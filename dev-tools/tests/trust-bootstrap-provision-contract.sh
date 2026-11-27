@@ -62,7 +62,7 @@ expected = {
 assert set(module._CREDENTIALS_BY_NAME) == set(expected)
 for name, credential in module._CREDENTIALS_BY_NAME.items():
     assert (credential.environment, credential.github_secret) == expected[name]
-    expected_probe_count = 8 if name == "firemud-preview-namespace-manager" else 2
+    expected_probe_count = 9 if name == "firemud-preview-namespace-manager" else 2
     assert len(credential.rbac_probes) == expected_probe_count
     assert {probe[3] for probe in credential.rbac_probes} == {"yes", "no"}
 manager = module._CREDENTIALS_BY_NAME["firemud-preview-namespace-manager"]
@@ -74,6 +74,7 @@ assert manager.rbac_probes == (
     ("patch", "configmaps/firemud-preview-proof-retries", "control", "yes"),
     ("create", "configmaps", "control", "no"),
     ("list", "configmaps", "control", "no"),
+    ("get", "configmaps/firemud-unrelated", "control", "no"),
     ("patch", "configmaps/firemud-unrelated", "control", "no"),
 )
 
@@ -419,6 +420,7 @@ with (
         ["patch", "configmaps/firemud-preview-proof-retries", "-n", "firemud-system"],
         ["create", "configmaps", "-n", "firemud-system"],
         ["list", "configmaps", "-n", "firemud-system"],
+        ["get", "configmaps/firemud-unrelated", "-n", "firemud-system"],
         ["patch", "configmaps/firemud-unrelated", "-n", "firemud-system"],
     ]
 

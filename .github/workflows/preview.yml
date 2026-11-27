@@ -30,8 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository && (github.event.action != 'labeled' && github.event.action != 'unlabeled' || github.event.label.name == 'preview:priority') && (github.event.action != 'edited' || github.event.changes.base != null)) }}
     concurrency:
-      group: preview-readonly-plan-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}
-      cancel-in-progress: true
+      group: preview-readonly-plan-${{ (github.event_name == 'repository_dispatch' && github.event.client_payload.proof_retry_nonce != '') && format('retry-{0}', github.run_id) || github.event_name == 'pull_request' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}
+      cancel-in-progress: ${{ !(github.event_name == 'repository_dispatch' && github.event.client_payload.proof_retry_nonce != '') }}
     outputs:
       action: ${{ steps.derive.outputs.action }}
       pr_number: ${{ steps.derive.outputs.pr_number }}
@@ -552,8 +552,8 @@ jobs:
     permissions:
       contents: read
     concurrency:
-      group: preview-readonly-render-${{ needs.preview-plan.outputs.pr_number }}
-      cancel-in-progress: true
+      group: preview-readonly-render-${{ (needs.preview-plan.outputs.proof_retry_nonce != '') && format('retry-{0}', github.run_id) || needs.preview-plan.outputs.pr_number }}
+      cancel-in-progress: ${{ !(needs.preview-plan.outputs.proof_retry_nonce != '') }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0

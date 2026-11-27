@@ -452,6 +452,14 @@ def evaluate(expression, action, base_ref, event="pull_request"):
 
 
 
+def actions_scalar_text(value):
+    if value is None:
+        return ""
+    if type(value) is bool:
+        return "true" if value else "false"
+    return str(value)
+
+
 def literal_format(pattern, *args):
     if type(pattern) is not str:
         raise ValueError("Concurrency format requires a literal string")
@@ -464,7 +472,7 @@ def literal_format(pattern, *args):
         index = int(match[1])
         if index >= len(args):
             raise ValueError("Concurrency format placeholder out of range")
-        parts.extend((literal, str(args[index])))
+        parts.extend((literal, actions_scalar_text(args[index])))
         cursor = match.end()
     tail = pattern[cursor:]
     if "{" in tail or "}" in tail:
@@ -543,14 +551,14 @@ for forbidden in ("{name}", "{0.attr}", "{0[0]}", "{0:04}", "{0!r}", "{{0}}", "{
         raise AssertionError(f"Accepted unsupported concurrency format: {forbidden}")
 
 
-def effective_group(group, action, base_ref, workflow_name="Required Gate", *, pr_number=42, push_branch=None):
+def effective_group(group, action, base_ref, workflow_name="Required Gate", *, pr_number=42, push_branch=None, run_id="123"):
     values = {
         "github.event.changes.base.ref": repr(base_ref),
         "github.event.pull_request.number": repr("") if push_branch else str(pr_number),
         "github.event.action": repr(action),
         "github.event_name": repr("push" if push_branch else "pull_request"),
         "github.workflow": repr(workflow_name),
-        "github.run_id": "123",
+        "github.run_id": repr(run_id),
         "github.ref": repr(f"refs/heads/{push_branch}" if push_branch else f"refs/pull/{pr_number}/merge"),
     }
 
@@ -574,7 +582,7 @@ def effective_group(group, action, base_ref, workflow_name="Required Gate", *, p
     def render(match):
         body = tokens.sub(translate, match[1].strip())
         tree = ast.parse(body, mode="eval")
-        return str(interpret_selector(tree.body))
+        return actions_scalar_text(interpret_selector(tree.body))
     return re.sub(r"\$\{\{(.*?)\}\}", render, group)
 
 
@@ -582,6 +590,10 @@ assert effective_group("${{ 'null' == 'None' && 'failed' || 'ok' }}", None, None
 assert effective_group("${{ 'true && false' }}", None, None) == "true && false"
 assert effective_group("${{ 'github.ref' }}", None, None) == "github.ref"
 assert effective_group("${{ 'it''s null' }}", None, None) == "it's null"
+
+assert effective_group("${{ format('gate{0}{1}{2}', null, true, false) }}", None, None) == "gatetruefalse"
+assert effective_group("${{ null }}-${{ true }}-${{ false }}", None, None) == "-true-false"
+
 
 def concurrency_group_collisions(rendered_groups):
     owners = {}
@@ -635,16 +647,22 @@ assert not can_reuse_required_name("CodeQL Analysis (${{ matrix.language }})", {
 
 
 def isolates_metadata_group(group, run_scoped, *, pr_number=42):
-    metadata = effective_group(group, "edited", None, pr_number=pr_number)
-    expected_suffix = "-metadata-123" if run_scoped else "-metadata"
+    metadata_groups = [
+        effective_group(group, "edited", None, pr_number=pr_number, run_id=run_id)
+        for run_id in ("123", "456")
+    ]
+    expected_suffixes = ("-metadata-123", "-metadata-456") if run_scoped else ("-metadata", "-metadata")
     substantive = [effective_group(group, action, base_ref, pr_number=pr_number) for action, base_ref in (
         ("edited", "develop"), ("opened", None), ("synchronize", None), ("reopened", None),
     )]
     if len({name.casefold() for name in substantive}) != 1:
         return False
-    return metadata.endswith(expected_suffix) and all(
-        name != metadata and name.endswith("-required") for name in substantive
-    )
+    distinct_metadata_groups = metadata_groups[0].casefold() != metadata_groups[1].casefold()
+    if distinct_metadata_groups != run_scoped:
+        return False
+    return all(
+        name.endswith(suffix) for name, suffix in zip(metadata_groups, expected_suffixes)
+    ) and all(name.endswith("-required") for name in substantive)
 
 
 def excludes_metadata(expression):
@@ -789,7 +807,7 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
     if concurrency.get("cancel-in-progress") != "true":
         raise SystemExit(f"{workflow} must cancel obsolete runs within each namespace")
 
-rendered_substantive_groups = []
+rendered_groups = []
 workflow_data = {}
 for workflow, (workflow_name, *_rest) in gates.items():
     data = yaml.load((root / ".github/workflows" / workflow).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
@@ -797,6 +815,14 @@ for workflow, (workflow_name, *_rest) in gates.items():
     group = data["concurrency"]["group"]
     if data.get("name") != workflow_name:
         raise SystemExit(f"{workflow} actual name must match its required-gate contract")
+    run_scoped = gates[workflow][-1]
+    for pr_number in (42, 43, 44):
+        for run_id in ("123", "456"):
+            metadata_owner = ("metadata", pr_number, run_id) if run_scoped else ("metadata", pr_number)
+            rendered_groups.append((
+                workflow, metadata_owner,
+                effective_group(group, "edited", None, workflow_name, pr_number=pr_number, run_id=run_id),
+            ))
     pr_group_owners = {}
     for action, base_ref in (("opened", None), ("synchronize", None), ("reopened", None), ("edited", "develop")):
         for pr_number in (42, 43, 44):
@@ -804,7 +830,7 @@ for workflow, (workflow_name, *_rest) in gates.items():
             prior_pr = pr_group_owners.setdefault(rendered.casefold(), pr_number)
             if prior_pr != pr_number:
                 raise SystemExit(f"{workflow} PRs {prior_pr} and {pr_number} share concurrency group {rendered!r}")
-            rendered_substantive_groups.append((workflow, ("pr", pr_number), rendered))
+            rendered_groups.append((workflow, ("pr", pr_number), rendered))
 
 for branch in ("main", "develop"):
     for workflow, data in workflow_data.items():
@@ -813,7 +839,7 @@ for branch in ("main", "develop"):
         branches = (data["on"]["push"] or {}).get("branches")
         if branches is not None and branch not in branches:
             continue
-        rendered_substantive_groups.append((
+        rendered_groups.append((
             workflow,
             ("push", branch),
             effective_group(data["concurrency"]["group"], None, None, data["name"], push_branch=branch),
@@ -822,11 +848,11 @@ missing_pr_collision = "${{ github.event.pull_request.number == null && 'protect
 assert effective_group(missing_pr_collision, None, None, push_branch="develop") == effective_group(
     missing_pr_collision, None, None, push_branch="main"
 ), "missing push PR context must expose a cross-branch collision"
-collisions = concurrency_group_collisions(rendered_substantive_groups)
+collisions = concurrency_group_collisions(rendered_groups)
 if collisions:
     first, second = collisions[0]
     raise SystemExit(
-        f"{first[0]} {first[1]} and {second[0]} {second[1]} share a substantive "
+        f"{first[0]} {first[1]} and {second[0]} {second[1]} share a "
         f"concurrency group (case-insensitive): {first[2]!r} / {second[2]!r}"
     )
 assert concurrency_group_collisions([
@@ -837,6 +863,10 @@ assert concurrency_group_collisions([
     ("ci.yml", ("pr", 42), "required-pr-42"),
     ("ci.yml", ("push", "develop"), "required-pr-42"),
 ]), "a push and PR in the same workflow cannot replace each other"
+assert concurrency_group_collisions([
+    ("ci.yml", ("metadata", 42, "123"), "pr-42-metadata-123"),
+    ("smoke.yml", ("push", "develop"), "PR-42-METADATA-123"),
+]), "a metadata edit cannot share another workflow's protected-push group"
 assert not concurrency_group_collisions([
     ("ci.yml", ("pr", 42), "required-pr-42"),
     ("ci.yml", ("pr", 42), "REQUIRED-PR-42"),
@@ -1188,7 +1218,9 @@ const repository = "example/firemud";
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
 async function scenario(kind, event = "pull_request", captureLookupFailure = false) {
   let now = 1000, snapshots = 0, reads = 0, currentRunReads = 0, refreshInventoryReads = 0;
-  const liveFallback = kind.startsWith("trusted-current-base") || kind === "optional-final-acceptance-transient";
+  const baseMovesDuringOrdering = kind === "pending-native-dual-base-moves-during-ordering";
+  const liveFallback = kind.startsWith("trusted-current-base") || kind === "optional-final-acceptance-transient" ||
+    baseMovesDuringOrdering;
   const h0 = kind.startsWith("optional-final-read-");
   const cancelledPrimary = kind === "optional-final-read-cancelled-primary";
   const cancelledWithReplacement = kind === "optional-final-read-cancelled-with-replacement";
@@ -1209,7 +1241,8 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     "trusted-current-base-advances": 2,
     "trusted-current-base-advances-during-acceptance-attempt": 3,
   }[kind] ?? Infinity;
-  const tupleAdvanced = () => currentRunReads >= baseAdvanceRead;
+  const tupleAdvanced = () => currentRunReads >= baseAdvanceRead ||
+    (baseMovesDuringOrdering && pendingRefreshObserved);
   let rerunStartedDuringLatestIdentityRead = false, rerunStartedDuringFinalTupleRead = false;
   const failures = [], refs = [], info = [], warnings = [];
   const context = {repo: {owner: "example", repo: "firemud"}, sha: liveFallback ? null : merge, payload: {
@@ -1509,6 +1542,10 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   assert.deepEqual(dualPending.failures, [], "older proof remains usable while both newer candidates are still pending");
   assert.deepEqual(dualPending.fallbackReadOrder.slice(-3), [44, 43, 42],
     "observe trusted refresh and native primary before making the selected attempt the last read");
+  const advancedDuringOrdering = await scenario("pending-native-dual-base-moves-during-ordering", "repository_dispatch");
+  assert(advancedDuringOrdering.info.some(line => line.includes("Current-base identity changed during fallback ordering")));
+  assert.match(advancedDuringOrdering.failures[0], /Timed out waiting for the exact runtime-images/,
+    "pending ordering on an obsolete current-base comparison must not release the gate");
   const nativeDuringRefresh = await scenario("pending-native-dual-native-fails-during-refresh", "repository_dispatch");
   assert(nativeDuringRefresh.warnings.some(line => line.includes("Pending runtime attempt changed before fallback proof")));
   assert.equal(nativeDuringRefresh.failures.length, 1, "terminal native result observed after the refresh read refuses older proof");

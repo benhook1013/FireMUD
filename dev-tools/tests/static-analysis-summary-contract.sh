@@ -126,6 +126,11 @@ assert.equal(b, "static-analysis-summary-pr-99");
 assert.equal(group({...source(), display_title: source().display_title + " mode-metadata"}), null);
 
 assert.equal(a, group(source(42, "License Gate")), "producer channels must serialize per PR");
+for (const run of [source(), source(42, "License Gate")]) {
+  assert.equal(a, group({...run, path: run.path + "@refs/pull/42/merge"}));
+  assert.equal(null, group({...run, path: run.path + "@refs/pull/99/merge"}));
+  assert.equal(null, group({...run, path: run.path + "@refs/heads/develop"}));
+}
 assert.equal(a, group(source(42, "CodeQL Analysis", "c".repeat(40))), "head advance must keep the PR queue");
 for (const pull_requests of [[{number: 99}, {number: 42}], [{number: 42}, {number: 99}]]) {
   assert.equal(group({...source(), pull_requests}), a, "association order must not select another PR");
@@ -512,7 +517,7 @@ async function assertCompletionOrders() {
         const callback = async (key) => {
           const name = key === "codeql" ? "CodeQL Analysis" : "License Gate";
           Object.assign(context.payload.workflow_run, {
-            name, path: `.github/workflows/${key === "codeql" ? "codeql" : "license-scan"}.yml`,
+            name, path: `.github/workflows/${key === "codeql" ? "codeql" : "license-scan"}.yml@refs/pull/42/merge`,
             display_title: `${name} pr-42 base-${baseSha} head-${headSha}`,
           });
           calls.paginate.length = 0;
@@ -559,8 +564,10 @@ async function assertCompletionOrders() {
             !comments[0].body.includes(currentHeadSha)) {
           throw new Error("older-head wake must publish new head identity in the existing comment");
         }
-        if (!comments[0].body.includes("CodeQL gate: `success`")) {
-          throw new Error("stale-head wake must replace the old failure with live-head success");
+        if (!comments[0].body.includes("CodeQL gate: `success`") ||
+            !comments[0].body.includes("License gate: `success`") ||
+            !comments[0].body.includes("✅ Static analysis checks passed")) {
+          throw new Error("stale-head wake must publish both passing gates for the live head");
         }
         const writesAfterHeadAdvance = updates;
         await callback(counterpart);

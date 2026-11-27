@@ -81,6 +81,7 @@ CREDENTIALS = (
             ("patch", "configmaps/firemud-preview-proof-retries", "control", "yes"),
             ("create", "configmaps", "control", "no"),
             ("list", "configmaps", "control", "no"),
+            ("get", "configmaps/firemud-unrelated", "control", "no"),
             ("patch", "configmaps/firemud-unrelated", "control", "no"),
         ),
     ),

@@ -123,7 +123,8 @@ jobs:
                     producer.head_sha !== run.head_sha || producer.status !== "completed" || producer.conclusion !== "success") {
                   throw new Error(
                     "publication requires one successful runtime image job from the exact source attempt" +
-                    ". If the current attempt lacks producer evidence after Re-run failed jobs, use Re-run all jobs on the source run while the comparison is current.",
+                    ". If the updated producer lacks its own evidence after Re-run failed jobs, use Re-run all jobs while the comparison is current. " +
+                    "For an outgoing producer, start a fresh exact-tuple build with the updated definition.",
                   );
                 }
                 if ((producer.steps ?? []).some(step =>
@@ -143,9 +144,20 @@ jobs:
                     !positiveInteger(artifact.id) || artifact.name !== artifactName ||
                     artifact.expired !== false || artifact.workflow_run?.id !== sourceId ||
                     !/^sha256:[0-9a-f]{64}$/.test(artifact.digest ?? "")) {
+                  if (artifacts.total_count === 0 && artifacts.artifacts.length === 0) {
+                    const legacyName = `pr-runtime-images-pr-merge-${title[4]}`;
+                    const { data: legacy } = await github.rest.actions.listWorkflowRunArtifacts({
+                      ...context.repo, run_id: sourceId, name: legacyName, per_page: 100,
+                    });
+                    if (legacy.total_count === 1 && legacy.artifacts.length === 1 &&
+                        legacy.artifacts[0].name === legacyName && legacy.artifacts[0].workflow_run?.id === sourceId) {
+                      throw new Error("The outgoing runtime producer used a merge-only archive. Start a fresh build for the exact current PR tuple with the updated producer definition.");
+                    }
+                  }
                   throw new Error(
                     "publication requires one immutable exact-attempt artifact and SHA256" +
-                    ". If the current attempt lacks producer evidence after Re-run failed jobs, use Re-run all jobs on the source run while the comparison is current.",
+                    ". If the updated producer lacks its own evidence after Re-run failed jobs, use Re-run all jobs while the comparison is current. " +
+                    "For an outgoing producer, start a fresh exact-tuple build with the updated definition.",
                   );
                 }
                 core.setOutput("artifact_name", artifactName);

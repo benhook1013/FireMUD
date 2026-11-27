@@ -268,7 +268,7 @@ retire_merged_preview_retry_entries() {
   done < <(jq -r '.keys[]' <<<"$entries")
   if [[ -n "$last" ]] && jq -e '.partial' <<<"$entries" >/dev/null; then
     holder="$(read_preview_retry_holder)" || return 1
-    write_preview_retry_retirement_cursor "$holder" "$holder_uid" "$cursor" "$GITHUB_REPOSITORY:$last"
+    write_preview_retry_retirement_cursor "$holder" "$holder_uid" "$cursor" "$GITHUB_REPOSITORY:$last" || return 1
   fi
   report_preview_retry_holder_headroom "$holder_uid"
 }

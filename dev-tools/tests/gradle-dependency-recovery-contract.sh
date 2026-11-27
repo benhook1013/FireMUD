@@ -553,6 +553,7 @@ write_compile_classpath_pom_429_cause
 write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; exit 0'
 run_case hosted-environment-identity-controller 0
 assert_call_count 2
+assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :hosted-environment-identity-controller:check -PfullCheck --profile --info --console=plain"
 assert_rate_limit_delay
 assert_output_contains "with cached dependency metadata"
 

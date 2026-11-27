@@ -35,14 +35,16 @@ jobs:
           script: |
             const source = context.payload.workflow_run;
             if (source?.event !== "pull_request") return;
-            const workflowName = ({
-              ".github/workflows/codeql.yml": "CodeQL Analysis",
-              ".github/workflows/license-scan.yml": "License Gate",
-            })[source.path];
             const title = String(source.display_title || "").match(
               /^(CodeQL Analysis|License Gate) pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40})$/
             );
-            if (!title || title[1] !== workflowName || title[4] !== source.head_sha ||
+            if (!title) return;
+            const path = String(source.path || "").replace(new RegExp(`@refs/pull/${title[2]}/merge$`), "");
+            const workflowName = ({
+              ".github/workflows/codeql.yml": "CodeQL Analysis",
+              ".github/workflows/license-scan.yml": "License Gate",
+            })[path];
+            if (title[1] !== workflowName || title[4] !== source.head_sha ||
                 ![workflowName, source.display_title].includes(source.name) ||
                 !Number.isSafeInteger(source.head_repository?.id) || source.head_repository.id <= 0 ||
                 typeof source.head_branch !== "string" || !source.head_branch.trim()) return;
@@ -107,7 +109,8 @@ jobs:
             if (typeof baseRef !== "string" || !baseRef.trim()) {
               throw new Error("The current pull-request base ref is unavailable.");
             }
-            const sourceWorkflowPath = context.payload.workflow_run.path;
+            const sourceWorkflowPath = String(context.payload.workflow_run.path || "")
+              .replace(new RegExp(`@refs/pull/${issueNumber}/merge$`), "");
             const sourceWorkflowName = ({
               ".github/workflows/codeql.yml": "CodeQL Analysis",
               ".github/workflows/license-scan.yml": "License Gate",

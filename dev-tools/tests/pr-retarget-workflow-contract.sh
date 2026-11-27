@@ -1674,8 +1674,8 @@ if grep -Eq '^concurrency:' "$preview_path"; then
   echo "Preview workflow must not cancel an active lifecycle from workflow-level concurrency" >&2
   exit 1
 fi
-assert_job_contains preview.yml preview-plan "group: preview-readonly-plan-\${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}"
-assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
+assert_job_contains preview.yml preview-plan "group: preview-readonly-plan-\${{ (github.event_name == 'repository_dispatch' && github.event.client_payload.proof_retry_nonce != '') && format('retry-{0}', github.run_id) || github.event_name == 'pull_request' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}"
+assert_job_contains preview.yml preview-plan "cancel-in-progress: \${{ !(github.event_name == 'repository_dispatch' && github.event.client_payload.proof_retry_nonce != '') }}"
 assert_job_excludes preview.yml preview-plan 'Publish preview lifecycle state'
 assert_job_excludes preview.yml preview-plan 'firemud-preview-summary'
 assert_job_excludes preview.yml preview-plan 'publish-preview-comment.js'

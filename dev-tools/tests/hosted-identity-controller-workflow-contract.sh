@@ -2007,6 +2007,10 @@ assert (
     '  "$RUNTIME_NAMESPACE" "$RUNTIME_NAMESPACE"'
 ) in clean_delete["run"]
 create_step = deploy_by_name["Create and annotate exact preview runtime namespace"]
+# If the locked recheck reports proceed=false, capacity allocation never runs.
+# Its absent allocation output must also block both Namespace mutations.
+for namespace_mutation in (clean_delete, create_step):
+    assert namespace_mutation["if"] == "${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}"
 assert create_step["env"]["ALLOCATED_TELNET_PORT"] == (
     "${{ steps.allocate-telnet-port.outputs.port }}"
 )
@@ -6904,6 +6908,8 @@ unset TEST_PR_MERGEABLE TEST_PR_MERGEABLE_STATE
 run_target_without_pull_request_metadata() {
   local scenario="$1"
   local workflow_run_json="$2"
+  local callback_attempt="${3:-}"
+  local expected_api_calls="${4:-1}"
   local output="$TEMP_DIR/target-${scenario}.output"
   local gh_log="$TEMP_DIR/target-${scenario}.gh.log"
 
@@ -6917,6 +6923,8 @@ run_target_without_pull_request_metadata() {
       EVENT_NAME=workflow_run \
       EVENT_ACTION=completed \
       WORKFLOW_RUN_ID=42 \
+      WORKFLOW_RUN_ATTEMPT="$callback_attempt" \
+      DEFAULT_BRANCH=develop \
       WORKFLOW_RUN_HEAD_SHA=cccccccccccccccccccccccccccccccccccccccc \
       EVENT_PR_NUMBER='' \
       EVENT_HEAD_SHA='' \
@@ -6929,7 +6937,8 @@ run_target_without_pull_request_metadata() {
       bash "$TEMP_DIR/target.sh"
   )
   test "$(cat "$output")" = $'action=none\nretire_identity=false\ncleanup_state=none'
-  test "$(cat "$gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
+  test "$(wc -l < "$gh_log")" = "$expected_api_calls"
+  test "$(head -n 1 "$gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
 }
 
 run_target_without_pull_request_metadata \
@@ -6938,6 +6947,12 @@ run_target_without_pull_request_metadata \
 run_target_without_pull_request_metadata \
   empty \
   '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[]}'
+
+# An old completion callback must never validate artifacts from a newer retry attempt.
+retry_workflow_run='{"conclusion":"success","run_attempt":2,"display_title":"Preview retry 12345678-1234-4234-8234-123456789abc pr-900-base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-head-cccccccccccccccccccccccccccccccccccccccc-merge-dddddddddddddddddddddddddddddddddddddddd","head_sha":"cccccccccccccccccccccccccccccccccccccccc","head_branch":"develop","path":".github/workflows/preview.yml@refs/heads/develop","event":"repository_dispatch","repository":{"full_name":"example/FireMUD"}}'
+run_target_without_pull_request_metadata retry-stale-callback "$retry_workflow_run" 1
+run_target_without_pull_request_metadata retry-malformed-callback "$retry_workflow_run" 02
+run_target_without_pull_request_metadata retry-exact-callback "$retry_workflow_run" 2 2
 
 # Source validation is integrated into the target step. Reject invalid source
 # identity before downloading any artifact or considering a privileged action.

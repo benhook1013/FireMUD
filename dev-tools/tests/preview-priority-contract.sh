@@ -242,7 +242,8 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     snapshot_uid="$FAKE_PR_901_RECHECK_NAMESPACE_UID"
   fi
   snapshot_resource_version=rv-901
-  if [[ "${FAKE_RETRY_RUNTIME_CHANGE_BEFORE_SEND:-false}" == true && "$count" -gt 2 ]]; then
+  if [[ ( "${FAKE_RETRY_RUNTIME_CHANGE_BEFORE_SEND:-false}" == true && "$count" -gt 2 ) ||
+    ( "${FAKE_RETRY_RUNTIME_CHANGE_AFTER_START:-false}" == true && "$count" -gt 3 ) ]]; then
     snapshot_resource_version=rv-drift
   fi
   proof_complete="${FAKE_PR_901_PROOF_COMPLETE:-true}"
@@ -256,8 +257,13 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
   if [[ "${FAKE_PR_901_PROOF_COMPLETES_ON_FRESH_REFRESH:-false}" == true && "$count" -gt 2 ]]; then
     proof_complete=true
   fi
-  if [[ "${FAKE_PR_901_PROOF_REMOVED_ON_FRESH_REFRESH:-false}" == true && "$count" -gt 2 ]]; then
-    proof_complete=false
+  if [[ "${FAKE_PR_901_PROOF_REMOVED_ON_FRESH_REFRESH:-false}" == true ]]; then
+    if [[ "$count" == 2 ]]; then
+      proof_complete=true
+    elif [[ "$count" -gt 2 ]]; then
+      proof_complete=false
+    fi
+    printf 'proof snapshot %s: %s\n' "$count" "$proof_complete" >> "$FAKE_NAMESPACE_SNAPSHOT_LOG"
   fi
   if [[ "$proof_complete" == true ]]; then
     snapshot_proof_base="$snapshot_base"
@@ -599,11 +605,14 @@ if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/173
     exit 1
   fi
   if [[ "$*" == *"event=pull_request"* ]]; then
-    if [[ "$*" != *"head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]]; then
-      echo "recent pull_request inventory omitted its exact head SHA filter: $*" >&2
+    if [[ "$*" == *"head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]]; then
+      payload="${FAKE_RECENT_PREVIEW_SOURCE_RUNS_JSON:-}"
+    elif [[ "$*" == *"head_sha=cccccccccccccccccccccccccccccccccccccccc"* ]]; then
+      payload="${FAKE_RECENT_PREVIEW_MERGE_RUNS_JSON:-}"
+    else
+      echo "recent pull_request inventory omitted its exact head or merge SHA filter: $*" >&2
       exit 1
     fi
-    payload="${FAKE_RECENT_PREVIEW_SOURCE_RUNS_JSON:-}"
   elif [[ "$*" == *"event=repository_dispatch"* ]]; then
     if [[ "$*" != *"branch=develop"* || "$*" == *"head_sha="* ]]; then
       echo "recent repository_dispatch inventory did not use the trusted default-branch filter: $*" >&2
@@ -1473,6 +1482,9 @@ run_proof_retry_contract() (
   reset_case
   seed_reserved_holder_with_old_namespace_version
   FAKE_PR_901_PROOF_REMOVED_ON_FRESH_REFRESH=true fixture_reconcile >"$case_output"
+  grep -Fqx 'proof snapshot 2: true' "$FAKE_NAMESPACE_SNAPSHOT_LOG"
+  grep -Fqx 'proof snapshot 3: false' "$FAKE_NAMESPACE_SNAPSHOT_LOG"
+  grep -Fq 'Refreshed Namespace resource-version fence' "$case_output"
   test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
   jq -e '.data["pr-901"] | fromjson | .phase == "SEND_STARTED"' "$FAKE_RETRY_HOLDER" >/dev/null
 
@@ -1554,6 +1566,35 @@ run_proof_retry_contract() (
   assert_retry_count 2
   test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 1
   test ! -e "$FAKE_DISPATCH_LOG"
+
+  reset_case
+  seed_retry_holder 1
+  FAKE_RETRY_RUNTIME_CHANGE_AFTER_START=true fixture_reconcile >"$case_output" 2>&1
+  grep -Fq 'Restored the unsent proof-retry reservation' "$case_output"
+  assert_retry_count 2
+  test ! -e "$FAKE_DISPATCH_LOG"
+  jq -se 'length == 3 and (map(.[2].value | fromjson) as [$reserved,$started,$restored]
+    | $reserved.phase == "RESERVED" and $started == ($reserved | .phase = "SEND_STARTED")
+    and $restored == $reserved)' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+
+  reset_case
+  seed_reserved_holder_with_old_namespace_version
+  jq -c '.data["pr-901"] |= (fromjson | .base = ("d" * 40) | .image = .base | tojson)' \
+    "$FAKE_RETRY_HOLDER" > "$FAKE_RETRY_HOLDER.next"
+  mv "$FAKE_RETRY_HOLDER.next" "$FAKE_RETRY_HOLDER"
+  fixture_reconcile >"$case_output"
+  assert_retry_count 1
+  test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+  jq -se 'length == 3 and .[0][2].op == "remove" and (.[1][2].value | fromjson |
+    .phase == "RESERVED" and .base == ("b" * 40) and .predecessor == null)' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+
+  reset_case
+  seed_retry_holder 1
+  FAKE_PR_901_NAMESPACE_ABSENT=true fixture_reconcile >"$case_output" 2>&1
+  grep -Fq 'retained proof retry requires an exact deployed Namespace' "$case_output"
+  assert_retry_count 1
+  test ! -e "$FAKE_DISPATCH_LOG"
+  test ! -e "$FAKE_RETRY_PATCH_LOG"
 
   reset_case
   seed_retry_holder 1
@@ -1780,6 +1821,7 @@ run_retry_retirement_cursor_contract() (
   export GITHUB_REPOSITORY=owner/fixture
   holder_file="$TEMP_DIR/c15-holder" audit="$TEMP_DIR/c15-gh" patches="$TEMP_DIR/c15-patch"
   false_repo=false
+  refuse_cursor=false
   jq -n '{
       apiVersion:"v1", kind:"ConfigMap", metadata:{namespace:"firemud-system",
       name:"firemud-preview-proof-retries",uid:"fixture-holder",resourceVersion:"1",
@@ -1829,6 +1871,10 @@ run_retry_retirement_cursor_contract() (
           $p[0] == {op:"test",path:"/metadata/uid",value:$f[0].metadata.uid}
           and $p[1] == {op:"test",path:"/metadata/resourceVersion",value:$f[0].metadata.resourceVersion}
           and ($p|length)==3' >/dev/null || return 2
+        if [[ "$refuse_cursor" == true ]] &&
+          jq -ne --argjson p "$patch" '$p[2].path | startswith("/metadata/annotations/")' >/dev/null; then
+          return 1
+        fi
         printf '%s\n' "$patch" >>"$patches"
         jq --argjson p "$patch" '
           .metadata.resourceVersion |= (tonumber+1|tostring)
@@ -1871,6 +1917,15 @@ run_retry_retirement_cursor_contract() (
     exit 1
   fi
   [[ "$(wc -l <"$audit")" == 36 && "$(wc -l <"$patches")" == 4 ]]
+  jq 'del(.metadata.annotations["firemud.dev/proof-retry-retirement-cursor"])' \
+    "$holder_file" >"$holder_file.next"
+  mv "$holder_file.next" "$holder_file"
+  refuse_cursor=true
+  if retire_merged_preview_retry_entries; then
+    echo 'Unsuccessful cursor write unexpectedly returned success' >&2
+    exit 1
+  fi
+  [[ "$(wc -l <"$audit")" == 48 && "$(wc -l <"$patches")" == 4 ]]
   echo 'Preview proof-retry retirement cursor contract passed.'
 )
 
@@ -3385,6 +3440,7 @@ reconciler_recreated_namespace_output="$TEMP_DIR/reconciler-recreated-namespace.
 grep -Fq \
   'namespace pr-901 was recreated before proof retry dispatch; refusing to charge its retry budget.' \
   "$reconciler_recreated_namespace_output"
+test ! -e "$FAKE_RETRY_PATCH_LOG"
 test ! -e "$FAKE_ANNOTATE_LOG"
 test ! -e "$FAKE_DISPATCH_LOG"
 
@@ -3397,8 +3453,8 @@ reconciler_unrelated_consumer_output="$TEMP_DIR/reconciler-trusted-consumer.out"
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     FAKE_PR_901_PROOF_COMPLETE=false \
     FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn \
-      --arg title "Preview dispatch pr-901-base-${preview_base_sha}-head-${preview_head_sha}-merge-${preview_merge_sha}" \
-      '[{workflow_runs:[{id:5252,path:".github/workflows/hosted-identity-request.yml",name:"Trusted Hosted Identity Request",head_branch:"develop",display_title:$title,status:"in_progress"}]}]')" \
+      --arg title "Preview dispatch pr-901-base-${preview_base_sha}-head-${preview_head_sha}-merge-dddddddddddddddddddddddddddddddddddddddd" \
+      '[{workflow_runs:[{id:5252,run_attempt:1,event:"workflow_run",workflow_id:357129350,head_sha:("b"*40),repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},path:".github/workflows/hosted-identity-request.yml",name:"Trusted Hosted Identity Request",head_branch:"develop",display_title:$title,status:"in_progress"}]}]')" \
 PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_unrelated_consumer_output"
@@ -3415,7 +3471,9 @@ reconciler_source_title_consumer_output="$TEMP_DIR/reconciler-unqualified-consum
     FAKE_PR_901_HEAD=head-901 \
     FAKE_PR_901_REQUESTED_HEAD=head-901 \
     FAKE_PR_901_PROOF_COMPLETE=false \
-    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5253,"path":".github/workflows/hosted-identity-request.yml","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pull_requests":[{"number":901}],"name":"Trusted Hosted Identity Request","head_branch":"develop","display_title":"PR preview 901","status":"queued"}]}]' \
+    FAKE_TRUSTED_CONSUMER_JOBS_JSON='{"total_count":1,"jobs":[{"name":"Validate Trusted Preview Target","run_id":5259,"run_attempt":1,"head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"completed","conclusion":"success","steps":[{"name":"Trusted preview deploy tuple pr-902 base-cccccccccccccccccccccccccccccccccccccccc head-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb merge-dddddddddddddddddddddddddddddddddddddddd","status":"completed","conclusion":"success"}]}]}' \
+    FAKE_TRUSTED_CONSUMER_LATEST_JSON='{"id":5259,"run_attempt":1,"event":"workflow_run","workflow_id":357129350,"path":".github/workflows/hosted-identity-request.yml","head_branch":"develop","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"},"status":"queued"}' \
+    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[{"id":5259,"run_attempt":1,"event":"workflow_run","workflow_id":357129350,"repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"},"path":".github/workflows/hosted-identity-request.yml","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pull_requests":[{"number":901}],"name":"Trusted Hosted Identity Request","head_branch":"develop","display_title":"PR preview 901","status":"queued"}]}]' \
 PREVIEW_MAX_ACTIVE=2 \
     bash "$RECONCILER_RUN"
 ) > "$reconciler_source_title_consumer_output"
@@ -3425,13 +3483,15 @@ grep -Fqx \
 test -s "$FAKE_DISPATCH_LOG"
 
 # An automatic run must prove exactly this tuple in its current native attempt.
-for tuple_case in current qualified target old_merge missing ambiguous stale_attempt wrong_list_path wrong_latest_path wrong_list_id wrong_latest_repo jobs_unavailable latest_unavailable old_event_current_plan event_only latest_missing_head latest_missing_path jobs_incomplete jobs_malformed stale_attempt_old_tuple job_attempt_missing job_attempt_mismatch job_attempt_null completed_failed_plan completed_success completed_plan_only completed_missing_upload completed_success_old_tuple completed_noop completed_old_noop active_noop; do
+for tuple_case in current qualified native_merge_associated native_merge_qualified target old_merge missing ambiguous stale_attempt wrong_list_path wrong_latest_path wrong_list_id wrong_latest_repo jobs_unavailable latest_unavailable old_event_current_plan event_only latest_missing_head latest_missing_path jobs_incomplete jobs_malformed stale_attempt_old_tuple job_attempt_missing job_attempt_mismatch job_attempt_null completed_failed_plan completed_success completed_plan_only completed_missing_upload completed_success_old_tuple completed_noop completed_old_noop active_noop; do
   reset_case
   reconciler_pull_request_output="$TEMP_DIR/reconciler-pull-request-$tuple_case.out"
   tuple_name="Preview resolved tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-${preview_merge_sha}"
   old_tuple_name="Preview resolved tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-dddddddddddddddddddddddddddddddddddddddd"
+  native_head="$preview_head_sha"
+  if [[ "$tuple_case" == native_merge_* ]]; then native_head="$preview_merge_sha"; fi
   plan_jobs="$(jq -cn --arg tuple "$tuple_name" --arg old "$old_tuple_name" \
-    --arg head "$preview_head_sha" --arg variant "$tuple_case" '
+    --arg head "$native_head" --arg variant "$tuple_case" '
       def step($name): {name:$name,status:"completed",conclusion:"success"};
       [{name:"Preview Plan",run_id:5254,
         run_attempt:(if $variant == "job_attempt_mismatch" then 1 elif $variant == "job_attempt_null" then null else 2 end),
@@ -3456,9 +3516,9 @@ for tuple_case in current qualified target old_merge missing ambiguous stale_att
       elif $variant == "jobs_incomplete" then {jobs:.,total_count:2}
       elif $variant == "jobs_malformed" then {jobs:null,total_count:1}
       else {jobs:.,total_count:length} end')"
-  latest_source="$(jq -cn --arg head "$preview_head_sha" --arg variant "$tuple_case" '
+  latest_source="$(jq -cn --arg head "$native_head" --arg variant "$tuple_case" '
     {id:5254,run_attempt:(if $variant == "stale_attempt" or $variant == "stale_attempt_old_tuple" then 3 else 2 end),
-     head_sha:$head,event:(if $variant == "target" then "pull_request_target" else "pull_request" end),workflow_id:173511323,display_title:"PR preview 901",repository:{full_name:(if $variant == "wrong_latest_repo" then "example/Other" else "example/FireMUD" end)},head_repository:{full_name:"example/FireMUD"},pull_requests:[{number:901}],path:(if $variant == "qualified" then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_latest_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),status:"in_progress"}
+     head_sha:$head,event:(if $variant == "target" then "pull_request_target" else "pull_request" end),workflow_id:173511323,display_title:"PR preview 901",repository:{full_name:(if $variant == "wrong_latest_repo" then "example/Other" else "example/FireMUD" end)},head_repository:{full_name:"example/FireMUD"},pull_requests:(if $variant == "native_merge_qualified" then [] else [{number:901,head:{sha:("a"*40)}}] end),path:(if ($variant | IN("qualified","native_merge_qualified")) then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_latest_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),status:"in_progress"}
      | if $variant == "latest_missing_head" then del(.head_sha)
        elif $variant == "latest_missing_path" then del(.path)
        elif $variant == "completed_failed_plan" then .status = "completed" | .conclusion = "failure"
@@ -3474,11 +3534,11 @@ for tuple_case in current qualified target old_merge missing ambiguous stale_att
       FAKE_PREVIEW_SOURCE_LATEST_FAIL="$([[ "$tuple_case" == latest_unavailable ]] && echo true || echo false)" \
       FAKE_PREVIEW_PLAN_JOBS_JSON="$plan_jobs" \
       FAKE_PREVIEW_SOURCE_LATEST_JSON="$latest_source" \
-      FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn --arg variant "$tuple_case" '[{workflow_runs:[{id:5254,run_attempt:2,event:(if $variant == "target" then "pull_request_target" else "pull_request" end),workflow_id:(if $variant == "wrong_list_id" then 1 else 173511323 end),repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},path:(if $variant == "qualified" then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_list_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),head_sha:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",pull_requests:[{number:901}],name:"PR Preview Environment",head_branch:"feature-preview",display_title:"PR preview 901",status:"in_progress"}]}]')" \
+      FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -cn --arg variant "$tuple_case" --arg head "$native_head" '[{workflow_runs:[{id:5254,run_attempt:2,event:(if $variant == "target" then "pull_request_target" else "pull_request" end),workflow_id:(if $variant == "wrong_list_id" then 1 else 173511323 end),repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},path:(if ($variant | IN("qualified","native_merge_qualified")) then ".github/workflows/preview.yml@refs/pull/901/merge" elif $variant == "wrong_list_path" then ".github/workflows/preview.yml@refs/pull/902/merge" else ".github/workflows/preview.yml" end),head_sha:$head,pull_requests:(if $variant == "native_merge_qualified" then [] else [{number:901,head:{sha:("a"*40)}}] end),name:"PR Preview Environment",head_branch:"feature-preview",display_title:"PR preview 901",status:"in_progress"}]}]')" \
       PREVIEW_MAX_ACTIVE=2 \
       bash "$RECONCILER_RUN"
   ) > "$reconciler_pull_request_output"
-  if [[ "$tuple_case" == current || "$tuple_case" == qualified || "$tuple_case" == old_event_current_plan || "$tuple_case" == job_attempt_missing ]]; then
+  if [[ "$tuple_case" == current || "$tuple_case" == qualified || "$tuple_case" == native_merge_* || "$tuple_case" == old_event_current_plan || "$tuple_case" == job_attempt_missing ]]; then
     grep -Fqx \
       "Skipping proof retry for PR #901: preview source or trusted consumer run 5254 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
       "$reconciler_pull_request_output"
@@ -3518,7 +3578,7 @@ make_recent_source_evidence() {
   FAKE_PREVIEW_SOURCE_LATEST_JSON="$(jq -cn --arg head "$preview_head_sha" --arg updated_at "$updated_at" '
     {id:5254,run_attempt:2,head_sha:$head,event:"pull_request",workflow_id:173511323,
       repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
-      pull_requests:[{number:901}],path:".github/workflows/preview.yml",status:"completed",
+      pull_requests:[{number:901,head:{sha:$head}}],path:".github/workflows/preview.yml",status:"completed",
       display_title:"PR preview 901",conclusion:"success",updated_at:$updated_at}')"
   export FAKE_PREVIEW_SOURCE_LATEST_JSON
   FAKE_RECENT_PREVIEW_SOURCE_RUNS_JSON="$(jq -cn --arg head "$preview_head_sha" \
@@ -3527,7 +3587,7 @@ make_recent_source_evidence() {
       status:"completed",conclusion:"success",name:"PR preview 901",display_title:"PR preview 901",
       head_branch:"feature-preview",head_sha:$head,path:".github/workflows/preview.yml",
       repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
-      pull_requests:[{number:901}],created_at:"2026-01-01T00:00:00Z",updated_at:$updated_at}]}')"
+      pull_requests:[{number:901,head:{sha:$head}}],created_at:"2026-01-01T00:00:00Z",updated_at:$updated_at}]}')"
   export FAKE_RECENT_PREVIEW_SOURCE_RUNS_JSON
 }
 
@@ -3561,26 +3621,40 @@ make_recent_dispatch_source_evidence() {
   export FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON
 }
 
-reset_case
-recent_source_updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-make_recent_source_evidence "$recent_source_updated_at"
-reconciler_recent_source_handoff_output="$TEMP_DIR/reconciler-recent-source-handoff.out"
-(
-  cd "$ROOT_DIR"
-  FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
-    FAKE_PR_901_HEAD=head-901 \
-    FAKE_PR_901_REQUESTED_HEAD=head-901 \
-    FAKE_PR_901_PROOF_COMPLETE=false \
-    FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[]}]' \
-    PREVIEW_MAX_ACTIVE=2 \
-    bash "$RECONCILER_RUN"
-) > "$reconciler_recent_source_handoff_output"
-grep -Fqx \
-  "Deferring proof retry for PR #901: exact successful preview source run 5254 is within the 600-second trusted-consumer handoff window." \
-  "$reconciler_recent_source_handoff_output"
-test ! -e "$FAKE_ANNOTATE_LOG"
-test ! -e "$FAKE_DISPATCH_LOG"
-test -s "$FAKE_RECENT_HANDOFF_LOOKUP_LOG"
+for native_completed_case in head merge; do
+  reset_case
+  recent_source_updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  make_recent_source_evidence "$recent_source_updated_at"
+  if [[ "$native_completed_case" == merge ]]; then
+    qualified_path=".github/workflows/preview.yml@refs/pull/901/merge"
+    FAKE_PREVIEW_SOURCE_LATEST_JSON="$(jq -c --arg merge "$preview_merge_sha" --arg path "$qualified_path" \
+      '.head_sha = $merge | .path = $path | .pull_requests = []' <<<"$FAKE_PREVIEW_SOURCE_LATEST_JSON")"
+    FAKE_PREVIEW_PLAN_JOBS_JSON="$(jq -c --arg merge "$preview_merge_sha" \
+      '.jobs[].head_sha = $merge' <<<"$FAKE_PREVIEW_PLAN_JOBS_JSON")"
+    FAKE_RECENT_PREVIEW_MERGE_RUNS_JSON="$(jq -c --arg merge "$preview_merge_sha" --arg path "$qualified_path" \
+      '.workflow_runs[] |= (.head_sha = $merge | .path = $path | .pull_requests = [])' <<<"$FAKE_RECENT_PREVIEW_SOURCE_RUNS_JSON")"
+    unset FAKE_RECENT_PREVIEW_SOURCE_RUNS_JSON
+    export FAKE_RECENT_PREVIEW_MERGE_RUNS_JSON
+  fi
+  reconciler_recent_source_handoff_output="$TEMP_DIR/reconciler-recent-source-handoff.out"
+  (
+    cd "$ROOT_DIR"
+    FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+      FAKE_PR_901_HEAD=head-901 \
+      FAKE_PR_901_REQUESTED_HEAD=head-901 \
+      FAKE_PR_901_PROOF_COMPLETE=false \
+      FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON='[{"workflow_runs":[]}]' \
+      PREVIEW_MAX_ACTIVE=2 \
+      bash "$RECONCILER_RUN"
+  ) > "$reconciler_recent_source_handoff_output"
+  grep -Fqx \
+    "Deferring proof retry for PR #901: exact successful preview source run 5254 is within the 600-second trusted-consumer handoff window." \
+    "$reconciler_recent_source_handoff_output"
+  test ! -e "$FAKE_ANNOTATE_LOG"
+  test ! -e "$FAKE_DISPATCH_LOG"
+  test -s "$FAKE_RECENT_HANDOFF_LOOKUP_LOG"
+done
+unset FAKE_RECENT_PREVIEW_MERGE_RUNS_JSON
 
 reset_case
 recent_source_updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -3765,7 +3839,7 @@ FAKE_RECENT_PREVIEW_SOURCE_RUNS_JSON="$(jq -cn --arg head "$preview_head_sha" \
     conclusion:"success",name:"PR preview 901",display_title:"PR preview 901",
     head_branch:"feature-preview",head_sha:$head,path:".github/workflows/preview.yml",
     repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
-    pull_requests:[{number:901}],updated_at:$updated_at}] as $runs
+    pull_requests:[{number:901,head:{sha:$head}}],updated_at:$updated_at}] as $runs
     | [{total_count:($runs | length),workflow_runs:$runs[:100]},
        {total_count:($runs | length),workflow_runs:$runs[100:]}]')"
 export FAKE_RECENT_PREVIEW_SOURCE_RUNS_JSON
@@ -4930,7 +5004,7 @@ assert '.metadata.resourceVersion =' not in reserve
 
 handoff = run[run.index("recent_successful_source_handoff()") : run.index("evaluate_recent_source_handoff()")]
 refresh = handoff.index("completed_preview_inventory repository_dispatch")
-last_native = handoff.rindex("completed_preview_inventory pull_request")
+last_native = handoff.rindex("completed_native_preview_inventory")
 assert refresh < last_native < handoff.rindex("evaluate_recent_source_handoff")
 assert "return 4" in handoff[last_native:]
 

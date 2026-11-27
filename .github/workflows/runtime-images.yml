@@ -102,6 +102,91 @@ jobs:
       - name: Set up canonical Python
         uses: ./.github/actions/setup-python
 
+      - name: Verify runtime refresh claim
+        id: claim
+        if: ${{ github.event_name == 'repository_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.client_payload.head_sha || '' }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number || github.event.client_payload.pr_number || '' }}
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.client_payload.base_ref || '' }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.client_payload.base_sha || '' }}
+          EVENT_MERGE_SHA: ${{ github.event.client_payload.merge_sha || '' }}
+          EVENT_RUNTIME_REFRESH_CLAIM: ${{ github.event.client_payload.runtime_refresh_claim || '' }}
+          EVENT_ACTION: ${{ github.event.action || '' }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$EVENT_ACTION" == "pr-runtime-base-refresh" ]] || {
+            echo "Runtime PR refresh requires the typed pr-runtime-base-refresh dispatch." >&2
+            exit 1
+          }
+          [[ "$GITHUB_REF" == "refs/heads/${DEFAULT_BRANCH}" ]] || {
+            echo "Runtime PR refresh must run from the repository default branch." >&2
+            exit 1
+          }
+          PR_NUMBER="$EVENT_PR_NUMBER"
+          BASE_REF="$EVENT_BASE_REF"
+          BASE_SHA="$EVENT_BASE_SHA"
+          MERGE_SHA="$EVENT_MERGE_SHA"
+          HEAD_SHA="$EVENT_HEAD_SHA"
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]] || {
+            echo "Runtime PR refresh payload has an invalid pull request number." >&2
+            exit 1
+          }
+          git check-ref-format "refs/heads/${BASE_REF}" >/dev/null || {
+            echo "Runtime PR refresh payload has an invalid base ref." >&2
+            exit 1
+          }
+          for sha_name in BASE_SHA HEAD_SHA MERGE_SHA; do
+            sha_value="${!sha_name}"
+            [[ "$sha_value" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "Runtime PR refresh payload has an invalid ${sha_name}." >&2
+              exit 1
+            }
+          done
+
+          claim_witness="$(jq -er '.client_payload.runtime_refresh_claim_witness // "" | select(type == "string")' "$GITHUB_EVENT_PATH")"
+          if [[ ! "${EVENT_RUNTIME_REFRESH_CLAIM:-}" =~ ^[1-9][0-9]{0,15}$ ]] ||
+            (( EVENT_RUNTIME_REFRESH_CLAIM > 9007199254740991 )) ||
+            [[ ! "$claim_witness" =~ ^[0-9a-f]{64}$ || ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Runtime PR refresh claim identity is invalid." >&2
+            exit 1
+          fi
+          base_ref_hash="$(printf '%s' "$BASE_REF" | sha256sum | cut -d' ' -f1)"
+          witness_hash="$(printf '%s' "$claim_witness" | sha256sum | cut -d' ' -f1)"
+          claim="firemud-runtime-refresh-intent/v1/pr-${PR_NUMBER}/${MERGE_SHA}/${base_ref_hash}/g${EVENT_RUNTIME_REFRESH_CLAIM}"
+          claim_ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${claim}")"
+          claim_sha="$(jq -er --arg claim "refs/tags/${claim}" 'select(.ref == $claim and .object.type == "tag") | .object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' <<<"$claim_ref")"
+          claim_tag="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${claim_sha}")"
+          jq -e --arg sha "$claim_sha" --arg claim "$claim" --arg merge "$MERGE_SHA" \
+            --arg pr "$PR_NUMBER" --arg base_ref "$BASE_REF" --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
+            --arg generation "$EVENT_RUNTIME_REFRESH_CLAIM" --arg witness_hash "$witness_hash" \
+            '{pr_number:$pr,base_ref:$base_ref,base_sha:$base,head_sha:$head,merge_sha:$merge,
+              generation:$generation,witness_sha256:$witness_hash} as $tuple |
+             .sha == $sha and .tag == $claim and .object.type == "commit" and
+             ((.message | fromjson) as $annotation |
+              if $annotation | has("owner_revision") then
+                $annotation.owner_revision as $owner |
+                ($owner | type) == "string" and ($owner | test("^[0-9a-f]{40}\\z")) and .object.sha == $owner and
+                .message == (($tuple + {owner_revision:$owner}) | tojson + "\n")
+              else
+                .object.sha == $merge and .message == ($tuple | tojson + "\n")
+              end)' \
+            <<<"$claim_tag" >/dev/null || {
+              echo "Runtime PR refresh claim does not bind the verified tuple and dispatch witness." >&2
+              exit 1
+            }
+          {
+            echo "runtime_refresh_claim=${EVENT_RUNTIME_REFRESH_CLAIM}"
+            echo "runtime_refresh_claim_tag=${claim_sha}"
+            echo "runtime_refresh_claim_attempt=${GITHUB_RUN_ATTEMPT}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Runtime refresh claim generation ${{ steps.claim.outputs.runtime_refresh_claim }} attempt ${{ steps.claim.outputs.runtime_refresh_claim_attempt }} tag ${{ steps.claim.outputs.runtime_refresh_claim_tag }}
+        if: ${{ steps.claim.outputs.runtime_refresh_claim != '' }}
+        run: ':'
+
       - name: Derive image tags
         id: meta
         env:
@@ -112,8 +197,6 @@ jobs:
           EVENT_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.client_payload.base_ref || '' }}
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.client_payload.base_sha || '' }}
           EVENT_MERGE_SHA: ${{ github.event.client_payload.merge_sha || '' }}
-          EVENT_RUNTIME_REFRESH_CLAIM: ${{ github.event.client_payload.runtime_refresh_claim || '' }}
-          EVENT_ACTION: ${{ github.event.action || '' }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
@@ -122,9 +205,6 @@ jobs:
           BASE_REF=""
           BASE_SHA=""
           MERGE_SHA=""
-          RUNTIME_REFRESH_CLAIM=""
-          RUNTIME_REFRESH_CLAIM_TAG=""
-          RUNTIME_REFRESH_CLAIM_ATTEMPT=""
           CANONICAL_PLAY_TRANSITION=false
           if [ "$EVENT_NAME" = "pull_request" ]; then
             PR_NUMBER="$EVENT_PR_NUMBER"
@@ -153,14 +233,6 @@ jobs:
                 exit 1
               }
           elif [ "$EVENT_NAME" = "repository_dispatch" ]; then
-            [[ "$EVENT_ACTION" == "pr-runtime-base-refresh" ]] || {
-              echo "Runtime PR refresh requires the typed pr-runtime-base-refresh dispatch." >&2
-              exit 1
-            }
-            [[ "$GITHUB_REF" == "refs/heads/${DEFAULT_BRANCH}" ]] || {
-              echo "Runtime PR refresh must run from the repository default branch." >&2
-              exit 1
-            }
             PR_NUMBER="$EVENT_PR_NUMBER"
             BASE_REF="$EVENT_BASE_REF"
             BASE_SHA="$EVENT_BASE_SHA"
@@ -168,22 +240,6 @@ jobs:
             HEAD_SHA="$EVENT_HEAD_SHA"
             HEAD_BRANCH=""
             CHECKOUT_REF="$MERGE_SHA"
-            [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]] || {
-              echo "Runtime PR refresh payload has an invalid pull request number." >&2
-              exit 1
-            }
-            git check-ref-format "refs/heads/${BASE_REF}" >/dev/null || {
-              echo "Runtime PR refresh payload has an invalid base ref." >&2
-              exit 1
-            }
-            for sha_name in BASE_SHA HEAD_SHA MERGE_SHA; do
-              sha_value="${!sha_name}"
-              [[ "$sha_value" =~ ^[0-9a-f]{40}$ ]] || {
-                echo "Runtime PR refresh payload has an invalid ${sha_name}." >&2
-                exit 1
-              }
-            done
-
             encoded_base_ref="$(python3 -c 'import sys; from urllib.parse import quote; print(quote(sys.argv[1], safe="/"))' "$BASE_REF")"
             current_base_ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${encoded_base_ref}")"
             jq -e \
@@ -227,40 +283,6 @@ jobs:
                 echo "Runtime PR refresh merge commit does not have the exact current base/head parents." >&2
                 exit 1
               }
-            claim_witness="$(jq -er '.client_payload.runtime_refresh_claim_witness // "" | select(type == "string")' "$GITHUB_EVENT_PATH")"
-            if [[ ! "${EVENT_RUNTIME_REFRESH_CLAIM:-}" =~ ^[1-9][0-9]{0,15}$ ]] ||
-              (( EVENT_RUNTIME_REFRESH_CLAIM > 9007199254740991 )) ||
-              [[ ! "$claim_witness" =~ ^[0-9a-f]{64}$ || ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
-              echo "Runtime PR refresh claim identity is invalid." >&2
-              exit 1
-            fi
-            base_ref_hash="$(printf '%s' "$BASE_REF" | sha256sum | cut -d' ' -f1)"
-            witness_hash="$(printf '%s' "$claim_witness" | sha256sum | cut -d' ' -f1)"
-            claim="firemud-runtime-refresh-intent/v1/pr-${PR_NUMBER}/${MERGE_SHA}/${base_ref_hash}/g${EVENT_RUNTIME_REFRESH_CLAIM}"
-            claim_ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${claim}")"
-            claim_sha="$(jq -er --arg claim "refs/tags/${claim}" 'select(.ref == $claim and .object.type == "tag") | .object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' <<<"$claim_ref")"
-            claim_tag="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${claim_sha}")"
-            jq -e --arg sha "$claim_sha" --arg claim "$claim" --arg merge "$MERGE_SHA" \
-              --arg pr "$PR_NUMBER" --arg base_ref "$BASE_REF" --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
-              --arg generation "$EVENT_RUNTIME_REFRESH_CLAIM" --arg witness_hash "$witness_hash" \
-              '{pr_number:$pr,base_ref:$base_ref,base_sha:$base,head_sha:$head,merge_sha:$merge,
-                generation:$generation,witness_sha256:$witness_hash} as $tuple |
-               .sha == $sha and .tag == $claim and .object.type == "commit" and
-               ((.message | fromjson) as $annotation |
-                if $annotation | has("owner_revision") then
-                  $annotation.owner_revision as $owner |
-                  ($owner | type) == "string" and ($owner | test("^[0-9a-f]{40}\\z")) and .object.sha == $owner and
-                  .message == (($tuple + {owner_revision:$owner}) | tojson + "\n")
-                else
-                  .object.sha == $merge and .message == ($tuple | tojson + "\n")
-                end)' \
-              <<<"$claim_tag" >/dev/null || {
-                echo "Runtime PR refresh claim does not bind the verified tuple and dispatch witness." >&2
-                exit 1
-              }
-            RUNTIME_REFRESH_CLAIM="$EVENT_RUNTIME_REFRESH_CLAIM"
-            RUNTIME_REFRESH_CLAIM_TAG="$claim_sha"
-            RUNTIME_REFRESH_CLAIM_ATTEMPT="$GITHUB_RUN_ATTEMPT"
             # Only the verified live same-repository PR can authorize this
             # diagnostic marker; dispatch payload labels carry no authority.
             if jq -e '(.labels | type) == "array" and any(.labels[]; .name == "canonical-play-transition")' \
@@ -329,14 +351,7 @@ jobs:
             echo "candidate_tag=${CANDIDATE_TAG}"
             echo "base_image=${BASE_IMAGE}"
             echo "canonical_play_transition=${CANONICAL_PLAY_TRANSITION}"
-            echo "runtime_refresh_claim=${RUNTIME_REFRESH_CLAIM}"
-            echo "runtime_refresh_claim_tag=${RUNTIME_REFRESH_CLAIM_TAG}"
-            echo "runtime_refresh_claim_attempt=${RUNTIME_REFRESH_CLAIM_ATTEMPT}"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Runtime refresh claim generation ${{ steps.meta.outputs.runtime_refresh_claim }} attempt ${{ steps.meta.outputs.runtime_refresh_claim_attempt }} tag ${{ steps.meta.outputs.runtime_refresh_claim_tag }}
-        if: ${{ steps.meta.outputs.runtime_refresh_claim != '' }}
-        run: ':'
 
       - name: Verify successful CI push for manual publication
         if: ${{ github.event_name == 'workflow_dispatch' && steps.meta.outputs.head_sha != '' }}

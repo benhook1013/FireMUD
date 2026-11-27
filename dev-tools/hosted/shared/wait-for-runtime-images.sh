@@ -413,6 +413,19 @@ except (OSError, TypeError, ValueError, RuntimeError, zipfile.BadZipFile):
 ' "$receipt_digest" "$expected"
 }
 
+confirm_publication_source_attempt() {
+  local lookup_deadline="$1" source_id="$2" workflow_id="$3" source_attempt="$4" source_title="$5" source_state="$6"
+  local latest
+  latest="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${source_id}")" || return 1
+  jq -e --argjson id "$source_id" --argjson workflow "$workflow_id" --argjson attempt "$source_attempt" \
+    --arg repo "$GITHUB_REPOSITORY" --arg title "$source_title" --arg head "$head_sha" '
+    .id == $id and .workflow_id == $workflow and .run_attempt == $attempt
+    and .repository.full_name == $repo and .head_repository.full_name == $repo
+    and .display_title == $title and (.event != "pull_request" or .head_sha == $head)
+  ' <<<"$latest" >/dev/null &&
+    [[ "$(jq -c '{workflow_runs:[.]}' <<<"$latest" | read_run_state)" == "$source_state" ]]
+}
+
 # PR callbacks bind the immutable source tuple. Typed native and explicit
 # publishers bind the exact source run ID as well as the tuple. Every path
 # needs a positive publication step in the exact current attempt.
@@ -421,7 +434,7 @@ use_completed_duplicate_publication() {
   local source_state="$1" lookup_deadline="$2" remaining
   local proof_origin="${3:-alternate}"
   local observed_inventory="${4:-}"
-  local source source_attempt source_title source_latest publisher_event expected_title
+  local source source_attempt source_title publisher_event expected_title
   local run attempt jobs latest publisher_path default_branch repository_info
   local source_workflow source_workflow_id source_pr producer_artifact publisher_artifact expected_receipt
   local -a publisher_events=()
@@ -429,7 +442,10 @@ use_completed_duplicate_publication() {
   [[ "$proof_origin" != "handoff" ]] || publisher_selector=all-statuses
   IFS=$'\t' read -r state older_id _ _ _ source_event older_created <<<"$source_state"
   [[ "$state" == "found" ]] || return 1
-  source="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${older_id}")" || return 1
+  source="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${older_id}")" || {
+    if [[ "$proof_origin" == "handoff" ]]; then return 2; fi
+    return 1
+  }
   [[ "$(jq -c '{workflow_runs:[.]}' <<<"$source" | read_run_state)" == "$source_state" ]] || return 1
   source_title="$(jq -er '.display_title | select(type == "string")' <<<"$source")" || return 1
   source_attempt="$(jq -er --arg repo "$GITHUB_REPOSITORY" --arg head "$head_sha" '
@@ -540,16 +556,8 @@ use_completed_duplicate_publication() {
          publishStep:"Publish fixed PR image tags"}')" || continue
       verify_exact_publication_receipt "$lookup_deadline" "$(jq -r '.id' <<<"$publisher_artifact")" \
         "$(jq -r '.digest' <<<"$publisher_artifact")" "$expected_receipt" || continue
-      source_latest="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${older_id}")" || continue
-      jq -e --argjson id "$older_id" --argjson workflow "$source_workflow_id" --argjson attempt "$source_attempt" \
-        --arg repo "$GITHUB_REPOSITORY" --arg title "$source_title" --arg head "$head_sha" '
-        .id == $id and .workflow_id == $workflow and .run_attempt == $attempt
-        and .repository.full_name == $repo and .head_repository.full_name == $repo
-        and .display_title == $title and (.event != "pull_request" or .head_sha == $head)
-      ' <<<"$source_latest" >/dev/null || continue
-      [[ "$(jq -c '{workflow_runs:[.]}' <<<"$source_latest" | read_run_state)" == "$source_state" ]] || continue
-      # Re-read the mutable publisher attempt after source validation so this is
-      # the last API proof read before accepting its immutable publication step.
+      confirm_publication_source_attempt "$lookup_deadline" "$older_id" "$source_workflow_id" \
+        "$source_attempt" "$source_title" "$source_state" || continue
       latest="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${publisher_id}")" || continue
       jq -e --argjson id "$publisher_id" --argjson attempt "$attempt" --arg path "$publisher_path" --arg branch "$default_branch" \
         --arg title "$expected_title" --arg event "$publisher_event" --arg repo "$GITHUB_REPOSITORY" '
@@ -557,6 +565,10 @@ use_completed_duplicate_publication() {
         and .path == $path and .head_branch == $branch and .event == $event and .display_title == $title
         and .repository.full_name == $repo and .head_repository.full_name == $repo
       ' <<<"$latest" >/dev/null || continue
+      # Observe the producer attempt last. A publisher read and a producer read
+      # are separate observations; a newly observed producer attempt withholds proof.
+      confirm_publication_source_attempt "$lookup_deadline" "$older_id" "$source_workflow_id" \
+        "$source_attempt" "$source_title" "$source_state" || continue
       (( SECONDS < lookup_deadline )) || break
       if [[ "$proof_origin" == "direct" ]]; then
         printf 'Trusted PR image publisher %s succeeded for %s as the direct source.\n' "$publisher_id" "$image_tag"
@@ -573,13 +585,16 @@ use_completed_duplicate_publication() {
 }
 
 find_completed_alternate_publication() {
-  local alternate_sources="$1" lookup_deadline="$2" older_state
+  local alternate_sources="$1" lookup_deadline="$2" proof_origin="${3:-alternate}" older_state
+  local status pending=false
   while IFS= read -r older_state; do
     (( SECONDS < lookup_deadline )) || break
-    if use_completed_duplicate_publication "$older_state" "$lookup_deadline"; then
-      return 0
-    fi
+    status=0
+    use_completed_duplicate_publication "$older_state" "$lookup_deadline" "$proof_origin" || status=$?
+    if (( status == 0 )); then return 0; fi
+    if (( status == 2 )); then pending=true; fi
   done <<<"$alternate_sources"
+  if [[ "$pending" == "true" ]]; then return 2; fi
   return 1
 }
 
@@ -656,7 +671,6 @@ wait_for_pr_publisher() {
   local publisher_start_epoch="${SECONDS}"
   local publisher_deadline=$((SECONDS + publisher_timeout_seconds))
   local -a direct_publisher_events=()
-  local -A tracked_replacements=()
   IFS=$'\t' read -r source_state_name source_run_id source_status source_conclusion _ source_state_event source_created_at <<<"$source_state"
   if [[ "$source_state_name" != "found" || "$source_status" != "completed" || "$source_conclusion" != "success" ]]; then
     printf 'Refusing publisher wait without the selected successful runtime source state.\n' >&2
@@ -716,12 +730,6 @@ wait_for_pr_publisher() {
       "refreshing alternate runtime-image sources while waiting for publication" "$source_refresh_remaining")"; then
       active_replacement="$(read_run_state "${source_run_id}" active-alternates <<<"${refreshed_source_payload}")" ||
         active_replacement="missing"
-      local active_state active_id active_event active_created
-      while IFS=$'\t' read -r active_state active_id _ _ _ active_event active_created; do
-        if [[ "$active_state" == "found" ]]; then
-          tracked_replacements["$active_id/$active_event/$active_created"]=1
-        fi
-      done <<<"$active_replacement"
       if refreshed_alternates="$(read_run_state "${source_run_id}" alternates <<<"${refreshed_source_payload}")"; then
         if [[ "${refreshed_alternates}" == "missing" ]]; then
           alternate_sources=""
@@ -774,19 +782,11 @@ wait_for_pr_publisher() {
     fi
 
     if [[ "${run_status}" == "completed" ]]; then
-      local handoff_state handoff_id handoff_event handoff_created handoff_line handoff_status
-      local should_wait_for_handoff=false
-      while IFS= read -r handoff_line; do
-        IFS=$'\t' read -r handoff_state handoff_id _ _ _ handoff_event handoff_created <<<"$handoff_line"
-        [[ "$handoff_state" == "found" &&
-           "${tracked_replacements["$handoff_id/$handoff_event/$handoff_created"]:-}" == 1 ]] || continue
-        handoff_status=0
-        use_completed_duplicate_publication "$handoff_line" "$publisher_deadline" handoff || handoff_status=$?
-        if (( handoff_status == 0 )); then return 0; fi
-        if (( handoff_status == 2 )); then should_wait_for_handoff=true; fi
-      done <<<"$alternate_sources"
-      if [[ "$should_wait_for_handoff" == "true" ]]; then
-        printf 'Waiting for publication of a tracked exact replacement producer for %s.\n' "$image_tag"
+      local handoff_status=0
+      find_completed_alternate_publication "$alternate_sources" "$publisher_deadline" handoff || handoff_status=$?
+      if (( handoff_status == 0 )); then return 0; fi
+      if (( handoff_status == 2 )); then
+        printf 'Waiting for publication of an exact replacement producer for %s.\n' "$image_tag"
         sleep "${sleep_seconds}"
         continue
       fi
@@ -881,12 +881,14 @@ while (( SECONDS < deadline )); do
     exit 0
   fi
 
-  older_states=""
-  if [[ "$wait_mode" == "pull-request" && "$SECONDS" -lt "$deadline" ]]; then
-    if older_states="$(read_run_state "$run_id" alternates <<<"$workflow_payload")" &&
-      find_completed_alternate_publication "$older_states" "$deadline"; then
-      exit 0
-    fi
+  alternate_status=1
+  if [[ "$wait_mode" == "pull-request" && "$SECONDS" -lt "$deadline" ]] &&
+    older_states="$(read_run_state "$run_id" alternates <<<"$workflow_payload")"; then
+    alternate_scope=alternate
+    [[ "$run_status" != "completed" ]] || alternate_scope=handoff
+    alternate_status=0
+    find_completed_alternate_publication "$older_states" "$deadline" "$alternate_scope" || alternate_status=$?
+    if (( alternate_status == 0 )); then exit 0; fi
   fi
 
   if [[ "${run_status}" == "completed" ]]; then
@@ -894,6 +896,11 @@ while (( SECONDS < deadline )); do
       active_alternates="$(read_run_state "$run_id" active-alternates <<<"$workflow_payload")" &&
       [[ "$active_alternates" == found$'\t'* ]]; then
       printf 'Another exact runtime-images producer is still active for %s; continuing bounded wait.\n' "$image_tag"
+      sleep "${sleep_seconds}"
+      continue
+    fi
+    if (( alternate_status == 2 )); then
+      printf 'Waiting for publication of an exact replacement producer for %s.\n' "$image_tag"
       sleep "${sleep_seconds}"
       continue
     fi

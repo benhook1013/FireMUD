@@ -2178,7 +2178,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"preview exposure mode rejected: {exc}", file=sys.stderr)
             return 1
         return 0
-    if command == "retry-receipt" and len(args) == 13:
+    if command == "retry-receipt":
+        if len(args) != 13:
+            print(
+                "usage: validate-preview-artifact.py retry-receipt <metadata> <repository> <run-id> <run-attempt> <pr> <base> <head> <merge> <image> <namespace-uid> <nonce>",
+                file=sys.stderr,
+            )
+            return 2
         try:
             validate_retry_receipt(Path(args[2]), *args[3:])
         except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:

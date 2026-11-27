@@ -180,20 +180,24 @@ module.exports = async function admitPrRuntimeRefresh({
   const secondsUtc = timestamp => new Date(timestamp).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
   const seenBeforeDispatch = new Set();
-  const collectInventory = async (event, status, createdSince, runs, ids) => {
+  const collectInventory = async (event, status, createdSince, runs, ids, createdUntil) => {
     let total;
     let seen = 0;
     for (let page = 1; page <= inventoryPages; page++) {
       const {data: inventory} = await github.rest.actions.listWorkflowRuns({
         ...contextRepo, workflow_id: runtimeWorkflow.id, event, status, per_page: pageSize, page,
-        ...(createdSince ? {created: `${createdSince}..*`} : {}),
+        ...(createdSince ? {created: `${createdSince}..${createdUntil ?? "*"}`} : {}),
       });
       if (!Number.isSafeInteger(inventory?.total_count) || inventory.total_count < 0 ||
-          inventory.total_count > inventoryLimit || !Array.isArray(inventory.workflow_runs) ||
+          !Array.isArray(inventory.workflow_runs) ||
           inventory.workflow_runs.length > pageSize || (total !== undefined && inventory.total_count !== total)) {
         throw new Error('Incomplete runtime run inventory.');
       }
       total = inventory.total_count;
+      if (total > inventoryLimit) {
+        if (createdUntil && page === 1) return false;
+        throw new Error('Incomplete runtime run inventory.');
+      }
       seen += inventory.workflow_runs.length;
       for (const run of inventory.workflow_runs) {
         if (run?.event !== event || run.status !== status) {
@@ -202,7 +206,8 @@ module.exports = async function admitPrRuntimeRefresh({
         if (!exactNativeTuple(run)) continue;
         if (!isPositiveInteger(run.id) || !isPositiveInteger(run.run_attempt) ||
             !validChronology(run.created_at) ||
-            (createdSince && Date.parse(run.created_at) < Date.parse(createdSince))) {
+            (createdSince && Date.parse(run.created_at) < Date.parse(createdSince)) ||
+            (createdUntil && Date.parse(run.created_at) >= Date.parse(createdUntil) + 1000)) {
           throw new Error('Exact runtime run has invalid native chronology.');
         }
         const identity = `${run.event}:${run.id}:${run.run_attempt}`;
@@ -216,7 +221,7 @@ module.exports = async function admitPrRuntimeRefresh({
         }
         runs.push(run);
       }
-      if (seen === total) return;
+      if (seen === total) return true;
       if (seen > total || inventory.workflow_runs.length < pageSize) break;
     }
     throw new Error('Incomplete runtime run inventory.');
@@ -291,6 +296,7 @@ module.exports = async function admitPrRuntimeRefresh({
     isPositiveInteger(Number(value)) && String(Number(value)) === value;
   const previewRefusal = {kind: 'unsent', description: 'Preview refusal'};
   const dispatchRejection = {kind: 'rejected', description: 'Dispatch rejection'};
+  const preSendUnavailable = {kind: 'pre-send-unavailable', description: 'Final identity read failure'};
   const ownerReceiptRefPrefix = (kind, tagSha) => `refs/tags/firemud-runtime-refresh-${kind}/v1/${tagSha}/`;
   const ownerReceiptIdentity = (claim, runId, attempt) =>
     `generation ${claim.generation} run ${runId} attempt ${attempt} tag ${claim.tag_sha}`;
@@ -527,7 +533,21 @@ module.exports = async function admitPrRuntimeRefresh({
 
   const terminalReceiverProven = async claim => {
     const runs = [];
-    await collectInventory('repository_dispatch', 'completed', claim.date, runs, new Set());
+    const ids = new Set();
+    const ranges = [[Date.parse(claim.date) / 1000, Math.floor(Date.now() / 1000)]];
+    // Search the entire observed claim interval, including its creation second.
+    // Subdivide only overfull inventories. A dense second or exhausted budget
+    // cannot prove a unique receiver.
+    for (let searches = 0; ranges.length > 0; searches++) {
+      if (searches >= 32) fail('Runtime receiver inventory search budget exhausted.');
+      const [start, end] = ranges.pop();
+      if (start > end) fail('Invalid runtime receiver inventory interval.');
+      if (await collectInventory('repository_dispatch', 'completed',
+        secondsUtc(start * 1000), runs, ids, secondsUtc(end * 1000))) continue;
+      if (start === end) fail('Incomplete runtime receiver inventory for a creation second.');
+      const midpoint = Math.floor((start + end) / 2);
+      ranges.push([start, midpoint], [midpoint + 1, end]);
+    }
     if (new Set(runs.map(run => run.id)).size !== runs.length) fail('Duplicate terminal runtime receiver run.');
     let receiver;
     for (const run of runs) {
@@ -570,13 +590,14 @@ module.exports = async function admitPrRuntimeRefresh({
   try {
     const prior = await latestClaim();
     if (prior && !await ownerReceiptProven(prior, previewRefusal)) {
-      const rejected = await ownerReceiptProven(prior, dispatchRejection);
-      if (!rejected && !await terminalReceiverProven(prior)) {
-        core.info('Runtime refresh claim has no proven terminal receiver, preview refusal, or dispatch rejection; no dispatch.');
+      const provenPreSendOutcome = await ownerReceiptProven(prior, dispatchRejection) ||
+        await ownerReceiptProven(prior, preSendUnavailable);
+      if (!provenPreSendOutcome && !await terminalReceiverProven(prior)) {
+        core.info('Runtime refresh claim has no proven terminal receiver or trusted owner outcome; no dispatch.');
         return 'claim-held';
       }
-      if (rejected && !await currentIdentity()) {
-        core.info('Runtime refresh tuple changed during dispatch rejection verification; no dispatch.');
+      if (provenPreSendOutcome && !await currentIdentity()) {
+        core.info('Runtime refresh tuple changed during owner outcome verification; no dispatch.');
         return 'obsolete';
       }
     }
@@ -617,6 +638,9 @@ module.exports = async function admitPrRuntimeRefresh({
     identityIsCurrent = await currentIdentity();
   } catch {
     core.warning('Runtime refresh tuple could not be rechecked after claiming; no dispatch.');
+    if (isTrustedReceiptOwner() && await recordOwnerReceipt(claim, preSendUnavailable)) {
+      return 'pre-send-unavailable';
+    }
     return 'claim-held';
   }
 

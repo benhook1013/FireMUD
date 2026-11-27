@@ -66,6 +66,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id || '' }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
           WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha || '' }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           ARTIFACT_DIRECTORY: ${{ runner.temp }}/trusted-preview-source-artifact
@@ -140,8 +141,9 @@ jobs:
               SOURCE_RETRY_BASE="${BASH_REMATCH[3]}"
               SOURCE_RETRY_HEAD="${BASH_REMATCH[4]}"
               SOURCE_RETRY_MERGE="${BASH_REMATCH[5]}"
-              [[ "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] ||
-                emit_no_action "Ignoring retry source without a canonical current attempt."
+              [[ "${WORKFLOW_RUN_ATTEMPT:-}" =~ ^[1-9][0-9]*$ &&
+                "$SOURCE_RUN_ATTEMPT" == "$WORKFLOW_RUN_ATTEMPT" ]] ||
+                emit_no_action "Ignoring retry callback not bound to the current source attempt."
             else
               SOURCE_RETRY_NONCE=""
             fi

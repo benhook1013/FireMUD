@@ -102,12 +102,15 @@ else:
 # Exercise the reconciler's actual active-run filter, not a duplicate predicate.
 reconciler_source = reconciler_script_path.read_text(encoding="utf-8")
 active_filter_match = re.search(
-    r'--arg retry_run_suffix [^\n]+ \'\n(.*?)\' <<<"\$\{active_preview_runs_json\}"',
+    r'--arg retry_run_suffix [^\n]+\n\s*"\$preview_native_pr_binding_jq"\'\n(.*?)\' <<<"\$\{active_preview_runs_json\}"',
     reconciler_source, re.S,
 )
 if active_filter_match is None:
     raise AssertionError("missing active preview filter in checked-in reconciler")
 active_filter = active_filter_match.group(1)
+native_pr_binding = re.search(r"readonly preview_native_pr_binding_jq='(.*?)'", reconciler_source, re.S)
+if native_pr_binding is None:
+    raise AssertionError("missing native PR binding in checked-in reconciler")
 
 
 def active_ids(row: dict[str, Any]) -> str:
@@ -116,23 +119,29 @@ def active_ids(row: dict[str, Any]) -> str:
         "--argjson", "workflow_id", "173511323", "--argjson", "consumer_workflow_id", "357129350",
         "--arg", "repository", "benhook1013/FireMUD",
         "--arg", "default_branch", "develop", "--arg", "pr_title", "PR preview 7",
-        "--argjson", "pr_number", "7", "--arg", "head_sha", "a" * 40,
+        "--argjson", "pr_number", "7", "--arg", "head_sha", "a" * 40, "--arg", "merge_sha", "c" * 40,
         "--arg", "run_name", "Preview dispatch pr-7-base-b-head-a-merge-c",
         "--arg", "retry_run_suffix", "pr-7-base-b-head-a-merge-c",
-        "(" + active_filter + ") | [.id, .exact] | @tsv",
+        native_pr_binding.group(1) + "(" + active_filter + ") | [.id, .exact] | @tsv",
     ], input=json.dumps([row]), text=True).strip()
+expected_association = {"number": 7, "head": {"sha": "a" * 40}}
 active_run = {
     "id": 1, "name": "PR preview 7", "path": ".github/workflows/preview.yml",
     "workflow_id": 173511323, "repository": {"full_name": "benhook1013/FireMUD"},
     "head_repository": {"full_name": "benhook1013/FireMUD"},
-    "head_branch": "feature", "head_sha": "a" * 40, "pull_requests": [{"number": 7}],
+    "head_branch": "feature", "head_sha": "a" * 40, "pull_requests": [expected_association],
     "display_title": "PR preview 7", "status": "in_progress", "run_attempt": 1, "event": "pull_request",
     "firemud_reconciler_branch_filtered": False,
 }
 assert active_ids(active_run) == "1\tfalse"
 assert active_ids({key: value for key, value in active_run.items() if key != "run_attempt"}) == ""
-assert active_ids({**active_run, "pull_requests": [{"number": 8}, {"number": 7}]}) == "1\tfalse"
-assert active_ids({**active_run, "pull_requests": [{"number": 7}, {"number": 7}]}) == ""
+assert active_ids({**active_run, "pull_requests": [{"number": 8}, expected_association]}) == "1\tfalse"
+assert active_ids({**active_run, "pull_requests": [expected_association, expected_association]}) == ""
+qualified_pr = {**active_run, "path": ".github/workflows/preview.yml@refs/pull/7/merge",
+                "pull_requests": [], "head_sha": "c" * 40}
+assert active_ids(qualified_pr) == "1\tfalse"
+assert active_ids({**qualified_pr, "head_sha": "a" * 40}) == ""
+assert active_ids({**qualified_pr, "path": ".github/workflows/preview.yml@refs/pull/8/merge"}) == ""
 for fields in (
     {"path": ".github/workflows/unrelated.yml"},
     {"head_sha": "b" * 40},
@@ -148,7 +157,7 @@ dispatch_title = "Preview dispatch pr-7-base-b-head-a-merge-c"
 dispatch = {**active_run, "name": dispatch_title, "display_title": dispatch_title,
             "pull_requests": [], "head_branch": "develop"}
 assert active_ids(dispatch) == ""
-assert active_ids({**dispatch, "pull_requests": [{"number": 7}]}) == "1\tfalse"
+assert active_ids({**dispatch, "pull_requests": [expected_association]}) == "1\tfalse"
 assert active_ids({**dispatch, "event": "repository_dispatch"}) == "1\ttrue"
 assert active_ids({**dispatch, "event": "repository_dispatch", "head_branch": "feature"}) == ""
 assert active_ids({**dispatch, "event": "repository_dispatch", "workflow_id": 170000000}) == ""
@@ -367,20 +376,27 @@ def check_preview_source_permissions(job_name: str, job: dict[str, Any]) -> None
         )
 
 
-# During the approved event-policy transition, the old default-branch
-# pull_request_target workflow still exists. It must not cancel the new read-only
-# plan/render, while successive runs within the new mode still supersede.
-expected_concurrency = {
+# Preserve per-PR supersession for ordinary renders and give each reserved
+# retry a separate run-scoped group so an ordinary run cannot replace it.
+job_concurrency = {
     "preview-plan": (
-        "preview-readonly-plan-${{ github.event_name == 'pull_request' && "
-        "github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}"
+        "github.event_name == 'repository_dispatch' && github.event.client_payload.proof_retry_nonce != ''",
+        "github.event_name == 'pull_request' && github.event.pull_request.number || "
+        "github.event.client_payload.pr_number || github.ref",
     ),
-    "preview-render": "preview-readonly-render-${{ needs.preview-plan.outputs.pr_number }}",
+    "preview-render": (
+        "needs.preview-plan.outputs.proof_retry_nonce != ''",
+        "needs.preview-plan.outputs.pr_number",
+    ),
 }
-for job_name, group in expected_concurrency.items():
-    concurrency = preview_jobs[job_name].get("concurrency", {})
-    assert concurrency.get("cancel-in-progress") is True
-    assert concurrency.get("group") == group
+for job_name, (retry, ordinary_key) in job_concurrency.items():
+    concurrency = preview_jobs[job_name]["concurrency"]
+    prefix = job_name.removeprefix("preview-")
+    assert concurrency["group"] == (
+        f"preview-readonly-{prefix}-" + "${{ "
+        + f"({retry}) && format('retry-{{0}}', github.run_id) || {ordinary_key}" + " }}"
+    )
+    assert concurrency["cancel-in-progress"] == "${{ !(" + retry + ") }}"
 
 for job_name, job in preview_jobs.items():
     if not isinstance(job, dict):

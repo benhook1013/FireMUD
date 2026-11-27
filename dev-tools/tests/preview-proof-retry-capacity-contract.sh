@@ -59,6 +59,8 @@ test "$before_sha" = "$after_sha"
 snapshot=$(holder 30 | jq -c '.binaryData={one:"not-base64"}')
 test_snapshot="$snapshot"
 read_fail=false
+# Used indirectly by report_preview_retry_holder_headroom from the sourced helper.
+# shellcheck disable=SC2329
 read_preview_retry_holder() {
   [[ "$read_fail" == false ]] || return 1
   printf '%s\n' "$test_snapshot"
@@ -71,7 +73,7 @@ grep -F 'headroom: unknown' <<<"$unknown_report" >/dev/null
 
 # Leave exactly enough room for the replacement, then add a single binary byte.
 record_bytes=$(jq -nr --argjson record "$record" '$record | tojson | utf8bytelength')
-snapshot=$(holder 0 | jq -c --argjson bytes "$((1048576 - 1 - record_bytes))" '.data["pr-789"]=("a"*$bytes)')
+snapshot=$(holder 0 | jq -c --argjson bytes "$((1048576 - 1 - record_bytes))" --arg rec "$(jq -c '.count=2' <<<"$record")" '.data["pr-789"]=("a"*$bytes) | .data["pr-123"]=$rec')
 write_preview_retry_entry "$snapshot" "$ns" "$record" > boundary
 test "$(wc -l <calls)" = 3
 snapshot=$(jq -c '.binaryData={one:"YQ=="}' <<<"$snapshot")

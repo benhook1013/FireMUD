@@ -65,7 +65,7 @@ function admissionFixture() {
         if (claimRefs.has(ref)) throw Object.assign(new Error('ref already exists'), {status: 422});
         const record = {ref, object: {type: 'tag', sha}};
         claimRefs.set(ref, record);
-        if (/^refs\/tags\/firemud-runtime-refresh-(unsent|rejected)\//.test(ref)) {
+        if (/^refs\/tags\/firemud-runtime-refresh-(unsent|rejected|pre-send-unavailable)\//.test(ref)) {
           if (state.loseLocatorResponse) throw new Error('response lost after locator creation');
           return {status: 201, data: record};
         }
@@ -106,7 +106,11 @@ function admissionFixture() {
         state.lookups.push({status, event, per_page, page, created});
         state.afterInventory?.();
         const matching = runs.filter(run => (!status || run.status === status) && run.event === event &&
-          (!created || Date.parse(run.created_at) >= Date.parse(created.split('..')[0])));
+          (!created || (() => {
+            const [start, end] = created.split('..');
+            const timestamp = Date.parse(run.created_at);
+            return timestamp >= Date.parse(start) && (end === '*' || timestamp < Date.parse(end) + 1000);
+          })()));
         return {data: {workflow_runs: matching.slice((page - 1) * per_page, page * per_page),
           total_count: matching.length}};
       },
@@ -152,6 +156,17 @@ function preparePreviewRefusal(f) {
   f.admission.input.base_ref = 'stacked';
   f.admission.input.preview_only = true;
   f.state.afterClaim = () => { f.state.labels = []; };
+}
+
+function failFinalIdentityRead(f) {
+  const read = f.admission.github.rest.pulls.get;
+  let unavailable = false;
+  f.state.afterClaim = () => { unavailable = true; };
+  f.admission.github.rest.pulls.get = async request => {
+    if (unavailable) throw Object.assign(new Error('temporarily unavailable'), {status: 503});
+    return read(request);
+  };
+  return () => { unavailable = false; };
 }
 
 function completeOwnerReceiptAttempt(f, kind = 'unsent') {
@@ -716,20 +731,56 @@ test('only the successful current admission attempt can prove an unsent or rejec
       };
     },
   };
-  for (const kind of ['unsent', 'rejected']) {
+  for (const kind of ['unsent', 'rejected', 'pre-send-unavailable']) {
     for (const [name, change] of Object.entries(mismatches)) {
       await t.test(`${kind}: ${name}`, async () => {
         const f = admissionFixture();
+        let restoreIdentity;
         if (kind === 'unsent') preparePreviewRefusal(f);
-        else f.state.dispatchError = dispatchValidationError();
-        assert.equal(await admitRuntimeRefresh(f.admission), kind === 'unsent' ? 'obsolete' : 'dispatch-rejected');
+        else if (kind === 'rejected') f.state.dispatchError = dispatchValidationError();
+        else restoreIdentity = failFinalIdentityRead(f);
+        assert.equal(await admitRuntimeRefresh(f.admission),
+          {unsent: 'obsolete', rejected: 'dispatch-rejected', 'pre-send-unavailable': kind}[kind]);
+        restoreIdentity?.();
         change(f, {...completeOwnerReceiptAttempt(f, kind), kind});
         delete f.state.dispatchError;
         assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
-        assert.equal(f.sent.length, kind === 'unsent' ? 0 : 1);
+        assert.equal(f.sent.length, kind === 'rejected' ? 1 : 0);
       });
     }
   }
+});
+
+test('final identity failure before dispatch records a distinct native claim receipt', async () => {
+  const f = admissionFixture();
+  const restoreIdentity = failFinalIdentityRead(f);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'pre-send-unavailable');
+  const [claim] = f.claimTags.values();
+  const ref = `refs/tags/firemud-runtime-refresh-pre-send-unavailable/v1/${claim.sha}/600/1`;
+  assert.deepEqual(f.claimRefs.get(ref), {ref, object: {type: 'tag', sha: claim.sha}});
+  assert.equal(f.outputs.get('pre-send-unavailable_claim'), `generation 1 run 600 attempt 1 tag ${claim.sha}`);
+  assert.deepEqual(f.sent, []);
+  completeOwnerReceiptAttempt(f, 'pre-send-unavailable');
+  restoreIdentity();
+
+  f.state.base = E;
+  assert.equal(await admitOrdinaryRefresh(f), 'obsolete');
+  assert.deepEqual(f.sent, []);
+  f.state.base = B;
+  assert.equal(await admitOrdinaryRefresh(f), 'dispatched-observed');
+  assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['2']);
+});
+
+test('an unacknowledged final identity failure receipt leaves the claim held', async () => {
+  const f = admissionFixture();
+  f.state.loseLocatorResponse = true;
+  const restoreIdentity = failFinalIdentityRead(f);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.outputs.size, 0);
+  completeOwnerReceiptAttempt(f, 'pre-send-unavailable');
+  restoreIdentity();
+  assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+  assert.deepEqual(f.sent, []);
 });
 
 test('a lost locator acknowledgement does not produce a preview refusal marker', async () => {
@@ -780,7 +831,7 @@ test('advancing a generation requires one exact terminal receiver with a success
   const f = admissionFixture();
   f.state.keepHidden = true;
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
-  const run = {...f.state.newRun, status: 'completed', conclusion: 'failure'};
+  const run = {...f.state.newRun, created_at: new Date().toISOString(), status: 'completed', conclusion: 'failure'};
   f.runs.push(run);
   assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
   assert.equal(f.sent.length, 1);
@@ -804,12 +855,30 @@ test('advancing a generation requires one exact terminal receiver with a success
   assert.equal(f.sent.length, 2);
 });
 
+test('terminal receiver search subdivides a crowded creation interval', async () => {
+  const f = admissionFixture();
+  f.state.keepHidden = true;
+  const now = Math.floor(Date.now() / 1000) * 1000;
+  const run = f.makeRun({id: 100, created_at: new Date(now - 120000).toISOString(),
+    status: 'completed', conclusion: 'failure'});
+  f.runs.push(run);
+  proveFixtureDispatchBase(f, run);
+  f.runs.push(...Array.from({length: 301}, (_, index) => f.makeRun({
+    id: index + 1000, status: 'completed', conclusion: 'success',
+    created_at: new Date(now - 100000 + index * 250).toISOString(),
+    display_title: 'Unrelated protected-branch build',
+  })));
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
+  assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['2']);
+  assert.ok(f.state.lookups.filter(call => call.status === 'completed').length > 1);
+});
+
 test('attempt-scoped receiver accepts a sibling job without a redundant attempt field', async () => {
   const f = admissionFixture();
   f.state.keepHidden = true;
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
   const [tag] = f.claimTags.values();
-  const run = {...f.state.newRun, status: 'completed', conclusion: 'failure', run_attempt: 2};
+  const run = {...f.state.newRun, created_at: new Date().toISOString(), status: 'completed', conclusion: 'failure', run_attempt: 2};
   f.runs.push(run);
   f.receiverJobs.set(`${run.id}:2`, [
     {id: 1, run_id: run.id, run_attempt: 2, head_sha: run.head_sha,
@@ -961,9 +1030,14 @@ test('both wake inputs retain intent in one non-replacing exact tuple queue on t
   assert.deepEqual(job.steps.find(step => step.uses.startsWith('actions/checkout@')).with,
     {ref: '${{ github.workflow_sha }}', 'persist-credentials': 'false'});
   assert.match(job.steps.find(step => step.id === 'admit').with.script, /input: context.payload.client_payload/);
-  for (const [marker, kind] of [[job.steps.at(-2), 'unsent'], [job.steps.at(-1), 'rejected']]) {
-    assert.equal(marker.name, `Runtime refresh ${kind} claim \${{ steps.admit.outputs.${kind}_claim }}`);
-    assert.equal(marker.if, `\${{ success() && steps.admit.outputs.${kind}_claim != '' }}`);
+  for (const [kind, output] of [
+    ['unsent', 'steps.admit.outputs.unsent_claim'],
+    ['rejected', 'steps.admit.outputs.rejected_claim'],
+    ['pre-send-unavailable', "steps.admit.outputs['pre-send-unavailable_claim']"],
+  ]) {
+    const marker = job.steps.find(step => step.name.startsWith(`Runtime refresh ${kind} claim `));
+    assert.equal(marker.name, `Runtime refresh ${kind} claim \${{ ${output} }}`);
+    assert.equal(marker.if, `\${{ success() && ${output} != '' }}`);
     assert.equal(marker['continue-on-error'], undefined);
   }
 });
@@ -1036,8 +1110,9 @@ async function execute(f, sent = []) {
           return execFileSync(command, args, {...options, cwd: root});
         }
         assert.equal(command, 'bash');
-        assert.deepEqual(args, ['./dev-tools/hosted/preview/resolve-preview-image-tag.sh', A, '7', f.base.object.sha]);
-        return f.imageTag ?? `pr-merge-${A}`;
+        assert.deepEqual(args, ['./dev-tools/hosted/preview/resolve-preview-image-tag.sh',
+          f.pr.merge_commit_sha, '7', f.base.object.sha]);
+        return f.imageTag ?? `pr-merge-${f.pr.merge_commit_sha}`;
       }};
     });
   return sent;
@@ -1104,12 +1179,26 @@ for (const [name, mutate] of Object.entries({
 })) test(`fails closed: ${name}`, async () => {
   const f = fixture(); mutate(f); assert.deepEqual(await execute(f), []);
 });
-test('a current integration event merge needs no lookup of the live merge', async () => {
+test('matching event, plan and current integration merges need no refresh', async () => {
   const f = fixture();
   f.jobs[0].steps = [tupleStep('event', B, E), tupleStep('resolved', B, E)];
   f.recordedMerge.parents[0].sha = B;
+  f.pr.merge_commit_sha = E;
   assert.deepEqual(await execute(f), []);
   assert.deepEqual(f.mergeReads, [E]);
+});
+
+test('current integration base returning to the event base still repairs a stale plan', async () => {
+  const f = fixture();
+  f.jobs[0].steps = [tupleStep('event', B, E), tupleStep('resolved', D, A)];
+  f.recordedMerge.parents[0].sha = B;
+  f.pr.merge_commit_sha = E;
+  f.resolvedMerge = {sha: A, parents: [{sha: D}, {sha: C}]};
+  f.imageTag = `pr-merge-${E}`;
+  const sent = await execute(f);
+  assert.deepEqual(f.mergeReads, [E, A]);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].client_payload.merge_sha, E);
 });
 
 test('observer checks out only trusted policy and has no artifact or candidate execution', () => {
@@ -1166,14 +1255,27 @@ test('older base classifiers cannot omit newly introduced validation modules', a
   const complete = JSON.parse(compute.match(/const completeModules = (\[[\s\S]*?\]);/)[1].replace(/,\s*\]/, "]"));
   for (const modules of [undefined, complete.filter(name => name !== 'recovery-controller-service'), complete]) {
     const outputs = {};
+    const changedFile = 'services/account-service/src/main/java/Example.java';
+    let classified = false;
+    const github = {rest: {repos: {compareCommitsWithBasehead: async ({basehead}) => {
+      assert.equal(basehead, B + '...' + C);
+      return {data: {base_commit: {sha: B}, merge_base_commit: {sha: B}, status: 'ahead',
+        files: [{filename: changedFile, status: 'modified'}]}};
+    }}}};
+    const context = {eventName: 'pull_request', payload: {pull_request: {
+      base: {sha: B}, head: {sha: C}, changed_files: 1,
+    }}};
     await new AsyncFunction('require', 'github', 'context', 'core', compute)(
       name => name === 'node:fs' ? {existsSync: () => true} : {
         ALL_MODULES: modules,
-        classifyGithubChangeScope: async () => ({
-          runAll: false, affectedModules: ['account-service'], bootableModules: ['account-service'],
-          affectedServices: ['account-service'], lightweightOnly: true,
-        }),
-      }, {}, {}, {setOutput: (name, value) => outputs[name] = value, warning() {}});
+        classifyChangeScope: paths => {
+          classified = true;
+          assert.deepEqual(paths, [changedFile]);
+          return {runAll: false, affectedModules: ['account-service'], bootableModules: ['account-service'],
+            affectedServices: ['account-service'], lightweightOnly: true};
+        },
+      }, github, context, {setOutput: (name, value) => outputs[name] = value, warning() {}});
+    assert.equal(classified, true);
     if (modules === complete) {
       assert.equal(outputs.run_all, 'false');
       assert.deepEqual(JSON.parse(outputs.affected_modules), ['account-service']);

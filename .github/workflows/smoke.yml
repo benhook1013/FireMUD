@@ -628,7 +628,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "c6aa27568055c35e995666f0d7bcd0953e01298a1d1292b5be206ddf817b6a9c";
+            const canonicalRuntimeWorkflowSha256 = "50dad49ccd4a52f78c3c126be66030f637202a3e4912940997ab5efc186392ae";
             // The previous archive format does not change this definition's independently valid smoke proof.
             const canonicalMergeOnlyArtifactRuntimeWorkflowSha256 = "004af984d2aa7ab023758cbc38c6c20f92976b8f07040c9a4965bda6616d5dd5";
             const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -1739,6 +1739,17 @@ jobs:
                         "Pending runtime attempt changed before fallback proof; retry exact primary selection."
                       )) continue smokeGatePolling;
                       break smokeGatePolling;
+                    }
+                  }
+                  if (currentIdentity.sourceEvent === "repository_dispatch") {
+                    const fallbackIdentity = await resolveCurrentIdentity(
+                      "Stopping stale current-base smoke gate after fallback ordering"
+                    );
+                    if (fallbackIdentity?.obsolete) return;
+                    if (!fallbackIdentity || identityKey(fallbackIdentity) !== identityKey(currentIdentity)) {
+                      currentIdentity = fallbackIdentity;
+                      core.info("Current-base identity changed during fallback ordering; resume exact selection.");
+                      continue smokeGatePolling;
                     }
                   }
                   // This must be the last awaited validation on the fallback

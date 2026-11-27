@@ -240,7 +240,27 @@ prepare_preview_dispatch() {
     return 1
   fi
   phase="$(jq -r '.phase // empty' <<<"$prior")" || return 1
+  if [[ "$phase" == RESERVED ]] && ! jq -e --arg base "$base_sha" --arg head "$head_sha" \
+      --arg merge "$merge_sha" --arg image "$image_tag" '
+      .base == $base and .head == $head and .merge == $merge and .image == $image
+    ' <<<"$prior" >/dev/null; then
+    # The exact holder CAS excludes a concurrent transition to SEND_STARTED.
+    # A superseded reservation can therefore restore its original predecessor.
+    local predecessor
+    predecessor="$(jq -c '.predecessor' <<<"$prior")" || return 1
+    if ! holder="$(write_preview_retry_entry "$holder" "$namespace" "$predecessor" true)"; then
+      echo "Unable to confirm release of the superseded proof-retry reservation for PR #${pr_number}; refusing dispatch." >&2
+      dispatch_outcome_failed=true
+      return 1
+    fi
+    prior="$predecessor"
+    phase=""
+  fi
   if [[ "$phase" == RESERVED ]]; then
+    if [[ "$deployed_exact" != true ]]; then
+      echo "Retained proof-retry reservation for PR #${pr_number} lacks an exact deployed Namespace; leaving it charged." >&2
+      return 1
+    fi
     # Recover this original charge and nonce, never allocate another one or
     # treat a vanished run as proof that a request was not sent.
     if ! jq -e --arg base "$base_sha" --arg head "$head_sha" --arg merge "$merge_sha" \
@@ -347,7 +367,11 @@ prepare_preview_dispatch() {
     echo "Skipping PR #${pr_number}: proof retry budget exhausted for $base_sha/$head_sha/$merge_sha/$image_tag." >&2
     return 3
   fi
-  if [[ -n "$snapshot" && ( -z "$namespace_uid" || -z "$namespace_resource_version" ) ]]; then
+  if [[ "$deployed_exact" != true ]]; then
+    echo "Skipping PR #${pr_number}: retained proof retry requires an exact deployed Namespace; retry budget unchanged." >&2
+    return 1
+  fi
+  if [[ -z "$namespace_uid" || -z "$namespace_resource_version" ]]; then
     echo "Skipping PR #${pr_number}: Namespace retry custody is unavailable." >&2
     dispatch_outcome_failed=true
     return 1
@@ -398,6 +422,7 @@ proof_retry_namespace_matches() {
 
 start_reserved_proof_retry() {
   local holder="$1" namespace="$2" pr_number="$3" started current current_row tuple
+  local reserved="$proof_retry_record"
   if ! proof_retry_namespace_matches "$namespace" "$proof_retry_record"; then
     echo "Skipping PR #${pr_number}: Namespace fence changed before proof retry dispatch; reservation stays charged." >&2
     return 1
@@ -418,10 +443,20 @@ start_reserved_proof_retry() {
       .metadata.uid == $uid
     ' <<<"$current" >/dev/null ||
     ! current_row="$(preview_retry_entry "$current" "$namespace")" ||
-    [[ "$current_row" != "$started" ]] ||
-    ! proof_retry_namespace_matches "$namespace" "$started"; then
+    [[ "$current_row" != "$started" ]]; then
     echo "Proof-retry send-start custody changed before POST for PR #${pr_number}; leaving its budget charged." >&2
     dispatch_outcome_failed=true
+    return 1
+  fi
+  if ! proof_retry_namespace_matches "$namespace" "$started"; then
+    # Only the process that acknowledged the send-start can prove that it
+    # has not attempted POST. Restore the same reservation using this row's CAS.
+    if write_preview_retry_entry "$current" "$namespace" "$reserved" true >/dev/null; then
+      echo "Restored the unsent proof-retry reservation for PR #${pr_number} after the final Namespace fence could not be verified." >&2
+    else
+      echo "Unable to restore the unsent proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
+      dispatch_outcome_failed=true
+    fi
     return 1
   fi
   tuple="$(jq -r '[.base,.head,.merge,.image] | join("/")' <<<"$started")" || return 1
@@ -496,6 +531,24 @@ preview_source_uploaded_render() {
   '
 }
 
+# Match the trusted source's native PR head or exact test-merge identity.
+# The empty association case requires the qualified path and exact merge.
+# shellcheck disable=SC2016 # Expansions belong to jq.
+readonly preview_native_pr_binding_jq='
+  def native_pr_binding($pr; $head; $merge):
+    (".github/workflows/preview.yml@refs/pull/" + ($pr | tostring) + "/merge") as $qualified
+    | (.path == ".github/workflows/preview.yml" or .path == $qualified)
+    and (.pull_requests | type == "array")
+    and (
+      [.pull_requests[] | select(.number == $pr)] as $selected
+      | if (.pull_requests | length) == 0 then
+          .path == $qualified and .head_sha == $merge and $head != $merge
+        elif ($selected | length) == 1 then
+          $selected[0].head.sha == $head and (.head_sha == $head or .head_sha == $merge)
+        else false end
+    );
+'
+
 automatic_preview_has_tuple() {
   local run_id="$1" attempt="$2" head="$3" tuple="$4" pr="$5" event="$6" nonce="${7:-}" jobs latest jobs_available=true
   local dispatch_tuple="${tuple#Preview resolved tuple }"
@@ -533,13 +586,15 @@ automatic_preview_has_tuple() {
   else
     jq -e --argjson id "$run_id" --arg head "$head" --arg pr "$pr" --arg event "$event" \
       --argjson workflow_id "$preview_workflow_id" --arg repository "$GITHUB_REPOSITORY" \
-      --arg pr_title "PR preview ${pr}" '
+      --arg pr_title "PR preview ${pr}" --arg pr_head "$head_sha" --arg merge "$merge_sha" \
+      "$preview_native_pr_binding_jq"'
       .id == $id and .head_sha == $head
       and .event == $event and .workflow_id == $workflow_id
       and .repository.full_name == $repository and .head_repository.full_name == $repository
-      and ([.pull_requests[]? | select(.number == ($pr | tonumber))] | length) == 1
       and .display_title == $pr_title
-      and (.path == ".github/workflows/preview.yml" or ($event == "pull_request" and .path == (".github/workflows/preview.yml@refs/pull/" + $pr + "/merge")))
+      and (if $event == "pull_request" then native_pr_binding(($pr | tonumber); $pr_head; $merge)
+           else .path == ".github/workflows/preview.yml" and
+             ([.pull_requests[]? | select(.number == ($pr | tonumber))] | length) == 1 end)
     ' <<<"$latest" >/dev/null || return 1
   fi
   if jq -e '.status == "completed" and .conclusion != "success"' <<<"$latest" >/dev/null; then return 1; fi
@@ -883,6 +938,20 @@ completed_preview_inventory() {
   '
 }
 
+completed_native_preview_inventory() {
+  local head="$1" merge="$2" head_runs merge_runs
+  head_runs="$(completed_preview_inventory pull_request "head_sha=${head}")" || return 1
+  merge_runs="$(completed_preview_inventory pull_request "head_sha=${merge}")" || return 1
+  jq -ces --arg head "$head" --arg merge "$merge" '
+    select(all(.[0].workflow_runs[]; .head_sha == $head))
+    | select(all(.[1].workflow_runs[]; .head_sha == $merge))
+    | [.[].workflow_runs[]] as $runs
+    | select(($runs | length) == ($runs | map(.id) | unique | length))
+    | {workflow_runs: $runs}
+  ' <<<"$head_runs
+$merge_runs"
+}
+
 # Cache the immutable inventory response only within this reconcile cycle.
 # A cached exact hit still traverses attempt and consumer checks; a miss is
 # never evidence that dispatch is safe.
@@ -890,7 +959,7 @@ completed_default_dispatch_inventory=""
 recent_successful_source_handoff() {
   local pr_number="$1" head_sha="$2" tuple_step="$3"
   local source_runs status=0
-  if ! source_runs="$(completed_preview_inventory pull_request "head_sha=${head_sha}")"; then
+  if ! source_runs="$(completed_native_preview_inventory "$head_sha" "$merge_sha")"; then
     echo "Recent completed preview-source inventory is unavailable, malformed, or truncated; retry budget unchanged." >&2
     return 4
   fi
@@ -906,7 +975,7 @@ recent_successful_source_handoff() {
   # Re-observe the native inventory after refreshing the dispatch inventory.
   # These provider reads are not atomic; the final successful read is only
   # the observation cutoff, not a claim about changes after it.
-  if ! source_runs="$(completed_preview_inventory pull_request "head_sha=${head_sha}")"; then
+  if ! source_runs="$(completed_native_preview_inventory "$head_sha" "$merge_sha")"; then
     echo "Recent completed preview-source inventory is unavailable, malformed, or truncated; retry budget unchanged." >&2
     return 4
   fi
@@ -929,7 +998,7 @@ evaluate_recent_source_handoff() {
     --arg pr_title "$pr_title" --arg run_name "$run_name" \
     --argjson workflow_id "$preview_workflow_id" \
     --argjson now "$source_inventory_now" --argjson window "$preview_handoff_window_seconds" \
-    --argjson pr_number "$pr_number" '
+    --argjson pr_number "$pr_number" --arg merge "$merge_sha" "$preview_native_pr_binding_jq"'
       def positive_int: type == "number" and . > 0 and . == floor;
       [ (.[0].workflow_runs[]
         | select(type == "object" and (.id | positive_int) and (.run_attempt | positive_int)
@@ -938,10 +1007,7 @@ evaluate_recent_source_handoff() {
           and (.name == $workflow_name or .name == .display_title)
           and .display_title == $pr_title
           and .repository.full_name == $repository and .head_repository.full_name == $repository
-          and .head_sha == $head
-          and (.path == ".github/workflows/preview.yml"
-            or .path == (".github/workflows/preview.yml@refs/pull/" + ($pr_number | tostring) + "/merge"))
-          and ([.pull_requests[]? | select(.number == $pr_number)] | length) == 1)
+          and native_pr_binding($pr_number; $head; $merge))
         | [.id, .run_attempt, .event, .head_sha, .updated_at]),
         (.[1].workflow_runs[]
         | select(type == "object" and (.id | positive_int) and (.run_attempt | positive_int)
@@ -1322,9 +1388,10 @@ dispatch_candidates() {
       --arg default_branch "${DEFAULT_BRANCH}" \
       --arg pr_title "PR preview ${pr_number}" \
       --argjson pr_number "$pr_number" \
-      --arg head_sha "$head_sha" \
+      --arg head_sha "$head_sha" --arg merge_sha "$merge_sha" \
       --arg run_name "Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}" \
-      --arg retry_run_suffix "pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}" '
+      --arg retry_run_suffix "pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}" \
+      "$preview_native_pr_binding_jq"'
           if type != "array" then
             error("workflow runs are not an array")
           else
@@ -1357,11 +1424,10 @@ dispatch_candidates() {
                   ((.display_title | startswith("Preview retry ")) and (.display_title | endswith($retry_run_suffix))));
               def provisional_pr:
                 native_preview and (.event == "pull_request" or .event == "pull_request_target")
-                and (.path == ".github/workflows/preview.yml"
-                  or (.event == "pull_request" and .path == (".github/workflows/preview.yml@refs/pull/" + ($pr_number | tostring) + "/merge")))
                 and (.display_title == $pr_title or (.event == "pull_request" and .display_title == $run_name))
-                and .head_sha == $head_sha
-                and ([.pull_requests[]? | select(.number == $pr_number)] | length) == 1;
+                and (if .event == "pull_request" then native_pr_binding($pr_number; $head_sha; $merge_sha)
+                     else .path == ".github/workflows/preview.yml" and .head_sha == $head_sha
+                       and ([.pull_requests[]? | select(.number == $pr_number)] | length) == 1 end);
               def trusted_consumer:
                 native_same_repo and .workflow_id == $consumer_workflow_id and .event == "workflow_run"
                 and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))

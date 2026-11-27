@@ -36,6 +36,16 @@ assert re.search(
 )
 assert re.search(r'assert_current_branch_head\n\s+promote_alias "\$candidate" "\$branch_tag"', promotion)
 
+# Empty branch metadata from an obsolete callback must skip every privileged build
+# and publisher even though the metadata job itself concludes successfully.
+for job in ("build-base-image", "build-runtime-images", "build-backup-verifier", "publish-backup-verifier",
+            "build-hosted-identity-controller", "publish-hosted-identity-controller", "publish-runtime-images"):
+    guard = re.search(rf"^  {job}:\n.*?^    if: (.+)$", source, re.MULTILINE | re.DOTALL).group(1).splitlines()[0]
+    assert re.search(
+        r"\(needs\.image-meta\.outputs\.head_branch == '(?:main|develop)' \|\| "
+        r"needs\.image-meta\.outputs\.head_branch == '(?:main|develop)'\)", guard,
+    ), (job, guard)
+
 # Run the actual branch metadata step with current, obsolete and unverifiable branch heads.
 meta = re.search(r"^      - name: Derive image tags\n.*?^        run: \|\n((?:^          [^\n]*\n|^\n)+)",
                  source, re.MULTILINE | re.DOTALL).group(1)
@@ -380,7 +390,7 @@ const source = { id: 4242, run_attempt: 2, workflow_id: 777, path: ".github/work
 const baseContext = { eventName: "repository_dispatch", ref: "refs/heads/develop", repo: {owner: "benhook1013", repo: "FireMUD"}, runId: 4242, payload: { repository, action: "pr-runtime-image-publication", client_payload: { source_run_id: "4242" } } };
 const producer = run => ({id: 8, run_id: run.id, run_attempt: run.run_attempt, head_sha: run.head_sha,
   name: "PR Full-Stack Smoke (runtime-required=true)", status: "completed", conclusion: "success"});
-async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path }, error = false, jobs, artifactOverride = {} } = {}) {
+async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path }, error = false, jobs, artifactOverride = {}, missingAttempt = false, legacyArchive = false } = {}) {
   let reads = 0, clock = 0;
   const output = {};
   const lastRead = () => runs[Math.min(reads - 1, runs.length - 1)];
@@ -392,8 +402,16 @@ async function resolve({ context = baseContext, runs = [source], workflow = { id
     getWorkflow: async () => ({data: workflow}),
     listWorkflowRunArtifacts: async ({run_id, name, per_page}) => {
       assert.equal(run_id, 4242);
-      assert.equal(name, `pr-runtime-images-pr-merge-${sha("c")}-attempt-${lastRead().run_attempt}`);
       assert.equal(per_page, 100);
+      const legacyName = `pr-runtime-images-pr-merge-${sha("c")}`;
+      if (name === legacyName) {
+        assert.ok(missingAttempt);
+        return {data: legacyArchive
+          ? {total_count: 1, artifacts: [{id: 73, name, workflow_run: {id: run_id}}]}
+          : {total_count: 0, artifacts: []}};
+      }
+      assert.equal(name, `${legacyName}-attempt-${lastRead().run_attempt}`);
+      if (missingAttempt) return {data: {total_count: 0, artifacts: []}};
       return {data: {total_count: 1, artifacts: [{id: 71, name, expired: false,
         workflow_run: {id: run_id}, digest: "sha256:" + "a".repeat(64), ...artifactOverride}]}};
     },
@@ -515,6 +533,8 @@ for (const publishable of ["false", "", undefined]) {
   for (const artifactOverride of [{expired:true}, {digest:"not-sha256"}, {id:0}, {workflow_run:{id:4243}}]) {
     await assert.rejects(resolve({artifactOverride}), /immutable exact-attempt artifact and SHA256/);
   }
+  await assert.rejects(resolve({missingAttempt: true, legacyArchive: true}), /Start a fresh build for the exact current PR tuple/);
+  await assert.rejects(resolve({missingAttempt: true}), /Re-run all jobs/);
   assert.equal(inputs.path, "/tmp/pr-runtime-artifacts/${{ needs.source.outputs.artifact_name }}");
   assert.equal(inputs["run-id"], "${{ fromJSON(needs.source.outputs.source).id }}");
   assert.ok(publisherWorkflow.includes("artifact_name: ${{ steps.resolve.outputs.artifact_name }}"));
@@ -698,10 +718,15 @@ from urllib.parse import quote
 
 fixture = Path(os.environ["FIXTURE_DIR"])
 workflow = Path(sys.argv[1]).read_text()
-section = workflow.split("      - name: Derive image tags\n", 1)[1].split("\n      - name:", 1)[0]
-script = section.split("        run: |\n", 1)[1]
-script = "\n".join(line[10:] if line.startswith("          ") else line for line in script.splitlines())
-script_template = script
+def read_step(name):
+    section = workflow.split(f"      - name: {name}\n", 1)[1].split("\n      - name:", 1)[0]
+    script = section.split("        run: |\n", 1)[1]
+    return "\n".join(line[10:] if line.startswith("          ") else line for line in script.splitlines())
+
+script_template = read_step("Derive image tags")
+claim_script = read_step("Verify runtime refresh claim")
+assert workflow.index("      - name: Verify runtime refresh claim") < workflow.index(
+    "      - name: Runtime refresh claim generation") < workflow.index("      - name: Derive image tags")
 paths = [fixture / name for name in ("pull-request.json", "merge-commit.json", "base-ref.json")]
 originals = [path.read_text() for path in paths]
 request, merge, branch = map(json.loads, originals)
@@ -742,6 +767,10 @@ def admit(current_request, current_merge, current_branch, overrides=None, event_
         "BASE_REF_CALLS": str(calls),
         "EXPECTED_BASE_REF_ENDPOINT": "repos/benhook1013/FireMUD/git/ref/heads/" + quote(current_env["EVENT_BASE_REF"], safe="/"),
     })
+    if event_name == "repository_dispatch":
+        receipt = subprocess.run(["bash", "-c", claim_script], env=current_env, text=True, capture_output=True)
+        if receipt.returncode != 0:
+            return receipt
     script = script_template.replace("${{ github.event_name }}", event_name)
     return subprocess.run(["bash", "-c", script], env=current_env, text=True, capture_output=True)
 
@@ -797,6 +826,11 @@ try:
     assert "runtime_refresh_claim_attempt=1\n" in output
     assert f"runtime_refresh_claim_tag={claim_sha}\n" in output
     assert claim_witness not in output
+    unavailable_base = admit(request, merge, branch, {**claim_request, "MOCK_BASE_REF_MISSING": "true"})
+    assert unavailable_base.returncode != 0
+    assert Path(env["GITHUB_OUTPUT"]).read_text().splitlines() == [
+        "runtime_refresh_claim=1", f"runtime_refresh_claim_tag={claim_sha}", "runtime_refresh_claim_attempt=1",
+    ]
     assert admit(request, merge, branch, {**claim_request, "TEST_RUNTIME_CLAIM_WITNESS": "b" * 64}).returncode != 0
     assert admit(request, merge, branch, {**claim_request, "TEST_RUNTIME_CLAIM_WITNESS": ""}).returncode != 0
     assert admit(request, merge, branch, {**claim_request, "EVENT_RUNTIME_REFRESH_CLAIM": ""}).returncode != 0
@@ -830,7 +864,7 @@ try:
     (fixture / "runtime-claim-ref.json").write_text(json.dumps(claim_ref))
     claim_tag_file.write_text(json.dumps(claim_tag))
     assert admit(request, merge, branch, claim_request, event_name="pull_request").returncode == 0
-    assert "runtime_refresh_claim=\n" in Path(env["GITHUB_OUTPUT"]).read_text()
+    assert "runtime_refresh_claim=" not in Path(env["GITHUB_OUTPUT"]).read_text()
     labeled_request = json.loads(json.dumps(request))
     labeled_request["labels"] = [{"name": "canonical-play-transition"}]
     assert admit(labeled_request, merge, branch, claim_request).returncode == 0

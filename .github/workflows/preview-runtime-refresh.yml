@@ -164,20 +164,20 @@ jobs:
               const {data: base} = await github.rest.git.getRef({
                 ...context.repo, ref: `heads/${expectedBaseRef}`,
               });
-              if (!sha.test(base.object?.sha) ||
-                  (['main', 'develop'].includes(expectedBaseRef) &&
-                   eventBaseMatchesMerge && recorded[2] === base.object.sha)) {
-                core.info('No stale source base to repair; no dispatch.');
+              if (!sha.test(base.object?.sha)) {
+                core.info('Current base ref has no valid SHA; no dispatch.');
                 return;
               }
               if (mergeReady(pull)) {
-                let merge;
-                try {
-                  ({data: merge} = await github.rest.repos.getCommit({
-                    ...context.repo, ref: pull.merge_commit_sha,
-                  }));
-                } catch (error) {
-                  if (error?.status !== 404 && error?.response?.status !== 404) throw error;
+                let merge = eventBaseMatchesMerge && recordedMerge.sha === pull.merge_commit_sha ? recordedMerge : null;
+                if (!merge) {
+                  try {
+                    ({data: merge} = await github.rest.repos.getCommit({
+                      ...context.repo, ref: pull.merge_commit_sha,
+                    }));
+                  } catch (error) {
+                    if (error?.status !== 404 && error?.response?.status !== 404) throw error;
+                  }
                 }
                 if (merge) {
                   if (merge.sha !== pull.merge_commit_sha || merge.parents?.length !== 2 ||
@@ -207,6 +207,11 @@ jobs:
             if (resolvedMerge?.sha !== resolved[4] || resolvedMerge.parents?.length !== 2 ||
                 resolvedMerge.parents[0].sha !== resolved[2] || resolvedMerge.parents[1].sha !== resolved[3]) {
               core.info('Resolved preview tuple does not match its verified merge parents; no dispatch.');
+              return;
+            }
+            if (['main', 'develop'].includes(pr.base.ref) &&
+                eventBaseMatchesMerge && recordedMerge.sha === merge.sha && resolvedMerge.sha === merge.sha) {
+              core.info('No stale source base to repair; no dispatch.');
               return;
             }
             // Reuse the canonical default-branch path classifier rather than
