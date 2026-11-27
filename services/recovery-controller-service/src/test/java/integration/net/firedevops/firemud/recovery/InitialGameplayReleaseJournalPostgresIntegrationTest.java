@@ -726,6 +726,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     "last_outcome_code, TYPE varchar(63)",
     "acknowledged_at, SET NOT NULL",
     "acknowledged_at, TYPE timestamptz(3)",
+    "last_dispatched_at, TYPE timestamptz(3)",
     "preparation_observation_payload, SET DEFAULT jsonb_build_object()",
     "preparation_observation_digest, SET DEFAULT 'a'"
   })
@@ -3079,6 +3080,14 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             base.plusSeconds(9));
     assertThat(journal.recordEffectReadback(held, fresh, base.plusSeconds(10)).phase())
         .isEqualTo(Phase.RELEASING);
+    EffectReadback laterPreparation =
+        readbackFor(
+            held,
+            held.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "later-preparation",
+            fresh.observedAt().plusNanos(1));
+    journal.recordEffectReadback(held, laterPreparation, base.plusSeconds(10));
     EffectReadback secondPartial =
         readbackFor(
             held,
@@ -3096,12 +3105,26 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             held,
             held.lastAttemptId(),
             EffectReadbackState.PREPARED_FENCED,
-            fresh.readbackIdentity(),
+            laterPreparation.readbackIdentity(),
             secondPartial.observedAt().plusNanos(1));
     assertThatThrownBy(
             () -> journal.recordEffectReadback(secondHeld, retimedSuperseded, base.plusSeconds(11)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("fresh observation after partial evidence");
+    assertThat(fresh.observedAt()).isBefore(laterPreparation.observedAt());
+    EffectReadback retimedOlderReceipt =
+        readbackFor(
+            held,
+            held.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            fresh.readbackIdentity(),
+            secondPartial.observedAt().plusNanos(2));
+    String retainedSecondHold = storedOutbox(operationId, effectId);
+    assertThatThrownBy(() ->
+            journal.recordEffectReadback(secondHeld, retimedOlderReceipt, base.plusSeconds(11)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("fresh observation after partial evidence");
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(retainedSecondHold);
     assertThat(journal.findNextEffect(operationId)).contains(secondHeld);
 
     EffectReadback afterSecondHold =
@@ -3156,8 +3179,34 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             EffectReadbackState.OWNER_HANDOFF_APPLIED,
             "handoff-applied",
             base.plusSeconds(14));
-    assertThat(journal.recordEffectReadback(activeHandoff, applied, base.plusSeconds(14)).phase())
-        .isEqualTo(Phase.FINALIZED);
+    EffectReadback latestPreparation =
+        readbackFor(
+            held,
+            held.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "fresh-after-handoff-claim",
+            base.plusSeconds(13));
+    journal.recordEffectReadback(held, latestPreparation, base.plusSeconds(13));
+    var finalized = journal.recordEffectReadback(activeHandoff, applied, base.plusSeconds(14));
+    assertThat(finalized.phase()).isEqualTo(Phase.FINALIZED);
+    String finalizedPreparationRow = storedOutbox(operationId, effectId);
+    assertThat(journal.recordEffectReadback(held, latestPreparation, base.plusSeconds(15)))
+        .isEqualTo(finalized);
+    if (preparationArrivesFirst) {
+      assertThat(journal.recordEffectReadback(held, prepared, base.plusSeconds(15)))
+          .isEqualTo(finalized);
+    }
+    EffectReadback retimedLatestPreparation =
+        readbackFor(
+            held,
+            held.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            latestPreparation.readbackIdentity(),
+            base.plusSeconds(15));
+    assertThatThrownBy(() ->
+            journal.recordEffectReadback(held, retimedLatestPreparation, base.plusSeconds(15)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(finalizedPreparationRow);
     assertThat(journal.findNextEffect(operationId)).isEmpty();
   }
 
@@ -3803,6 +3852,80 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             .isInstanceOf(InitialGameplayReleaseConflictException.class)
             .hasMessageContaining("retained pending effect has a dispatch outcome");
         assertThat(retainedOutboxRow(legacyDsl)).isEqualTo(before);
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @ParameterizedTest(name = "V6 preparation observation retained: {0}")
+  @ValueSource(booleans = {false, true})
+  void v7RequiresCompletePreparationReceiptHistory(boolean retainObservation) throws Exception {
+    String database = "legacy_receipts_" + UUID.randomUUID().toString().replace("-", "");
+    dsl.execute("CREATE DATABASE " + database);
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String legacyUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    try {
+      journalFlyway(legacyUrl, "6").migrate();
+      try (var legacyConnection =
+          DriverManager.getConnection(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        var legacyDsl = DSL.using(legacyConnection, SQLDialect.POSTGRES);
+        Instant base = Instant.parse("2026-09-01T00:00:00Z");
+        seedImmutableV1Journal(legacyDsl, true, base);
+        var legacyJournal = new JooqInitialGameplayReleaseJournal(legacyDsl, tupleCodec);
+        OutboxEntry dispatch =
+            legacyJournal
+                .findEffect(V1_OPERATION_ID, EffectKind.PREPARE_PLAYABLE_STATE_FENCED)
+                .orElseThrow();
+        EffectReadback acknowledgement =
+            readbackFor(
+                dispatch,
+                dispatch.lastAttemptId(),
+                EffectReadbackState.PREPARED_FENCED,
+                "v6-acknowledgement",
+                base.plusSeconds(1));
+        EffectReadback observation =
+            readbackFor(
+                dispatch,
+                dispatch.lastAttemptId(),
+                EffectReadbackState.UNKNOWN_OR_PARTIAL,
+                "v6-observation",
+                base.plusSeconds(2));
+        assertThat(
+                legacyDsl.execute(
+                    """
+                    UPDATE recovery_control.initial_gameplay_release_outbox
+                    SET state = 'acknowledged', acknowledged_at = CAST(? AS timestamptz),
+                        updated_at = CAST(? AS timestamptz),
+                        readback_identity = ?, readback_payload = CAST(? AS jsonb),
+                        readback_digest = ?, preparation_observation_payload = CAST(? AS jsonb),
+                        preparation_observation_digest = ?
+                    WHERE outbox_id = ?
+                    """,
+                    acknowledgement.observedAt().atOffset(ZoneOffset.UTC),
+                    (retainObservation ? observation : acknowledgement)
+                        .observedAt()
+                        .atOffset(ZoneOffset.UTC),
+                    acknowledgement.readbackIdentity(),
+                    tupleCodec.toJson(acknowledgement),
+                    tupleCodec.digest(acknowledgement),
+                    retainObservation ? tupleCodec.toJson(observation) : null,
+                    retainObservation ? tupleCodec.digest(observation) : null,
+                    V1_OUTBOX_ID))
+            .isEqualTo(1);
+        String retained = retainedOutboxRow(legacyDsl);
+        Flyway upgrade = journalFlyway(legacyUrl, "7");
+        if (retainObservation) {
+          assertThat(retained).contains(tupleCodec.digest(observation));
+          assertThatThrownBy(upgrade::migrate)
+              .hasStackTraceContaining("Preparation receipt history is incomplete");
+          assertThat(upgrade.info().current().getVersion().getVersion()).isEqualTo("6");
+        } else {
+          upgrade.migrate();
+          upgrade.validate();
+          assertThat(upgrade.info().current().getVersion().getVersion()).isEqualTo("7");
+        }
+        assertThat(retainedOutboxRow(legacyDsl)).isEqualTo(retained);
       }
     } finally {
       dsl.execute("DROP DATABASE " + database);

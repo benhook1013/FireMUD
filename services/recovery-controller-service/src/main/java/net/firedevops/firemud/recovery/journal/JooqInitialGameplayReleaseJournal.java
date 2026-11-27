@@ -604,6 +604,16 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             retainPreparationObservation(tx, current, stored, readback, readbackDigest, now);
             return operation;
           }
+          if (operation.phase() == Phase.FINALIZED
+              && current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
+              && readback.state() == EffectReadbackState.PREPARED_FENCED
+              && stored != null
+              && readback.equals(
+                  latestPreparationObservation(
+                      stored, current, requireReadbackReceipt(stored, current)))) {
+            requireTerminalReplayWithinAttempt(readback, stored, now);
+            return operation;
+          }
           if (stored != null
               && sameRetainedOutcome(readback, stored, storedDigest, "acknowledged_at")) {
             requireSuccessfulReadbackState(readback, current.effect().kind());
