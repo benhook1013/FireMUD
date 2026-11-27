@@ -124,10 +124,11 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               || ' AND (last_attempt_id IS NOT NULL)'
               || ' AND (last_attempt_id <> ''00000000-0000-0000-0000-000000000000''::uuid)'
               || ' AND (last_dispatched_at IS NOT NULL)))')
-        AND EXISTS (
-          SELECT 1 FROM pg_catalog.pg_attribute
+        AND (SELECT count(*) = 2
+          FROM pg_catalog.pg_attribute
           WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
-            AND attname = 'acknowledged_at' AND NOT attisdropped AND NOT attnotnull
+            AND attname IN ('acknowledged_at', 'last_dispatched_at')
+            AND NOT attisdropped AND NOT attnotnull
             AND atttypid = 'pg_catalog.timestamptz'::regtype AND atttypmod = -1)
         AND (SELECT count(*) = 2
           FROM pg_catalog.pg_attribute

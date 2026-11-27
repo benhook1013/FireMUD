@@ -91,8 +91,15 @@ def version_label(version_key: tuple[int, ...]) -> str:
     return ".".join(str(part) for part in version_key)
 
 
+def migration_path(path: str) -> re.Match[str] | None:
+    match = MIGRATION_PATH_RE.match(path)
+    if match and match.group(2) == "recovery-control-migration" and match.group(1) != RECOVERY_PROJECT:
+        return None
+    return match
+
+
 def relevant_path(path: str) -> bool:
-    return bool(MIGRATION_PATH_RE.match(path)) or (
+    return bool(migration_path(path)) or (
         path.startswith("services/")
         and (path.endswith("/build.gradle.kts")
              or PACKAGED_CONFIG_RE.search(path))
@@ -107,8 +114,8 @@ def current_snapshot(repo_root: Path) -> Snapshot:
              *repo_root.glob("services/*/src/main/resources/config/application*.properties"),
              *repo_root.glob("services/*/src/main/resources/db/migration/**/*"),
              *repo_root.glob("services/*/src/main/java/db/migration/**/*"),
-             *repo_root.glob("services/*/src/main/resources/db/recovery-control-migration/**/*"),
-             *repo_root.glob("services/*/src/main/java/db/recovery-control-migration/**/*"),
+             *repo_root.glob(f"{RECOVERY_SQL_ROOT}**/*"),
+             *repo_root.glob(f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration/**/*"),
              *repo_root.glob("buildSrc/**/*.kt"), *repo_root.glob("buildSrc/**/*.kts")]
     return {path.relative_to(repo_root).as_posix(): path.read_bytes() for path in paths if path.is_file()}
 
@@ -137,7 +144,7 @@ def parent_snapshot(repo_root: Path, base_ref: str) -> Snapshot:
 def discover_migration_files(snapshot: Snapshot) -> list[MigrationFile]:
     discovered = []
     for path in sorted(snapshot):
-        project_match = MIGRATION_PATH_RE.match(path)
+        project_match = migration_path(path)
         version_match = VERSION_RE.match(Path(path).name)
         if project_match and version_match:
             text = version_match.group("version")
@@ -250,6 +257,7 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
     effective_settings = {}
     auto_configuration_switch = "spring.boot.enableautoconfiguration"
     datasource_overrides = {"spring.flyway.url", "spring.flyway.user", "spring.flyway.password"}
+    init_sqls = "spring.flyway.initsqls"
     effective_exclusions: list[str] | None = None
     for config_path in [*base_paths, *profile_paths]:
         try:
@@ -267,6 +275,9 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
             flatten_properties(document, (), properties, ambiguous)
             if any(path == override or path.startswith((override + ".", override + "["))
                    for path in properties for override in datasource_overrides):
+                return None
+            if (init_sqls in ambiguous or properties.get(init_sqls, []) not in ([], "")
+                    or any(path.startswith((init_sqls + ".", init_sqls + "[")) for path in properties)):
                 return None
             exclusion_property = "spring.autoconfigure.exclude"
             exclusion_paths = {
@@ -448,7 +459,8 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
             issues.append(f"{project_root}: packaged Spring configuration must enable Flyway with target latest, "
                           f"select the recovery-control location, use history table {RECOVERY_HISTORY_TABLE} "
                           f"in {RECOVERY_SCHEMA}, allow schema creation, share the journal datasource, "
-                          "and apply UTF-8 migrations without automatic baselining, dry-run output, or callback locations")
+                          "and apply UTF-8 migrations without connection init SQL, automatic baselining, dry-run "
+                          "output, or callback locations")
         if not any(is_recovery_sql_migration(item) for item in migrations):
             issues.append(f"{project_root}: requires at least one versioned migration in the recovery-control location")
     recovery_java_root = (
@@ -595,6 +607,18 @@ def run_self_test() -> None:
     recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    check("explicitly empty Flyway connection init SQL qualifies recovery history", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    init-sqls: []\n",
+    }, recovery_history, None)
+    for override in (
+        b"    init-sqls: [SET application_name = fixture]\n",
+        b"    init-sqls: SET application_name = fixture\n",
+        b"spring.flyway.init-sqls[0]: SET application_name = fixture\n",
+    ):
+        check("Flyway connection init SQL is unsupported", {
+            **recovery_history, recovery_config: recovery_settings + override,
+        }, recovery_history, "without connection init SQL")
     for baseline_disabled in (b"false", b"'FaLsE'"):
         check("explicitly disabled recovery auto-baselining", {
             **recovery_history,
@@ -1075,7 +1099,14 @@ def run_self_test() -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        for path, data in history.items():
+        outside_recovery = {
+            "services/example-service/src/main/resources/db/recovery-control-migration/V1003__other.sql":
+                b"-- outside Recovery",
+            "services/example-service/src/main/java/db/recovery-control-migration/V1003__other.java":
+                b"// outside Recovery",
+        }
+        combined_fixture = {**history, **recovery_history}
+        for path, data in {**combined_fixture, **outside_recovery}.items():
             target = root / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
@@ -1083,6 +1114,8 @@ def run_self_test() -> None:
         git(root, "add", ".")
         git(root, "-c", "user.name=Flyway fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "history")
         base = git(root, "rev-parse", "HEAD").decode().strip()
+        if current_snapshot(root) != combined_fixture or parent_snapshot(root, base) != combined_fixture:
+            raise AssertionError("snapshot migration discovery must scope the Recovery location to its owning service")
         make_fixture(root, [local + "V2__new.sql"])
         check("immutable git parent and worktree addition", current_snapshot(root), parent_snapshot(root, base), "frontier V1002")
         try:

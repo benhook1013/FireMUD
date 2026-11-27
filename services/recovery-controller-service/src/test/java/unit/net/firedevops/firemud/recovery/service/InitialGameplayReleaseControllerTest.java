@@ -209,6 +209,72 @@ class InitialGameplayReleaseControllerTest {
   }
 
   @Test
+  void appliedEffectReadsAndRecordsTheExactClaimBeforeReturning() {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var codec = mock(InitialGameplayReleaseTupleCodec.class);
+    var operation = mock(Operation.class);
+    var after = mock(Operation.class);
+    var scope = mock(Scope.class);
+    var effect = mock(PreparePlayableStateFencedEffect.class);
+    var pending = mock(OutboxEntry.class);
+    var dispatched = mock(OutboxEntry.class);
+    var operationId = UUID.randomUUID();
+    var effectId = UUID.randomUUID();
+    var now = java.time.Instant.parse("2026-11-18T12:00:00Z");
+    var readback =
+        mock(
+            net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback.class);
+    when(readback.observedAt()).thenReturn(now);
+    when(operation.scope()).thenReturn(scope);
+    when(scope.operationId()).thenReturn(operationId);
+    when(pending.state()).thenReturn(EffectOutboxState.PENDING);
+    when(pending.effect()).thenReturn(effect);
+    when(effect.effectId()).thenReturn(effectId);
+    when(dispatched.state()).thenReturn(EffectOutboxState.DISPATCHED);
+    when(dispatched.effect()).thenReturn(effect);
+    when(dispatched.attemptCount()).thenReturn(1);
+    when(journal.findNextEffect(operationId)).thenReturn(java.util.Optional.of(pending));
+    when(journal.find(operationId)).thenReturn(java.util.Optional.of(operation));
+    var attempt = new AtomicReference<UUID>();
+    when(journal.claimEffect(
+            org.mockito.ArgumentMatchers.eq(operationId),
+            org.mockito.ArgumentMatchers.eq(effectId),
+            any(),
+            org.mockito.ArgumentMatchers.eq(now)))
+        .thenAnswer(invocation -> {
+          UUID claim = invocation.getArgument(2);
+          attempt.set(claim);
+          when(dispatched.lastAttemptId()).thenReturn(claim);
+          return dispatched;
+        });
+    when(port.apply(
+            org.mockito.ArgumentMatchers.eq(effect), any(), org.mockito.ArgumentMatchers.eq(1)))
+        .thenReturn(EffectApplyResult.applied());
+    var available = InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(readback);
+    when(port.readback(
+            org.mockito.ArgumentMatchers.eq(effect), any(), org.mockito.ArgumentMatchers.eq(1)))
+        .thenReturn(available);
+    when(journal.recordEffectReadback(dispatched, readback, now)).thenReturn(after);
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            codec,
+            mock(InitialGameplayReleaseEvidenceProvider.class),
+            port,
+            java.time.Clock.fixed(now, java.time.ZoneOffset.UTC));
+
+    assertThat(controller.reconcileNextEffect(operationId)).isSameAs(after);
+    assertThat(attempt.get()).isNotNull();
+    var order = org.mockito.Mockito.inOrder(journal, port);
+    order.verify(journal).claimEffect(operationId, effectId, attempt.get(), now);
+    order.verify(port).apply(effect, attempt.get(), 1);
+    order.verify(port).readback(effect, attempt.get(), 1);
+    order.verify(journal).recordEffectReadback(dispatched, readback, now);
+    order.verifyNoMoreInteractions();
+  }
+
+  @Test
   void pendingEffectClaimedByAnotherAttemptDoesNotDispatch() {
     assertPendingClaimHandling(false, null, null);
   }
