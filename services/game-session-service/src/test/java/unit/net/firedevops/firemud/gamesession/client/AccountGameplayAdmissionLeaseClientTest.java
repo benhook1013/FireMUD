@@ -323,7 +323,8 @@ class AccountGameplayAdmissionLeaseClientTest {
       client.init();
       byte[] originalLease = lease().canonicalJson().getBytes(StandardCharsets.UTF_8);
       OriginalNewCredential received =
-          client.issueOriginalNewBoundGameplayCredential(JWT, originalLease);
+          client.issueOriginalNewBoundGameplayCredential(
+              JWT, originalLease, Deadline.after(3, TimeUnit.SECONDS));
       byte[] receivedHandle = received.opaqueRebindHandle();
       try {
         assertThat(receivedHandle).containsExactly(handle);
@@ -358,11 +359,12 @@ class AccountGameplayAdmissionLeaseClientTest {
                 .containsExactly(originalLease);
           });
       assertThat(deadlines).hasSize(3);
-      assertThat(deadlines.subList(0, 2))
-          .allSatisfy(deadline -> {
-            long remainingMillis = deadline.timeRemaining(TimeUnit.MILLISECONDS);
-            assertThat(remainingMillis).isPositive().isLessThanOrEqualTo(5_000L);
-          });
+      assertThat(deadlines.get(0).timeRemaining(TimeUnit.MILLISECONDS))
+          .isPositive()
+          .isLessThanOrEqualTo(3_000L);
+      assertThat(deadlines.get(1).timeRemaining(TimeUnit.MILLISECONDS))
+          .isPositive()
+          .isLessThanOrEqualTo(5_000L);
       assertThat(deadlines.get(2).timeRemaining(TimeUnit.MILLISECONDS))
           .isPositive()
           .isLessThanOrEqualTo(3_000L);

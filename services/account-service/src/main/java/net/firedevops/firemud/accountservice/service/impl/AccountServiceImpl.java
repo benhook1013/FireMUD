@@ -595,12 +595,25 @@ public class AccountServiceImpl implements AccountService {
       String requestId,
       String callerBinding) {
     // Retain the exact policy-independent intent before any fallible source/provider work.
-    joinTransactionTemplate.executeWithoutResult(status -> {
-      lockCanonicalScopeAccount(scope);
-      accountJoinOperationRepository.insertCanonicalIntent(requestId, scope, callerBinding);
-    });
+    var retainedFailure =
+        Objects.requireNonNull(
+            joinTransactionTemplate.execute(status -> {
+              lockCanonicalScopeAccount(scope);
+              if (accountJoinOperationRepository.insertCanonicalIntent(
+                  requestId, scope, callerBinding)) {
+                return Optional.<CanonicalJoinOperationEvidence>empty();
+              }
+              return accountJoinOperationRepository
+                  .findCanonicalEvidenceByRequestId(requestId)
+                  .filter(operation -> "FAILED".equals(operation.status()));
+            }));
+    if (retainedFailure.isPresent()) {
+      return new CanonicalJoinPreparation(retainedFailure.orElseThrow(), null, null, null);
+    }
     return Objects.requireNonNull(
         joinTransactionTemplate.execute(status -> {
+          // Lock the caller and distinct payer before source selection or a hosting read.
+          accountRepository.lockCanonicalJoinAccounts(scope.tenantId(), scope.accountId());
           lockCanonicalScopeAccount(scope);
           CanonicalJoinOperationEvidence operation =
               accountJoinOperationRepository
@@ -634,6 +647,11 @@ public class AccountServiceImpl implements AccountService {
       StripeHostingSubscriptionObserver.Result observation) {
     return Objects.requireNonNull(
         joinTransactionTemplate.execute(status -> {
+          boolean retainedFailure = "FAILED".equals(prepared.operation().status());
+          // Only source-dependent work needs the sorted caller and payer locks.
+          if (!retainedFailure) {
+            accountRepository.lockCanonicalJoinAccounts(scope.tenantId(), scope.accountId());
+          }
           lockCanonicalScopeAccount(scope);
           requireCanonicalScopeFresh(consumers, scope);
           CanonicalJoinOperationEvidence lockedOperation =
@@ -647,6 +665,10 @@ public class AccountServiceImpl implements AccountService {
                 accountJoinOperationRepository.finishCanonicalFailure(
                     requestId, scope, callerBinding, lockedOperation.outcome());
             return new CanonicalJoinResult(retained.outcome(), null, false, true);
+          }
+          if (retainedFailure) {
+            throw new AccountJoinOperationRepository.CanonicalJoinOperationConflictException(
+                "Retained JOIN failure changed before replay");
           }
           SourceSelection current =
               consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
@@ -769,6 +791,7 @@ public class AccountServiceImpl implements AccountService {
       CanonicalScopeConsumers consumers, CanonicalJoinScopeV2 scope) {
     return Objects.requireNonNull(
         joinTransactionTemplate.execute(status -> {
+          accountRepository.lockCanonicalJoinAccounts(scope.tenantId(), scope.accountId());
           lockCanonicalScopeAccount(scope);
           requireCanonicalScopeFresh(consumers, scope);
           var membership = readBootstrapCharacterMembership(scope);
@@ -816,6 +839,7 @@ public class AccountServiceImpl implements AccountService {
       BootstrapCharacterAuthority prepared,
       StripeHostingSubscriptionObserver.Result observation) {
     joinTransactionTemplate.executeWithoutResult(status -> {
+      accountRepository.lockCanonicalJoinAccounts(scope.tenantId(), scope.accountId());
       lockCanonicalScopeAccount(scope);
       requireCanonicalScopeFresh(consumers, scope);
       var membership = readBootstrapCharacterMembership(scope);

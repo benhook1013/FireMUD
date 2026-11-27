@@ -12,6 +12,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -86,6 +88,7 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
   @TempDir Path temporaryDirectory;
   private AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest fixtureHarness;
   private AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.Fixture sourceFixture;
+  private AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.PaidFixture paidFixture;
   private AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.PhysicalRedisFixture
       redisFixture;
 
@@ -103,6 +106,7 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
   void createActualSourceFixture() throws Exception {
     fixtureHarness = new AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest();
     fixtureHarness.temporaryDirectory = temporaryDirectory;
+    paidFixture = null;
     redisFixture =
         AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.PhysicalRedisFixture.start();
     sourceFixture = fixtureHarness.newFixture(redisFixture.client());
@@ -124,7 +128,83 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
     exerciseFinalConfirmation(true);
   }
 
+  @Test
+  void paidHostingSourceIsObservedOutsideSqlForIssueAndConfirmation() throws Exception {
+    paidFixture = fixtureHarness.newPaidFixture(redisFixture.client());
+    sourceFixture = paidFixture.caller();
+    exerciseFinalConfirmation(false);
+  }
+
+  @Test
+  void paidSourceHeadChangeDuringObservationRefusesOriginalCredentialIssuance() throws Exception {
+    paidFixture = fixtureHarness.newPaidFixture(redisFixture.client());
+    sourceFixture = paidFixture.caller();
+    exerciseFinalConfirmation(false, true);
+  }
+
+  @Test
+  void paidConfirmationWithElapsedContinuityLeavesRegistryPending() throws Exception {
+    paidFixture = fixtureHarness.newPaidFixture(redisFixture.client());
+    sourceFixture = paidFixture.caller();
+    exerciseFinalConfirmation(false, false, true);
+  }
+
+  @Test
+  void paidIssuanceWithCallerExpiringDuringCommitObservationLeavesGenesisPending()
+      throws Exception {
+    paidFixture = fixtureHarness.newPaidFixture(redisFixture.client());
+    sourceFixture = paidFixture.caller();
+    exerciseFinalConfirmation(false, false, false, true);
+  }
+
   private void exerciseFinalConfirmation(boolean revokeCallerDuringFinalRead) throws Exception {
+    exerciseFinalConfirmation(revokeCallerDuringFinalRead, false);
+  }
+
+  private void exerciseFinalConfirmation(
+      boolean revokeCallerDuringFinalRead, boolean changePaidSourceDuringObservation)
+      throws Exception {
+    exerciseFinalConfirmation(
+        revokeCallerDuringFinalRead, changePaidSourceDuringObservation, false);
+  }
+
+  private void exerciseFinalConfirmation(
+      boolean revokeCallerDuringFinalRead,
+      boolean changePaidSourceDuringObservation,
+      boolean expireContinuityDuringConfirmationObservation)
+      throws Exception {
+    exerciseFinalConfirmation(
+        revokeCallerDuringFinalRead,
+        changePaidSourceDuringObservation,
+        expireContinuityDuringConfirmationObservation,
+        false);
+  }
+
+  private void exerciseFinalConfirmation(
+      boolean revokeCallerDuringFinalRead,
+      boolean changePaidSourceDuringObservation,
+      boolean expireContinuityDuringConfirmationObservation,
+      boolean expireCallerDuringIssuanceObservation)
+      throws Exception {
+    AtomicReference<Clock> selectedOwnerClock = new AtomicReference<>(Clock.systemUTC());
+    Clock ownerClock =
+        new Clock() {
+          @Override
+          public ZoneId getZone() {
+            return selectedOwnerClock.get().getZone();
+          }
+
+          @Override
+          public Clock withZone(ZoneId zone) {
+            return selectedOwnerClock.get().withZone(zone);
+          }
+
+          @Override
+          public Instant instant() {
+            return selectedOwnerClock.get().instant();
+          }
+        };
+    AtomicInteger continuityAdvances = new AtomicInteger();
     DSLContext dsl =
         DSL.using(
             new TransactionAwareDataSourceProxy(sourceFixture.dataSource), SQLDialect.POSTGRES);
@@ -190,6 +270,26 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
           when(readback.canonicalSessionDurationMillis()).thenReturn(SESSION_DURATION_MILLIS);
           when(readback.canonicalReadbackSha256()).thenReturn("f".repeat(64));
           finalReadResults.add(readback);
+          if (expireContinuityDuringConfirmationObservation) {
+            selectedOwnerClock.set(
+                Clock.fixed(
+                    Instant.ofEpochMilli(controlledAdmissionAtMillis + 1), ZoneId.of("UTC")));
+            paidFixture
+                .hosting()
+                .transport()
+                .duringRead(() -> {
+                  assertThat(
+                          org.springframework.transaction.support.TransactionSynchronizationManager
+                              .isActualTransactionActive())
+                      .isFalse();
+                  selectedOwnerClock.set(
+                      Clock.fixed(
+                          Instant.ofEpochMilli(
+                              controlledAdmissionAtMillis + SESSION_DURATION_MILLIS),
+                          ZoneId.of("UTC")));
+                  continuityAdvances.incrementAndGet();
+                });
+          }
           if (revokeCallerDuringFinalRead) {
             // The normal revocation owner lawfully changes the genuine LOGIN identity fence
             // after Account began its reverse read, without changing the original NEW lineage.
@@ -218,19 +318,32 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
           }
           return readback;
         };
+    var callerVerifier =
+        new AccountGameplayAdmissionCallerVerifier(
+            sourceFixture.signerFixture.trustedJwksSource(),
+            sourceFixture.committedIssuanceOwner,
+            Clock.systemUTC());
     var owner =
-        new AccountOriginalNewBoundGameplayCredentialOwner(
-            sourceFixture.dataSource,
-            NAMESPACE,
-            new AccountGameplayAdmissionCallerVerifier(
-                sourceFixture.signerFixture.trustedJwksSource(),
-                sourceFixture.committedIssuanceOwner,
-                Clock.systemUTC()),
-            sourceFixture.signerFixture.signer(),
-            tokenRegistry,
-            responseCryptography,
-            Clock.systemUTC(),
-            controlledFinalReadback);
+        paidFixture == null
+            ? new AccountOriginalNewBoundGameplayCredentialOwner(
+                sourceFixture.dataSource,
+                NAMESPACE,
+                callerVerifier,
+                sourceFixture.signerFixture.signer(),
+                tokenRegistry,
+                responseCryptography,
+                ownerClock,
+                controlledFinalReadback)
+            : new AccountOriginalNewBoundGameplayCredentialOwner(
+                sourceFixture.dataSource,
+                NAMESPACE,
+                callerVerifier,
+                sourceFixture.signerFixture.signer(),
+                tokenRegistry,
+                responseCryptography,
+                ownerClock,
+                controlledFinalReadback,
+                paidFixture.hosting().admissionPaidSource());
     GrpcPeerIdentity peer = GrpcPeerIdentity.parseUri(GAME_SESSION_WORKLOAD).orElseThrow();
     AccountGameplayAdmissionLeaseEvidence originalLease =
         commitActualOriginalNewLease(dsl, serializable);
@@ -244,16 +357,68 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
     if (originalDecisionId == null) throw new IllegalStateException("Original decision is absent");
     String originalEvidenceSha256 = originalLease.sha256();
 
+    if (changePaidSourceDuringObservation) {
+      paidFixture.hosting().transport().duringRead(paidFixture::refresh);
+      assertThatThrownBy(() ->
+              Context.current()
+                  .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
+                  .call(() -> owner.issue(loginJwt, originalLease)))
+          .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class);
+      assertThat(dsl.fetchCount(DSL.table("account_original_new_bound_gameplay_issuances")))
+          .isZero();
+      assertThat(finalReadCalls.get()).isZero();
+      assertOriginalLeaseAndAckRemainExact(dsl, originalLease, originalEvidenceSha256);
+      return;
+    }
+
+    if (expireCallerDuringIssuanceObservation) {
+      var issuances = DSL.table("account_original_new_bound_gameplay_issuances");
+      var committedIssuances = DSL.field("status", String.class).eq("COMMITTED");
+      var identityFences = DSL.table("account_gameplay_token_identity_fences");
+      int committedCount = dsl.fetchCount(issuances, committedIssuances);
+      int fenceCount = dsl.fetchCount(identityFences);
+      var transport = paidFixture.hosting().transport();
+      int before = transport.reads();
+      Instant callerExpiry = Instant.ofEpochSecond(initialIdentity.expiresAtEpochSecond());
+      // Let the initial source read and signed-candidate binding finish before advancing time.
+      transport.duringRead(() ->
+          transport.duringRead(() ->
+              transport.duringRead(
+                  () -> selectedOwnerClock.set(Clock.fixed(callerExpiry, ZoneId.of("UTC"))))));
+
+      assertThatThrownBy(() ->
+              Context.current()
+                  .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
+                  .call(() -> owner.issue(loginJwt, originalLease)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Original-new bound gameplay credential is unavailable");
+      assertPaidObservationReadsSince(before, 3);
+      assertThat(ownerClock.instant()).isEqualTo(callerExpiry);
+      assertThat(dsl.fetchCount(issuances, committedIssuances)).isEqualTo(committedCount);
+      assertThat(dsl.fetchCount(identityFences)).isEqualTo(fenceCount);
+      Genesis pending = readGenesis(dsl, serializable, originalLease);
+      assertThat(pending.status())
+          .isEqualTo(AccountOriginalNewBoundGameplayIssuanceRepository.Status.PENDING);
+      assertThat(pending.tokenHash()).isNotNull();
+      assertThat(pending.committedRegistryReceiptSha256()).isNull();
+      assertThat(finalReadCalls.get()).isZero();
+      assertOriginalLeaseAndAckRemainExact(dsl, originalLease, originalEvidenceSha256);
+      return;
+    }
+
     OriginalNewCredential first =
         Context.current()
             .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
             .call(() -> owner.issue(loginJwt, originalLease));
+    int paidReadsBeforeCommittedRetry = paidObservationReads();
     OriginalNewCredential lostReplyRetry =
         Context.current()
             .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
             .call(() -> owner.issue(loginJwt, originalLease));
     try (first;
         lostReplyRetry) {
+      // Current source, issuance fence, and a single source for opening the committed result.
+      assertPaidObservationReadsSince(paidReadsBeforeCommittedRetry, 3);
       Genesis committed = readGenesis(dsl, serializable, originalLease);
       byte[] firstHandle = first.opaqueRebindHandle();
       byte[] retryHandle = lostReplyRetry.opaqueRebindHandle();
@@ -323,6 +488,24 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
           Math.addExact(
               Math.multiplyExact(committed.expiresAtEpochSecond(), 1_000L),
               REDIS_CLEANUP_MARGIN_MILLIS);
+      if (expireContinuityDuringConfirmationObservation) {
+        String before = issuancePhysicalImage(dsl);
+        assertFinalConfirmationUnavailable(owner, peer, loginJwt, originalLease);
+        assertThat(finalReadCalls.get()).isOne();
+        assertThat(continuityAdvances.get()).isOne();
+        assertUnconfirmed(dsl, serializable, originalLease);
+        byte[] expectedPending = committed.pendingRegistryRecordBytes();
+        try {
+          redisFixture
+              .client()
+              .requirePendingRecord(committed.tokenHash(), expectedPending, exactRedisExpiryMillis);
+        } finally {
+          Arrays.fill(expectedPending, (byte) 0);
+        }
+        assertThat(issuancePhysicalImage(dsl)).isEqualTo(before);
+        assertOriginalLeaseAndAckRemainExact(dsl, originalLease, originalEvidenceSha256);
+        return;
+      }
       if (revokeCallerDuringFinalRead) {
         String issuanceBefore =
             dsl.fetchSingle(
@@ -433,7 +616,10 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
 
       // ACTIVE Redis state cannot substitute for a new authenticated Game Session final read.
       finalReadMode.set(FinalReadMode.CHANGED);
+      int paidReadsBeforeChangedFinal = paidObservationReads();
       assertFinalConfirmationUnavailable(owner, peer, loginJwt, originalLease);
+      // Refusal happens after the same single frozen-credential open, before another paid read.
+      assertPaidObservationReadsSince(paidReadsBeforeChangedFinal, 3);
       Genesis afterChangedRead = assertUnconfirmed(dsl, serializable, originalLease);
       assertSameActiveRegistryReadback(
           activeAfterLostConfirmation,
@@ -449,7 +635,10 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
       // Recovery makes a fresh read of the same controlled final result and confirms the same
       // frozen lineage, token, anchors, continuity deadline, and physical registry expiry.
       finalReadMode.set(FinalReadMode.EXACT);
+      int paidReadsBeforeExactFinal = paidObservationReads();
       var confirmed = confirm(owner, peer, loginJwt, originalLease);
+      // Early source, genesis, frozen-credential open, preactivation, and final confirmation.
+      assertPaidObservationReadsSince(paidReadsBeforeExactFinal, 5);
       assertThat(confirmed.lineageId()).isEqualTo(first.lineageId());
       assertThat(confirmed.originalLeaseId())
           .isEqualTo(UUID.fromString((String) originalLease.carrier().get("leaseId")));
@@ -524,89 +713,148 @@ class AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest {
         assertThat(finalReadCalls.get()).isEqualTo(4);
       }
       assertOriginalLeaseAndAckRemainExact(dsl, originalLease, originalEvidenceSha256);
+      if (paidFixture != null) {
+        var transport = paidFixture.hosting().transport();
+        int before = transport.reads();
+        var observationsAtRefresh = new AtomicInteger();
+        String issuanceBefore = issuancePhysicalImage(dsl);
+        // Only change the paid source at the committed credential open, after the earlier
+        // current-source and issuance-fence reads succeeded.
+        transport.duringRead(() ->
+            transport.duringRead(() ->
+                transport.duringRead(() -> {
+                  observationsAtRefresh.set(transport.reads() - before);
+                  paidFixture.refresh();
+                })));
+        assertThatThrownBy(() ->
+                Context.current()
+                    .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
+                    .call(() -> owner.issue(loginJwt, originalLease)))
+            .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class);
+        assertThat(observationsAtRefresh.get()).isEqualTo(3);
+        assertThat(issuancePhysicalImage(dsl)).isEqualTo(issuanceBefore);
+        assertOriginalLeaseAndAckRemainExact(dsl, originalLease, originalEvidenceSha256);
+      }
     }
+  }
+
+  private int paidObservationReads() {
+    return paidFixture == null ? 0 : paidFixture.hosting().transport().reads();
+  }
+
+  private void assertPaidObservationReadsSince(int prior, int expectedPaid) {
+    assertThat(paidObservationReads() - prior).isEqualTo(paidFixture == null ? 0 : expectedPaid);
   }
 
   private AccountGameplayAdmissionLeaseEvidence commitActualOriginalNewLease(
       DSLContext dsl, TransactionTemplate serializable) {
     UUID accountId = sourceFixture.committedCandidate.identity().accountId();
-    UUID tenantId =
-        dsl.fetchSingle(
-                "SELECT membership.tenant_uuid FROM account_tenant_membership membership "
-                    + "JOIN accounts account ON account.id = membership.account_id "
-                    + "WHERE account.account_uuid = ? AND membership.tenant_uuid IS NOT NULL",
-                accountId)
-            .get(0, UUID.class);
-    if (tenantId == null)
-      throw new IllegalStateException("Current-source fixture tenant is absent");
+    AccountGameplayAdmissionLeaseEvidence evidence;
+    if (paidFixture == null) {
+      UUID tenantId =
+          dsl.fetchSingle(
+                  "SELECT membership.tenant_uuid FROM account_tenant_membership membership "
+                      + "JOIN accounts account ON account.id = membership.account_id "
+                      + "WHERE account.account_uuid = ? AND membership.tenant_uuid IS NOT NULL",
+                  accountId)
+              .get(0, UUID.class);
+      if (tenantId == null)
+        throw new IllegalStateException("Current-source fixture tenant is absent");
 
-    AccountGameplayAdmissionLeaseEvidence evidence =
-        serializable.execute(status -> {
-          var current =
-              AccountGameplayAdmissionCurrentSources.bind(dsl, NAMESPACE)
-                  .readCurrentPublicProductionNew(
-                      tenantId,
-                      sourceFixture.committedCandidate.identity().tokenJti(),
-                      sourceFixture.committedCandidate);
-          UUID requestId = UUID.randomUUID();
-          UUID leaseId = UUID.randomUUID();
-          var leaseRepository = new AccountGameplayAdmissionLeaseRepository(dsl);
-          var allocation = leaseRepository.allocate(accountId, requestId, leaseId);
-          long evaluatedAt =
-              dsl.fetchSingle("SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
-                  .get(0, Long.class);
-          long maxLeaseExpiry =
-              Math.addExact(evaluatedAt, AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS);
-          long initialTokenExpiry =
-              Math.multiplyExact(
-                  sourceFixture.committedCandidate.identity().expiresAtEpochSecond(), 1_000L);
-          Map<String, Object> carrier = new LinkedHashMap<>();
-          carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
-          carrier.put("schemaVersion", "1");
-          carrier.put("mode", "PUBLIC_PRODUCTION");
-          carrier.put("targetNamespace", NAMESPACE);
-          carrier.put("callerWorkload", GAME_SESSION_WORKLOAD);
-          carrier.put("requestId", allocation.requestId().toString());
-          carrier.put("leaseId", allocation.leaseId().toString());
-          carrier.put("leaseFence", Long.toString(allocation.leaseFence()));
-          carrier.put("leaseKind", "NEW_BINDING");
-          carrier.put(
-              "bindingScope",
-              Map.ofEntries(
-                  Map.entry("accountId", accountId.toString()),
-                  Map.entry("tenantId", tenantId.toString()),
-                  Map.entry("realmId", UUID.randomUUID().toString()),
-                  Map.entry("worldSlug", "world"),
-                  Map.entry("realmSlug", "realm"),
-                  Map.entry("playableStateNamespaceId", UUID.randomUUID().toString()),
-                  Map.entry("playableStateScope", "SHARED"),
-                  Map.entry("gameInstanceId", UUID.randomUUID().toString()),
-                  Map.entry("characterId", UUID.randomUUID().toString()),
-                  Map.entry("sessionId", UUID.randomUUID().toString()),
-                  Map.entry("bindingGeneration", "1"),
-                  Map.entry("catalogRevision", "1"),
-                  Map.entry("pointerVersion", "1"),
-                  Map.entry("regionId", UUID.randomUUID().toString()),
-                  Map.entry("regionEpoch", "1")));
-          carrier.putAll(current.leaseSourceFields());
-          carrier.put("evaluatedAt", Long.toString(evaluatedAt));
-          carrier.put("expiresAt", Long.toString(Math.min(maxLeaseExpiry, initialTokenExpiry)));
-          var originalLease = AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
-          leaseRepository.beginPending(originalLease);
-          return originalLease;
-        });
+      evidence =
+          serializable.execute(status -> {
+            var current =
+                AccountGameplayAdmissionCurrentSources.bind(dsl, NAMESPACE)
+                    .readCurrentPublicProductionNew(
+                        tenantId,
+                        sourceFixture.committedCandidate.identity().tokenJti(),
+                        sourceFixture.committedCandidate);
+            return beginPendingLease(dsl, accountId, tenantId, current);
+          });
+    } else {
+      var observed = paidFixture.prepare().observeOutsideSql();
+      var current = paidFixture.read(observed);
+      UUID tenantId = paidFixture.hosting().tenantId();
+      evidence =
+          serializable.execute(status -> beginPendingLease(dsl, accountId, tenantId, current));
+    }
 
     UUID decisionId = UUID.randomUUID();
+    var paidObservation = paidFixture == null ? null : paidFixture.prepare().observeOutsideSql();
     var acknowledgement =
         new AccountGameplayAdmissionOriginalCommitExecutor(sourceFixture.dataSource)
             .executeWithCurrentSources(
-                evidence, decisionId, NAMESPACE, sourceFixture.committedCandidate);
+                evidence, decisionId, NAMESPACE, sourceFixture.committedCandidate, paidObservation);
     var receipt =
         new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(sourceFixture.dataSource)
             .confirm(acknowledgement);
     assertThat(receipt.evidenceSha256()).isEqualTo(evidence.sha256());
     assertThat(receipt.bindingDecisionId()).isEqualTo(decisionId);
     return evidence;
+  }
+
+  private AccountGameplayAdmissionLeaseEvidence beginPendingLease(
+      DSLContext dsl,
+      UUID accountId,
+      UUID tenantId,
+      AccountGameplayAdmissionCurrentSources.Current current) {
+    UUID requestId = UUID.randomUUID();
+    UUID leaseId = UUID.randomUUID();
+    var leaseRepository = new AccountGameplayAdmissionLeaseRepository(dsl);
+    var allocation = leaseRepository.allocate(accountId, requestId, leaseId);
+    long evaluatedAt =
+        dsl.fetchSingle("SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint")
+            .get(0, Long.class);
+    long maxLeaseExpiry =
+        Math.addExact(evaluatedAt, AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS);
+    long initialTokenExpiry =
+        Math.multiplyExact(
+            sourceFixture.committedCandidate.identity().expiresAtEpochSecond(), 1_000L);
+    Map<String, Object> carrier = new LinkedHashMap<>();
+    carrier.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
+    carrier.put("schemaVersion", "1");
+    carrier.put("mode", "PUBLIC_PRODUCTION");
+    carrier.put("targetNamespace", NAMESPACE);
+    carrier.put("callerWorkload", GAME_SESSION_WORKLOAD);
+    carrier.put("requestId", allocation.requestId().toString());
+    carrier.put("leaseId", allocation.leaseId().toString());
+    carrier.put("leaseFence", Long.toString(allocation.leaseFence()));
+    carrier.put("leaseKind", "NEW_BINDING");
+    carrier.put(
+        "bindingScope",
+        Map.ofEntries(
+            Map.entry("accountId", accountId.toString()),
+            Map.entry("tenantId", tenantId.toString()),
+            Map.entry("realmId", UUID.randomUUID().toString()),
+            Map.entry("worldSlug", "world"),
+            Map.entry("realmSlug", "realm"),
+            Map.entry("playableStateNamespaceId", UUID.randomUUID().toString()),
+            Map.entry("playableStateScope", "SHARED"),
+            Map.entry("gameInstanceId", UUID.randomUUID().toString()),
+            Map.entry("characterId", UUID.randomUUID().toString()),
+            Map.entry("sessionId", UUID.randomUUID().toString()),
+            Map.entry("bindingGeneration", "1"),
+            Map.entry("catalogRevision", "1"),
+            Map.entry("pointerVersion", "1"),
+            Map.entry("regionId", UUID.randomUUID().toString()),
+            Map.entry("regionEpoch", "1")));
+    carrier.putAll(current.leaseSourceFields());
+    carrier.put("evaluatedAt", Long.toString(evaluatedAt));
+    long expiry = Math.min(maxLeaseExpiry, initialTokenExpiry);
+    if (current.sourceValidUntilMs() != null) {
+      expiry = Math.min(expiry, current.sourceValidUntilMs());
+    }
+    carrier.put("expiresAt", Long.toString(expiry));
+    var originalLease = AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
+    leaseRepository.beginPending(originalLease);
+    return originalLease;
+  }
+
+  private static String issuancePhysicalImage(DSLContext dsl) {
+    return dsl.fetchSingle(
+            "SELECT xmin::text || ':' || to_jsonb(issuance)::text"
+                + " FROM account_original_new_bound_gameplay_issuances issuance")
+        .get(0, String.class);
   }
 
   private static Genesis readGenesis(

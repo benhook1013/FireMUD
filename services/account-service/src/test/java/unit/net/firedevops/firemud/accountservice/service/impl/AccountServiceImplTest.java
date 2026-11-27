@@ -981,6 +981,27 @@ class AccountServiceImplTest {
     assertEquals(9L, f.currentMembership.getMembershipVersion());
     assertEquals(4L, f.currentMembership.getMembershipAuthorityGeneration());
 
+    if ("paid".equals(sourceKind)) {
+      var order =
+          org.mockito.Mockito.inOrder(accountRepository, accountJoinOperationRepository, f.hosting);
+      order.verify(accountRepository).findByAccountUuidForUpdate(f.scope.accountId());
+      order
+          .verify(accountJoinOperationRepository)
+          .insertCanonicalIntent(f.requestId, f.scope, f.binding);
+      order
+          .verify(accountRepository)
+          .lockCanonicalJoinAccounts(f.scope.tenantId(), f.scope.accountId());
+      order.verify(accountRepository).findByAccountUuidForUpdate(f.scope.accountId());
+      order.verify(f.hosting).prepareCurrentRead(f.scope.tenantId());
+      order
+          .verify(accountRepository)
+          .lockCanonicalJoinAccounts(f.scope.tenantId(), f.scope.accountId());
+      order.verify(accountRepository).findByAccountUuidForUpdate(f.scope.accountId());
+      order.verify(f.hosting).readCurrent(paidFence, null);
+      org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.times(3))
+          .findByAccountUuidForUpdate(f.scope.accountId());
+    }
+
     org.mockito.Mockito.verify(f.terminal)
         .commitCanonicalJoin(
             f.scope,
@@ -1101,6 +1122,8 @@ class AccountServiceImplTest {
       String outcome) {
     var f = canonicalJoinFixture();
     when(f.pending.status()).thenReturn("FAILED");
+    when(accountJoinOperationRepository.findCanonicalEvidenceByRequestId(f.requestId))
+        .thenReturn(Optional.of(f.pending));
     when(f.pending.outcome()).thenReturn(outcome);
     when(accountJoinOperationRepository.finishCanonicalFailure(
             f.requestId, f.scope, f.binding, outcome))
@@ -1113,6 +1136,8 @@ class AccountServiceImplTest {
     assertTrue(result.replayed());
     assertEquals(outcome, result.outcomeCode());
     verifyNoInteractions(f.targets, f.sources, f.demos, f.hosting, f.observer, f.terminal);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .lockCanonicalJoinAccounts(f.scope.tenantId(), f.scope.accountId());
     org.mockito.Mockito.verify(accountJoinOperationRepository)
         .finishCanonicalFailure(f.requestId, f.scope, f.binding, outcome);
     org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.times(2))
@@ -1123,6 +1148,8 @@ class AccountServiceImplTest {
   void canonicalFailedRetryStillChecksLockedRequestIdentity() {
     var f = canonicalJoinFixture();
     when(f.pending.status()).thenReturn("FAILED");
+    when(accountJoinOperationRepository.findCanonicalEvidenceByRequestId(f.requestId))
+        .thenReturn(Optional.of(f.pending));
     when(f.pending.outcome()).thenReturn("PUBLIC_PRODUCTION_ADMISSION_DENIED");
     when(accountJoinOperationRepository.finishCanonicalFailure(
             f.requestId, f.scope, f.binding, "PUBLIC_PRODUCTION_ADMISSION_DENIED"))
@@ -1132,7 +1159,7 @@ class AccountServiceImplTest {
     assertEquals(
         "IDEMPOTENCY_CONFLICT",
         assertThrows(AuthenticationException.class, f::browserJoin).getCode());
-    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.times(2))
+    org.mockito.Mockito.verify(accountJoinOperationRepository)
         .findCanonicalEvidenceForUpdateByRequestId(f.requestId);
     verifyNoInteractions(f.targets, f.sources, f.demos, f.hosting, f.observer, f.terminal);
   }
@@ -1141,6 +1168,8 @@ class AccountServiceImplTest {
   void canonicalFailedRetryStillRechecksCallerBeforeLockedReplay() {
     var f = canonicalJoinFixture();
     when(f.pending.status()).thenReturn("FAILED");
+    when(accountJoinOperationRepository.findCanonicalEvidenceByRequestId(f.requestId))
+        .thenReturn(Optional.of(f.pending));
     when(sessionService.isAccountSessionActive(f.account.getId(), f.bootstrap))
         .thenReturn(true, false);
     assertEquals(
@@ -2095,6 +2124,60 @@ class AccountServiceImplTest {
     assertEquals(f.scope.pointerVersion(), target.getValue().selector().expectedPointerVersion());
     org.mockito.Mockito.verify(f.targets, org.mockito.Mockito.atLeast(2))
         .readPublishedRealmAdmissionOwner(org.mockito.ArgumentMatchers.any());
+    verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
+  }
+
+  @Test
+  void paidBootstrapCharactersLocksCanonicalAccountsBeforeEveryHostingRead() {
+    var f = canonicalJoinFixture();
+    f.joined.set(true);
+    when(f.source.kind()).thenReturn(SourceKind.PAID_HOSTING);
+    var paidFence =
+        org.mockito.Mockito.mock(AccountHostingSubscriptionLifecycleRepository.ReadFence.class);
+    var paidReceipt = org.mockito.Mockito.mock(AccountHostingSubscriptionCurrentReceipt.class);
+    when(f.hosting.prepareCurrentRead(f.scope.tenantId())).thenReturn(paidFence);
+    when(f.hosting.readCurrent(paidFence, null)).thenReturn(paidReceipt);
+    when(paidReceipt.gameplayAvailable()).thenReturn(true);
+    when(f.observer.observe(paidFence.binding()))
+        .thenAnswer(invocation -> {
+          assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+          assertFalse(TransactionSynchronizationManager.isSynchronizationActive());
+          return null;
+        });
+    when(f.roster.read(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.eq(f.scope.accountId()),
+            org.mockito.ArgumentMatchers.any()))
+        .thenReturn(List.of());
+
+    assertTrue(f.characters().isEmpty());
+
+    var order = org.mockito.Mockito.inOrder(accountRepository, f.hosting, f.observer, f.roster);
+    order
+        .verify(accountRepository)
+        .lockCanonicalJoinAccounts(f.scope.tenantId(), f.scope.accountId());
+    order.verify(accountRepository).findByAccountUuidForUpdate(f.scope.accountId());
+    order.verify(f.hosting).prepareCurrentRead(f.scope.tenantId());
+    order.verify(f.observer).observe(paidFence.binding());
+    order
+        .verify(accountRepository)
+        .lockCanonicalJoinAccounts(f.scope.tenantId(), f.scope.accountId());
+    order.verify(accountRepository).findByAccountUuidForUpdate(f.scope.accountId());
+    order.verify(f.hosting).readCurrent(paidFence, null);
+    order
+        .verify(f.roster)
+        .read(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.eq(f.scope.accountId()),
+            org.mockito.ArgumentMatchers.any());
+    order.verify(f.observer).observe(paidFence.binding());
+    order
+        .verify(accountRepository)
+        .lockCanonicalJoinAccounts(f.scope.tenantId(), f.scope.accountId());
+    order.verify(accountRepository).findByAccountUuidForUpdate(f.scope.accountId());
+    order.verify(f.hosting).readCurrent(paidFence, null);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.times(3))
+        .findByAccountUuidForUpdate(f.scope.accountId());
     verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 

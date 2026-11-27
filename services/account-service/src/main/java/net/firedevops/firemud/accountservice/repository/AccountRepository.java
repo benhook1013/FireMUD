@@ -144,6 +144,13 @@ public class AccountRepository {
     return List.copyOf(accounts);
   }
 
+  /** Uses the same caller/payer Account lock order as paid NEW before JOIN source reads. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void lockCanonicalJoinAccounts(UUID tenantId, UUID callerAccountId) {
+    AccountGameplayAdmissionCurrentSources.lockRequiredAccountsBeforeTenantSources(
+        dsl, tenantId, callerAccountId);
+  }
+
   /** Locks one exact Account UUID inside a writable owner transaction. */
   @Transactional(propagation = Propagation.MANDATORY)
   public Optional<Account> findByAccountUuidForUpdate(UUID accountUuid) {

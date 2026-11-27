@@ -1394,10 +1394,11 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       throw new FenceRejectedException(
           "ENTITLEMENT_UNAVAILABLE: provider facts differ from the committed receipt");
     }
-    Instant evaluatedAt = now();
+    Instant preciseEvaluatedAt = clock.instant();
+    Instant evaluatedAt = preciseEvaluatedAt.truncatedTo(ChronoUnit.MICROS);
     var decision =
         retainedPolicy(operation)
-            .evaluate(observed, evaluatedAt, nullableInstant(receipt, "past_due_since"));
+            .evaluate(observed, preciseEvaluatedAt, nullableInstant(receipt, "past_due_since"));
     if (!decision.resolved() || !decision.status().storageValue().equals(current.status())) {
       throw new FenceRejectedException(
           "ENTITLEMENT_UNAVAILABLE: lifecycle/period requires reconciliation");

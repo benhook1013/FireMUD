@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
+import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
 import io.grpc.Context;
 import io.grpc.ManagedChannel;
 import io.grpc.MethodDescriptor;
@@ -60,6 +61,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -89,6 +91,8 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.RecoveredCredential;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
+import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.OwnerFence;
+import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.ProducerEvidence;
 import net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinTerminalCoordinator;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider;
@@ -124,6 +128,8 @@ import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfil
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile.AccountSecurityCutoff;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.AccountAuthoritySnapshot;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
@@ -131,6 +137,7 @@ import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteListener;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -139,6 +146,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.ConnectionHolder;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -225,8 +234,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
             CommittedCandidateVerificationData.hasSameOwnerEvidence(
                 independentCandidate, current.currentCommittedCandidate()))
         .isTrue();
-    assertThat(current.typedTenantEvent().gameplayAvailable()).isTrue();
-    assertThat(current.typedTenantEvent().allowNewGameplayBindings()).isTrue();
+    assertThat(current.sourceValidUntilMs()).isNull();
     assertThat(current.leaseSourceFields().keySet())
         .containsExactlyInAnyOrder(
             "authorityTuple",
@@ -253,6 +261,499 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     assertThat(fixture.sourceAndIssuanceImage()).isEqualTo(ownerImageBeforeOriginalCommit);
     assertThat(fixture.readCurrent(fixture.readCommittedCandidate()).leaseSourceFields())
         .isEqualTo(current.leaseSourceFields());
+  }
+
+  @Test
+  void paidCurrentReadAndOriginalPhysicalCommitUseTheGenuineOwnerWithoutChangingSources()
+      throws Exception {
+    PaidFixture paid = newPaidFixture(null);
+    Fixture caller = paid.caller();
+    var before = caller.sourceAndIssuanceImage();
+    int reads = paid.hosting().transport().reads();
+    var observed = paid.prepare().observeOutsideSql();
+    var current = paid.read(observed);
+    assertThat(paid.hosting().transport().reads()).isEqualTo(reads + 1);
+    assertThat(current.snapshot().tenantId()).isEqualTo(paid.hosting().tenantId().toString());
+    assertThat(current.sourceValidUntilMs())
+        .isEqualTo(paid.hosting().clock().instant().plusSeconds(14).toEpochMilli());
+    assertThat(caller.sourceAndIssuanceImage()).isEqualTo(before);
+
+    var lease = caller.beginPendingAdmissionLease(current);
+    assertThat(Long.parseLong((String) lease.carrier().get("expiresAt")))
+        .isLessThanOrEqualTo(current.sourceValidUntilMs());
+    var ownerImage = caller.sourceAndIssuanceImage();
+    UUID decisionId = UUID.randomUUID();
+    var acknowledgement =
+        new AccountGameplayAdmissionOriginalCommitExecutor(caller.dataSource)
+            .executeWithCurrentSources(
+                lease,
+                decisionId,
+                TEST_NAMESPACE,
+                caller.committedCandidate,
+                paid.prepare().observeOutsideSql());
+    assertThat(acknowledgement.evidence().canonicalJson()).isEqualTo(lease.canonicalJson());
+    assertThat(caller.sourceAndIssuanceImage()).isEqualTo(ownerImage);
+    var receipt =
+        new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(caller.dataSource)
+            .confirm(acknowledgement);
+    assertThat(receipt.operation().state())
+        .isEqualTo(AccountGameplayAdmissionLeaseOperation.State.COMMITTED);
+    assertThat(receipt.operation().evidence().canonicalJson()).isEqualTo(lease.canonicalJson());
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalCommitExecutor(caller.dataSource)
+                .executeWithCurrentSources(
+                    lease,
+                    decisionId,
+                    TEST_NAMESPACE,
+                    caller.committedCandidate,
+                    paid.prepare().observeOutsideSql()))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void paidAdmissionLocksWalletBeforeTenantGenerationInBothSqlPhases() throws Exception {
+    PaidFixture paid = newPaidFixture(null);
+    Fixture caller = paid.caller();
+    List<String> sourceImageBefore = caller.sourceAndIssuanceImage();
+
+    var prepared = whileWalletInstrumentIsLockedBeforeTenantGeneration(paid, () -> paid.prepare());
+    var observed = prepared.observeOutsideSql();
+    var current =
+        whileWalletInstrumentIsLockedBeforeTenantGeneration(paid, () -> paid.read(observed));
+
+    assertThat(current.snapshot().tenantId()).isEqualTo(paid.hosting().tenantId().toString());
+    assertThat(caller.sourceAndIssuanceImage()).isEqualTo(sourceImageBefore);
+  }
+
+  @Test
+  void currentDemoHeadRemainsSelectedWhileSameTenantHasPendingHostingSubscription()
+      throws Exception {
+    Fixture caller = newFixture(null);
+    var hosting = CanonicalHostingSubscriptionTestFixture.create(caller.dataSource, TEST_NAMESPACE);
+    String authorizationDigest = "sha256:" + "a".repeat(64);
+    UUID authorizationOperation = UUID.randomUUID();
+    var creator =
+        new FreshTenantCreatorEvidence(
+            1,
+            caller.tenantEvidence,
+            hosting.accountUuid(),
+            authorizationOperation,
+            authorizationDigest,
+            FreshTenantCreatorDigest.evidenceDigest(
+                1,
+                caller.tenantEvidence,
+                hosting.accountUuid(),
+                authorizationOperation,
+                authorizationDigest));
+    var owner =
+        caller.transaction.execute(status ->
+            new AccountInitialTenantBillingOwnerRepository(caller.dsl)
+                .establishInitial(
+                    new AccountInitialTenantBillingOwnerRepository.InitialRequest(
+                        UUID.randomUUID(), creator, UUID.randomUUID(), 1, true)));
+    var instrument = hosting.instrument();
+    caller.transaction.execute(status ->
+        hosting
+            .intents()
+            .retainPending(
+                new AccountSubscriptionCreateRequest(
+                    UUID.randomUUID(),
+                    caller.tenantUuid,
+                    new OwnerFence(
+                        hosting.accountUuid(), owner.ownerVersion(), owner.ownerGeneration()),
+                    "hosting",
+                    instrument.instrumentUuid(),
+                    instrument.rowVersion(),
+                    new ProducerEvidence(
+                        hosting.accountUuid(), UUID.randomUUID(), authorizationDigest),
+                    null)));
+
+    int providerReads = hosting.transport().reads();
+    var prepared =
+        caller.inCurrentSources(sources ->
+            sources.prepareCurrentPublicProductionNew(
+                caller.tenantUuid,
+                caller.committedCandidate.identity().tokenJti(),
+                caller.committedCandidate,
+                hosting.admissionPaidSource()));
+    var observed = prepared.observeOutsideSql();
+    var current =
+        caller.inCurrentSources(sources ->
+            sources.readCurrentPublicProductionNew(
+                caller.tenantUuid,
+                caller.committedCandidate.identity().tokenJti(),
+                caller.committedCandidate,
+                observed));
+
+    assertThat(current.sourceValidUntilMs()).isNull();
+    assertThat(hosting.transport().reads()).isEqualTo(providerReads);
+  }
+
+  @Test
+  void paidSourceWithoutItsConcreteCompositionOrObservationNeverFallsBackToDemo() throws Exception {
+    PaidFixture paid = newPaidFixture(null, true);
+    Fixture caller = paid.caller();
+    var before = caller.sourceAndIssuanceImage();
+    int reads = paid.hosting().transport().reads();
+    assertThatThrownBy(() ->
+            caller.inCurrentSources(sources ->
+                sources.prepareCurrentPublicProductionNew(
+                    paid.hosting().tenantId(),
+                    caller.committedCandidate.identity().tokenJti(),
+                    caller.committedCandidate,
+                    null)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> paid.read(null)).isInstanceOf(IllegalStateException.class);
+    // Historical DEMO evidence for the exact paid tenant remains retained, not a fallback.
+    assertThat(
+            caller.dsl.fetchExists(
+                caller
+                    .dsl
+                    .selectOne()
+                    .from("account_demo_tenant_entitlements")
+                    .where(
+                        org.jooq
+                            .impl
+                            .DSL
+                            .field("tenant_uuid", UUID.class)
+                            .eq(paid.hosting().tenantId()))))
+        .isTrue();
+    assertThat(paid.hosting().transport().reads()).isEqualTo(reads);
+    assertThat(caller.sourceAndIssuanceImage()).isEqualTo(before);
+    assertThat(caller.leaseOperationCount()).isZero();
+  }
+
+  @Test
+  void paidObservationCannotRunInsideThePreparingAccountTransaction() throws Exception {
+    PaidFixture paid = newPaidFixture(null);
+    int reads = paid.hosting().transport().reads();
+    paid.caller()
+        .inCurrentSources(sources -> {
+          var prepared =
+              sources.prepareCurrentPublicProductionNew(
+                  paid.hosting().tenantId(),
+                  paid.caller().committedCandidate.identity().tokenJti(),
+                  paid.caller().committedCandidate,
+                  paid.hosting().admissionPaidSource());
+          assertThat(prepared).isNotNull();
+          assertThatThrownBy(prepared::observeOutsideSql).isInstanceOf(IllegalStateException.class);
+          return null;
+        });
+    assertThat(paid.hosting().transport().reads()).isEqualTo(reads);
+  }
+
+  @ParameterizedTest
+  @ValueSource(longs = {13_999, 14_000})
+  void paidReceiptExpiresAtEntitlementDeadlineBeforeLifecycleDeadline(long elapsedMillis)
+      throws Exception {
+    PaidFixture paid = newPaidFixture(null);
+    Fixture caller = paid.caller();
+    var observed = paid.prepare().observeOutsideSql();
+    Instant evaluatedAt = paid.hosting().clock().instant();
+    Instant deadline = evaluatedAt.plusSeconds(14);
+    Instant readTime = evaluatedAt.plusMillis(elapsedMillis);
+    UUID originalJti = caller.committedCandidate.identity().tokenJti();
+    var reachedCallerRead = new AtomicBoolean();
+    var advanceClock =
+        advancePaidClockDuringCallerRead(paid, originalJti, readTime, reachedCallerRead);
+    java.util.function.Supplier<AccountGameplayAdmissionCurrentSources.Current> read =
+        () ->
+            caller.inCurrentSources(
+                sources ->
+                    sources.readCurrentPublicProductionNew(
+                        paid.hosting().tenantId(),
+                        originalJti,
+                        caller.committedCandidate,
+                        observed),
+                advanceClock);
+
+    if (readTime.isBefore(deadline)) {
+      assertThat(read.get().sourceValidUntilMs()).isEqualTo(deadline.toEpochMilli());
+    } else {
+      assertThatThrownBy(read::get)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Current paid NEW source has expired");
+    }
+    assertThat(reachedCallerRead).isTrue();
+    assertThat(paid.hosting().clock().instant()).isEqualTo(readTime);
+  }
+
+  @Test
+  void paidReceiptExpiringDuringFinalCallerSourceReadIsUnavailableWithoutWrites() throws Exception {
+    PaidFixture paid = newPaidFixture(null);
+    Fixture caller = paid.caller();
+    var observed = paid.prepare().observeOutsideSql();
+    long validUntil = paid.read(observed).sourceValidUntilMs();
+    Instant pastDeadline = Instant.ofEpochMilli(validUntil).plusMillis(1);
+    UUID originalJti = caller.committedCandidate.identity().tokenJti();
+    int providerReads = paid.hosting().transport().reads();
+    var before = caller.sourceAndIssuanceImage();
+    var reachedCallerRead = new AtomicBoolean();
+    var expireDuringCallerRead =
+        advancePaidClockDuringCallerRead(paid, originalJti, pastDeadline, reachedCallerRead);
+
+    assertThatThrownBy(() ->
+            caller.inCurrentSources(
+                sources ->
+                    sources.readCurrentPublicProductionNew(
+                        paid.hosting().tenantId(),
+                        originalJti,
+                        caller.committedCandidate,
+                        observed),
+                expireDuringCallerRead))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Current paid NEW source has expired");
+    assertThat(reachedCallerRead).isTrue();
+    assertThat(paid.hosting().clock().instant()).isEqualTo(pastDeadline);
+    assertThat(paid.hosting().transport().reads()).isEqualTo(providerReads);
+    assertThat(caller.sourceAndIssuanceImage()).isEqualTo(before);
+    assertThat(caller.leaseOperationCount()).isZero();
+  }
+
+  private static ExecuteListener advancePaidClockDuringCallerRead(
+      PaidFixture paid, UUID originalJti, Instant readTime, AtomicBoolean reachedCallerRead) {
+    // This exact issuance SELECT is downstream of the paid receipt read and early clock check.
+    return ExecuteListener.onExecuteEnd(ctx -> {
+      String sql = ctx.sql();
+      var query = ctx.query();
+      if (sql != null
+          && sql.contains("SELECT request_id FROM account_gameplay_delegation_issuance_operations")
+          && sql.contains("WHERE token_jti = ? AND status = 'COMMITTED'")
+          && query != null
+          && query.getBindValues().equals(List.of(originalJti))
+          && reachedCallerRead.compareAndSet(false, true)) {
+        assertThat(paid.hosting().clock().instant()).isBefore(readTime);
+        paid.hosting().clock().advanceToAtLeast(readTime);
+      }
+    });
+  }
+
+  @Test
+  void paidObservationExpiryAndContradictoryProviderFactsCannotFinalizeTheOriginalLease()
+      throws Exception {
+    PaidFixture paid = newPaidFixture(null);
+    var current = paid.read(paid.prepare().observeOutsideSql());
+    var lease = paid.caller().beginPendingAdmissionLease(current);
+    paid.hosting().providerStatus("past_due");
+    var contradictory = paid.prepare().observeOutsideSql();
+    assertThatThrownBy(() -> paid.read(contradictory)).isInstanceOf(IllegalStateException.class);
+    paid.hosting().providerStatus("active");
+    var expired = paid.prepare().observeOutsideSql();
+    paid.hosting().clock().advance(Duration.ofSeconds(15));
+    var before = paid.caller().sourceAndIssuanceImage();
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalCommitExecutor(paid.caller().dataSource)
+                .executeWithCurrentSources(
+                    lease,
+                    UUID.randomUUID(),
+                    TEST_NAMESPACE,
+                    paid.caller().committedCandidate,
+                    expired))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(paid.caller().readLeaseOperation(lease).state())
+        .isEqualTo(AccountGameplayAdmissionLeaseOperation.State.PENDING);
+    assertThat(paid.caller().sourceAndIssuanceImage()).isEqualTo(before);
+  }
+
+  @Test
+  void paidHeadChangeDuringTheActualProviderReadRefusesThePreparedSourceAndOriginalLease()
+      throws Exception {
+    PaidFixture paid = newPaidFixture(null);
+    var current = paid.read(paid.prepare().observeOutsideSql());
+    var lease = paid.caller().beginPendingAdmissionLease(current);
+    var prepared = paid.prepare();
+    paid.hosting()
+        .transport()
+        .duringRead(() -> {
+          paid.hosting().clock().advance(Duration.ofSeconds(1));
+          paid.refresh();
+        });
+    var observed = prepared.observeOutsideSql();
+    var before = paid.caller().sourceAndIssuanceImage();
+    assertThatThrownBy(() -> paid.read(observed))
+        .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class)
+        .hasMessage("Pending claim owner/customer/instrument/subscription fence rejected");
+    assertThatThrownBy(() ->
+            new AccountGameplayAdmissionOriginalCommitExecutor(paid.caller().dataSource)
+                .executeWithCurrentSources(
+                    lease,
+                    UUID.randomUUID(),
+                    TEST_NAMESPACE,
+                    paid.caller().committedCandidate,
+                    paid.prepare().observeOutsideSql()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "membership source tenantAuthorityGeneration current equality does not match its bound evidence");
+    assertThat(paid.caller().readLeaseOperation(lease).evidence().canonicalJson())
+        .isEqualTo(lease.canonicalJson());
+    assertThat(paid.caller().readLeaseOperation(lease).state())
+        .isEqualTo(AccountGameplayAdmissionLeaseOperation.State.PENDING);
+    assertThat(paid.caller().sourceAndIssuanceImage()).isEqualTo(before);
+  }
+
+  @Test
+  void authenticatedPaidOwnerCapsTheLeaseFinalizesOnceAndRecoversWithoutPaidAuthority()
+      throws Exception {
+    try (PhysicalRedisFixture redis = PhysicalRedisFixture.start()) {
+      PaidFixture paid = newPaidFixture(redis.client());
+      Fixture caller = paid.caller();
+      var identity = caller.committedCandidate.identity();
+      var recovered =
+          caller.responseRecoveryOwner.recoverInitialLoginResponse(
+              identity.requestId(),
+              identity.accountId(),
+              new CallerIdentity(identity.callerWorkload(), identity.callerContextId()));
+      String jwt = new String(recovered.compactJwtBytes(), StandardCharsets.US_ASCII);
+      Candidate candidate =
+          candidateWithTenant(admissionCandidate(caller), paid.hosting().tenantId());
+      UUID requestId = UUID.randomUUID();
+      Target target = admissionTarget(candidate, UUID.randomUUID());
+      var decisions = controlledPublishedTargetClient(candidate, target, requestId);
+      controlProvisionalDecisionRead(decisions, candidate, target);
+      var verifier =
+          new AccountGameplayAdmissionCallerVerifier(
+              caller.signerFixture.trustedJwksSource(),
+              caller.committedIssuanceOwner,
+              Clock.systemUTC());
+      var owner =
+          new AccountGameplayAdmissionLeaseOwner(
+              verifier,
+              decisions,
+              TEST_NAMESPACE,
+              caller.dataSource,
+              paid.hosting().admissionPaidSource());
+      var peer = GrpcPeerIdentity.parseUri(CALLER_WORKLOAD).orElseThrow();
+      var acquire =
+          AccountGameplayAdmissionLeaseGrpcCodec.toAcquireRequest(
+              requestId, jwt, candidate, target, BigInteger.ONE);
+      var response = new AtomicReference<AccountGameplayAdmissionLeaseResponse>();
+      var before = caller.sourceAndIssuanceImageForAuthenticatedCommit();
+      long acquisitionDatabaseMillis =
+          caller.inSerializableTransaction(caller::currentDatabaseMillisOnEnlistedConnection);
+      paid.hosting().clock().advanceToAtLeast(Instant.ofEpochMilli(acquisitionDatabaseMillis));
+      withPeer(peer, () -> response.set(owner.acquire(acquire)));
+      var lease =
+          AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireResponse(
+                  AccountGameplayAdmissionLeaseGrpcCodec.parseAcquireRequest(acquire),
+                  response.get())
+              .originalLeaseEvidence();
+      long evaluatedAt = Long.parseLong((String) lease.carrier().get("evaluatedAt"));
+      assertThat(Long.parseLong((String) lease.carrier().get("expiresAt")))
+          .isEqualTo(
+              Math.min(
+                  Math.min(evaluatedAt + 15_000L, identity.expiresAtEpochSecond() * 1000L),
+                  paid.hosting().clock().instant().plusSeconds(14).toEpochMilli()));
+      byte[] leaseBytes = lease.canonicalJson().getBytes(StandardCharsets.UTF_8);
+      paid.hosting().providerStatus("unsupported");
+      var read = AccountGameplayAdmissionLeaseGrpcCodec.toReadRequest(jwt, leaseBytes);
+      withPeer(peer, () -> response.set(owner.read(read)));
+      assertThat(
+              AccountGameplayAdmissionLeaseGrpcCodec.parseReadResponse(
+                      AccountGameplayAdmissionLeaseGrpcCodec.parseReadRequest(read), response.get())
+                  .state())
+          .isEqualTo(State.PENDING);
+      assertThatThrownBy(() -> withPeer(peer, () -> owner.acquire(acquire)))
+          .isInstanceOf(StatusRuntimeException.class);
+      UUID decisionId = UUID.randomUUID();
+      var finalize =
+          AccountGameplayAdmissionLeaseGrpcCodec.toFinalizeRequest(jwt, leaseBytes, decisionId);
+      assertThatThrownBy(() -> withPeer(peer, () -> owner.finalizeLease(finalize)))
+          .isInstanceOf(StatusRuntimeException.class);
+      assertThat(caller.readLeaseOperation(lease).state())
+          .isEqualTo(AccountGameplayAdmissionLeaseOperation.State.PENDING);
+
+      paid.hosting().providerStatus("active");
+      var publishedTarget = controlledPublishedTarget(candidate, target, requestId);
+      var targetWithdrawn = new AtomicBoolean();
+      when(decisions.readPublishedRealmAdmissionOwner(any()))
+          .thenAnswer(invocation -> {
+            if (targetWithdrawn.get()) throw Status.UNAVAILABLE.asRuntimeException();
+            return publishedTarget;
+          });
+      paid.hosting().transport().duringRead(() -> targetWithdrawn.set(true));
+      assertThatThrownBy(() -> withPeer(peer, () -> owner.finalizeLease(finalize)))
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+      assertThat(targetWithdrawn.get()).isTrue();
+      var stillPending = caller.readLeaseOperation(lease);
+      assertThat(stillPending.state())
+          .isEqualTo(AccountGameplayAdmissionLeaseOperation.State.PENDING);
+      assertThat(stillPending.evidence().canonicalJson()).isEqualTo(lease.canonicalJson());
+      assertThat(caller.originalAckReceiptImage(requestId)).isEmpty();
+
+      targetWithdrawn.set(false);
+      withPeer(peer, () -> response.set(owner.finalizeLease(finalize)));
+      var committed = response.get();
+      assertThat(
+              AccountGameplayAdmissionLeaseGrpcCodec.parseFinalizeResponse(
+                      AccountGameplayAdmissionLeaseGrpcCodec.parseFinalizeRequest(finalize),
+                      committed)
+                  .state())
+          .isEqualTo(State.COMMITTED);
+      assertThat(caller.readLeaseOperation(lease).evidence().canonicalJson())
+          .isEqualTo(lease.canonicalJson());
+      assertThat(caller.sourceAndIssuanceImageForAuthenticatedCommit()).isEqualTo(before);
+
+      paid.hosting().providerStatus("unsupported");
+      int providerReads = paid.hosting().transport().reads();
+      var restartedWithoutPaidSource =
+          new AccountGameplayAdmissionLeaseOwner(
+              verifier, decisions, TEST_NAMESPACE, caller.dataSource);
+      withPeer(peer, () -> response.set(restartedWithoutPaidSource.finalizeLease(finalize)));
+      assertThat(response.get()).isEqualTo(committed);
+      assertThat(paid.hosting().transport().reads()).isEqualTo(providerReads);
+    }
+  }
+
+  @Test
+  void paidLifecycleWriterWaitsForCurrentSourceLocksThroughOriginalPhysicalCommit()
+      throws Exception {
+    PaidFixture paid = newPaidFixture(null);
+    Fixture caller = paid.caller();
+    var current = paid.read(paid.prepare().observeOutsideSql());
+    var lease = caller.beginPendingAdmissionLease(current);
+    var observed = paid.prepare().observeOutsideSql();
+    CountDownLatch reached = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    AtomicInteger originalBackendPid = new AtomicInteger();
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    var barrierSource =
+        holdOriginalCommitBeforePhysicalCommit(
+            caller.dataSource, reached, release, originalBackendPid);
+    try {
+      var commit =
+          executor.submit(() ->
+              new AccountGameplayAdmissionOriginalCommitExecutor(barrierSource)
+                  .executeWithCurrentSources(
+                      lease,
+                      UUID.randomUUID(),
+                      TEST_NAMESPACE,
+                      caller.committedCandidate,
+                      observed));
+      assertThat(reached.await(5, TimeUnit.SECONDS)).isTrue();
+      var writer = executor.submit(paid::refresh);
+      int blockedPid =
+          awaitBackendBlockedBy(caller.dsl, originalBackendPid.get(), 3, TimeUnit.SECONDS);
+      assertThat(blockedPid).isPositive().isNotEqualTo(originalBackendPid.get());
+      assertThat(writer.isDone()).isFalse();
+      release.countDown();
+      assertThat(commit.get(5, TimeUnit.SECONDS).evidence().canonicalJson())
+          .isEqualTo(lease.canonicalJson());
+      writer.get(5, TimeUnit.SECONDS);
+      assertThat(caller.readLeaseOperation(lease).state())
+          .isEqualTo(AccountGameplayAdmissionLeaseOperation.State.COMMITTED);
+      assertThatThrownBy(() ->
+              paid.read(paid.prepare().observeOutsideSql()).requireMatchesOriginalLease(lease))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage(
+              "membership source tenantAuthorityGeneration current equality does not match its bound evidence");
+    } finally {
+      release.countDown();
+      executor.shutdown();
+      if (!executor.awaitTermination(5, TimeUnit.SECONDS)) executor.shutdownNow();
+    }
   }
 
   @Test
@@ -1405,6 +1906,95 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     return newFixture(null);
   }
 
+  PaidFixture newPaidFixture(AccountGameplayDelegationRedisClient redis) throws Exception {
+    return newPaidFixture(redis, false);
+  }
+
+  private PaidFixture newPaidFixture(
+      AccountGameplayDelegationRedisClient redis, boolean retainSameTenantDemo) throws Exception {
+    Fixture caller = newFixture(redis);
+    var hosting = CanonicalHostingSubscriptionTestFixture.create(caller.dataSource, TEST_NAMESPACE);
+    UUID tenantId = hosting.tenantId();
+    var source =
+        caller.transaction.execute(status -> caller.freshTenants.read(tenantId).orElseThrow());
+    if (retainSameTenantDemo) {
+      var demoRequest = entitlementRequest(tenantId, source);
+      caller.transaction.execute(status -> caller.demoEntitlements.provision(demoRequest, source));
+    }
+    hosting.withCheckoutDirectory(temporaryDirectory).completeFirstInvoice();
+    var scope = canonicalJoinScope(caller.account.getAccountUuid(), tenantId);
+    var provenance =
+        new VerifiedTenantProvenance(
+            null,
+            TenantProvenanceKind.FRESH_GAME_DESIGN,
+            source.operationId(),
+            source.evidenceDigest());
+    var scopes =
+        new AccountConnectScopeRepository(
+            caller.dsl,
+            new AccountTenantIdentityResolver(
+                mock(ApprovedLegacyTenantAssociationRepository.class), TEST_NAMESPACE),
+            caller.freshTenants);
+    String requestId = UUID.randomUUID().toString();
+    String binding = "paid-new-player-" + UUID.randomUUID();
+    caller.transaction.executeWithoutResult(status -> {
+      caller.generations.initialize(
+          AuthorityScope.membership(caller.account.getAccountUuid(), tenantId));
+      scopes.insertCanonical(caller.account.getId(), scope, provenance);
+      caller.joinOperations.insertCanonicalIntent(requestId, scope, binding);
+    });
+    var fence =
+        hosting
+            .transaction()
+            .execute(status -> hosting.lifecycleRepository().prepareCurrentRead(tenantId));
+    var actual = hosting.observer().observe(fence.binding());
+    caller.transaction.executeWithoutResult(status -> {
+      var receipt = hosting.lifecycleRepository().readCurrent(fence, actual);
+      caller.joinOperations.bindCanonicalPolicyEvidence(
+          requestId, scope, binding, receipt.allowPublicJoin(), receipt.entitlementVersion());
+      caller.joinTerminal.commitPaidCanonicalFirstJoin(
+          scope, requestId, binding, hosting.lifecycleRepository(), fence, actual);
+    });
+    return new PaidFixture(caller, hosting);
+  }
+
+  record PaidFixture(Fixture caller, CanonicalHostingSubscriptionTestFixture.Fixture hosting) {
+    AccountGameplayAdmissionCurrentSources.Prepared prepare() {
+      return caller.inCurrentSources(sources ->
+          sources.prepareCurrentPublicProductionNew(
+              hosting.tenantId(),
+              caller.committedCandidate.identity().tokenJti(),
+              caller.committedCandidate,
+              hosting.admissionPaidSource()));
+    }
+
+    AccountGameplayAdmissionCurrentSources.Current read(
+        AccountGameplayAdmissionCurrentSources.Observed observed) {
+      return caller.inCurrentSources(sources ->
+          sources.readCurrentPublicProductionNew(
+              hosting.tenantId(),
+              caller.committedCandidate.identity().tokenJti(),
+              caller.committedCandidate,
+              observed));
+    }
+
+    void refresh() {
+      long version =
+          hosting.intents().findCurrentByTenant(hosting.tenantId()).orElseThrow().rowVersion();
+      assertThat(
+              hosting
+                  .service()
+                  .reconcile(
+                      UUID.randomUUID(),
+                      hosting.creation().requestId(),
+                      version,
+                      hosting.providerId(),
+                      null)
+                  .outcome())
+          .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Outcome.COMMITTED);
+    }
+  }
+
   Fixture newFixture(AccountGameplayDelegationRedisClient redisClient) throws Exception {
     return newFixture(redisClient, "latest");
   }
@@ -1481,6 +2071,60 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       Thread.sleep(10);
     } while (System.nanoTime() < deadline);
     return -1;
+  }
+
+  private <T> T whileWalletInstrumentIsLockedBeforeTenantGeneration(
+      PaidFixture paid, Callable<T> admissionPhase) throws Exception {
+    Fixture caller = paid.caller();
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try (Connection blocker = caller.dataSource.getConnection()) {
+      blocker.setAutoCommit(false);
+      int blockerPid;
+      try (Statement statement = blocker.createStatement();
+          ResultSet pid = statement.executeQuery("SELECT pg_backend_pid()")) {
+        assertThat(pid.next()).isTrue();
+        blockerPid = pid.getInt(1);
+      }
+      try (PreparedStatement instrumentLock =
+          blocker.prepareStatement(
+              "SELECT instrument_uuid FROM payment_instrument WHERE account_uuid = ? "
+                  + "AND instrument_uuid = ? FOR UPDATE")) {
+        instrumentLock.setObject(1, paid.hosting().instrument().accountUuid());
+        instrumentLock.setObject(2, paid.hosting().instrument().instrumentUuid());
+        try (ResultSet instrument = instrumentLock.executeQuery()) {
+          assertThat(instrument.next()).isTrue();
+        }
+      }
+
+      Future<T> phase = executor.submit(admissionPhase);
+      int blockedPid = awaitBackendBlockedBy(caller.dsl, blockerPid, 3, TimeUnit.SECONDS);
+      assertThat(blockedPid).isPositive().isNotEqualTo(blockerPid);
+      assertTenantGenerationCanBeLocked(caller.dataSource, paid.hosting().tenantId());
+      blocker.rollback();
+      return phase.get(5, TimeUnit.SECONDS);
+    } finally {
+      executor.shutdown();
+      if (!executor.awaitTermination(5, TimeUnit.SECONDS)) executor.shutdownNow();
+    }
+  }
+
+  private static void assertTenantGenerationCanBeLocked(DataSource dataSource, UUID tenantId)
+      throws SQLException {
+    try (Connection probe = dataSource.getConnection()) {
+      probe.setAutoCommit(false);
+      try (PreparedStatement lock =
+          probe.prepareStatement(
+              "SELECT generation FROM account_authority_generations WHERE scope_kind = 'TENANT' "
+                  + "AND issuer_id IS NULL AND account_uuid IS NULL AND tenant_uuid = ? "
+                  + "FOR UPDATE NOWAIT")) {
+        lock.setObject(1, tenantId);
+        try (ResultSet row = lock.executeQuery()) {
+          assertThat(row.next()).isTrue();
+        }
+      } finally {
+        probe.rollback();
+      }
+    }
   }
 
   private static DataSource holdOriginalCommitBeforePhysicalCommit(
@@ -1751,6 +2395,25 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     return new Candidate(
         accountId,
         candidate.tenantId(),
+        candidate.playableStateNamespaceId(),
+        candidate.characterId(),
+        candidate.playableStateScope(),
+        candidate.gameInstanceId(),
+        candidate.runtimeGameInstanceId(),
+        candidate.sessionId(),
+        candidate.regionId(),
+        candidate.regionEpoch(),
+        candidate.issuerId(),
+        candidate.issuerAuthGeneration(),
+        candidate.issuerIndexLayoutVersion(),
+        candidate.issuerIndexPartitionCount(),
+        candidate.issuerIndexPartitionCapacity());
+  }
+
+  private static Candidate candidateWithTenant(Candidate candidate, UUID tenantId) {
+    return new Candidate(
+        candidate.accountId(),
+        tenantId,
         candidate.playableStateNamespaceId(),
         candidate.characterId(),
         candidate.playableStateScope(),
@@ -2465,6 +3128,19 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
 
     private AccountGameplayAdmissionCurrentSources.Current readCurrent(
         CommittedCandidateVerificationData expectedCandidate) {
+      return inCurrentSources(sources ->
+          sources.readCurrentPublicProductionNew(
+              tenantUuid, expectedCandidate.identity().tokenJti(), expectedCandidate));
+    }
+
+    private <T> T inCurrentSources(
+        java.util.function.Function<AccountGameplayAdmissionCurrentSources, T> read) {
+      return inCurrentSources(read, null);
+    }
+
+    private <T> T inCurrentSources(
+        java.util.function.Function<AccountGameplayAdmissionCurrentSources, T> read,
+        ExecuteListener listener) {
       return serializable.execute(status -> {
         if (!TransactionSynchronizationManager.isActualTransactionActive()
             || TransactionSynchronizationManager.isCurrentTransactionReadOnly()
@@ -2477,14 +3153,16 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
           throw new IllegalStateException("Expected the manager-enlisted Account connection");
         }
         Connection connection = holder.getConnection();
-        DSLContext exactDsl = DSL.using(connection, SQLDialect.POSTGRES);
+        DSLContext boundDsl = DSL.using(connection, SQLDialect.POSTGRES);
+        DSLContext exactDsl =
+            listener == null
+                ? boundDsl
+                : DSL.using(boundDsl.configuration().deriveAppending(listener));
         try {
           Integer backendBefore =
               exactDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
-          var current =
-              AccountGameplayAdmissionCurrentSources.bind(exactDsl, TEST_NAMESPACE)
-                  .readCurrentPublicProductionNew(
-                      tenantUuid, expectedCandidate.identity().tokenJti(), expectedCandidate);
+          T current =
+              read.apply(AccountGameplayAdmissionCurrentSources.bind(exactDsl, TEST_NAMESPACE));
           Integer backendAfter =
               exactDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
           assertThat(backendAfter).isEqualTo(backendBefore);
@@ -2523,10 +3201,16 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         carrier.put("leaseId", allocation.leaseId().toString());
         carrier.put("leaseFence", Long.toString(allocation.leaseFence()));
         carrier.put("leaseKind", "NEW_BINDING");
-        carrier.put("bindingScope", bindingScope());
+        Map<String, Object> scope = new LinkedHashMap<>(bindingScope());
+        scope.put("tenantId", current.snapshot().tenantId());
+        carrier.put("bindingScope", scope);
         carrier.putAll(current.leaseSourceFields());
         carrier.put("evaluatedAt", Long.toString(evaluatedAt));
-        carrier.put("expiresAt", Long.toString(evaluatedAt + 14_000L));
+        long expiry = evaluatedAt + 14_000L;
+        if (current.sourceValidUntilMs() != null) {
+          expiry = Math.min(expiry, current.sourceValidUntilMs());
+        }
+        carrier.put("expiresAt", Long.toString(expiry));
         var evidence = AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier);
         leases.beginPending(evidence);
         return evidence;

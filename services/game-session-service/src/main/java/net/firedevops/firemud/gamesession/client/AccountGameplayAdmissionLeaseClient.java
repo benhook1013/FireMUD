@@ -240,6 +240,14 @@ public final class AccountGameplayAdmissionLeaseClient
    */
   public OriginalNewCredential issueOriginalNewBoundGameplayCredential(
       String presentedInitialGsACompactJwt, byte[] originalLeaseEvidenceUtf8) {
+    return issueOriginalNewBoundGameplayCredential(
+        presentedInitialGsACompactJwt, originalLeaseEvidenceUtf8, null);
+  }
+
+  public OriginalNewCredential issueOriginalNewBoundGameplayCredential(
+      String presentedInitialGsACompactJwt,
+      byte[] originalLeaseEvidenceUtf8,
+      Deadline operationDeadline) {
     requireNoAmbientSql("Original-new credential issuance requires no ambient SQL");
     var wireRequest =
         AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialRequest(
@@ -252,7 +260,7 @@ public final class AccountGameplayAdmissionLeaseClient
           AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialResponse(
               expected,
               requireInitializedStub("Account lease service is not initialized")
-                  .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                  .withDeadline(boundedAdmissionDeadline(operationDeadline))
                   .issueOriginalNewGameplayCredential(wireRequest));
       if (!credential
               .originalLeaseId()
@@ -308,15 +316,9 @@ public final class AccountGameplayAdmissionLeaseClient
               expected,
               withPublishedInitializedStub(
                   "Account lease service is not initialized",
-                  stub -> {
-                    var bounded =
-                        operationDeadline == null
-                            ? stub.withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                            : stub.withDeadline(
-                                operationDeadline.minimum(
-                                    Deadline.after(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)));
-                    return bounded.confirmOriginalNewGameplayAdmission(wireRequest);
-                  }));
+                  stub ->
+                      stub.withDeadline(boundedAdmissionDeadline(operationDeadline))
+                          .confirmOriginalNewGameplayAdmission(wireRequest)));
     } catch (StatusRuntimeException failure) {
       throw statusFailure("Account original-new admission confirmation failed", failure);
     } catch (IllegalArgumentException malformed) {
@@ -334,6 +336,11 @@ public final class AccountGameplayAdmissionLeaseClient
       throw new IllegalArgumentException(
           "Account lease scope does not correlate to this Game Session workload");
     }
+  }
+
+  private static Deadline boundedAdmissionDeadline(Deadline operationDeadline) {
+    Deadline rpcDeadline = Deadline.after(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
+    return operationDeadline == null ? rpcDeadline : operationDeadline.minimum(rpcDeadline);
   }
 
   private static IllegalStateException statusFailure(

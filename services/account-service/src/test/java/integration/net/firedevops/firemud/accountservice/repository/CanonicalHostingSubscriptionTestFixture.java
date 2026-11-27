@@ -51,6 +51,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEv
 import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRecord;
 import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionPaidSource;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePayment;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePaymentRepository;
 import net.firedevops.firemud.accountservice.repository.AccountHostingPlanCatalog;
@@ -117,22 +118,36 @@ public final class CanonicalHostingSubscriptionTestFixture {
   private CanonicalHostingSubscriptionTestFixture() {}
 
   public static Fixture create(DataSource source) {
-    return createInternal(source, null, "prod");
+    return createInternal(source, null, "prod", null);
   }
 
   /** Uses the caller's explicit workload namespace without changing controlled source custody. */
   public static Fixture create(DataSource source, String namespace) {
-    return createInternal(source, null, namespace);
+    return createInternal(source, null, namespace, null);
   }
 
   /** Reuses the exact persisted Account of a genuine actor/authentication composition. */
   public static Fixture create(DataSource source, Account account) {
     return createInternal(
-        source, Objects.requireNonNull(account, "persisted Account required"), "prod");
+        source, Objects.requireNonNull(account, "persisted Account required"), "prod", null);
+  }
+
+  /** Seeds paid receipt state for the exact tenant carried by a separate test composition. */
+  public static Fixture createForExistingTenant(
+      DataSource source, Account account, FreshTenantCreationEvidence tenantSource) {
+    Objects.requireNonNull(tenantSource, "exact fixture tenant evidence required");
+    return createInternal(
+        source,
+        Objects.requireNonNull(account, "persisted Account required"),
+        tenantSource.targetNamespace(),
+        tenantSource);
   }
 
   private static Fixture createInternal(
-      DataSource source, Account existingAccount, String namespace) {
+      DataSource source,
+      Account existingAccount,
+      String namespace,
+      FreshTenantCreationEvidence existingTenantSource) {
     Objects.requireNonNull(source, "migrated Account datasource is required");
     JdbcTemplate jdbc = new JdbcTemplate(source);
     DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
@@ -158,33 +173,9 @@ public final class CanonicalHostingSubscriptionTestFixture {
     long accountId = accountRow.get("id", Long.class);
     UUID accountUuid = accountRow.get("account_uuid", UUID.class);
 
-    UUID tenantId = UUID.randomUUID();
-    UUID tenantCreateRequest = UUID.randomUUID();
-    UUID tenantCreateOperation = UUID.randomUUID();
-    String tenantKey = "hosting-fixture-game-" + row;
-    String tenantRequestDigest =
-        GameTenantCreationDigest.requestDigest(
-            namespace, tenantCreateRequest, tenantKey, "Controlled hosting", "Storage only");
     var tenantSource =
-        new FreshTenantCreationEvidence(
-            1,
-            namespace,
-            tenantCreateRequest,
-            tenantCreateOperation,
-            tenantRequestDigest,
-            tenantId,
-            row,
-            tenantKey,
-            "NEW_GAME_ROW",
-            GameTenantCreationDigest.evidenceDigest(
-                namespace,
-                tenantCreateRequest,
-                tenantCreateOperation,
-                tenantRequestDigest,
-                tenantId,
-                row,
-                tenantKey,
-                "NEW_GAME_ROW"));
+        existingTenantSource == null ? freshTenantSource(namespace, row) : existingTenantSource;
+    UUID tenantId = tenantSource.canonicalTenantId();
     in(
         transaction,
         () -> {
@@ -314,12 +305,43 @@ public final class CanonicalHostingSubscriptionTestFixture {
             service,
             lifecycleRepository,
             observer,
+            new AccountGameplayAdmissionPaidSource(
+                catalog, clock, Duration.ofSeconds(1), limits, policy, observer, namespace, false),
             source);
     fixture.providerStatus("active");
     return fixture;
   }
 
   /** Separate factory for protected HTTPS owner tests that supply their own genuine actor. */
+  private static FreshTenantCreationEvidence freshTenantSource(String namespace, long row) {
+    UUID tenantId = UUID.randomUUID();
+    UUID tenantCreateRequest = UUID.randomUUID();
+    UUID tenantCreateOperation = UUID.randomUUID();
+    String tenantKey = "hosting-fixture-game-" + row;
+    String tenantRequestDigest =
+        GameTenantCreationDigest.requestDigest(
+            namespace, tenantCreateRequest, tenantKey, "Controlled hosting", "Storage only");
+    return new FreshTenantCreationEvidence(
+        1,
+        namespace,
+        tenantCreateRequest,
+        tenantCreateOperation,
+        tenantRequestDigest,
+        tenantId,
+        row,
+        tenantKey,
+        "NEW_GAME_ROW",
+        GameTenantCreationDigest.evidenceDigest(
+            namespace,
+            tenantCreateRequest,
+            tenantCreateOperation,
+            tenantRequestDigest,
+            tenantId,
+            row,
+            tenantKey,
+            "NEW_GAME_ROW"));
+  }
+
   public static Fixture createAwaitingPayment(
       DataSource source, Account account, Path checkoutDirectory) {
     var fixture = create(source, account);
@@ -999,6 +1021,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
     private final AccountHostingSubscriptionLifecycleService service;
     private final AccountHostingSubscriptionLifecycleRepository lifecycleRepository;
     private final StripeHostingSubscriptionObserver observer;
+    private final AccountGameplayAdmissionPaidSource admissionPaidSource;
     private final DataSource source;
     private FirstInvoiceCheckout checkout;
     private Path checkoutDirectory;
@@ -1020,6 +1043,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
         AccountHostingSubscriptionLifecycleService service,
         AccountHostingSubscriptionLifecycleRepository lifecycleRepository,
         StripeHostingSubscriptionObserver observer,
+        AccountGameplayAdmissionPaidSource admissionPaidSource,
         DataSource source) {
       this.jdbc = jdbc;
       this.dsl = dsl;
@@ -1037,6 +1061,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
       this.service = service;
       this.lifecycleRepository = lifecycleRepository;
       this.observer = observer;
+      this.admissionPaidSource = admissionPaidSource;
       this.source = source;
     }
 
@@ -1115,6 +1140,10 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
     public StripeHostingSubscriptionObserver observer() {
       return observer;
+    }
+
+    public AccountGameplayAdmissionPaidSource admissionPaidSource() {
+      return admissionPaidSource;
     }
 
     /** Uses a JUnit-owned directory for both successful and partially constructed checkouts. */

@@ -10,13 +10,21 @@ import integration.net.firedevops.firemud.accountservice.repository.AccountPostg
 import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.sql.SQLException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
+import javax.sql.DataSource;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -43,16 +51,22 @@ import net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinTe
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import org.flywaydb.core.Flyway;
+import org.jooq.ExecuteListener;
+import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Physical Account transaction and real SDK decoding against a controlled local Stripe transport.
@@ -87,6 +101,141 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
       jdbc.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
     }
     schemas.clear();
+  }
+
+  @Test
+  void canonicalJoinLocksAccountPairInSharedOrderAndDeduplicatesSelfPayer() {
+    Context c = context(false);
+    UUID payer = c.hosting.accountUuid();
+    UUID caller = c.scope.accountId();
+    assertThat(caller).isNotEqualTo(payer);
+    var captured = new ArrayList<UUID>();
+    var configuration =
+        c.hosting
+            .dsl()
+            .configuration()
+            .derive(
+                new DefaultExecuteListenerProvider(
+                    ExecuteListener.onExecuteStart(context -> {
+                      String sql = context.sql();
+                      var query = context.query();
+                      if (sql != null
+                          && query != null
+                          && sql.startsWith(
+                              "SELECT account_uuid FROM accounts WHERE account_uuid = ")
+                          && sql.endsWith(" FOR UPDATE")) {
+                        captured.add((UUID) query.getBindValues().getFirst());
+                      }
+                    })));
+    var repository = new AccountRepository(configuration.dsl());
+
+    c.hosting
+        .transaction()
+        .executeWithoutResult(
+            status -> repository.lockCanonicalJoinAccounts(c.hosting.tenantId(), caller));
+    assertThat(captured)
+        .containsExactlyElementsOf(List.of(caller, payer).stream().sorted().toList());
+
+    captured.clear();
+    c.hosting
+        .transaction()
+        .executeWithoutResult(
+            status -> repository.lockCanonicalJoinAccounts(c.hosting.tenantId(), payer));
+    assertThat(captured).containsExactly(payer);
+  }
+
+  @Test
+  void orderedPaidHostingReadsDoNotHoldLaterCallerWhileWaitingForEarlierPayer() throws Exception {
+    DataSource source = migratedSource();
+    var dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    var transaction = new TransactionTemplate(new DataSourceTransactionManager(source));
+    transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
+    var accounts = new AccountRepository(dsl);
+    var candidates =
+        new ArrayList<>(
+            List.of(
+                CanonicalHostingSubscriptionTestFixture.createBillingAccount(dsl, transaction),
+                CanonicalHostingSubscriptionTestFixture.createBillingAccount(dsl, transaction)));
+    candidates.sort(Comparator.comparing(Account::getAccountUuid));
+    Account earlierPayer = candidates.getFirst();
+    UUID payer = earlierPayer.getAccountUuid();
+    UUID caller = candidates.getLast().getAccountUuid();
+    assertThat(payer.compareTo(caller)).isNegative();
+
+    var hosting =
+        CanonicalHostingSubscriptionTestFixture.create(source, earlierPayer)
+            .withCheckoutDirectory(invoiceCheckoutDirectory);
+    assertThat(hosting.completeFirstInvoice().outcome())
+        .isEqualTo(
+            net.firedevops.firemud.accountservice.repository
+                .AccountHostingSubscriptionLifecycleRepository.Outcome.COMMITTED);
+    hosting.transaction().setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
+    UUID tenant = hosting.tenantId();
+    var lifecycle = hosting.lifecycleRepository();
+    ReadFence fence = transaction.execute(status -> lifecycle.prepareCurrentRead(tenant));
+    var observation = hosting.observer().observe(Objects.requireNonNull(fence).binding());
+
+    // The genuine paid hosting preparation and revalidation each acquire the same Account pair.
+    // A separate holder prevents the earlier payer lock from completing. There is no intentional
+    // cycle: another session must still be able to acquire the later caller immediately.
+    try (var workers = Executors.newSingleThreadExecutor()) {
+      for (boolean revalidating : List.of(false, true)) {
+        var waitingPid = new CompletableFuture<Integer>();
+        var done =
+            transaction.execute(status -> {
+              int holderPid =
+                  Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                      .get(0, Integer.class);
+              accounts.findByAccountUuidForUpdate(payer).orElseThrow();
+              var worker =
+                  workers.submit(() ->
+                      transaction.executeWithoutResult(ignored -> {
+                        dsl.execute("SET LOCAL lock_timeout = '8s'");
+                        waitingPid.complete(
+                            Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                                .get(0, Integer.class));
+                        accounts.lockCanonicalJoinAccounts(tenant, caller);
+                        accounts.findByAccountUuidForUpdate(caller).orElseThrow();
+                        if (revalidating) {
+                          assertThat(lifecycle.readCurrent(fence, observation).gameplayAvailable())
+                              .isTrue();
+                        } else {
+                          assertThat(lifecycle.prepareCurrentRead(tenant).binding())
+                              .isEqualTo(fence.binding());
+                        }
+                      }));
+              int waiter = waitingPid.orTimeout(4, TimeUnit.SECONDS).join();
+              assertThat(waiter).isNotEqualTo(holderPid);
+              long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4);
+              while (!Boolean.TRUE.equals(
+                  Objects.requireNonNull(
+                          dsl.fetchOne("SELECT ? = ANY(pg_blocking_pids(?))", holderPid, waiter))
+                      .get(0, Boolean.class))) {
+                if (System.nanoTime() >= deadline) {
+                  throw new AssertionError(
+                      "Ordered read did not block on the earlier payer Account");
+                }
+                LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(10));
+              }
+              try (var connection = source.getConnection();
+                  var query =
+                      connection.prepareStatement(
+                          "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE"
+                              + " NOWAIT")) {
+                query.setObject(1, caller);
+                try (var selected = query.executeQuery()) {
+                  assertThat(selected.next()).isTrue();
+                  assertThat(selected.getObject(1, UUID.class)).isEqualTo(caller);
+                }
+              } catch (SQLException failure) {
+                throw new AssertionError(
+                    "Earlier payer wait must leave caller Account unlocked", failure);
+              }
+              return worker;
+            });
+        Objects.requireNonNull(done).get(5, TimeUnit.SECONDS);
+      }
+    }
   }
 
   @Test
@@ -186,6 +335,13 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
   }
 
   private Context context(boolean wrongPolicy) {
+    return new Context(
+        CanonicalHostingSubscriptionTestFixture.create(migratedSource()),
+        wrongPolicy,
+        invoiceCheckoutDirectory);
+  }
+
+  private DataSource migratedSource() {
     String schema = PREFIX + UUID.randomUUID().toString().replace("-", "");
     schemas.add(schema);
     var source = POSTGRES.dataSource(schema);
@@ -197,10 +353,7 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
         .locations("classpath:db/migration")
         .load()
         .migrate();
-    return new Context(
-        CanonicalHostingSubscriptionTestFixture.create(source),
-        wrongPolicy,
-        invoiceCheckoutDirectory);
+    return source;
   }
 
   private static final class Context {
@@ -382,8 +535,8 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
       return hosting
           .dsl()
           .fetch(
-              "SELECT audit_event_id, row_to_json(audit)::text AS row_image, xmin::text AS row_xmin "
-                  + "FROM account_audit_outbox audit ORDER BY audit_event_id")
+              "SELECT audit_event_id, row_to_json(audit)::text AS row_image, xmin::text AS row_xmin"
+                  + " FROM account_audit_outbox audit ORDER BY audit_event_id")
           .intoMaps();
     }
 
@@ -393,8 +546,9 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
               hosting
                   .dsl()
                   .fetch(
-                      "SELECT audit_event_id, row_to_json(audit)::text AS row_image, xmin::text AS row_xmin "
-                          + "FROM account_audit_outbox audit WHERE audit_event_id <> ? ORDER BY audit_event_id",
+                      "SELECT audit_event_id, row_to_json(audit)::text AS row_image, xmin::text AS"
+                          + " row_xmin FROM account_audit_outbox audit WHERE audit_event_id <> ?"
+                          + " ORDER BY audit_event_id",
                       proof.auditEventId())
                   .intoMaps())
           .isEqualTo(paidAuditRows);

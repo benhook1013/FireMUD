@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
@@ -51,7 +52,17 @@ public final class AccountBootstrapRosterFixture {
   }
 
   public static Fixture create() throws Exception {
-    var account = AuthoringFixtures.freshGraphRequest().accountBinding();
+    return create(AuthoringFixtures.freshGraphRequest());
+  }
+
+  /** Uses independent canonical owner evidence for a separately seeded tenant. */
+  public static Fixture create(UUID canonicalTenantId) throws Exception {
+    return create(AuthoringFixtures.freshGraphRequest(canonicalTenantId));
+  }
+
+  private static Fixture create(WorldDraftTerminalReadEvidence.Request draftTerminal)
+      throws Exception {
+    var account = draftTerminal.accountBinding();
     var draft =
         DraftCommitBinding.fromStored(
             new String(account.gameDesignBinding(), StandardCharsets.UTF_8), account.inputDigest());
