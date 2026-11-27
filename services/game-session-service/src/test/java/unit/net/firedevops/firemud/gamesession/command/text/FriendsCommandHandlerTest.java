@@ -400,6 +400,10 @@ class FriendsCommandHandlerTest {
                             FriendPresenceEntry.newBuilder()
                                 .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(true)
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .setCharacterName("Sora")
                                 .setVisibilityPolicy(
                                     net.firedevops.firemud.socialgroups.v1
@@ -535,7 +539,7 @@ class FriendsCommandHandlerTest {
                                 .setVisibilityPolicy(
                                     net.firedevops.firemud.socialgroups.v1
                                         .FriendPresenceVisibilityPolicy
-                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                                 .setLastSeenAtMs(
                                     Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
                                 .build())

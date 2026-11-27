@@ -273,6 +273,7 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
       var beforeMigration = rowImages(dsl);
       var guards = guardImages(dsl);
       configure(data, schema).load().migrate();
+      assertRetainedUsageHasNoFixtureBirth(dsl);
       assertThat(rowImages(dsl)).isEqualTo(beforeMigration);
       assertThat(guardImages(dsl)).isEqualTo(guards);
       var conservation =
@@ -382,6 +383,7 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
 
       configure(data, schema).load().migrate();
 
+      assertRetainedUsageHasNoFixtureBirth(dsl);
       assertThat(rowImages(dsl)).isEqualTo(beforeRows);
       assertThat(guardImages(dsl)).isEqualTo(beforeGuards);
       assertThat(
@@ -482,9 +484,18 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
                 + "FROM account_tenant_capacity_recovery_evidence r UNION ALL "
                 + "SELECT 'reservation', (to_jsonb(r) || jsonb_build_object('xmin', r.xmin::text))::text "
                 + "FROM account_tenant_capacity_reservations r UNION ALL "
-                + "SELECT 'usage', (to_jsonb(u) || jsonb_build_object('xmin', u.xmin::text))::text "
+                + "SELECT 'usage', ((to_jsonb(u) - 'fixture_birth_tenant_uuid') "
+                + "|| jsonb_build_object('xmin', u.xmin::text))::text "
                 + "FROM account_tenant_capacity_usage u) retained ORDER BY family, image")
         .getValues("image", String.class);
+  }
+
+  private static void assertRetainedUsageHasNoFixtureBirth(DSLContext dsl) {
+    assertThat(
+            dsl.fetchCount(
+                DSL.table("account_tenant_capacity_usage"),
+                DSL.field("fixture_birth_tenant_uuid").isNotNull()))
+        .isZero();
   }
 
   private static List<String> guardImages(DSLContext dsl) {

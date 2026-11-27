@@ -3,6 +3,7 @@ package integration.net.firedevops.firemud.accountservice.hostedterms;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.Statement;
@@ -40,11 +41,12 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
-import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -52,18 +54,23 @@ import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 /** PostgreSQL proof with explicitly test-only environment publisher and identity authorities. */
-@Testcontainers(disabledWithoutDocker = true)
 class HostedTermsEnvironmentBindingPostgresIntegrationTest {
   private static final String TEST_NAMESPACE = "hosted-terms-binding-isolated-test";
 
-  @Container
-  static PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
+  private static final AccountPostgresIntegrationFixture POSTGRES =
+      new AccountPostgresIntegrationFixture();
+
+  @BeforeAll
+  static void startPostgres() {
+    POSTGRES.start();
+  }
+
+  @AfterAll
+  static void stopPostgres() {
+    POSTGRES.stop();
+  }
 
   @Test
   void realAccountWorkflowBindsCurrentEnvironmentAndFencesIndependentSourceVersions()
@@ -603,14 +610,7 @@ class HostedTermsEnvironmentBindingPostgresIntegrationTest {
 
   private static Database database(String target) throws Exception {
     String schema = "terms_binding_" + UUID.randomUUID().toString().replace("-", "");
-    DriverManagerDataSource source =
-        new DriverManagerDataSource(
-            postgres.getJdbcUrl()
-                + (postgres.getJdbcUrl().contains("?") ? "&" : "?")
-                + "currentSchema="
-                + schema,
-            postgres.getUsername(),
-            postgres.getPassword());
+    DriverManagerDataSource source = POSTGRES.dataSource(schema);
     try (Connection connection = source.getConnection();
         Statement statement = connection.createStatement()) {
       statement.execute("CREATE SCHEMA " + schema);

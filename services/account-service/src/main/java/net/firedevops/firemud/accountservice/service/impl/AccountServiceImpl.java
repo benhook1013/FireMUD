@@ -125,6 +125,7 @@ import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEve
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
+import net.firedevops.firemud.common.prev1.PreV1GateWaivers;
 import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -169,6 +170,7 @@ public class AccountServiceImpl implements AccountService {
   private volatile AccountCanonicalPublicRealmScopeOwner canonicalPublicRealmScopeOwner;
   private volatile CanonicalScopeConsumers canonicalScopeConsumers;
   private volatile AccountBootstrapRosterReadClient accountBootstrapRosterReadClient;
+  private volatile RuntimeEntitlementSources runtimeEntitlementSources;
 
   private final AccountRepository accountRepository;
   private final AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
@@ -474,6 +476,24 @@ public class AccountServiceImpl implements AccountService {
     return owner.listWorlds(bootstrapToken);
   }
 
+  /** Canonical tenant entitlement sources for the runtime PLAY read, keyed by tenant UUID. */
+  @Autowired(required = false)
+  public void setRuntimeEntitlementSources(
+      AccountTenantAuthorityEventRepository tenantSources,
+      AccountDemoTenantEntitlementRepository demos,
+      PreV1GateWaivers waivers) {
+    runtimeEntitlementSources =
+        new RuntimeEntitlementSources(
+            Objects.requireNonNull(tenantSources),
+            Objects.requireNonNull(demos),
+            Objects.requireNonNull(waivers));
+  }
+
+  private record RuntimeEntitlementSources(
+      AccountTenantAuthorityEventRepository tenantSources,
+      AccountDemoTenantEntitlementRepository demos,
+      PreV1GateWaivers waivers) {}
+
   /**
    * Explicit held composition; the owner retains the signed V2 selector before publication. Its
    * direct-text entry point authenticates the existing Game Session caller separately.
@@ -497,14 +517,18 @@ public class AccountServiceImpl implements AccountService {
     if (!net.firedevops.firemud.common.grpc.GrpcPeerIdentity.isValidNamespace(namespace)) {
       throw new IllegalArgumentException("Canonical Account workload namespace required");
     }
+    if ((hosting == null) != (observer == null)) {
+      throw new IllegalArgumentException(
+          "Paid hosting sources are composed together or not at all");
+    }
     canonicalScopeConsumers =
         new CanonicalScopeConsumers(
             Objects.requireNonNull(reader),
             Objects.requireNonNull(targets),
             Objects.requireNonNull(tenantSources),
             Objects.requireNonNull(demos),
-            Objects.requireNonNull(hosting),
-            Objects.requireNonNull(observer),
+            hosting,
+            observer,
             Objects.requireNonNull(firstJoin),
             namespace,
             Objects.requireNonNull(clock));
@@ -618,7 +642,7 @@ public class AccountServiceImpl implements AccountService {
                         operation,
                         source,
                         null,
-                        consumers.hosting().prepareCurrentRead(scope.tenantId()));
+                        consumers.paidHosting().prepareCurrentRead(scope.tenantId()));
                 case NON_PAID_DEMO ->
                     new CanonicalJoinPreparation(
                         operation, source, consumers.demos().readCurrent(scope.tenantId()), null);
@@ -662,7 +686,7 @@ public class AccountServiceImpl implements AccountService {
               final long entitlementVersion;
               if (prepared.fence() != null) {
                 AccountHostingSubscriptionCurrentReceipt receipt =
-                    consumers.hosting().readCurrent(prepared.fence(), observation);
+                    consumers.paidHosting().readCurrent(prepared.fence(), observation);
                 gameplayAvailable = receipt.gameplayAvailable();
                 allowPublicJoin = receipt.allowPublicJoin();
                 entitlementVersion = receipt.entitlementVersion();
@@ -697,7 +721,7 @@ public class AccountServiceImpl implements AccountService {
                           scope,
                           requestId,
                           callerBinding,
-                          prepared.fence() == null ? null : consumers.hosting(),
+                          prepared.fence() == null ? null : consumers.paidHosting(),
                           prepared.fence(),
                           observation);
               requireCanonicalScopeFresh(consumers, scope);
@@ -751,7 +775,26 @@ public class AccountServiceImpl implements AccountService {
       StripeHostingSubscriptionObserver observer,
       AccountCanonicalFirstJoinTerminalCoordinator firstJoin,
       String namespace,
-      Clock clock) {}
+      Clock clock) {
+    /**
+     * Paid hosting is composed only with checkout receiving; without it paid tenants fail closed.
+     */
+    AccountHostingSubscriptionLifecycleRepository paidHosting() {
+      if (hosting == null) {
+        throw new AuthenticationException(
+            "ENTITLEMENT_UNAVAILABLE", "Paid hosting entitlement source is not composed");
+      }
+      return hosting;
+    }
+
+    StripeHostingSubscriptionObserver paidObserver() {
+      if (observer == null) {
+        throw new AuthenticationException(
+            "ENTITLEMENT_UNAVAILABLE", "Paid hosting provider observer is not composed");
+      }
+      return observer;
+    }
+  }
 
   private record CanonicalJoinPreparation(
       CanonicalJoinOperationEvidence operation,
@@ -788,7 +831,7 @@ public class AccountServiceImpl implements AccountService {
                         ? consumers.demos().readCurrent(scope.tenantId())
                         : null,
                     source.kind() == AccountTenantAuthorityEventRepository.SourceKind.PAID_HOSTING
-                        ? consumers.hosting().prepareCurrentRead(scope.tenantId())
+                        ? consumers.paidHosting().prepareCurrentRead(scope.tenantId())
                         : null,
                     consumers.clock().instant());
               } catch (RuntimeException failure) {
@@ -843,7 +886,7 @@ public class AccountServiceImpl implements AccountService {
               throw new IllegalStateException("Bootstrap entitlement source changed");
             }
             if (prepared.fence() != null) {
-              var receipt = consumers.hosting().readCurrent(prepared.fence(), observation);
+              var receipt = consumers.paidHosting().readCurrent(prepared.fence(), observation);
               gameplayAvailable = receipt.gameplayAvailable();
               allowPublicJoin = receipt.allowPublicJoin();
             } else {
@@ -892,7 +935,7 @@ public class AccountServiceImpl implements AccountService {
       CanonicalScopeConsumers consumers, BootstrapCharacterAuthority prepared) {
     if (prepared.fence() == null) return null;
     try {
-      return consumers.observer().observe(prepared.fence().binding());
+      return consumers.paidObserver().observe(prepared.fence().binding());
     } catch (RuntimeException failure) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE", "Bootstrap provider source is unavailable", failure);
@@ -965,7 +1008,10 @@ public class AccountServiceImpl implements AccountService {
           "REALM_UNAVAILABLE", "Bootstrap actor discovery does not yet support this realm policy");
     }
     PublishedRealmEvidence published = readCanonicalScopePublishedTarget(consumers, scope);
-    if (!"SHARED".equals(published.currentTarget().playableStateScope())
+    // Entity bootstrap discovery binds the Human published policy set; the run-owned fixture has
+    // no publication, so its bootstrap discovery stays unsupported rather than partially bound.
+    if (published.isRunOwnedFixture()
+        || !"SHARED".equals(published.currentTarget().playableStateScope())
         || !"PRESEEDED_ONLY".equals(published.currentTarget().characterCreationPolicy())) {
       throw new AuthenticationException(
           "REALM_UNAVAILABLE", "Bootstrap actor discovery does not yet support this realm policy");
@@ -1074,7 +1120,7 @@ public class AccountServiceImpl implements AccountService {
         observation =
             prepared.fence() == null
                 ? null
-                : consumers.observer().observe(prepared.fence().binding());
+                : consumers.paidObserver().observe(prepared.fence().binding());
         if (!target.equals(readCanonicalScopeTarget(consumers, scope))) {
           throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
         }
@@ -1113,6 +1159,7 @@ public class AccountServiceImpl implements AccountService {
             recordFailure.getClass().getSimpleName());
       }
       if (failure instanceof AuthenticationException authentication) throw authentication;
+      logger.warn("Canonical JOIN authority failed: {}", failure.getClass().getName(), failure);
       throw new AuthenticationException(
           code, "Canonical JOIN authority is unavailable; retry the same request", failure);
     }
@@ -1239,12 +1286,47 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private RuntimeEntitlementsDto readTenantEntitlements(long tenantId, boolean lockSubscription) {
-    // Retained numeric rows cannot supply canonical identity, provider provenance, current-row
-    // selection, or a committed billing checkpoint. Deny before any historical evidence read.
-    throw new AuthenticationException(
-        "ENTITLEMENT_UNAVAILABLE",
-        "Canonical tenant entitlement authority is unavailable; retry later");
+  private RuntimeEntitlementsDto readTenantEntitlements(UUID tenantId) {
+    RuntimeEntitlementSources sources = runtimeEntitlementSources;
+    if (sources == null) {
+      throw new AuthenticationException(
+          "ENTITLEMENT_UNAVAILABLE",
+          "Canonical tenant entitlement authority is unavailable; retry later");
+    }
+    try {
+      return Objects.requireNonNull(
+          joinTransactionTemplate.execute(status -> readTenantEntitlements(sources, tenantId)));
+    } catch (AuthenticationException denied) {
+      throw denied;
+    } catch (RuntimeException failure) {
+      throw new AuthenticationException(
+          "ENTITLEMENT_UNAVAILABLE",
+          "Canonical tenant entitlement authority is unavailable; retry later",
+          failure);
+    }
+  }
+
+  private RuntimeEntitlementsDto readTenantEntitlements(
+      RuntimeEntitlementSources sources, UUID tenantId) {
+    if (sources.waivers().enabled() && !sources.tenantSources().hasCurrentSource(tenantId)) {
+      // Pre-v1 waiver (ADR 0185): script-seeded preview tenants have no Account tenant-creation
+      // source yet, so they are entitled for gameplay without one.
+      return new RuntimeEntitlementsDto(tenantId, true, true, 1L, 1L, Instant.now().toString());
+    }
+    SourceSelection source = sources.tenantSources().readCurrentSourceSelection(tenantId);
+    if (source.kind() != AccountTenantAuthorityEventRepository.SourceKind.NON_PAID_DEMO) {
+      // Paid hosting needs the provider observation outside SQL; it is not composed here yet.
+      throw new AuthenticationException(
+          "ENTITLEMENT_UNAVAILABLE", "Paid tenant entitlement read is unavailable; retry later");
+    }
+    var demo = sources.demos().readCurrent(tenantId);
+    return new RuntimeEntitlementsDto(
+        tenantId,
+        demo.gameplayAvailable(),
+        demo.allowPublicJoin(),
+        demo.entitlementVersion(),
+        demo.tenantBillingSequence(),
+        Instant.now().toString());
   }
 
   @Override
@@ -1317,10 +1399,9 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional(readOnly = true)
   @Timed(value = "account.runtime_entitlements")
-  public RuntimeEntitlementsDto getTenantEntitlementsForRuntime(Long tenantId, String requestId) {
-    return readTenantEntitlements(tenantId, false);
+  public RuntimeEntitlementsDto getTenantEntitlementsForRuntime(UUID tenantId, String requestId) {
+    return readTenantEntitlements(Objects.requireNonNull(tenantId, "tenantId"));
   }
 
   private BootstrapContext requireBootstrapContext(String bootstrapToken) {

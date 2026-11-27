@@ -586,9 +586,39 @@ public class AccountAuthoritySourceEvidenceRepository {
     IssuanceFence fence = authority.issuanceFence();
     if (scope.kind() == ScopeKind.ACCOUNT) {
       if (fence == null
-          || positive(source, "current_issuance_fence") != fence.value()
-          || positive(source, "current_issuance_fence_source_version") != fence.sourceVersion()) {
+          || positive(source, "current_issuance_fence") > fence.value()
+          || positive(source, "current_issuance_fence_source_version") > fence.sourceVersion()) {
         throw new SourceEvidenceUnavailableException();
+      }
+      // Security history keeps its own immutable event fence. Membership invalidation can
+      // advance the composite fence only with independently validated causal provenance.
+      Record provenanceTable =
+          dsl.fetchOne("SELECT to_regclass('account_issuance_fence_provenance')");
+      if (provenanceTable == null || provenanceTable.get(0) == null) {
+        // Historical migration fixtures retain the exact pre-cutover V40 equality contract.
+        if (positive(source, "current_issuance_fence") != fence.value()
+            || positive(source, "current_issuance_fence_source_version") != fence.sourceVersion()) {
+          throw new SourceEvidenceUnavailableException();
+        }
+      } else {
+        // A closed security append checks its immutable before-image after its exact CAS.
+        // That private path verifies the pending event immediately below; it must not present
+        // the predecessor as current authority or relax the ordinary current-snapshot helper.
+        String query =
+            allowOnePendingAppend
+                ? "SELECT EXISTS (SELECT 1 FROM account_issuance_fence_provenance p "
+                    + "JOIN account_authority_issuance_fences f USING (account_uuid) "
+                    + "WHERE p.account_uuid = ? AND p.issuance_fence = ? AND p.source_version = ? "
+                    + "AND f.issuance_fence = p.issuance_fence + 1 AND f.source_version = p.source_version + 1 "
+                    + "AND (p.event_sequence = 0 OR EXISTS (SELECT 1 FROM account_authority_outbox_events e "
+                    + "WHERE (e.outbox_stream_key,e.outbox_sequence,e.event_id,e.event_digest) "
+                    + "= (p.source_stream_key,p.event_sequence,p.event_id,p.event_digest))))"
+                : "SELECT account_has_current_fence_provenance(?, ?, ?)";
+        Record provenance =
+            dsl.fetchOne(query, scope.accountId(), fence.value(), fence.sourceVersion());
+        if (provenance == null || !Boolean.TRUE.equals(provenance.get(0, Boolean.class))) {
+          throw new SourceEvidenceUnavailableException();
+        }
       }
     } else if (fence != null) {
       throw new SourceEvidenceUnavailableException();
@@ -898,6 +928,56 @@ public class AccountAuthoritySourceEvidenceRepository {
       AccountSecurityCutoff cutoff,
       ScopeState advanced,
       IssuanceFence advancedFence) {
+    // The source head owns its last security-event fence, not necessarily the live composite
+    // before-fence. Lock and compare that exact independently sequenced source position.
+    Record sourcePosition =
+        dsl.fetchOne(
+            "SELECT current_issuance_fence, current_issuance_fence_source_version FROM "
+                + SOURCE_TABLE
+                + " WHERE outbox_stream_key = ? AND current_generation = ? AND current_source_version = ? "
+                + "AND last_outbox_sequence = ? AND last_event_id IS NOT DISTINCT FROM ? "
+                + "AND last_event_digest IS NOT DISTINCT FROM ? FOR UPDATE",
+            before.checkpoint().outboxStreamKey(),
+            before.generation(),
+            before.sourceVersion(),
+            before.checkpoint().sequence(),
+            before.checkpoint().sourceEventId().orElse(null),
+            before.checkpoint().sourceEventDigest().orElse(null));
+    if (sourcePosition == null) throw new SourceEvidenceUnavailableException();
+    Long sourceFence = sourcePosition.get("current_issuance_fence", Long.class);
+    Long sourceFenceVersion =
+        sourcePosition.get("current_issuance_fence_source_version", Long.class);
+    if (before.issuanceFence() == null) {
+      if (sourceFence != null || sourceFenceVersion != null)
+        throw new SourceEvidenceUnavailableException();
+    } else {
+      if (sourceFence == null
+          || sourceFenceVersion == null
+          || sourceFence <= 0
+          || sourceFenceVersion <= 0
+          || sourceFence > before.issuanceFence().value()
+          || sourceFenceVersion > before.issuanceFence().sourceVersion()) {
+        throw new SourceEvidenceUnavailableException();
+      }
+      Record table = dsl.fetchOne("SELECT to_regclass('account_issuance_fence_provenance')");
+      if (table != null && table.get(0) != null) {
+        Record matches =
+            dsl.fetchOne(
+                "SELECT account_fence_security_position_matches(?, ?, ?, ?, ?, ?, ?)",
+                before.scope().accountId(),
+                sourceFence,
+                sourceFenceVersion,
+                before.checkpoint().outboxStreamKey(),
+                before.checkpoint().sequence(),
+                before.checkpoint().sourceEventId().orElse(null),
+                before.checkpoint().sourceEventDigest().orElse(null));
+        if (matches == null || !Boolean.TRUE.equals(matches.get(0, Boolean.class)))
+          throw new SourceEvidenceUnavailableException();
+      } else if (sourceFence != before.issuanceFence().value()
+          || sourceFenceVersion != before.issuanceFence().sourceVersion()) {
+        throw new SourceEvidenceUnavailableException();
+      }
+    }
     Record changed =
         dsl.fetchOne(
             "UPDATE "
@@ -925,8 +1005,8 @@ public class AccountAuthoritySourceEvidenceRepository {
             before.generation(),
             before.sourceVersion(),
             before.checkpoint().sequence(),
-            before.issuanceFence() == null ? null : before.issuanceFence().value(),
-            before.issuanceFence() == null ? null : before.issuanceFence().sourceVersion());
+            sourceFence,
+            sourceFenceVersion);
     if (changed == null || positive(changed, "current_generation") != advanced.generation()) {
       throw new SourceEvidenceUnavailableException();
     }

@@ -818,8 +818,8 @@ public final class GameSessionAccountDelegationRegistryRecord {
           || issuanceFenceSourceVersion <= 0L
           || issuerGeneration != issuerSourceVersion
           || accountGeneration != accountSourceVersion
-          || accountGeneration != issuanceFence
-          || accountGeneration != issuanceFenceSourceVersion) {
+          || accountGeneration > issuanceFence
+          || issuanceFence != issuanceFenceSourceVersion) {
         throw invalid("Durable Account authority snapshot is malformed");
       }
       String expectedStream = "account:auth-authority:v1:account/" + accountId;

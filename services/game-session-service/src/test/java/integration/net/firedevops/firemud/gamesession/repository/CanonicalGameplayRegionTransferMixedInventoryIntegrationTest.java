@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecuti
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -306,6 +307,11 @@ class CanonicalGameplayRegionTransferMixedInventoryIntegrationTest
       }
       assertThat(proof.executionState(proof.execution)).isEqualTo("COMMITTED");
       String originalReceipts = proof.originalImage();
+      if (cohortSize > CanonicalGameplayRegionOwnerTransferRepository.PAGE_SIZE) {
+        // Give each one-shot dispatch its own budget before measuring paged verification.
+        // The small-cohort case still dispatches through advance within one deadline.
+        for (var item : captured) proof.fence(item);
+      }
 
       var observationLatency = Duration.ofMillis(5);
       var attestor =
@@ -342,8 +348,8 @@ class CanonicalGameplayRegionTransferMixedInventoryIntegrationTest
       int pages =
           (cohortSize + CanonicalGameplayRegionOwnerTransferRepository.PAGE_SIZE - 1)
               / CanonicalGameplayRegionOwnerTransferRepository.PAGE_SIZE;
-      // Bounded calls can stop while fencing or verifying a page. Retry the same transfer
-      // and prove the predecessor and exact terminal receipts stay intact until it qualifies.
+      // Bounded verification calls may stop between pages. Keep the predecessor and original
+      // receipts intact until the retained fences qualify.
       UUID verified = null;
       for (int attempt = 0; attempt < 4 * pages && verified == null; attempt++) {
         try {
@@ -352,6 +358,16 @@ class CanonicalGameplayRegionTransferMixedInventoryIntegrationTest
                   proof.scope, proof.prior, cohortSize == 3 ? initialDeadline : transferDeadline());
         } catch (CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable expired) {
           if (cohortSize == 3) throw expired;
+        } catch (DataAccessException wrapped) {
+          // jOOQ wraps the owned connection's pre-commit budget check. This is the same bounded
+          // expiry as above, not evidence that a SQL COMMIT was attempted or its outcome lost.
+          if (cohortSize == 3
+              || !"Cannot commit transaction".equals(wrapped.getMessage())
+              || !(wrapped.getCause()
+                  instanceof
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable)) {
+            throw wrapped;
+          }
         } catch (IllegalStateException held) {
           if (cohortSize == 3
               || !List.of(

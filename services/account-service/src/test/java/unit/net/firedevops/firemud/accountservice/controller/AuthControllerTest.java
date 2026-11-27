@@ -241,7 +241,8 @@ class AuthControllerTest {
         .andExpect(jsonPath("$.data.gameInstanceId").value(42))
         .andExpect(jsonPath("$.data.realmSlug").value("production"))
         .andExpect(jsonPath("$.data.connectScopeId").value("scope-1"))
-        .andExpect(jsonPath("$.data.jti").value("jti-1"))
+        .andExpect(jsonPath("$.data.jti").doesNotHaveJsonPath())
+        .andExpect(content().string(not(containsString("jti-1"))))
         .andExpect(jsonPath("$.data.requestId").value("req-7"))
         .andExpect(jsonPath("$.data.issuedAt").value("2026-03-30T00:00:00Z"))
         .andExpect(jsonPath("$.data.expiresAt").value("2026-03-30T00:00:30Z"))
@@ -468,5 +469,14 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(req)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
+  }
+
+  @Test
+  void emailedGetRequestsNeverConsumeTokens() throws Exception {
+    for (String path :
+        List.of("/auth/verify-email", "/auth/complete-password-reset", "/auth/reset-password")) {
+      mockMvc.perform(get(path).param("token", "tok")).andExpect(status().is4xxClientError());
+    }
+    verifyNoInteractions(accountService);
   }
 }

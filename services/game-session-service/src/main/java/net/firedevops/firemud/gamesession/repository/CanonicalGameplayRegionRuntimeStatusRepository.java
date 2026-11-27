@@ -29,6 +29,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
   private static final String TABLE = "game_session_region_runtime_status";
   private static final String PREPARATION_TABLE = "game_session_region_timeline_preparation";
   private static final String FENCE_SEQUENCE = "game_session_region_executor_fence_seq";
+  static final String HUMAN_CAPTURE_SOURCE_KIND = "HUMAN_CAPTURE";
+  static final String RUN_OWNED_FIXTURE_SOURCE_KIND = "RUN_OWNED_FIXTURE";
   private final DSLContext dsl;
 
   CanonicalGameplayRegionRuntimeStatusRepository(DSLContext dsl) {
@@ -127,8 +129,9 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                         + " stable_incarnation_source_bytes, stable_incarnation_qualification_bytes,"
                         + " stable_incarnation_digest,"
                         + " timeline_preimage_state, timeline_absence_proof_digest, region_epoch,"
-                        + " last_committed_tick_id, phase, created_at, updated_at, entity_created_origin)"
-                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ABSENT', ?, 1, -1, 'PREPARED', ?, ?, CAST(? AS jsonb))",
+                        + " last_committed_tick_id, phase, created_at, updated_at, entity_created_origin,"
+                        + " world_source_kind)"
+                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ABSENT', ?, 1, -1, 'PREPARED', ?, ?, CAST(? AS jsonb), ?)",
                     operationId,
                     evidence.transition().transitionId(),
                     evidence.candidate().identity().accountId(),
@@ -146,9 +149,9 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                     inputs.tenantRegionTag(),
                     source.lifecycleEpoch(),
                     source.lifecycleRowVersion(),
-                    source.captureId(),
+                    captureParam(source.captureId()),
                     source.lifecycleRequest().canonicalBytes(),
-                    source.graphSha256(),
+                    graphParam(source.graphSha256()),
                     source.preparationInputDigest(),
                     CanonicalGameplayActorOrigins.assignmentId(inputs.actorOrigin()),
                     CanonicalGameplayActorOrigins.assignmentDigest(inputs.actorOrigin()),
@@ -161,7 +164,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                     inputs.absenceProofDigest(),
                     java.sql.Timestamp.from(now),
                     java.sql.Timestamp.from(now),
-                    CanonicalGameplayActorOrigins.creationJson(inputs.actorOrigin()));
+                    CanonicalGameplayActorOrigins.creationJson(inputs.actorOrigin()),
+                    source.worldSourceKind());
                 Record inserted =
                     transaction.fetchOne(
                         "SELECT * FROM " + PREPARATION_TABLE + " WHERE transition_id = ?",
@@ -504,8 +508,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         || !source.lifecycleRequest().equals(assignment.request())
         || source.lifecycleEpoch() != assignment.lifecycleEpoch()
         || source.lifecycleRowVersion() != assignment.lifecycleRowVersion()
-        || !source.captureId().equals(assignment.captureId())
-        || !source.graphSha256().equals(assignment.graphSha256())
+        || !Objects.equals(source.captureId(), assignment.captureId())
+        || !Objects.equals(source.graphSha256(), assignment.graphSha256())
         || !source.preparationInputDigest().equals(assignment.preparationInputDigest())
         || !identity.tenantId().equals(assignment.request().canonicalTenantId())
         || !identity.gameInstanceId().equals(assignment.request().canonicalGameInstanceId())
@@ -825,8 +829,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                           + " lifecycle_request_bytes, graph_sha256, preparation_input_digest,"
                           + " region_epoch, executor_fence,"
                           + " lease_token_correlation, owner_service, owner_instance_id, paused,"
-                          + " last_committed_tick_id, updated_at)"
-                          + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, false, -1, ?)"
+                          + " last_committed_tick_id, updated_at, world_source_kind)"
+                          + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, false, -1, ?, ?)"
                           + " ON CONFLICT (tenant_id, game_instance_id, region_id) DO NOTHING"
                           + " RETURNING *",
                       source.tenantId(),
@@ -836,15 +840,16 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                       expectedTag,
                       source.lifecycleEpoch(),
                       source.lifecycleRowVersion(),
-                      source.captureId(),
+                      captureParam(source.captureId()),
                       source.lifecycleRequest().canonicalBytes(),
-                      source.graphSha256(),
+                      graphParam(source.graphSha256()),
                       source.preparationInputDigest(),
                       fence,
                       leaseTokenCorrelation,
                       ownerService,
                       ownerInstanceId,
-                      localDateTime(now));
+                      localDateTime(now),
+                      source.worldSourceKind());
             } else {
               installed =
                   transaction.fetchOne(
@@ -855,8 +860,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                           + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?"
                           + " AND tenant_region_tag = ? AND canonical_region_id = ?"
                           + " AND lifecycle_epoch = ? AND lifecycle_row_version = ?"
-                          + " AND capture_id = ? AND lifecycle_request_bytes = ?"
-                          + " AND graph_sha256 = ?"
+                          + " AND capture_id IS NOT DISTINCT FROM ? AND lifecycle_request_bytes = ?"
+                          + " AND graph_sha256 IS NOT DISTINCT FROM ?"
                           + " AND preparation_input_digest = ? AND region_epoch = ?"
                           + " AND executor_fence = ? AND lease_token_correlation = ?"
                           + " AND owner_service = ? AND owner_instance_id = ? AND paused = ?"
@@ -875,9 +880,9 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                       current.canonicalRegionId(),
                       current.lifecycleEpoch(),
                       current.lifecycleRowVersion(),
-                      current.captureId(),
+                      captureParam(current.captureId()),
                       current.lifecycleRequest().canonicalBytes(),
-                      current.graphSha256(),
+                      graphParam(current.graphSha256()),
                       current.preparationInputDigest(),
                       current.regionEpoch(),
                       current.executorFence().longValueExact(),
@@ -939,8 +944,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         && status.lifecycleRowVersion() == source.lifecycleRowVersion()
         && sameLifecycleRequestExceptReadRequestId(
             status.lifecycleRequest(), source.lifecycleRequest())
-        && status.captureId().equals(source.captureId())
-        && status.graphSha256().equals(source.graphSha256())
+        && Objects.equals(status.captureId(), source.captureId())
+        && Objects.equals(status.graphSha256(), source.graphSha256())
         && status.preparationInputDigest().equals(source.preparationInputDigest());
   }
 
@@ -953,8 +958,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         && expected.lifecycleRowVersion() == actual.lifecycleRowVersion()
         && sameLifecycleRequestExceptReadRequestId(
             expected.lifecycleRequest(), actual.lifecycleRequest())
-        && expected.captureId().equals(actual.captureId())
-        && expected.graphSha256().equals(actual.graphSha256())
+        && Objects.equals(expected.captureId(), actual.captureId())
+        && Objects.equals(expected.graphSha256(), actual.graphSha256())
         && expected.preparationInputDigest().equals(actual.preparationInputDigest());
   }
 
@@ -1024,7 +1029,21 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         "Canonical Game Session region ownership is unavailable", cause);
   }
 
-  /** Fresh authenticated World assignment supplied by the closed resolver, never caller fields. */
+  /** Typed so an absent run-owned fixture capture binds as a SQL NULL uuid. */
+  static org.jooq.Param<UUID> captureParam(UUID captureId) {
+    return DSL.val(captureId, org.jooq.impl.SQLDataType.UUID);
+  }
+
+  /** Typed so an absent run-owned fixture graph digest binds as a SQL NULL varchar. */
+  static org.jooq.Param<String> graphParam(String graphSha256) {
+    return DSL.val(graphSha256, org.jooq.impl.SQLDataType.VARCHAR);
+  }
+
+  /**
+   * Fresh authenticated World assignment supplied by the closed resolver, never caller fields. A
+   * run-owned fixture source (pre-v1 gate waiver) has neither a capture id nor a graph digest; its
+   * lifecycle request carries the fixture provenance digest instead.
+   */
   record Source(
       UUID tenantId,
       UUID gameInstanceId,
@@ -1041,18 +1060,27 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       Objects.requireNonNull(gameInstanceId, "gameInstanceId");
       Objects.requireNonNull(canonicalRegionId, "canonicalRegionId");
       Objects.requireNonNull(regionId, "regionId");
-      Objects.requireNonNull(captureId, "captureId");
       Objects.requireNonNull(lifecycleRequest, "lifecycleRequest");
       requireNonNil(canonicalRegionId);
-      requireNonNil(captureId);
+      if ((captureId == null) != (graphSha256 == null)) throw unavailable();
+      if (captureId != null) requireNonNil(captureId);
       CanonicalGameplayRegionRedisKeys.tenantRegionTag(tenantId, gameInstanceId, regionId);
       if (!tenantId.equals(lifecycleRequest.canonicalTenantId())
           || !gameInstanceId.equals(lifecycleRequest.canonicalGameInstanceId())) {
         throw unavailable();
       }
-      requireDigest(graphSha256);
+      if (graphSha256 != null) requireDigest(graphSha256);
       requirePrefixedDigest(preparationInputDigest);
       if (lifecycleEpoch <= 0L || lifecycleRowVersion < 0L) throw unavailable();
+    }
+
+    boolean runOwnedFixture() {
+      return captureId == null;
+    }
+
+    /** The persisted World source kind column value. */
+    String worldSourceKind() {
+      return runOwnedFixture() ? RUN_OWNED_FIXTURE_SOURCE_KIND : HUMAN_CAPTURE_SOURCE_KIND;
     }
   }
 

@@ -299,6 +299,29 @@ public final class AccountPlayerAdmissionSharedOwnerFixture {
     return new AccountGameplayAuthenticateReceiver(login, verifier, namespace, disposal);
   }
 
+  /** Binds the receiver as the Authenticate/Retire surface of AccountService for test servers. */
+  public io.grpc.BindableService authenticateService(String namespace) {
+    var receiver = authenticateReceiver(namespace);
+    return new net.firedevops.firemud.account.v1.AccountServiceGrpc.AccountServiceImplBase() {
+      @Override
+      public void authenticate(
+          AuthenticateRequest request,
+          io.grpc.stub.StreamObserver<net.firedevops.firemud.account.v1.AuthenticateResponse>
+              responseObserver) {
+        receiver.authenticate(request, responseObserver);
+      }
+
+      @Override
+      public void retireInitialGameplayLogin(
+          net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest request,
+          io.grpc.stub.StreamObserver<
+                  net.firedevops.firemud.account.v1.RetireInitialGameplayLoginResponse>
+              responseObserver) {
+        receiver.retireInitialGameplayLogin(request, responseObserver);
+      }
+    };
+  }
+
   /** Actual receipt-backed public source, not a replacement JWKS document. */
   public AccountJwtJwksTrustedSource trustedJwksSource() {
     return publicSource;
@@ -493,7 +516,7 @@ public final class AccountPlayerAdmissionSharedOwnerFixture {
         List.of(
             "/redis/scripts/account-game-session-delegation-pending-register.json",
             "/redis/scripts/account-game-session-delegation-activate-committed.json",
-            "/redis/scripts/account-game-session-delegation-authority-project-issuer.json",
+            "/redis/scripts/account-game-session-delegation-authority-project-issuer-v2.json",
             "/redis/scripts/account-initial-gameplay-login-dispose.json")) {
       try (var input =
           AccountPlayerAdmissionSharedOwnerFixture.class.getResourceAsStream(resource)) {

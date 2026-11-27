@@ -117,8 +117,8 @@ public record CanonicalGameplayBindingRegionBridgeObligation(
         || prepared != (canonicalRegionId != null)
         || prepared != (worldLifecycleEpoch != null)
         || prepared != (worldLifecycleRowVersion != null)
-        || prepared != (worldCaptureId != null)
-        || prepared != (worldGraphSha256 != null)
+        || (!prepared && (worldCaptureId != null || worldGraphSha256 != null))
+        || (worldCaptureId == null) != (worldGraphSha256 == null)
         || prepared != (worldPreparationInputDigest != null)) {
       throw new IllegalArgumentException("Region bridge operation provenance is incomplete");
     }
@@ -130,10 +130,13 @@ public record CanonicalGameplayBindingRegionBridgeObligation(
       requirePositive(entityProjectionGeneration, "entityProjectionGeneration");
       requirePositive(entityProjectionFence, "entityProjectionFence");
       requireNonNil(canonicalRegionId, "canonicalRegionId");
-      requireNonNil(worldCaptureId, "worldCaptureId");
+      // A run-owned fixture World source (pre-v1 gate waiver) has no capture or graph.
+      if (worldCaptureId != null) {
+        requireNonNil(worldCaptureId, "worldCaptureId");
+        requireDigest(worldGraphSha256, "worldGraphSha256");
+      }
       requireDigest(entityReferenceDigest, "entityReferenceDigest");
       requireDigest(worldSourceDigest, "worldSourceDigest");
-      requireDigest(worldGraphSha256, "worldGraphSha256");
       requirePrefixedDigest(worldPreparationInputDigest, "worldPreparationInputDigest");
       if (actorOrigin instanceof CreationOrigin created
           && !entityWorkloadNamespace.equals(created.original().getTargetNamespace())) {

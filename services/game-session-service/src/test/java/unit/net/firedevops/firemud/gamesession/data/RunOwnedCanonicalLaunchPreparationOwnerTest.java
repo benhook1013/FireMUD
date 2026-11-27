@@ -386,7 +386,7 @@ class RunOwnedCanonicalLaunchPreparationOwnerTest {
         true,
         false,
         "SHARED",
-        "ALLOW_NEW",
+        "PRESEEDED_ONLY",
         "a".repeat(64),
         RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN,
         "b".repeat(64),

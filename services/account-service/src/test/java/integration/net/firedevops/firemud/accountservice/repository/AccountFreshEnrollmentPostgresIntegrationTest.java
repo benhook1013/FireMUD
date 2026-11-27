@@ -70,6 +70,28 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
             context.dsl.fetchCount(DSL.table("account_platform_restriction_current_projections")))
         .isEqualTo(2);
     assertThat(context.dsl.fetchCount(DSL.table("account_authority_outbox_events"))).isEqualTo(2);
+    // Each completed owner boundary retains exact provenance even though the final commit
+    // contains baseline plus both genuine category transitions in one Account transaction.
+    var provenance =
+        context.dsl.fetch(
+            "SELECT issuance_fence, prior_fence, cause_kind, event_sequence, generation, authority_source_version FROM account_issuance_fence_provenance WHERE account_uuid = ? ORDER BY issuance_fence",
+            result.accountUuid());
+    assertThat(provenance.getValues("issuance_fence", Long.class)).containsExactly(1L, 2L, 3L);
+    assertThat(provenance.getValues("prior_fence", Long.class)).containsExactly(0L, 1L, 2L);
+    assertThat(provenance.getValues("cause_kind", String.class))
+        .containsExactly("BASELINE", "ACCOUNT", "ACCOUNT");
+    assertThat(provenance.getValues("event_sequence", Long.class)).containsExactly(0L, 1L, 2L);
+    assertThat(provenance.getValues("generation", Long.class)).containsExactly(1L, 2L, 3L);
+    assertThat(provenance.getValues("authority_source_version", Long.class))
+        .containsExactly(1L, 2L, 3L);
+    assertThat(
+            context
+                .dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM account_issuance_fence_provenance p JOIN account_authority_outbox_events e ON (e.outbox_stream_key,e.outbox_sequence,e.event_id,e.event_digest) = (p.source_stream_key,p.event_sequence,p.event_id,p.event_digest) WHERE p.account_uuid = ? AND p.cause_kind = 'ACCOUNT'",
+                    result.accountUuid())
+                .get(0, Long.class))
+        .isEqualTo(2L);
     context.transaction.executeWithoutResult(
         status -> {
           var roleSource =
@@ -134,6 +156,33 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
                     result.accountUuid())
                 .get("lifecycle_state", String.class))
         .isEqualTo("active");
+  }
+
+  @Test
+  void currentSchemaMissingProvenanceConstraintFailsClosedWithoutEnrolling() throws Exception {
+    Context context = context(null);
+    controlledPolicies(context);
+    assertThatThrownBy(
+            () ->
+                context.transaction.executeWithoutResult(
+                    status -> {
+                      context.dsl.execute(
+                          "DROP TRIGGER account_fence_provenance_consistent ON account_issuance_fence_provenance");
+                      producer(context).enroll(request());
+                    }))
+        .rootCause()
+        .isInstanceOf(org.postgresql.util.PSQLException.class)
+        .hasMessageContaining("account_fence_provenance_consistent")
+        .hasMessageContaining("does not exist");
+    assertNoEnrollmentState(context);
+    // The deliberate test-only DDL is rolled back with the refused owner transaction.
+    assertThat(
+            context
+                .dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM pg_trigger WHERE tgname = 'account_fence_provenance_consistent' AND tgrelid = 'account_issuance_fence_provenance'::regclass")
+                .get(0, Long.class))
+        .isEqualTo(1L);
   }
 
   @Test
@@ -587,7 +636,8 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
           "account_platform_restriction_operations",
           "account_platform_restriction_revisions",
           "account_platform_restriction_current_projections",
-          "account_authority_outbox_events"
+          "account_authority_outbox_events",
+          "account_issuance_fence_provenance"
         }) {
       assertThat(context.dsl.fetchCount(DSL.table(table))).as(table).isZero();
     }
@@ -608,7 +658,8 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
     // so their final refusal must come from the intended enrollment-completeness constraint.
     String constraints =
         "account_authority_source_generation_consistent, "
-            + "account_authority_source_fence_consistent, account_authority_source_record_consistent";
+            + "account_authority_source_fence_consistent, account_authority_source_record_consistent, "
+            + "account_fence_provenance_consistent";
     context.dsl.execute("SET CONSTRAINTS " + constraints + " IMMEDIATE");
     context.dsl.execute("SET CONSTRAINTS " + constraints + " DEFERRED");
   }

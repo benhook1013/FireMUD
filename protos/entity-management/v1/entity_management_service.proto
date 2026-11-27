@@ -10,6 +10,24 @@ import "entity-management/v1/entity_character_create_service.proto";
 option java_package = "net.firedevops.firemud.entitymanagement.v1";
 option java_multiple_files = true;
 
+// Verifies physical room-ground absence within an exact run-owned fixture.
+service RunOwnedFixtureLookEntityService {
+  rpc ReadRunOwnedFixtureGround(ReadRunOwnedFixtureGroundRequest)
+      returns (ReadRunOwnedFixtureGroundResponse);
+}
+
+message ReadRunOwnedFixtureGroundRequest {
+  shared.v1.RoomInstanceRef room = 1;
+  // Complete WorldRunOwnedFixtureLifecycleEvidence from the authenticated World owner.
+  bytes world_fixture_lifecycle = 2;
+}
+
+message ReadRunOwnedFixtureGroundResponse {
+  shared.v1.RoomInstanceRef room = 1;
+  string entity_snapshot_id = 2;
+  bool empty_ground_verified = 3;
+}
+
 service EntityManagementService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse);

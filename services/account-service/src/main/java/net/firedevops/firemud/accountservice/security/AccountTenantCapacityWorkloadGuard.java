@@ -36,20 +36,30 @@ public final class AccountTenantCapacityWorkloadGuard implements ServerIntercept
     return value;
   }
 
+  public <ReqT, RespT> ServerCall.Listener<ReqT> interceptSharedServiceCall(
+      ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
+    if (isCapacityCommit(call)) {
+      return interceptCall(call, headers, next);
+    }
+    return next.startCall(call, headers);
+  }
+
   @Override
   public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
       ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
     var peer =
         GrpcPeerIdentity.fromSslSession(call.getAttributes().get(Grpc.TRANSPORT_ATTR_SSL_SESSION));
     if (peer.isEmpty()) return deny(call, Status.UNAUTHENTICATED);
-    if (ambient()
-        || !allowed.contains(peer.orElseThrow().uri())
-        || !AccountServiceGrpc.getCommitTenantCapacityAdmissionMethod()
-            .getFullMethodName()
-            .equals(call.getMethodDescriptor().getFullMethodName()))
+    if (ambient() || !allowed.contains(peer.orElseThrow().uri()) || !isCapacityCommit(call))
       return deny(call, Status.PERMISSION_DENIED);
     return Contexts.interceptCall(
         Context.current().withValue(caller, peer.orElseThrow().uri()), call, headers, next);
+  }
+
+  private static boolean isCapacityCommit(ServerCall<?, ?> call) {
+    return AccountServiceGrpc.getCommitTenantCapacityAdmissionMethod()
+        .getFullMethodName()
+        .equals(call.getMethodDescriptor().getFullMethodName());
   }
 
   private static boolean ambient() {

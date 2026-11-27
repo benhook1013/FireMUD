@@ -24,6 +24,7 @@ import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
+import net.firedevops.firemud.gamesession.repository.PreV1CanonicalPlayAdmissionOwner;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginCleanupOwner;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginOwner;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyOwner;
@@ -70,7 +71,8 @@ class AuthenticatedDirectTextSessionsTest {
             sessions,
             beans.getBeanProvider(InitialGameplayLoginOwner.class),
             beans.getBeanProvider(DirectTextWorldSelectionService.class),
-            beans.getBeanProvider(DirectTextAuthenticatedLobbyOwner.class));
+            beans.getBeanProvider(DirectTextAuthenticatedLobbyOwner.class),
+            beans.getBeanProvider(PreV1CanonicalPlayAdmissionOwner.class));
 
     var result =
         receiver.receive(
@@ -111,7 +113,8 @@ class AuthenticatedDirectTextSessionsTest {
             sessions,
             beans.getBeanProvider(InitialGameplayLoginOwner.class),
             beans.getBeanProvider(DirectTextWorldSelectionService.class),
-            beans.getBeanProvider(DirectTextAuthenticatedLobbyOwner.class));
+            beans.getBeanProvider(DirectTextAuthenticatedLobbyOwner.class),
+            beans.getBeanProvider(PreV1CanonicalPlayAdmissionOwner.class));
     var command = new TextCommand(type, List.of("demo"), type + " demo");
 
     var missingLogin = receiver.receive(socket, command);

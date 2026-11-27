@@ -213,6 +213,18 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         denied.put("secret", "wrong-secret");
         assertThat(receiving.request("POST", "/api/account/auth/login", null, denied).statusCode())
             .isEqualTo(401);
+        // The fixture owns a unique policy scope with real 60-second fixed windows. Start a
+        // new window before issuance so earlier failures cannot supply threshold credit
+        // and the real 60-second response-recovery window is not consumed by this wait.
+        long windowMillis = Duration.ofSeconds(60).toMillis();
+        long previousWindow = Math.floorDiv(System.currentTimeMillis(), windowMillis);
+        long windowWaitDeadline = System.nanoTime() + Duration.ofSeconds(65).toNanos();
+        while (Math.floorDiv(System.currentTimeMillis(), windowMillis) <= previousWindow) {
+          assertThat(System.nanoTime()).isLessThan(windowWaitDeadline);
+          Thread.sleep(25);
+        }
+        long failureWindow = Math.floorDiv(System.currentTimeMillis(), windowMillis);
+        long failurePhaseDeadline = System.nanoTime() + Duration.ofSeconds(50).toNanos();
         receiving.resetIngressObservations();
         var signedIn =
             receiving.request(
@@ -292,17 +304,6 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         assertThat(wrongOwner.body())
             .doesNotContain(tuple.path("invoiceId").asText(), "clientSecret", PASSWORD);
 
-        // The fixture owns a unique policy scope with real 60-second fixed windows. Start a
-        // new window so earlier source/candidate failures cannot supply threshold credit.
-        long windowMillis = Duration.ofSeconds(60).toMillis();
-        long previousWindow = Math.floorDiv(System.currentTimeMillis(), windowMillis);
-        long windowWaitDeadline = System.nanoTime() + Duration.ofSeconds(65).toNanos();
-        while (Math.floorDiv(System.currentTimeMillis(), windowMillis) <= previousWindow) {
-          assertThat(System.nanoTime()).isLessThan(windowWaitDeadline);
-          Thread.sleep(25);
-        }
-        long failureWindow = Math.floorDiv(System.currentTimeMillis(), windowMillis);
-        long failurePhaseDeadline = System.nanoTime() + Duration.ofSeconds(50).toNanos();
         // Admission precedes failure accounting: three failures populate source >= 3 and
         // candidate >= 2, and only the following new request is throttled.
         for (int failure = 0; failure < 3; failure++) {

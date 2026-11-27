@@ -25,13 +25,17 @@ import tools.jackson.databind.json.JsonMapper;
 public record WorldCanonicalInitialAdmissionHoldState(
     WorldCanonicalInitialAdmissionHold.HoldIdentity holdIdentity,
     HoldStatus holdStatus,
-    WorldCanonicalInstanceLifecycleEvidence lifecycleEvidence) {
+    WorldCanonicalInstanceLifecycleEvidence lifecycleEvidence,
+    WorldRunOwnedFixtureLifecycleEvidence fixtureLifecycleEvidence) {
   public static final String SCHEMA = "world-canonical-initial-admission-hold-state/v1";
   public static final int MAX_CANONICAL_BYTES = 4 * 1024 * 1024;
   private static final int MAX_HOLD_IDENTITY_BYTES = 64 * 1024;
   private static final int MAX_LIFECYCLE_EVIDENCE_BYTES = 2 * 1024 * 1024;
   private static final Set<String> FIELDS =
       Set.of("schema", "holdIdentityBytesBase64", "holdStatus", "lifecycleEvidenceBytesBase64");
+  private static final Set<String> FIXTURE_FIELDS =
+      Set.of(
+          "schema", "holdIdentityBytesBase64", "holdStatus", "fixtureLifecycleEvidenceBytesBase64");
   private static final JsonMapper JSON =
       JsonMapper.builder()
           .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
@@ -42,12 +46,71 @@ public record WorldCanonicalInitialAdmissionHoldState(
   public WorldCanonicalInitialAdmissionHoldState {
     Objects.requireNonNull(holdIdentity, "holdIdentity");
     Objects.requireNonNull(holdStatus, "holdStatus");
-    Objects.requireNonNull(lifecycleEvidence, "lifecycleEvidence");
-    requireTargetBinding(holdIdentity, lifecycleEvidence);
+    if ((lifecycleEvidence == null) == (fixtureLifecycleEvidence == null)) {
+      throw new IllegalArgumentException(
+          "Canonical World hold state requires exactly one Human or fixture lifecycle observation");
+    }
+    requireTargetBinding(
+        holdIdentity, lifecycleRequestOf(lifecycleEvidence, fixtureLifecycleEvidence));
+    byte[] lifecycleBytes =
+        lifecycleEvidence != null
+            ? lifecycleEvidence.canonicalBytes()
+            : fixtureLifecycleEvidence.canonicalBytes();
     if (holdIdentity.canonicalBytes().length > MAX_HOLD_IDENTITY_BYTES
-        || lifecycleEvidence.canonicalBytes().length > MAX_LIFECYCLE_EVIDENCE_BYTES) {
+        || lifecycleBytes.length > MAX_LIFECYCLE_EVIDENCE_BYTES) {
       throw new IllegalArgumentException("Canonical World hold-state evidence exceeds its limit");
     }
+  }
+
+  /** Existing Human hold-state constructor retained at its call sites. */
+  public WorldCanonicalInitialAdmissionHoldState(
+      WorldCanonicalInitialAdmissionHold.HoldIdentity holdIdentity,
+      HoldStatus holdStatus,
+      WorldCanonicalInstanceLifecycleEvidence lifecycleEvidence) {
+    this(
+        holdIdentity,
+        holdStatus,
+        Objects.requireNonNull(lifecycleEvidence, "lifecycleEvidence"),
+        null);
+  }
+
+  /** Run-owned fixture hold state, observed with its fixture lifecycle evidence. */
+  public static WorldCanonicalInitialAdmissionHoldState runOwnedFixture(
+      WorldCanonicalInitialAdmissionHold.HoldIdentity holdIdentity,
+      HoldStatus holdStatus,
+      WorldRunOwnedFixtureLifecycleEvidence fixtureLifecycleEvidence) {
+    return new WorldCanonicalInitialAdmissionHoldState(
+        holdIdentity,
+        holdStatus,
+        null,
+        Objects.requireNonNull(fixtureLifecycleEvidence, "fixtureLifecycleEvidence"));
+  }
+
+  public boolean isRunOwnedFixture() {
+    return fixtureLifecycleEvidence != null;
+  }
+
+  /** The lifecycle read request echoed by whichever owner observation this state carries. */
+  public WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest() {
+    return lifecycleRequestOf(lifecycleEvidence, fixtureLifecycleEvidence);
+  }
+
+  public String lifecycleStatus() {
+    return lifecycleEvidence != null
+        ? lifecycleEvidence.lifecycleStatus()
+        : fixtureLifecycleEvidence.lifecycleStatus();
+  }
+
+  public long lifecycleEpoch() {
+    return lifecycleEvidence != null
+        ? lifecycleEvidence.lifecycleEpoch()
+        : fixtureLifecycleEvidence.lifecycleEpoch();
+  }
+
+  private static WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequestOf(
+      WorldCanonicalInstanceLifecycleEvidence human,
+      WorldRunOwnedFixtureLifecycleEvidence fixture) {
+    return human != null ? human.request() : fixture.request();
   }
 
   /**
@@ -60,9 +123,15 @@ public record WorldCanonicalInitialAdmissionHoldState(
         "holdIdentityBytesBase64",
         Base64.getEncoder().encodeToString(holdIdentity.canonicalBytes()));
     value.put("holdStatus", holdStatus.name());
-    value.put(
-        "lifecycleEvidenceBytesBase64",
-        Base64.getEncoder().encodeToString(lifecycleEvidence.canonicalBytes()));
+    if (lifecycleEvidence != null) {
+      value.put(
+          "lifecycleEvidenceBytesBase64",
+          Base64.getEncoder().encodeToString(lifecycleEvidence.canonicalBytes()));
+    } else {
+      value.put(
+          "fixtureLifecycleEvidenceBytesBase64",
+          Base64.getEncoder().encodeToString(fixtureLifecycleEvidence.canonicalBytes()));
+    }
     try {
       byte[] canonical = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(value));
       if (canonical.length > MAX_CANONICAL_BYTES) {
@@ -81,8 +150,8 @@ public record WorldCanonicalInitialAdmissionHoldState(
    */
   public boolean isPendingAtExpectedActiveEpoch() {
     return holdStatus == HoldStatus.PENDING
-        && "ACTIVE".equals(lifecycleEvidence.lifecycleStatus())
-        && lifecycleEvidence.lifecycleEpoch() == holdIdentity.request().activeLifecycleEpoch();
+        && "ACTIVE".equals(lifecycleStatus())
+        && lifecycleEpoch() == holdIdentity.request().activeLifecycleEpoch();
   }
 
   /** Decodes only complete, canonical, bounded state and both exact nested owner records. */
@@ -93,12 +162,15 @@ public record WorldCanonicalInitialAdmissionHoldState(
     }
     try {
       JsonNode root = JSON.readTree(strictUtf8(stored));
-      requireFields(root);
+      boolean fixture = requireFields(root);
       if (!SCHEMA.equals(text(root, "schema"))) {
         throw new IllegalArgumentException("Unsupported canonical World hold-state schema");
       }
       byte[] identityBytes = decodeBase64(root, "holdIdentityBytesBase64");
-      byte[] lifecycleBytes = decodeBase64(root, "lifecycleEvidenceBytesBase64");
+      byte[] lifecycleBytes =
+          decodeBase64(
+              root,
+              fixture ? "fixtureLifecycleEvidenceBytesBase64" : "lifecycleEvidenceBytesBase64");
       if (identityBytes.length == 0
           || identityBytes.length > MAX_HOLD_IDENTITY_BYTES
           || lifecycleBytes.length == 0
@@ -108,11 +180,17 @@ public record WorldCanonicalInitialAdmissionHoldState(
       }
       WorldCanonicalInitialAdmissionHold.HoldIdentity identity =
           WorldCanonicalInitialAdmissionHold.HoldIdentity.fromStored(identityBytes);
-      WorldCanonicalInstanceLifecycleEvidence lifecycle =
-          WorldCanonicalInstanceLifecycleEvidence.fromStored(lifecycleBytes);
+      HoldStatus status = parseStatus(text(root, "holdStatus"));
       WorldCanonicalInitialAdmissionHoldState state =
-          new WorldCanonicalInitialAdmissionHoldState(
-              identity, parseStatus(text(root, "holdStatus")), lifecycle);
+          fixture
+              ? runOwnedFixture(
+                  identity,
+                  status,
+                  WorldRunOwnedFixtureLifecycleEvidence.fromStored(lifecycleBytes))
+              : new WorldCanonicalInitialAdmissionHoldState(
+                  identity,
+                  status,
+                  WorldCanonicalInstanceLifecycleEvidence.fromStored(lifecycleBytes));
       if (!Arrays.equals(stored, state.canonicalBytes())) {
         throw new IllegalArgumentException("Canonical World hold-state evidence is not canonical");
       }
@@ -124,9 +202,8 @@ public record WorldCanonicalInitialAdmissionHoldState(
 
   private static void requireTargetBinding(
       WorldCanonicalInitialAdmissionHold.HoldIdentity identity,
-      WorldCanonicalInstanceLifecycleEvidence lifecycle) {
+      WorldCanonicalInstanceLifecycleEvidence.Request current) {
     var hold = identity.request();
-    var current = lifecycle.request();
     if (!hold.targetNamespace().equals(current.targetNamespace())
         || !hold.canonicalTenantId().equals(current.canonicalTenantId())
         || !hold.worldSlug().equals(current.worldSlug())
@@ -184,16 +261,17 @@ public record WorldCanonicalInitialAdmissionHoldState(
     return value.textValue();
   }
 
-  private static void requireFields(JsonNode object) {
+  /** Returns true for the fixture field set; any other shape is rejected. */
+  private static boolean requireFields(JsonNode object) {
     if (object == null || !object.isObject()) {
       throw new IllegalArgumentException("Canonical World hold-state evidence must be an object");
     }
     Set<String> actual = new java.util.HashSet<>();
     object.propertyNames().forEach(actual::add);
-    if (!actual.equals(FIELDS)) {
-      throw new IllegalArgumentException(
-          "Canonical World hold-state evidence has missing or unsupported fields");
-    }
+    if (actual.equals(FIELDS)) return false;
+    if (actual.equals(FIXTURE_FIELDS)) return true;
+    throw new IllegalArgumentException(
+        "Canonical World hold-state evidence has missing or unsupported fields");
   }
 
   public enum HoldStatus {

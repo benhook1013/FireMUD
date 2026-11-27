@@ -118,6 +118,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Import({NoGrpcServerTestConfiguration.class, InMemorySessionContextTestConfiguration.class})
 class GameSessionWebSocketHandlerIntegrationTest {
   private static final String ACCOUNT_UUID = "5e1340f8-99c8-49fa-a4fe-5fc9d2075621";
+  private static final String CANONICAL_TENANT_UUID = "0f6c9c1e-2c55-4d2b-9a59-3c1d2f4e8a22";
 
   // Runtime target 2 belongs to the sandbox route in this fixture.
   private static final long CUTOVER_GAME_INSTANCE_ID = 3L;
@@ -137,6 +138,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @MockitoBean private AccountClient accountClient;
+
+  @MockitoBean private net.firedevops.firemud.gamesession.client.GameDesignClient gameDesignClient;
 
   @MockitoBean private EntityManagementClient entityManagementClient;
 
@@ -280,10 +283,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.nullable(String.class));
+    org.mockito.Mockito.doReturn(
+            java.util.Optional.of(java.util.UUID.fromString(CANONICAL_TENANT_UUID)))
+        .when(gameDesignClient)
+        .resolveCanonicalTenantId(org.mockito.ArgumentMatchers.anyLong());
     org.mockito.Mockito.doAnswer(
             invocation ->
                 GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                    .setTenantId("22")
+                    .setTenantId(CANONICAL_TENANT_UUID)
                     .setGameplayAvailable(true)
                     .setAllowPublicJoin(true)
                     .setEntitlementVersion(1L)
@@ -607,20 +614,35 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void unavailableLogoutRetainsSessionReplayStateAndOpenTransport() throws Exception {
+  void websocketLogoutWithoutDurableFenceRetainsSessionAndTransport() throws Exception {
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
-      var originalSession = sessionContextService.findByTenantAndSessionId(22L, 41L);
-      assertThat(originalSession).isPresent();
+      var before = sessionContextService.findByTenantAndSessionId(22L, 41L);
+      assertThat(before).isPresent();
+
       for (int attempt = 0; attempt < 2; attempt++) {
         int responseCount = client.responses().size();
         client.send("LOGOUT");
         client.awaitTranscriptContainingAllAfter(
             responseCount, "ERROR LOGOUT_UNAVAILABLE", "Logout is temporarily unavailable");
-        assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
-            .isEqualTo(originalSession);
+        assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isEqualTo(before);
       }
+
+      client.send("WHO");
+      client.awaitStartsWith("OK WHO");
+    }
+
+    verify(commandService, never()).enqueue("41", "LOGOUT", false);
+  }
+
+  @Test
+  void unavailableWebsocketLogoutDoesNotReplayOrClearRetainedOutput() throws Exception {
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
+      clearInvocations(screenBufferService);
+      client.send("LOGOUT");
+      client.awaitStartsWith("ERROR LOGOUT_UNAVAILABLE");
+
+      verify(screenBufferService, never()).get(22L, 1L, 123L);
       verify(screenBufferService, never()).clear(22L, 1L, 123L);
-      verify(commandService, never()).enqueue("41", "LOGOUT", false);
     }
   }
 

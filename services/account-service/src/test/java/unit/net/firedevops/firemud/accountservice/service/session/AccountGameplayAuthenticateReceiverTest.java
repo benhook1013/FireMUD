@@ -83,8 +83,8 @@ class AccountGameplayAuthenticateReceiverTest {
   }
 
   @ParameterizedTest
-  @ValueSource(ints = {0, 2, 77})
-  void bootstrapUnknownAndUnspecifiedModeDenyBeforeCredentialAccess(int mode) {
+  @ValueSource(ints = {0, 2, 3, 77})
+  void unavailableOrUnsupportedTransportDeniesBeforeCredentialAccess(int mode) {
     var request = mock(AuthenticateRequest.class);
     when(request.hasSourceContext()).thenReturn(true);
     when(request.getSourceContext()).thenReturn(source().setTransportClassValue(mode).build());

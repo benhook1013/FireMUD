@@ -281,6 +281,9 @@ class AuthenticatedCanonicalInitialAdmissionWorldVerifierTest {
     when(lifecycle.request()).thenReturn(lifecycleRequest);
     when(lifecycle.lifecycleStatus()).thenReturn(lifecycleStatus);
     when(lifecycle.lifecycleEpoch()).thenReturn(lifecycleEpoch);
+    when(state.lifecycleRequest()).thenReturn(lifecycleRequest);
+    when(state.lifecycleStatus()).thenReturn(lifecycleStatus);
+    when(state.lifecycleEpoch()).thenReturn(lifecycleEpoch);
     return state;
   }
 

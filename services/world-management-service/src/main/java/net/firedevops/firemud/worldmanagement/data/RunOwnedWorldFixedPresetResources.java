@@ -86,6 +86,13 @@ public final class RunOwnedWorldFixedPresetResources {
   }
 
   /**
+   * Returns the fixed preset's starter ROOM template identity, never a runtime or legacy row id.
+   */
+  public static UUID starterRoomTemplateId() {
+    return STARTER_ROOM.templateId();
+  }
+
+  /**
    * Builds a complete authorization plan before any World resource write is permitted.
    *
    * <p>The inputs must be the typed results of World source intake, World Version association, and

@@ -6,6 +6,8 @@
 # private key stays host-only and is never mounted into an app.
 x-grpc-mtls-environment: &grpc-mtls-environment
   FIREMUD_GRPC_PLAINTEXT: "false"
+  # Pre-v1 gate waivers (ADR 0185); listed in the player access and session tracker.
+  FIREMUD_PRE_V1_GATE_WAIVERS_ENABLED: "true"
   GRPC_SERVER_TLS_ENABLED: "true"
   GRPC_SERVER_CLIENT_AUTH: REQUIRE
   FIREMUD_GRPC_CERT_CHAIN_PATH: /app/certs/client.crt
@@ -17,12 +19,46 @@ services:
     environment:
       <<: *grpc-mtls-environment
       FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+      FIREMUD_SMOKE_RUN_ID: ${FIREMUD_SMOKE_RUN_ID:-}
+      FIREMUD_SMOKE_COMPOSE_PROJECT_NAME: ${FIREMUD_SMOKE_COMPOSE_PROJECT_NAME:-}
+      # Enrolls the fixture's fresh Game Design tenant with a demo entitlement for REALMS/JOIN.
+      FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED: ${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}
+      FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH: /app/run-owned-initial-admission-capability.json
+      FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH: /app/run-owned-authored-world-source/source-receipt.json
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/account-service:/app/certs:ro
+      - type: bind
+        source: ${FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH:-/dev/null}
+        target: /app/run-owned-initial-admission-capability.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH:?run-owned smoke must prepare a claimed authored-world receipt directory}
+        target: /app/run-owned-authored-world-source
+        read_only: true
+        bind:
+          create_host_path: false
 
   gateway:
     environment:
       <<: *grpc-mtls-environment
+      FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+      FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_AUTHENTICATED_UPSTREAM_URL: wss://game-session-service:8444/ws/game/tcp
+      FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CERT_CHAIN_PATH: /app/certs/client.crt
+      FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_PRIVATE_KEY_PATH: /app/certs/client.key
+      FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CA_CERT_PATH: /app/certs/ca.crt
+      # Authenticated Telnet: the TCP Proxy reaches Gateway only on the dedicated mTLS listener.
+      FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_ALLOW_INSECURE_HEADERS_FROM_TRUSTED_CIDRS: "false"
+      FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED: "true"
+      FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS: 0.0.0.0
+      FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT: "8443"
+      FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH: /app/certs/client.crt
+      FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH: /app/certs/client.key
+      FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH: /app/certs/ca.crt
+      FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT: local-dev
+      FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE: production_uri
+      FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN: spiffe://firemud/ns/dev/sa/tcp-proxy-service
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/gateway:/app/certs:ro
 
@@ -36,11 +72,28 @@ services:
     environment:
       <<: *grpc-mtls-environment
       FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+      FIREMUD_SMOKE_RUN_ID: ${FIREMUD_SMOKE_RUN_ID:-}
+      FIREMUD_SMOKE_COMPOSE_PROJECT_NAME: ${FIREMUD_SMOKE_COMPOSE_PROJECT_NAME:-}
+      FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED: ${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}
+      FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH: /app/run-owned-initial-admission-capability.json
+      FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH: /app/run-owned-authored-world-source/source-receipt.json
     depends_on:
       account-service:
         condition: service_healthy
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/entity-management-service:/app/certs:ro
+      - type: bind
+        source: ${FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH:-/dev/null}
+        target: /app/run-owned-initial-admission-capability.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH:?run-owned smoke must prepare a claimed authored-world receipt directory}
+        target: /app/run-owned-authored-world-source
+        read_only: true
+        bind:
+          create_host_path: false
 
   game-design-service:
     environment:
@@ -83,6 +136,8 @@ services:
   game-logic-service:
     environment:
       <<: *grpc-mtls-environment
+      FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+      FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED: ${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/game-logic-service:/app/certs:ro
 
@@ -95,6 +150,10 @@ services:
       FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED: ${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}
       FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH: /app/run-owned-initial-admission-capability.json
       FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH: /app/run-owned-authored-world-source/source-receipt.json
+      # The canonical fixture drives its first OPEN through the launch-association owner read.
+      FIREMUD_CANONICAL_GAME_INSTANCE_LAUNCH_ASSOCIATION_OWNER_READ_ENABLED: ${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}
+      FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_ENABLED: "true"
+      FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_PORT: "8444"
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/game-session-service:/app/certs:ro
       - type: bind
@@ -126,6 +185,10 @@ services:
   tcp-proxy-service:
     environment:
       <<: *grpc-mtls-environment
+      GATEWAY_WS_URL: wss://gateway:8443/ws/game
+      FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH: /app/certs/client.crt
+      FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH: /app/certs/client.key
+      FIREMUD_GATEWAY_WS_CA_CERT_PATH: /app/certs/ca.crt
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/tcp-proxy-service:/app/certs:ro
 

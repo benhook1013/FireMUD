@@ -114,12 +114,27 @@ firemud:
         - account.v1.AccountService/GetTenantEntitlementsForRuntime
         - account.v1.AccountService/IssueDirectTextConnectScope
         - account.v1.AccountService/JoinPublicProductionMembership
+        - account.v1.AccountService/CommitTenantCapacityAdmission
+        - account.v1.AccountPlayerAdmissionEntitlementReadService/ReadPlayerAdmissionEntitlement
+        - account.v1.AccountGameplayAdmissionLeaseService/AbortNeverAdmittedGameplayAdmissionLease
+        - account.v1.AccountGameplayAdmissionLeaseService/AcquireGameplayAdmissionLease
+        - account.v1.AccountGameplayAdmissionLeaseService/FinalizeGameplayAdmissionLease
+        - account.v1.AccountGameplayAdmissionLeaseService/ReadGameplayAdmissionLease
+        - account.v1.AccountGameplayAdmissionLeaseService/AbortGameplayAdmissionLease
+        - account.v1.AccountGameplayAdmissionLeaseService/IssueOriginalNewGameplayCredential
+        - account.v1.AccountGameplayAdmissionLeaseService/ConfirmOriginalNewGameplayAdmission
         - account.v1.RuntimeAccountIdentityService/ResolveRuntimeAccountIdentity
         - account.v1.AccountActorStagingEligibilityService/ResolvePreseededActorStagingEligibility
         - account.v1.StartSessionOperatorAuthorizationService/IssueHumanOperatorAuthorizationReference
         - account.v1.StartSessionOperatorAuthorizationService/RecoverOperatorAuthorizationReference
         - account.v1.StartSessionOperatorAuthorizationService/RedeemOperatorAuthorization
         - account.v1.StartSessionOperatorAuthorizationService/ReadRedeemedOperationProjection
+        - account.v1.AccountJwtSignerMaterializationService/EnrollBootstrap
+        - account.v1.AccountJwtSignerMaterializationService/GetCurrentGenerationRequest
+        - account.v1.AccountJwtSignerMaterializationService/RecordSecretObservation
+        - account.v1.AccountJwtSignerMaterializationService/RecordGenerationResult
+        - account.v1.AccountJwtSignerMaterializationService/GetCurrentPromotionRequest
+        - account.v1.AccountJwtSignerMaterializationService/RecordPrivatePromotionResult
 
 management:
   endpoints:

@@ -155,6 +155,9 @@ public class CanonicalInitialAdmissionRepository {
     lockTarget(request);
     Attempt existing =
         findAttempt(request.targetNamespace(), request.initialAdmissionRequestId(), true);
+    if (existing != null) {
+      requireHumanAttempt(existing);
+    }
     if (existing != null && !PENDING.equals(existing.status())) {
       requireSameRequestIdentity(existing, request);
       requireTerminalProtectionReplay(existing, accountProtection);
@@ -262,6 +265,7 @@ public class CanonicalInitialAdmissionRepository {
     requireWritableReadCommittedOwnerTransaction();
     lockTarget(request);
     Attempt attempt = requireAttemptForUpdate(request);
+    requireHumanAttempt(attempt);
     if (!PENDING.equals(attempt.status())) {
       if (!COMMITTED.equals(attempt.status())) {
         throw new CanonicalInitialAdmissionConflictException(
@@ -281,7 +285,15 @@ public class CanonicalInitialAdmissionRepository {
     protectionRepository()
         .requireExactPendingReservation(
             request.targetNamespace(), request.initialAdmissionRequestId(), accountProtection);
+    writeCommit(request, attempt, catalog, launchTarget);
+  }
 
+  /** Writes the pointer, audit, attempt terminal and intent terminal for one locked attempt. */
+  private void writeCommit(
+      CanonicalInitialAdmissionRequest request,
+      Attempt attempt,
+      CanonicalRealmCatalogSnapshot catalog,
+      CanonicalInitialAdmissionLaunchTarget launchTarget) {
     ExpectedClosedEvidence closedOrigin = lockExpectedClosedOrigin(request);
     if (closedOrigin == null) {
       requireNoPriorPointer(request, catalog, launchTarget);
@@ -323,9 +335,145 @@ public class CanonicalInitialAdmissionRepository {
             request.initialAdmissionRequestId());
     if (updated != 1) {
       throw new CanonicalInitialAdmissionConflictException(
-          "Protected initial-admission attempt changed before pointer commit");
+          "Initial-admission attempt changed before pointer commit");
     }
     terminalizeIntent(request, terminalAt);
+  }
+
+  /**
+   * Reserves the run-owned fixture attempt before its STARTING runtime completes. The fixture has
+   * no Account protection; the attempt retains the launch's fixture provenance digest instead.
+   * Returns true when this call inserted the reservation and false for an exact replay.
+   */
+  @Transactional(isolation = Isolation.READ_COMMITTED)
+  public boolean reserveFixtureStarting(CanonicalInitialAdmissionRequest request) {
+    Objects.requireNonNull(request, "request");
+    requireWritableReadCommittedOwnerTransaction();
+    lockTarget(request);
+    Attempt existing =
+        findAttempt(request.targetNamespace(), request.initialAdmissionRequestId(), true);
+    if (existing != null) {
+      requireFixtureAttempt(existing);
+      requireSameRequestIdentity(existing, request);
+      if (!PENDING.equals(existing.status())) {
+        return false;
+      }
+    }
+    CanonicalRealmCatalogSnapshot catalog = lockCatalog(request);
+    if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
+      lockAllAdmissionRepresentationsForNoPrior();
+    }
+    // A pending replay may follow fixture runtime completion; a fresh reservation needs STARTING.
+    CanonicalInitialAdmissionLaunchTarget launchTarget =
+        existing != null ? lockLaunchTarget(request, false) : lockFixtureStartingLaunch(request);
+    requireRequestMatchesCatalogAndLaunch(request, catalog, launchTarget);
+    String provenance = requireFixtureLaunch(launchTarget);
+    if (existing != null) {
+      requireSameRequest(existing, request, launchTarget);
+      if (!provenance.equals(existing.fixtureProvenanceDigest())) {
+        throw new CanonicalInitialAdmissionConflictException(
+            "Fixture initial-admission replay changed its fixture provenance");
+      }
+      return false;
+    }
+    requireAttachedFixtureIntent(request, provenance);
+    if (findPendingForRealm(request, true) != null) {
+      throw new CanonicalInitialAdmissionConflictException(
+          "Another initial-admission request already owns the pending realm attempt");
+    }
+    requireOriginStillCurrent(request, catalog, launchTarget);
+
+    Instant now = databaseTimestamp();
+    int inserted =
+        dsl.execute(
+            "INSERT INTO "
+                + OPERATION_TABLE
+                + " (target_namespace, initial_admission_request_id, request_digest, "
+                + "canonical_tenant_id, world_slug, realm_id, playable_state_namespace_id, "
+                + "playable_state_scope, canonical_game_instance_id, game_session_tenant_id, "
+                + "game_instance_id, canonical_version_id, runtime_version_id, "
+                + "expected_catalog_revision, origin_kind, expected_prior_pointer_version, "
+                + "active_lifecycle_epoch, hold_id, hold_fence, hold_binding_digest, status, "
+                + "fixture_provenance_digest, created_at, updated_at) VALUES (?, ?, ?, ?, "
+                + "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, "
+                + "CAST(? AS TIMESTAMPTZ), CAST(? AS TIMESTAMPTZ)) ON CONFLICT DO NOTHING",
+            request.targetNamespace(),
+            request.initialAdmissionRequestId(),
+            request.requestDigest(),
+            request.canonicalTenantId(),
+            request.worldSlug(),
+            request.realmId(),
+            request.playableStateNamespaceId(),
+            request.playableStateScope(),
+            request.canonicalGameInstanceId(),
+            launchTarget.association().gameSessionTenantId(),
+            launchTarget.gameInstanceId(),
+            request.canonicalVersionId(),
+            launchTarget.runtimeVersionId(),
+            request.expectedCatalogRevision(),
+            request.originKind().name(),
+            request.expectedPriorPointerVersion(),
+            request.activeLifecycleEpoch(),
+            request.holdId(),
+            request.holdFence(),
+            request.holdBindingDigest(),
+            provenance,
+            utc(now),
+            utc(now));
+    Attempt reserved =
+        findAttempt(request.targetNamespace(), request.initialAdmissionRequestId(), true);
+    if (inserted != 1 || reserved == null) {
+      throw new CanonicalInitialAdmissionConflictException(
+          "Fixture initial-admission reservation conflicted with durable owner state");
+    }
+    requireFixtureAttempt(reserved);
+    requireSameRequest(reserved, request, launchTarget);
+    if (!PENDING.equals(reserved.status())
+        || !provenance.equals(reserved.fixtureProvenanceDigest())) {
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Fixture initial-admission reservation readback differs from its insert");
+    }
+    return true;
+  }
+
+  /**
+   * Atomically writes the fixture pointer, append-only audit, fixture-provenance terminal and
+   * intent terminal after the exact World ACTIVE/hold proof and the retained fixture RUNNING
+   * completion. Returns true when this call committed and false for an exact COMMITTED replay.
+   */
+  @Transactional(isolation = Isolation.READ_COMMITTED)
+  public boolean commitFixture(
+      CanonicalInitialAdmissionRequest request, CanonicalInitialAdmissionWorldProof worldProof) {
+    Objects.requireNonNull(request, "request");
+    Objects.requireNonNull(worldProof, "worldProof");
+    worldProof.requireMatches(request);
+    requireWritableReadCommittedOwnerTransaction();
+    lockTarget(request);
+    Attempt attempt = requireAttemptForUpdate(request);
+    requireFixtureAttempt(attempt);
+    if (!PENDING.equals(attempt.status())) {
+      if (!COMMITTED.equals(attempt.status())) {
+        throw new CanonicalInitialAdmissionConflictException(
+            "A definitively ABORTED initial admission cannot later commit");
+      }
+      return false;
+    }
+    CanonicalRealmCatalogSnapshot catalog = lockCatalog(request);
+    if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
+      lockAllAdmissionRepresentationsForNoPrior();
+    }
+    CanonicalInitialAdmissionLaunchTarget launchTarget = lockLaunchTarget(request, true);
+    requireRequestMatchesCatalogAndLaunch(request, catalog, launchTarget);
+    requireSameRequest(attempt, request, launchTarget);
+    String provenance = requireFixtureLaunch(launchTarget);
+    if (!provenance.equals(attempt.fixtureProvenanceDigest())) {
+      throw new CanonicalInitialAdmissionConflictException(
+          "Fixture initial-admission commit changed its fixture provenance");
+    }
+    requireAttachedFixtureIntent(request, provenance);
+    requireFixtureRuntimeCompletion(request, provenance, launchTarget);
+    writeCommit(request, attempt, catalog, launchTarget);
+    return true;
   }
 
   /** Records one immutable protection-bound abort without creating pointer or audit evidence. */
@@ -340,6 +488,7 @@ public class CanonicalInitialAdmissionRepository {
     requireWritableReadCommittedOwnerTransaction();
     lockTarget(request);
     Attempt attempt = requireAttemptForUpdate(request);
+    requireHumanAttempt(attempt);
     if (!PENDING.equals(attempt.status())) {
       if (!ABORTED.equals(attempt.status()) || !reason.equals(attempt.abortReason())) {
         throw new CanonicalInitialAdmissionConflictException(
@@ -695,6 +844,123 @@ public class CanonicalInitialAdmissionRepository {
         launch,
         "Canonical STARTING launch does not match the exact Human completion request");
     return launch;
+  }
+
+  private CanonicalInitialAdmissionLaunchTarget lockFixtureStartingLaunch(
+      CanonicalInitialAdmissionRequest request) {
+    CanonicalInitialAdmissionLaunchTarget launch =
+        new CanonicalGameInstanceLaunchAssociationRepository(dsl, request.targetNamespace())
+            .lockStartingForFixtureRuntimeCompletion(
+                request.targetNamespace(),
+                request.canonicalTenantId(),
+                request.realmId(),
+                request.canonicalGameInstanceId());
+    requireLaunchMatchesRequest(
+        request,
+        launch,
+        "Canonical fixture STARTING launch does not match the exact initial-admission request");
+    return launch;
+  }
+
+  private static String requireFixtureLaunch(CanonicalInitialAdmissionLaunchTarget launch) {
+    if (!launch.association().isRunOwnedFixture()) {
+      throw new CanonicalInitialAdmissionConflictException(
+          "Run-owned fixture admission cannot use a Human launch");
+    }
+    return launch.association().attestationDigest();
+  }
+
+  private static void requireFixtureAttempt(Attempt attempt) {
+    if (!attempt.isRunOwnedFixture()) {
+      throw new CanonicalInitialAdmissionConflictException(
+          "Run-owned fixture admission cannot settle a Human attempt");
+    }
+  }
+
+  private static void requireHumanAttempt(Attempt attempt) {
+    if (attempt.isRunOwnedFixture()) {
+      throw new CanonicalInitialAdmissionConflictException(
+          "Protected Human admission cannot settle a run-owned fixture attempt");
+    }
+  }
+
+  /** The exact attached intent whose attestation slot holds this fixture's provenance digest. */
+  private void requireAttachedFixtureIntent(
+      CanonicalInitialAdmissionRequest request, String provenance) {
+    Record intent =
+        dsl.fetchOne(
+            "SELECT state, hold_identity_bytes, release_attestation_digest, "
+                + "original_start_session_tuple FROM game_session_canonical_initial_admission_intent "
+                + "WHERE target_namespace = ? AND initial_admission_request_id = ? "
+                + "AND request_digest = ? FOR UPDATE",
+            request.targetNamespace(),
+            request.initialAdmissionRequestId(),
+            request.requestDigest());
+    if (intent == null
+        || !"HOLD_ATTACHED".equals(intent.get("state", String.class))
+        || intent.get("original_start_session_tuple", byte[].class) != null
+        || !provenance.equals(intent.get("release_attestation_digest", String.class))) {
+      throw new CanonicalInitialAdmissionConflictException(
+          "Fixture initial admission requires its exact attached fixture intent");
+    }
+    final net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity
+        identity;
+    try {
+      identity =
+          net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity
+              .fromStored(intent.get("hold_identity_bytes", byte[].class));
+    } catch (RuntimeException malformed) {
+      throw new CanonicalInitialAdmissionReconciliationRequiredException(
+          "Fixture intent retains a malformed World hold identity", malformed);
+    }
+    if (!identity.holdId().equals(request.holdId())
+        || !identity.holdFence().equals(request.holdFence())
+        || !identity.holdBindingDigest().equals(request.holdBindingDigest())) {
+      throw new CanonicalInitialAdmissionConflictException(
+          "Fixture initial admission differs from its attached World hold identity");
+    }
+  }
+
+  private void requireFixtureRuntimeCompletion(
+      CanonicalInitialAdmissionRequest request,
+      String provenance,
+      CanonicalInitialAdmissionLaunchTarget launch) {
+    Record completion =
+        dsl.fetchOne(
+            "SELECT 1 FROM game_session_run_owned_fixture_runtime_completion "
+                + "WHERE target_namespace = ? AND initial_admission_request_id = ? "
+                + "AND request_digest = ? AND hold_id = ? AND hold_fence = ? "
+                + "AND canonical_game_instance_id = ? AND canonical_version_id = ? "
+                + "AND game_session_tenant_id = ? AND game_instance_id = ? "
+                + "AND completed_running_row_version <= ? AND fixture_provenance_digest = ?",
+            request.targetNamespace(),
+            request.initialAdmissionRequestId(),
+            request.requestDigest(),
+            request.holdId(),
+            request.holdFence(),
+            request.canonicalGameInstanceId(),
+            request.canonicalVersionId(),
+            launch.association().gameSessionTenantId(),
+            launch.gameInstanceId(),
+            launch.association().currentRowVersion(),
+            provenance);
+    if (completion == null) {
+      throw new CanonicalInitialAdmissionConflictException(
+          "Fixture first OPEN requires its retained exact RUNNING completion");
+    }
+  }
+
+  /** V1006 terminal framing with the fixture provenance digest in the protection slot. */
+  private static String fixtureTerminalProofDigest(Attempt attempt) {
+    return AccountInitialAdmissionProtectionBindingRepository.terminalDigest(
+        attempt.fixtureProvenanceDigest().getBytes(StandardCharsets.UTF_8),
+        attempt.requestDigest(),
+        attempt.status(),
+        attempt.pointerId(),
+        attempt.pointerVersion(),
+        attempt.auditEventId(),
+        attempt.terminalAt(),
+        attempt.abortReason());
   }
 
   private CanonicalRealmCatalogSnapshot lockCatalog(CanonicalInitialAdmissionRequest request) {
@@ -1297,6 +1563,9 @@ public class CanonicalInitialAdmissionRepository {
   }
 
   private Optional<String> protectedTerminalProofDigest(Attempt attempt) {
+    if (attempt.isRunOwnedFixture()) {
+      return Optional.of(fixtureTerminalProofDigest(attempt));
+    }
     try {
       return new AccountInitialAdmissionProtectionBindingRepository(dsl)
           .read(attempt.targetNamespace(), attempt.initialAdmissionRequestId())
@@ -1439,7 +1708,10 @@ public class CanonicalInitialAdmissionRepository {
         row.get("updated_at", OffsetDateTime.class).toInstant(),
         row.get("terminal_at", OffsetDateTime.class) == null
             ? null
-            : row.get("terminal_at", OffsetDateTime.class).toInstant());
+            : row.get("terminal_at", OffsetDateTime.class).toInstant(),
+        row.field("fixture_provenance_digest") == null
+            ? null
+            : row.get("fixture_provenance_digest", String.class));
   }
 
   private static CanonicalInitialAdmissionOwnerProof toProof(
@@ -1781,7 +2053,12 @@ public class CanonicalInitialAdmissionRepository {
       String abortReason,
       Instant createdAt,
       Instant updatedAt,
-      Instant terminalAt) {
+      Instant terminalAt,
+      String fixtureProvenanceDigest) {
+    private boolean isRunOwnedFixture() {
+      return fixtureProvenanceDigest != null;
+    }
+
     private CanonicalInitialAdmissionRequest asRequest() {
       return new CanonicalInitialAdmissionRequest(
           targetNamespace,

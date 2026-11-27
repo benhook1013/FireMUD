@@ -17,6 +17,7 @@ import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Re
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState.HoldStatus;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldRunOwnedFixtureLifecycleEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.exception.DataAccessException;
@@ -71,14 +72,11 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
                           new InvalidHoldEvidenceException(
                               "Canonical World association is unavailable"));
           requireAssociationTarget(request, association);
-          if (association.isRunOwnedFixture()) {
-            throw new InvalidHoldEvidenceException(
-                "Run-owned fixture rows cannot acquire canonical initial-admission holds");
-          }
           requireLifecycleRequestAssociation(lifecycleRequest, association);
           LockedWorldLifecycle lockedLifecycle = lockWorldLifecycleRow(request, association);
+          PrivateKeys keys = privateKeys(association);
 
-          long localTenantKey = association.worldPrepareFields().privateTenantKey();
+          long localTenantKey = keys.tenantKey();
           Record existing =
               dsl.fetchOne(
                   "SELECT * FROM initial_admission_bind_hold "
@@ -106,17 +104,19 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
                 "Canonical World hold requires the exact current ACTIVE lifecycle epoch");
           }
 
-          WorldCanonicalInstanceLifecycleEvidence lifecycle =
-              lifecycleRepository
-                  .readForActivationInOwnerTransaction(lifecycleRequest)
-                  .orElseThrow(
-                      () ->
-                          new InvalidHoldEvidenceException(
-                              "Exact canonical World lifecycle evidence is unavailable"));
-          if (!"ACTIVE".equals(lifecycle.lifecycleStatus())
-              || lifecycle.lifecycleEpoch() != request.activeLifecycleEpoch()) {
-            throw new InvalidHoldEvidenceException(
-                "Canonical World hold requires the exact current ACTIVE lifecycle evidence");
+          if (!association.isRunOwnedFixture()) {
+            WorldCanonicalInstanceLifecycleEvidence lifecycle =
+                lifecycleRepository
+                    .readForActivationInOwnerTransaction(lifecycleRequest)
+                    .orElseThrow(
+                        () ->
+                            new InvalidHoldEvidenceException(
+                                "Exact canonical World lifecycle evidence is unavailable"));
+            if (!"ACTIVE".equals(lifecycle.lifecycleStatus())
+                || lifecycle.lifecycleEpoch() != request.activeLifecycleEpoch()) {
+              throw new InvalidHoldEvidenceException(
+                  "Canonical World hold requires the exact current ACTIVE lifecycle evidence");
+            }
           }
 
           Record activeForRealm =
@@ -150,8 +150,8 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
               request.realmId(),
               request.playableStateNamespaceId(),
               request.playableStateScope(),
-              association.worldPrepareFields().privateGameInstanceKey(),
-              association.worldPrepareFields().localVersionKey(),
+              keys.gameInstanceKey(),
+              keys.versionKey(),
               request.activeLifecycleEpoch(),
               request.initialAdmissionRequestId(),
               request.initialAdmissionRequestDigest(),
@@ -220,6 +220,14 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
                           new InvalidHoldEvidenceException(
                               "Canonical World association is unavailable in the hold snapshot"));
           requireAssociationTarget(identity.request(), association);
+          if (association.isRunOwnedFixture()) {
+            requireLifecycleRequestAssociation(lifecycleRequest, association);
+            return Optional.of(
+                WorldCanonicalInitialAdmissionHoldState.runOwnedFixture(
+                    identity,
+                    parseStatus(required(row, "status", String.class)),
+                    fixtureLifecycle(lifecycleRequest, association)));
+          }
           WorldCanonicalInstanceLifecycleEvidence lifecycle =
               lifecycleRepository
                   .readForCurrentLocationInOwnerTransaction(lifecycleRequest)
@@ -407,9 +415,86 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
     }
   }
 
+  private record PrivateKeys(long tenantKey, long gameInstanceKey, long versionKey) {}
+
+  private static PrivateKeys privateKeys(WorldCanonicalInstanceAssociation association) {
+    if (association.isRunOwnedFixture()) {
+      var keys = association.runOwnedFixture().worldPrivateKeys();
+      return new PrivateKeys(keys.tenantId(), keys.gameInstanceId(), keys.versionId());
+    }
+    var fields = association.worldPrepareFields();
+    return new PrivateKeys(
+        fields.privateTenantKey(), fields.privateGameInstanceKey(), fields.localVersionKey());
+  }
+
+  /** Current fixture World lifecycle, read in the caller's owner snapshot. */
+  private WorldRunOwnedFixtureLifecycleEvidence fixtureLifecycle(
+      WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest,
+      WorldCanonicalInstanceAssociation association) {
+    Record row =
+        dsl.fetchOne(
+            "SELECT status,lifecycle_epoch,row_version FROM world_instance WHERE id=?",
+            association.worldInstanceId());
+    if (row == null) {
+      throw new InvalidHoldEvidenceException(
+          "Canonical World fixture lifecycle row is unavailable");
+    }
+    var fixture = association.runOwnedFixture();
+    return new WorldRunOwnedFixtureLifecycleEvidence(
+        lifecycleRequest,
+        fixture.fixtureProvenanceDigest(),
+        fixture.preparationInputDigest(),
+        required(row, "status", String.class),
+        required(row, "lifecycle_epoch", Long.class),
+        required(row, "row_version", Long.class));
+  }
+
+  /**
+   * A fixture has no Human release attestation: its lifecycle request carries the retained fixture
+   * descriptor digests and the fixture provenance digest in place of the release attestation.
+   */
+  private void requireFixtureLifecycleRequest(
+      WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest,
+      WorldCanonicalInstanceAssociation association) {
+    var identity = association.identity();
+    var fixture = association.runOwnedFixture();
+    Record descriptor =
+        dsl.fetchOne(
+            "SELECT descriptor_request_digest, descriptor_result_digest "
+                + "FROM world_canonical_instance_association "
+                + "WHERE canonical_game_instance_id = ? AND canonical_authority_kind = 'RUN_OWNED_FIXTURE'",
+            identity.canonicalGameInstanceId());
+    if (descriptor == null
+        || !lifecycleRequest.targetNamespace().equals(identity.targetNamespace())
+        || !lifecycleRequest.canonicalTenantId().equals(identity.canonicalTenantId())
+        || !lifecycleRequest.worldSlug().equals(identity.worldSlug())
+        || !lifecycleRequest.canonicalGameInstanceId().equals(identity.canonicalGameInstanceId())
+        || !lifecycleRequest.playableStateNamespaceId().equals(identity.playableStateNamespaceId())
+        || !lifecycleRequest.playableStateScope().equals(identity.playableStateScope())
+        || lifecycleRequest.publicProduction() != identity.publicProduction()
+        || !lifecycleRequest.controlPlaneRequestId().equals(identity.controlPlaneRequestId())
+        || !lifecycleRequest.canonicalVersionId().equals(association.canonicalVersionId())
+        || !lifecycleRequest
+            .expectedDescriptorRequestDigest()
+            .equals(required(descriptor, "descriptor_request_digest", String.class))
+        || !lifecycleRequest
+            .expectedDescriptorResultDigest()
+            .equals(required(descriptor, "descriptor_result_digest", String.class))
+        || !lifecycleRequest
+            .expectedReleaseAttestationDigest()
+            .equals(fixture.fixtureProvenanceDigest())) {
+      throw new InvalidHoldEvidenceException(
+          "Lifecycle read request differs from the exact immutable World fixture association");
+    }
+  }
+
   private void requireLifecycleRequestAssociation(
       WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest,
       WorldCanonicalInstanceAssociation association) {
+    if (association.isRunOwnedFixture()) {
+      requireFixtureLifecycleRequest(lifecycleRequest, association);
+      return;
+    }
     var identity = association.identity();
     var launch = association.completeLaunchBinding().evidence();
     var descriptor = launch.descriptor();
@@ -446,10 +531,10 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
       throw new InvalidHoldEvidenceException("Canonical World lifecycle row is unavailable");
     }
     var identity = association.identity();
-    var prepareFields = association.worldPrepareFields();
-    if (required(row, "tenant_id", Long.class) != prepareFields.privateTenantKey()
-        || required(row, "game_instance_id", Long.class) != prepareFields.privateGameInstanceKey()
-        || required(row, "version_id", Long.class) != prepareFields.localVersionKey()
+    PrivateKeys keys = privateKeys(association);
+    if (required(row, "tenant_id", Long.class) != keys.tenantKey()
+        || required(row, "game_instance_id", Long.class) != keys.gameInstanceKey()
+        || required(row, "version_id", Long.class) != keys.versionKey()
         || !required(row, "canonical_game_instance_id", UUID.class)
             .equals(identity.canonicalGameInstanceId())
         || !required(row, "canonical_target_namespace", String.class)
@@ -463,8 +548,9 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
         || !required(row, "public_production", Boolean.class).equals(identity.publicProduction())
         || !required(row, "canonical_realm_id", UUID.class).equals(identity.canonicalRealmId())
         || required(row, "catalog_revision", Long.class) != identity.catalogRevision()
-        || !required(row, "canonical_launch_binding_operation_id", UUID.class)
-            .equals(association.launchBindingOperationId())
+        || (!association.isRunOwnedFixture()
+            && !required(row, "canonical_launch_binding_operation_id", UUID.class)
+                .equals(association.launchBindingOperationId()))
         || !request.canonicalGameInstanceId().equals(identity.canonicalGameInstanceId())) {
       throw new InvalidHoldEvidenceException(
           "Locked World lifecycle row differs from the immutable canonical association");

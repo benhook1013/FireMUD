@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "scope": "Donor 3097 current hosted terms and Draft owner-local physical proof only; not missing producer families or activation.",
+  "required_cases": {
+    "integration.net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBindingPostgresIntegrationTest": [
+      "bindingUpdateWaitsForExactTerminalSettlementOfAffectedDraftOperation()",
+      "boundCurrentnessCarriesExactScheduledCatalogAndUnextendedDeadline()",
+      "realAccountWorkflowBindsCurrentEnvironmentAndFencesIndependentSourceVersions()"
+    ],
+    "integration.net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsPostgresIntegrationTest": [
+      "acceptanceRejectsWrongSignerNegativeActionChangedShownTermsAndUnavailableIdentity()",
+      "futureTermsCarryDeadlineWithoutFreezingPriorTermsEarly()",
+      "migrationRetainsExistingPartyAndBackfillsNoCatalogOrAcceptance()",
+      "ownerTransactionRollbackRemovesUncommittedCatalogAndPublicationIntent()",
+      "realServicePublishesAffirmativelyAcceptsReadsBackAndAdvancesMateriality()"
+    ],
+    "integration.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFencePostgresIntegrationTest": [
+      "bothMixedDirectionsRemainPendingAndPreserveOriginalReadbacks()",
+      "changedCompleteBindingsConflictWithoutRewritingOriginal()",
+      "commitOrderWithBothDefinitiveAbortsReleasesOriginalWaitingIntentWithoutReopening()",
+      "concurrentCommitOrderAndRevocationChooseExactlyOneDurableOrdering()",
+      "concurrentConflictingOwnerEvidenceRejectsRetryAndPreservesWinningBytes()",
+      "concurrentDistinctSourceClaimsAdmitOnlyOnePendingCaptureWithoutBlockingDisjointSources()",
+      "concurrentExactConsumerRetriesReturnTheSameOriginalSettlement()",
+      "discoveryPagesOriginalPendingOperationsAndExcludesEverySettledVector()",
+      "distinctPendingChangesCannotRetainTwoOldCapturesForTheSameSource()",
+      "forwardMigrationRetainsV1BindingReadbackAndFlywayChecksumsExactly()",
+      "inconsistentOrMalformedCompleteBindingsFailBeforeReservationStorage()",
+      "mixedCommitOrderPreservesOriginalWorldCommitAndHoldsSourceFence()",
+      "originalBindingSurvivesRestartAndAbsenceRemainsUnknownUnderOwnerTransaction()",
+      "originalRecoveryRejectsMalformedBytesAndEveryConflictingIdentityColumn()",
+      "ownerRecoveryRejectsReadbackThatContradictsItsOutcomeColumn()",
+      "rawSqlCannotRecordOwnerProofWithMissingChangedOrExtraSourceParticipation()",
+      "revokeBeforeCommitDeniesDelayedRequestsUntilBothDefinitiveAborts()",
+      "revokeOrderWithEitherMixedDirectionCannotAuthorizeSourceMutation()",
+      "rollbackPreservesReservationAndIntentTogetherAndDisjointSourcesDoNotConflict()",
+      "twoOwnerConsumerPersistsWorldOnceAndRecoversMissingGameDesignOnRetry()",
+      "v2AllRequiredAbortsSettleBothCommitAndRevokeOrdering()",
+      "v2FreshDraftEpochZeroAcceptsExactRequiredOwnerReadback()",
+      "v2MixedResultsHoldBothSourceTransitionsAndPreserveAppliedBytes()",
+      "v2RequiredOwnerDecoderRejectsMissingExtraDuplicateAndReorderedOwners()",
+      "v2WorldEntityAndCoordinatorRequireAllThreeExactOriginalResults()",
+      "worldCommittedAndGameDesignUnknownSurviveRestartAndBlockSourceUntilExactBothReadbacks()"
+    ]
+  }
+}

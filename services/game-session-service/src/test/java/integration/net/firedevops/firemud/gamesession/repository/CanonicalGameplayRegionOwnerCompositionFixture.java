@@ -390,23 +390,14 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             metaDigest,
             java.sql.Timestamp.from(now),
             initializationId));
-    var status =
-        new CanonicalGameplayRegionRuntimeStatusRepository(dsl)
-            .installOwner(
-                source,
-                1L,
-                null,
-                grantCorrelation,
-                "game-session-service",
-                "historical-sql-fixture",
-                now);
+    long executorFence = installHistoricalRegionOwner(dsl, source, tag, grantCorrelation, now);
     historicalRequireOne(
         dsl.execute(
             "UPDATE game_session_region_timeline_preparation SET phase = ?, lease_token_correlation = ?,"
                 + " executor_fence = ?, redis_meta_digest = ?, updated_at = ? WHERE initialization_operation_id = ?",
             "INSTALLED",
             grantCorrelation,
-            status.executorFence().longValueExact(),
+            executorFence,
             metaDigest,
             java.sql.Timestamp.from(now),
             initializationId));
@@ -445,7 +436,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                   source.captureId(),
                   source.graphSha256(),
                   source.preparationInputDigest(),
-                  new BigDecimal(status.executorFence()),
+                  BigDecimal.valueOf(executorFence),
                   grantCorrelation,
                   new BigDecimal(next),
                   transitionId,
@@ -546,6 +537,57 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             evidence.candidateReservation().reservationId(),
             transitionId,
             new BigDecimal(prior)));
+  }
+
+  /** Installs the first owner using the V1050.6 table shape and exact predecessor sequence. */
+  private static long installHistoricalRegionOwner(
+      DSLContext dsl,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      String tag,
+      String grantCorrelation,
+      Instant now) {
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          long executorFence =
+              transaction
+                  .fetchSingle("SELECT nextval('game_session_region_executor_fence_seq')")
+                  .get(0, Long.class);
+          Long installedFence =
+              transaction
+                  .fetchSingle(
+                      """
+                      INSERT INTO game_session_region_runtime_status
+                        (tenant_id, game_instance_id, canonical_region_id, region_id,
+                         tenant_region_tag, lifecycle_epoch, lifecycle_row_version, capture_id,
+                         lifecycle_request_bytes, graph_sha256, preparation_input_digest,
+                         region_epoch, executor_fence, lease_token_correlation, owner_service,
+                         owner_instance_id, paused, last_committed_tick_id, updated_at)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, false, -1, ?)
+                      RETURNING executor_fence
+                      """,
+                      source.tenantId(),
+                      source.gameInstanceId(),
+                      source.canonicalRegionId(),
+                      source.regionId(),
+                      tag,
+                      source.lifecycleEpoch(),
+                      source.lifecycleRowVersion(),
+                      source.captureId(),
+                      source.lifecycleRequest().canonicalBytes(),
+                      source.graphSha256(),
+                      source.preparationInputDigest(),
+                      executorFence,
+                      grantCorrelation,
+                      "game-session-service",
+                      "historical-sql-fixture",
+                      java.time.LocalDateTime.ofInstant(now, java.time.ZoneOffset.UTC))
+                  .get(0, Long.class);
+          if (executorFence <= 0 || !Objects.equals(installedFence, executorFence)) {
+            throw new IllegalStateException("Historical region owner SQL changed the exact fence");
+          }
+          return executorFence;
+        });
   }
 
   private static void historicalRequireOne(int count) {
@@ -1662,11 +1704,14 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
   private static void requireMaterializedBridgeCaptured(DSLContext dsl, UUID transitionId) {
     String exactRow =
         dsl.fetchSingle(
-                "SELECT CASE WHEN entity_created_origin IS NULL"
-                    + " THEN (to_jsonb(g) - 'entity_created_origin')::text"
-                    + " ELSE to_jsonb(g)::text END"
-                    + " FROM game_session_canonical_binding_region_bridge_obligation g"
-                    + " WHERE transition_id = ? AND bridge_operation_id IS NOT NULL",
+                """
+                SELECT (to_jsonb(g) - array_remove(ARRAY[
+                    CASE WHEN entity_created_origin IS NULL THEN 'entity_created_origin' END,
+                    CASE WHEN world_source_kind = 'HUMAN_CAPTURE' THEN 'world_source_kind' END
+                  ], NULL))::text
+                FROM game_session_canonical_binding_region_bridge_obligation g
+                WHERE transition_id = ? AND bridge_operation_id IS NOT NULL
+                """,
                 transitionId)
             .get(0, String.class);
     java.math.BigDecimal revision =

@@ -15,6 +15,62 @@ if [[ $# -lt 1 || $# -gt 2 || ! "$MODULE" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ || \
 fi
 
 declare -a CHECK_ARGS=(-PfullCheck)
+# These required physical suites must execute, not restore cached JUnit results.
+if [[ "$MODULE" == "logging-admin-service" || "$MODULE" == "social-groups-service" ]]; then
+  CHECK_ARGS+=(--no-build-cache --no-configuration-cache ":${MODULE}:integrationTest" --rerun)
+  # A skipped/no-source task must not satisfy this invocation from old XML.
+  # Invalidate only generated JUnit reports for this module before Gradle runs.
+  test_results="$ROOT_DIR/services/$MODULE/build/test-results"
+  for proof_dir in "$ROOT_DIR/services" "$ROOT_DIR/services/$MODULE" \
+    "$ROOT_DIR/services/$MODULE/build" "$test_results"; do
+    if [[ -L "$proof_dir" ]]; then
+      echo "Required database proof refuses a symlinked result path" >&2
+      exit 1
+    fi
+  done
+  if [[ -d "$test_results" ]]; then
+    if [[ -n "$(find "$test_results" -type l -print -quit)" ]]; then
+      echo "Required database proof refuses symlinked generated results" >&2
+      exit 1
+    fi
+    find "$test_results" -type f -name 'TEST-*.xml' -delete
+  fi
+fi
+
+verify_required_database_proof() {
+  case "$MODULE" in
+    logging-admin-service)
+      local moderation="net.firedevops.firemud.loggingadmin.ModerationAccountUuidMigrationPostgresIntegrationTest"
+      local report="net.firedevops.firemud.loggingadmin.ReportAccountUuidMigrationPostgresIntegrationTest"
+      bash "$ROOT_DIR/dev-tools/validation/inspect-test-results.sh" --strict \
+        --require-suite "$moderation" \
+        --require-suite "$report" \
+        --require-case "$moderation#emptySchemaMigratesAndKeepsExactUuidWithoutChangingPolicyFields()" \
+        --require-case "$moderation#populatedLegacyRowsBlockMigrationWithoutChangingRowsOrMigrationHistory()" \
+        --require-case "$moderation#concurrentModerationWriterBlocksMigrationThenItsCommittedRowForcesRefusal()" \
+        --require-case "$report#freshSchemaMigratesWithCanonicalAccountUuidsAndNumericLocalIdentifiers()" \
+        --require-case "$report#emptyAffectedTablesUpgradeFromV1007AndGenericLogAccountIdRemainsNumeric()" \
+        --require-case "$report#existingCanonicalModerationRowsAreUntouchedByReportOnlyMigration()" \
+        --require-case "$report#retainedPlayerReportRefusesWithoutChangingRowsOrMigrationHistory()" \
+        --require-case "$report#migrationWaitsForConcurrentWriterAndRefusesAfterItsRowCommits()" \
+        "$MODULE"
+      ;;
+    social-groups-service)
+      local suite="integration.net.firedevops.firemud.socialgroups.repository.SocialAccountUuidMigrationPostgresIntegrationTest"
+      bash "$ROOT_DIR/dev-tools/validation/inspect-test-results.sh" --strict \
+        --require-suite "$suite" \
+        --require-case "$suite#emptyLegacyFrontierConvergesAndTypedRepositoriesRoundTripCanonicalAccountUuids()" \
+        --require-case "$suite#[1] table = \"guilds\"" \
+        --require-case "$suite#[2] table = \"guild_members\"" \
+        --require-case "$suite#[3] table = \"chat_messages\"" \
+        --require-case "$suite#[4] table = \"friend_links\"" \
+        --require-case "$suite#[5] table = \"mail_messages\"" \
+        --require-case "$suite#[6] table = \"account_friend_links\"" \
+        --require-case "$suite#concurrentWriterCommitsBeforeEmptyCheckAndItsEvidenceIsPreserved()" \
+        "$MODULE"
+      ;;
+  esac
+}
 if [[ ( "$MODULE" == "account-service" || "$MODULE" == "game-session-service" || "$MODULE" == "world-management-service" ) && "$PARTITION" != "full" ]]; then
   SERVICE_DIR="$ROOT_DIR/services/$MODULE"
   PARTITION_DIR="$SERVICE_DIR/build/slow-service-ci-partition"
@@ -64,11 +120,24 @@ trap 'rm -f -- "$CHECK_LOG"' EXIT
 if [[ -z "$CHECK_LOG" ]]; then
   printf 'FIREMUD_STALL_ACTIVATION status=disabled-capture-unavailable\n' >&2
   echo "Compile-failure log unavailable; running the original check without capture" >&2
-  exec bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
+  if [[ "$MODULE" != "logging-admin-service" && "$MODULE" != "social-groups-service" ]]; then
+    # Preserve the existing exec/process boundary for every unaffected module.
+    exec bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
+      --runner "$ROOT_DIR/gradlew" -- \
+      --max-workers=2 \
+      '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
+      ":${MODULE}:check" "${CHECK_ARGS[@]}" --profile
+  fi
+  if bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
     --runner "$ROOT_DIR/gradlew" -- \
     --max-workers=2 \
     '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
-    ":${MODULE}:check" "${CHECK_ARGS[@]}" --profile
+    ":${MODULE}:check" "${CHECK_ARGS[@]}" --profile; then
+    verify_required_database_proof
+    exit 0
+  else
+    exit "$?"
+  fi
 fi
 declare -a CAPTURE_ARGS=()
 stall_activation=disabled-scope
@@ -108,5 +177,8 @@ if (( check_status > 0 && check_status < 128 )); then
     --root "$ROOT_DIR" --log "$CHECK_LOG" --check-exit "$check_status" \
     --output "$ROOT_DIR/build/reports/compile-failure/$MODULE" || \
     echo "Compile-failure evidence collection unavailable; preserving check exit $check_status" >&2
+fi
+if (( check_status == 0 )); then
+  verify_required_database_proof
 fi
 exit "$check_status"

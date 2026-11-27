@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service;
 
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
@@ -10,7 +11,9 @@ import net.firedevops.firemud.common.publication.GameDesignPublicationOperationB
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyEvidence;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
+import net.firedevops.firemud.common.world.CanonicalGameplayRunOwnedFixtureSourceEvidence;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProofCodec;
 import net.firedevops.firemud.common.world.PreseededActorAssignmentOwnerReadEvidence;
@@ -29,7 +32,8 @@ import org.jooq.exception.DataAccessException;
 
 /**
  * Read-only composition of current Game Session routing and a fresh complete Game Design policy
- * set. A result is source evidence only and does not enable PLAY or actor admission.
+ * set, or for the run-owned Compose fixture its catalog-retained sealed fixture policy. A result is
+ * source evidence only and does not enable PLAY or actor admission.
  */
 public final class CanonicalPublishedPlayerRouteReadService {
   private final String targetNamespace;
@@ -62,7 +66,7 @@ public final class CanonicalPublishedPlayerRouteReadService {
    */
   public CanonicalPublishedPlayerRoute readCurrent(CanonicalPlayableTarget expected) {
     Objects.requireNonNull(expected, "expected");
-    return readCurrent(expected, null);
+    return requirePublished(readCurrent(expected, null));
   }
 
   /**
@@ -73,12 +77,86 @@ public final class CanonicalPublishedPlayerRouteReadService {
   public CanonicalGameplayRosterOwnerReadEvidence readCurrent(
       CanonicalGameplayRosterOwnerReadEvidence.Request request) {
     Objects.requireNonNull(request, "request");
-    CanonicalPublishedPlayerRoute route = readCurrent(null, request);
+    CanonicalPublishedPlayerRoute route = requirePublished(readCurrent(null, request));
     return new CanonicalGameplayRosterOwnerReadEvidence(
         request,
         route.route().admissionPointerSnapshotDigest(),
         ownerProof(route.route()),
         route.policySetEvidence());
+  }
+
+  /**
+   * Reads the exact caller-selected target for the Account published-realm owner read: the full
+   * Human published source, or for a run-owned fixture launch its retained sealed fixture policy.
+   * Neither variant establishes Account membership or PLAY authority.
+   */
+  public AdmissionSource readCurrentAdmissionSource(
+      CanonicalGameplayRosterOwnerReadEvidence.Request request) {
+    Objects.requireNonNull(request, "request");
+    CurrentSource current = readCurrent(null, request);
+    if (current.published() != null) {
+      CanonicalPublishedPlayerRoute route = current.published();
+      return new AdmissionSource(
+          new CanonicalGameplayRosterOwnerReadEvidence(
+              request,
+              route.route().admissionPointerSnapshotDigest(),
+              ownerProof(route.route()),
+              route.policySetEvidence()),
+          null);
+    }
+    var fixture = current.fixturePolicy();
+    try {
+      return new AdmissionSource(
+          null,
+          new CanonicalGameplayRunOwnedFixtureSourceEvidence(
+              request,
+              current.route().admissionPointerSnapshotDigest(),
+              ownerProof(current.route()),
+              fixture.requestBytes(),
+              fixture.sealOperationId(),
+              fixture.sealRequestDigest(),
+              fixture.sealEvidenceDigest()));
+    } catch (IllegalArgumentException invalid) {
+      throw new InvalidAuthorityException(
+          "Run-owned fixture source is not the exact current route", invalid);
+    }
+  }
+
+  /** Exactly one Human published source or run-owned fixture source for one exact route. */
+  public record AdmissionSource(
+      CanonicalGameplayRosterOwnerReadEvidence published,
+      CanonicalGameplayRunOwnedFixtureSourceEvidence runOwnedFixture) {
+    public AdmissionSource {
+      if ((published == null) == (runOwnedFixture == null)) {
+        throw new IllegalArgumentException(
+            "Exactly one published or run-owned fixture admission source is required");
+      }
+    }
+
+    public boolean isRunOwnedFixture() {
+      return runOwnedFixture != null;
+    }
+  }
+
+  /** Exactly one Human published route or run-owned fixture route with its retained policy. */
+  private record CurrentSource(
+      CanonicalPlayableTarget route,
+      CanonicalPublishedPlayerRoute published,
+      CanonicalRealmCatalogSnapshot.FixturePolicy fixturePolicy) {
+    private CurrentSource {
+      Objects.requireNonNull(route, "route");
+      if ((published == null) == (fixturePolicy == null)) {
+        throw new IllegalArgumentException("Exactly one canonical route source is required");
+      }
+    }
+  }
+
+  private static CanonicalPublishedPlayerRoute requirePublished(CurrentSource current) {
+    if (current.published() == null) {
+      throw new InvalidAuthorityException(
+          "Run-owned fixture route has no Game Design published policy source");
+    }
+    return current.published();
   }
 
   /**
@@ -102,7 +180,7 @@ public final class CanonicalPublishedPlayerRouteReadService {
     return new PreseededActorAssignmentOwnerReadEvidence(request, sourceEvidence);
   }
 
-  private CanonicalPublishedPlayerRoute readCurrent(
+  private CurrentSource readCurrent(
       CanonicalPlayableTarget expected, CanonicalGameplayRosterOwnerReadEvidence.Request request) {
     if ((expected == null) == (request == null)) {
       throw new IllegalArgumentException("Exactly one canonical route selector is required");
@@ -125,6 +203,9 @@ public final class CanonicalPublishedPlayerRouteReadService {
     CanonicalRealmCatalogSnapshot catalogBefore = readCatalog(before);
     CanonicalInitialAdmissionLaunchTarget launchBefore = readLaunch(before);
     requireCurrentRouteBinding(before, catalogBefore, launchBefore);
+    if (launchBefore.association().isRunOwnedFixture()) {
+      return readCurrentFixture(expected, request, before, catalogBefore, launchBefore);
+    }
 
     PublishedRealmEntryPolicySetEvidence policySet =
         readPolicy(before.canonicalTenantId(), before.canonicalVersionId());
@@ -156,7 +237,108 @@ public final class CanonicalPublishedPlayerRouteReadService {
           "Game Design policy source or capture changed during owner read");
     }
 
-    return new CanonicalPublishedPlayerRoute(after, complete, selected);
+    return new CurrentSource(
+        after, new CanonicalPublishedPlayerRoute(after, complete, selected), null);
+  }
+
+  /**
+   * Run-owned fixture variant: no Game Design publication exists, so the catalog-retained sealed
+   * fixture policy (independently verified by the catalog owner on readback) replaces the policy
+   * read, and the same complete route/catalog/launch reread brackets it.
+   */
+  private CurrentSource readCurrentFixture(
+      CanonicalPlayableTarget expected,
+      CanonicalGameplayRosterOwnerReadEvidence.Request request,
+      CanonicalPlayableTarget before,
+      CanonicalRealmCatalogSnapshot catalogBefore,
+      CanonicalInitialAdmissionLaunchTarget launchBefore) {
+    requireRunOwnedFixturePolicy(before, catalogBefore, launchBefore);
+
+    CanonicalPlayableTarget after =
+        expected == null ? readRoute(request.canonicalTenantUuid()) : readRoute(before);
+    if (!before.equals(after)) {
+      throw new StaleAuthorityException("Canonical player route changed during fixture read");
+    }
+    if (request != null) {
+      requireExpectedRequest(request, after);
+    }
+    CanonicalRealmCatalogSnapshot catalogAfter = readCatalog(after);
+    CanonicalInitialAdmissionLaunchTarget launchAfter = readLaunch(after);
+    if (!catalogBefore.equals(catalogAfter)
+        || !sameCurrentLaunchBinding(launchBefore, launchAfter)) {
+      throw new StaleAuthorityException(
+          "Canonical source or complete fixture launch binding changed during owner read");
+    }
+    requireCurrentRouteBinding(after, catalogAfter, launchAfter);
+    requireRunOwnedFixturePolicy(after, catalogAfter, launchAfter);
+    return new CurrentSource(after, null, catalogAfter.fixturePolicy());
+  }
+
+  private void requireRunOwnedFixturePolicy(
+      CanonicalPlayableTarget route,
+      CanonicalRealmCatalogSnapshot catalog,
+      CanonicalInitialAdmissionLaunchTarget launch) {
+    CanonicalGameInstanceLaunchAssociation association = launch.association();
+    CanonicalRealmCatalogSnapshot.FixturePolicy fixture = catalog.fixturePolicy();
+    if (!association.isRunOwnedFixture() || fixture == null) {
+      throw new InvalidAuthorityException(
+          "Run-owned fixture route requires its catalog-retained fixture policy");
+    }
+    final RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicyRequest parsed;
+    final String requestDigest;
+    final String evidenceDigest;
+    try {
+      byte[] requestBytes = fixture.requestBytes();
+      parsed =
+          RunOwnedInitialAdmissionFixtureWireCodec.parseFixturePolicyRequestBytes(requestBytes);
+      requestDigest =
+          RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestDigest(
+              parsed.capability(),
+              parsed.creationEvidence(),
+              parsed.sourceEvidence(),
+              parsed.launchReadEvidence());
+      evidenceDigest =
+          RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
+              fixture.sealOperationId(), fixture.sealRequestDigest());
+      if (!Arrays.equals(
+          requestBytes,
+          RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestBytes(
+              parsed.capability(),
+              parsed.creationEvidence(),
+              parsed.sourceEvidence(),
+              parsed.launchReadEvidence()))) {
+        throw new InvalidAuthorityException("Retained fixture policy is not canonical");
+      }
+    } catch (IllegalArgumentException invalid) {
+      throw new InvalidAuthorityException("Retained fixture policy is invalid", invalid);
+    }
+    var capability = parsed.capability();
+    var bundle = parsed.launchReadEvidence().publishedReleaseBundle();
+    var versionState = parsed.launchReadEvidence().versionState();
+    var descriptor = association.descriptor();
+    if (!capability.visible()
+        || !capability.publicProductionRealm()
+        || !"SHARED".equals(capability.stateScope())
+        || !"PRESEEDED_ONLY".equals(capability.characterCreationPolicy())
+        || !catalog.visible()
+        || !catalog.publicProduction()
+        || !"SHARED".equals(catalog.stateScope())
+        || !capability.characterCreationPolicy().equals(catalog.characterCreationPolicy())
+        || !capability.worldSlug().equals(route.worldSlug())
+        || !capability.realmSlug().equals(route.realmSlug())
+        || !parsed.sourceEvidence().equals(catalog.sourceIntakeReceipt().source())
+        || !route.canonicalVersionId().toString().equals(bundle.getCanonicalVersionId())
+        || !route.canonicalVersionId().equals(association.fixtureCanonicalVersionId())
+        || !UUID.fromString(capability.operationId()).equals(fixture.sealOperationId())
+        || !requestDigest.equals(fixture.sealRequestDigest())
+        || !evidenceDigest.equals(fixture.sealEvidenceDigest())
+        || !fixture.sealEvidenceDigest().equals(association.fixtureProvenanceDigest())
+        || !descriptor.publishedReleaseBundleRef().equals(bundle.getPublishedReleaseBundleRef())
+        || descriptor.versionId() != bundle.getVersionId()
+        || descriptor.versionStateEpoch() != versionState.getVersionStateEpoch()) {
+      throw new InvalidAuthorityException(
+          "Retained fixture policy does not match the current PRESEEDED_ONLY fixture launch");
+    }
   }
 
   private GameSessionCanonicalInitialAdmissionOwnerProof ownerProof(CanonicalPlayableTarget route) {
@@ -349,7 +531,10 @@ public final class CanonicalPublishedPlayerRouteReadService {
     var terminal =
         GameDesignPublicationTerminalEvidence.fromStored(complete.terminalEvidenceBytes());
     var association = launch.association();
-    var descriptor = association.launchBindingEvidence().descriptor();
+    if (association.isRunOwnedFixture()) {
+      throw new InvalidAuthorityException("Run-owned fixture launch has no published policy");
+    }
+    var descriptor = association.descriptor();
     var release = association.launchBindingEvidence().releaseAttestation();
     if (!operation.account().input().selection().target().equals(targetProof)
         || !targetNamespace.equals(operation.world().request().targetNamespace())
@@ -413,8 +598,42 @@ public final class CanonicalPublishedPlayerRouteReadService {
       CanonicalInitialAdmissionLaunchTarget launch) {
     CanonicalGameInstanceLaunchAssociation association = launch.association();
     var source = catalog.sourceIntakeReceipt().source();
-    var descriptor = association.launchBindingEvidence().descriptor();
+    var descriptor = association.descriptor();
+    if (association.isRunOwnedFixture() != catalog.isRunOwnedFixture()) {
+      throw new InvalidAuthorityException(
+          "Canonical catalog and launch disagree on run-owned fixture provenance");
+    }
+    if (association.isRunOwnedFixture()) {
+      requireCurrentRouteSharedBinding(route, catalog, launch, association, source, descriptor);
+      if (!route.canonicalVersionId().equals(association.fixtureCanonicalVersionId())) {
+        throw new InvalidAuthorityException(
+            "Canonical route and run-owned fixture launch disagree on content version");
+      }
+      return;
+    }
     var release = association.launchBindingEvidence().releaseAttestation();
+    requireCurrentRouteSharedBinding(route, catalog, launch, association, source, descriptor);
+    if (!route.canonicalTenantId().equals(release.canonicalTenantId())
+        || !route.canonicalVersionId().equals(release.canonicalVersionId())
+        || !route.worldSlug().equals(release.worldSlug())
+        || !targetNamespace.equals(release.targetNamespace())
+        || !source.operationId().equals(release.authoredWorldSourceOperationId())
+        || !source.evidenceDigest().equals(release.authoredWorldSourceEvidenceDigest())
+        || descriptor.versionStateEpoch() != release.versionStateEpoch()
+        || !descriptor.publishedReleaseBundleRef().equals(release.publishedReleaseBundleRef())) {
+      throw new InvalidAuthorityException(
+          "Canonical catalog, route, and complete launch binding disagree");
+    }
+  }
+
+  /** Route, catalog, launch and descriptor binding shared by the Human and fixture variants. */
+  private void requireCurrentRouteSharedBinding(
+      CanonicalPlayableTarget route,
+      CanonicalRealmCatalogSnapshot catalog,
+      CanonicalInitialAdmissionLaunchTarget launch,
+      CanonicalGameInstanceLaunchAssociation association,
+      net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence source,
+      net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence descriptor) {
     if (!targetNamespace.equals(route.targetNamespace())
         || !targetNamespace.equals(catalog.targetNamespace())
         || !route.canonicalTenantId().equals(catalog.tenantId())
@@ -441,17 +660,9 @@ public final class CanonicalPublishedPlayerRouteReadService {
         || !targetNamespace.equals(descriptor.targetNamespace())
         || !route.canonicalTenantId().equals(descriptor.canonicalTenantId())
         || !route.worldSlug().equals(descriptor.worldSlug())
-        || !route.canonicalTenantId().equals(release.canonicalTenantId())
-        || !route.canonicalVersionId().equals(release.canonicalVersionId())
-        || !route.worldSlug().equals(release.worldSlug())
-        || !targetNamespace.equals(release.targetNamespace())
         || !source.operationId().equals(descriptor.authoredWorldSourceOperationId())
         || !source.evidenceDigest().equals(descriptor.authoredWorldSourceEvidenceDigest())
-        || !source.operationId().equals(release.authoredWorldSourceOperationId())
-        || !source.evidenceDigest().equals(release.authoredWorldSourceEvidenceDigest())
         || descriptor.versionId() != route.runtimeVersionId()
-        || descriptor.versionStateEpoch() != release.versionStateEpoch()
-        || !descriptor.publishedReleaseBundleRef().equals(release.publishedReleaseBundleRef())
         || !association.controlPlaneRequestId().equals(descriptor.controlPlaneRequestId())
         || !association.launchDescriptorId().equals(descriptor.launchDescriptorId())) {
       throw new InvalidAuthorityException(
@@ -490,7 +701,10 @@ public final class CanonicalPublishedPlayerRouteReadService {
         && first.launchDescriptorId().equals(second.launchDescriptorId())
         && first.capturedStartingRowVersion() == second.capturedStartingRowVersion()
         && first.currentRowVersion() == second.currentRowVersion()
-        && first.launchBindingEvidence().equals(second.launchBindingEvidence())
+        && Objects.equals(first.launchBindingEvidence(), second.launchBindingEvidence())
+        && Objects.equals(first.fixtureDescriptor(), second.fixtureDescriptor())
+        && Objects.equals(first.fixtureProvenanceDigest(), second.fixtureProvenanceDigest())
+        && Objects.equals(first.fixtureCanonicalVersionId(), second.fixtureCanonicalVersionId())
         && first.currentGameInstanceStatus() == second.currentGameInstanceStatus();
   }
 

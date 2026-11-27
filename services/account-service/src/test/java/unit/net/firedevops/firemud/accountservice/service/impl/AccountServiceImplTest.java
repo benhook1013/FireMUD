@@ -846,6 +846,27 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void createAccountPropagatesOwnerBirthFailureBeforeRegistrationAudit() {
+    IllegalStateException ownerFailure =
+        new IllegalStateException("Account source birth unavailable");
+    when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
+        .thenThrow(ownerFailure);
+
+    IllegalStateException observed =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.createAccount(
+                    new CreateAccountRequest("demo", "demo@example.com", "password")));
+
+    assertSame(ownerFailure, observed);
+    org.mockito.Mockito.verify(accountRepository)
+        .save(org.mockito.ArgumentMatchers.any(Account.class));
+    verifyNoInteractions(
+        accountAuditOutboxRepository, profileRepository, accountTenantMembershipRepository);
+  }
+
+  @Test
   void createAccountReturnsExplicitConflictForCanonicalIdentityCollision() {
     CreateAccountRequest request =
         new CreateAccountRequest("demo", " DEMO@EXAMPLE.COM ", "password");
@@ -3607,11 +3628,46 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void runtimeEntitlementGrantsSourcelessSeededTenantOnlyUnderPreV1Waiver() {
+    var tenant = java.util.UUID.fromString("5b8d4c0e-3a1f-4f6e-9b2d-7c1e0a9f3d21");
+    var sources =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository
+                .class);
+    var demos =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository
+                .class);
+    when(sources.hasCurrentSource(tenant)).thenReturn(false);
+    service.setRuntimeEntitlementSources(
+        sources, demos, net.firedevops.firemud.common.prev1.PreV1GateWaivers.enabledForTest());
+
+    var granted = service.getTenantEntitlementsForRuntime(tenant, "req-seeded");
+
+    assertEquals(tenant, granted.tenantId());
+    assertTrue(granted.gameplayAvailable());
+    verifyNoInteractions(demos);
+
+    when(sources.readCurrentSourceSelection(tenant))
+        .thenThrow(new IllegalStateException("Current tenant source is absent"));
+    service.setRuntimeEntitlementSources(
+        sources, demos, net.firedevops.firemud.common.prev1.PreV1GateWaivers.disabled());
+    AuthenticationException denied =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.getTenantEntitlementsForRuntime(tenant, "req-unwaived"));
+    assertEquals("ENTITLEMENT_UNAVAILABLE", denied.getCode());
+  }
+
+  @Test
   void getTenantEntitlementsForRuntimeFailsClosedBeforeReadingLegacyEvidence() {
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class,
-            () -> service.getTenantEntitlementsForRuntime(7L, "req-current-entitlement"));
+            () ->
+                service.getTenantEntitlementsForRuntime(
+                    java.util.UUID.fromString("5b8d4c0e-3a1f-4f6e-9b2d-7c1e0a9f3d21"),
+                    "req-current-entitlement"));
 
     assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
     verifyNoInteractions(retainedSubscriptionEvidenceRepository);

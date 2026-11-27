@@ -494,8 +494,17 @@ public class FriendsCommandHandler {
                   return toEntry(ordinal, entry);
                 })
             .toList();
+    boolean disclosureFiltered =
+        filter == FriendListFilter.ONLINE || filter == FriendListFilter.RECENT;
     List<FriendPresenceViewOutput.Entry> mapped =
-        allEntries.stream().filter(filter::matches).toList();
+        allEntries.stream()
+            .filter(
+                entry ->
+                    !disclosureFiltered
+                        || "PUBLIC".equals(entry.visibilityPolicy())
+                        || "FRIENDS_ONLY".equals(entry.visibilityPolicy()))
+            .filter(filter::matches)
+            .toList();
     int totalCount = response.getTotalCount() > 0 ? response.getTotalCount() : allEntries.size();
     return new FriendPresenceViewOutput(filter.name(), totalCount, mapped);
   }

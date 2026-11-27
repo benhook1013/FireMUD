@@ -474,7 +474,7 @@ public abstract class TestDataSeederIntegrationSupport {
     capability.put("publicProductionRealm", true);
     capability.put("requiresCharacterSelection", false);
     capability.put("stateScope", "SHARED");
-    capability.put("characterCreationPolicy", "ALLOW_NEW");
+    capability.put("characterCreationPolicy", "PRESEEDED_ONLY");
     capability.put("gameSessionLeafSha256", leafDigest);
     capability.put("gameSessionUriSan", SESSION_URI_SAN);
     capability.put("worldManagementLeafSha256", worldManagementLeafDigest);

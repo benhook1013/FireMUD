@@ -8,6 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -25,8 +26,6 @@ import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFence
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Ordering;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
-import net.firedevops.firemud.accountservice.entity.Account;
-import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Outcome;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
@@ -41,12 +40,13 @@ import net.firedevops.firemud.common.authoring.GameDesignDraftTerminalReadClient
 import net.firedevops.firemud.common.authoring.GameDesignDraftTerminalReadEvidence;
 import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadClient;
 import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadEvidence;
-import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -54,20 +54,25 @@ import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Component fixtures stipulate authenticated current-source capture and authenticated definitive
  * owner readback. They do not implement or prove those absent producers, RPC or source-writer
  * gates.
  */
-@Testcontainers(disabledWithoutDocker = true)
 class DraftAuthorizationFencePostgresIntegrationTest {
-  @Container
-  static PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
+  private static final AccountPostgresIntegrationFixture POSTGRES =
+      new AccountPostgresIntegrationFixture();
+
+  @BeforeAll
+  static void startPostgres() {
+    POSTGRES.start();
+  }
+
+  @AfterAll
+  static void stopPostgres() {
+    POSTGRES.stop();
+  }
 
   @Test
   void twoOwnerConsumerPersistsWorldOnceAndRecoversMissingGameDesignOnRetry() {
@@ -196,7 +201,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void concurrentExactConsumerRetriesReturnTheSameOriginalSettlement() throws Exception {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     tx(context, () -> context.repository().reserve(binding));
     tx(context, () -> context.repository().claimCommitOrder(binding));
     OwnerReadback worldAbort =
@@ -257,7 +262,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void concurrentConflictingOwnerEvidenceRejectsRetryAndPreservesWinningBytes() throws Exception {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     tx(context, () -> context.repository().reserve(binding));
     tx(context, () -> context.repository().claimCommitOrder(binding));
     OwnerReadback gameDesignAbort =
@@ -315,10 +320,12 @@ class DraftAuthorizationFencePostgresIntegrationTest {
     assertThat(rejected).hasSize(1);
     assertThat(rejected.getFirst().failure())
         .isInstanceOf(IllegalArgumentException.class)
-        // Depending on interleaving, the service snapshot or locked repository read detects
-        // the same immutable terminal-byte conflict. Both must reject without replacement.
-        .hasMessageMatching(
-            "Concurrent owner recovery changed immutable evidence|Changed owner terminal evidence");
+        .satisfies(
+            failure ->
+                assertThat(failure.getMessage())
+                    .isIn(
+                        "Concurrent owner recovery changed immutable evidence",
+                        "Changed owner terminal evidence"));
     byte[] storedWorldReadback =
         tx(context, () -> context.repository().readOwnerResult(binding, Owner.WORLD))
             .orElseThrow()
@@ -540,7 +547,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void changedCompleteBindingsConflictWithoutRewritingOriginal() {
     Context context = context();
-    DraftAuthorizationFenceBinding original = binding();
+    DraftAuthorizationFenceBinding original = binding(context);
     var stored = tx(context, () -> context.repository().reserve(original));
     assertThat(tx(context, () -> context.repository().readSettlement(original)))
         .isEqualTo(Settlement.PENDING);
@@ -557,7 +564,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void inconsistentOrMalformedCompleteBindingsFailBeforeReservationStorage() {
     Context context = context();
-    DraftAuthorizationFenceBinding b = binding();
+    DraftAuthorizationFenceBinding b = binding(context);
     for (int field = 0; field < 9; field++) {
       int changedField = field;
       byte[] bytes = field == 6 ? new byte[] {11} : b.gameDesignBinding();
@@ -759,7 +766,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void originalBindingSurvivesRestartAndAbsenceRemainsUnknownUnderOwnerTransaction() {
     Context context = context();
-    var binding = binding();
+    var binding = binding(context);
     tx(context, () -> context.repository().reserve(binding));
     Context restarted =
         new Context(
@@ -883,7 +890,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   void originalRecoveryRejectsMalformedBytesAndEveryConflictingIdentityColumn() {
     for (int field = 0; field < 5; field++) {
       Context context = context();
-      var b = binding();
+      var b = binding(context);
       UUID operation = field == 0 ? UUID.randomUUID() : b.operationId();
       UUID request = field == 1 ? UUID.randomUUID() : b.requestId();
       UUID commit = field == 2 ? UUID.randomUUID() : b.commitId();
@@ -916,7 +923,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void ownerRecoveryRejectsReadbackThatContradictsItsOutcomeColumn() {
     Context context = context();
-    var b = binding();
+    var b = binding(context);
     tx(context, () -> context.repository().reserve(b));
     tx(context, () -> context.repository().claimCommitOrder(b));
     var readback =
@@ -991,7 +998,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void v2FreshDraftEpochZeroAcceptsExactRequiredOwnerReadback() {
     Context context = context();
-    var prior = multiOwnerBinding();
+    var prior = multiOwnerBinding(context);
     var b =
         new DraftAuthorizationFenceBinding(
                 prior.operationId(),
@@ -1024,7 +1031,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   void rawSqlCannotRecordOwnerProofWithMissingChangedOrExtraSourceParticipation() {
     for (int sourceShape = 0; sourceShape < 4; sourceShape++) {
       Context context = context();
-      var b = multiOwnerBinding();
+      var b = multiOwnerBinding(context);
       var source = b.sources().getFirst();
       context
           .dsl()
@@ -1042,7 +1049,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
         context
             .dsl()
             .execute(
-                "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+                "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?) ON CONFLICT (source_key) DO NOTHING",
                 key);
         context
             .dsl()
@@ -1056,7 +1063,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
           context
               .dsl()
               .execute(
-                  "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?)",
+                  "INSERT INTO account_draft_authorization_source_locks (source_key) VALUES (?) ON CONFLICT (source_key) DO NOTHING",
                   extraKey);
           context
               .dsl()
@@ -1092,7 +1099,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void v2RequiredOwnerDecoderRejectsMissingExtraDuplicateAndReorderedOwners() {
     Context context = context();
-    var b = multiOwnerBinding();
+    var b = multiOwnerBinding(context);
     for (var labels :
         List.of(
             List.of("GAME_DESIGN", "WORLD"),
@@ -1185,7 +1192,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void forwardMigrationRetainsV1BindingReadbackAndFlywayChecksumsExactly() {
     Context context = context("75");
-    var b = binding();
+    var b = binding(context);
     tx(context, () -> context.repository().reserve(b));
     tx(context, () -> context.repository().claimCommitOrder(b));
     var original = ownerReadback(b, Owner.WORLD, Outcome.COMMITTED, new byte[] {8});
@@ -1198,7 +1205,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
         Objects.requireNonNull(context.dsl().fetchOne("SELECT current_schema()"))
             .get(0, String.class);
     Flyway.configure()
-        .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+        .dataSource(POSTGRES.dataSource(schema))
         .schemas(schema)
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
@@ -1268,11 +1275,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
 
   private Context context(String target) {
     String schema = "draft_fence_" + UUID.randomUUID().toString().replace("-", "");
-    DriverManagerDataSource source = new DriverManagerDataSource();
-    source.setUrl(postgres.getJdbcUrl());
-    source.setUsername(postgres.getUsername());
-    source.setPassword(postgres.getPassword());
-    source.setSchema(schema);
+    DriverManagerDataSource source = POSTGRES.dataSource(schema);
     Flyway.configure()
         .dataSource(source)
         .schemas(schema)
@@ -1289,34 +1292,31 @@ class DraftAuthorizationFencePostgresIntegrationTest {
     return new Context(dsl, new DraftAuthorizationFenceRepository(dsl), transaction);
   }
 
-  private DraftAuthorizationFenceBinding binding() {
-    return binding(SourceKind.ACCOUNT);
-  }
-
-  private DraftAuthorizationFenceBinding binding(SourceKind sourceKind) {
-    return binding(UUID.randomUUID(), sourceKind);
-  }
-
   private DraftAuthorizationFenceBinding binding(Context context) {
     return binding(context, SourceKind.ACCOUNT);
   }
 
   private DraftAuthorizationFenceBinding binding(Context context, SourceKind sourceKind) {
-    UUID account =
-        tx(
-            context,
-            () -> {
-              Account fresh = new Account();
-              String unique = UUID.randomUUID().toString();
-              fresh.setUsername("draft-fence-" + unique);
-              fresh.setEmail("draft-fence-" + unique + "@example.test");
-              fresh.setPasswordHash("isolated-draft-source-verifier");
-              return new AccountRepository(context.dsl()).save(fresh).getAccountUuid();
-            });
-    return binding(account, sourceKind);
-  }
-
-  private DraftAuthorizationFenceBinding binding(UUID account, SourceKind sourceKind) {
+    // Database-owned UUID/provenance satisfies the current Account-before-source lock.
+    // The captured source epochs and authenticated owner evidence remain fixture stipulations.
+    UUID suffix = UUID.randomUUID();
+    var row =
+        Objects.requireNonNull(
+            context
+                .dsl()
+                .fetchOne(
+                    "INSERT INTO accounts (username, email, password_hash, role, email_verified, "
+                        + "login_auth_modes, lifecycle_state) VALUES (?, ?, 'test-verifier', "
+                        + "'player', FALSE, 'PASSWORD,EMAIL_OTP', 'active') RETURNING account_uuid, id, "
+                        + "account_uuid_source_numeric_id, account_uuid_provenance",
+                    "draft-fence-" + suffix,
+                    suffix + "@example.test"));
+    UUID account = Objects.requireNonNull(row.get("account_uuid", UUID.class));
+    assertThat(row.get("id", Long.class)).isPositive();
+    assertThat(row.get("account_uuid_source_numeric_id", Long.class))
+        .isEqualTo(row.get("id", Long.class));
+    assertThat(row.get("account_uuid_provenance", String.class))
+        .isEqualTo("ACCOUNT_DATABASE_INSERT");
     DraftCommitBinding complete =
         completeBinding(
             UUID.randomUUID(),
@@ -1326,8 +1326,6 @@ class DraftAuthorizationFencePostgresIntegrationTest {
             "opaque/base:9007199254740993",
             "world-payload",
             UUID.randomUUID());
-    // Controlled, stipulated source-participation inputs qualify only fence storage here.
-    // Canonical key shape does not prove a membership writer or actual source provenance.
     String tenant = complete.target().canonicalTenantId().toString();
     String scopeId =
         switch (sourceKind) {
@@ -1353,15 +1351,8 @@ class DraftAuthorizationFencePostgresIntegrationTest {
         List.of(source));
   }
 
-  private DraftAuthorizationFenceBinding multiOwnerBinding() {
-    return multiOwnerBinding(binding());
-  }
-
   private DraftAuthorizationFenceBinding multiOwnerBinding(Context context) {
-    return multiOwnerBinding(binding(context));
-  }
-
-  private DraftAuthorizationFenceBinding multiOwnerBinding(DraftAuthorizationFenceBinding prior) {
+    var prior = binding(context);
     var complete =
         DraftCommitBinding.fromStored(
             new String(prior.gameDesignBinding(), StandardCharsets.UTF_8), prior.inputDigest());

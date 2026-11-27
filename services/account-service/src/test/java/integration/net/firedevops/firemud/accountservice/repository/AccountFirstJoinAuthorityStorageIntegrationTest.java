@@ -18,6 +18,7 @@ import java.util.function.Supplier;
 import javax.sql.DataSource;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
@@ -225,9 +226,19 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
                 .fetchOne(0, Long.class))
         .isZero();
 
+    Account freshAccount = new Account();
+    freshAccount.setUsername("first-join");
+    freshAccount.setEmail("first-join@example.test");
+    freshAccount.setPasswordHash("first-join-test-hash");
+    inTransaction(transaction, () -> accounts.save(freshAccount));
+    UUID freshAccountUuid = freshAccount.getAccountUuid();
     UUID tenantUuid = UUID.fromString("f8871fb0-7810-4b72-bb13-09e29a3509f2");
     FreshTenantCreationEvidence tenantSource = freshTenantEvidence(tenantUuid);
-    transaction.executeWithoutResult(status -> freshTenants.importVerified(tenantSource));
+    transaction.executeWithoutResult(
+        status -> {
+          freshTenants.importVerified(tenantSource);
+          new AccountAuthorityGenerationRepository(dsl).initializeTenantIfAbsent(tenantUuid);
+        });
     VerifiedTenantProvenance provenance =
         new VerifiedTenantProvenance(
             null,
@@ -239,11 +250,11 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
         transaction.execute(
             status -> {
               AccountTenantMembership pendingMembership =
-                  memberships.createFreshMembershipForJoin(account.getAccountUuid(), tenantUuid);
+                  memberships.createFreshMembershipForJoin(freshAccountUuid, tenantUuid);
               long membershipId = Objects.requireNonNull(pendingMembership.getId());
               assertThat(
                       roleSnapshots.findForCanonicalUpdate(
-                          account.getAccountUuid(),
+                          freshAccountUuid,
                           tenantUuid,
                           provenance,
                           membershipId,
@@ -253,13 +264,13 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
               AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot written =
                   roleSnapshots.replaceCanonical(
                       pendingMembership,
-                      account.getAccountUuid(),
+                      freshAccountUuid,
                       tenantUuid,
                       provenance,
                       pendingMembership.getMembershipVersion(),
                       List.of());
               assertThat(written.roles()).isEmpty();
-              assertThat(written.accountUuid()).isEqualTo(account.getAccountUuid());
+              assertThat(written.accountUuid()).isEqualTo(freshAccountUuid);
               assertThat(written.tenantUuid()).isEqualTo(tenantUuid);
               assertThat(written.tenantId()).isNull();
               assertThat(written.tenantProvenance()).isEqualTo(provenance);
@@ -273,7 +284,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
               assertThatThrownBy(
                       () ->
                           roleSnapshots.findForCanonicalUpdate(
-                              account.getAccountUuid(),
+                              freshAccountUuid,
                               tenantUuid,
                               changedProvenance,
                               membershipId,
@@ -283,7 +294,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
               assertThatThrownBy(
                       () ->
                           roleSnapshots.findForCanonicalUpdate(
-                              account.getAccountUuid(),
+                              freshAccountUuid,
                               tenantUuid,
                               provenance,
                               membershipId,
@@ -292,7 +303,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
                   .hasMessageContaining("membership version is missing or mismatched");
               assertThat(
                       roleSnapshots.findForCanonicalUpdate(
-                          account.getAccountUuid(),
+                          freshAccountUuid,
                           tenantUuid,
                           provenance,
                           membershipId,
@@ -300,7 +311,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
                   .contains(written);
 
               assertThatThrownBy(
-                      () -> memberships.findFreshMembership(account.getAccountUuid(), tenantUuid))
+                      () -> memberships.findFreshMembership(freshAccountUuid, tenantUuid))
                   .isInstanceOf(IllegalStateException.class)
                   .hasMessageContaining("no positive authority event");
               status.setRollbackOnly();
@@ -311,7 +322,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
             dsl.resultQuery(
                     "SELECT count(*) FROM account_tenant_membership "
                         + "WHERE account_id = ? AND tenant_uuid = ?",
-                    accountId,
+                    freshAccount.getId(),
                     tenantUuid)
                 .fetchOne(0, Long.class))
         .isZero();
@@ -329,6 +340,102 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
                     canonicalMembershipId)
                 .fetchOne(0, Long.class))
         .isZero();
+  }
+
+  @Test
+  void canonicalUpgradeWaitsForLegacyWriterAndPreservesItsUnverifiedIdentity() throws Exception {
+    TestContext context = newTestContextBeforeV38();
+    DSLContext dsl = context.dsl();
+    org.jooq.Record account =
+        dsl.fetchOne(
+            "INSERT INTO accounts (username, email, password_hash, role) VALUES (?, ?, ?, ?) "
+                + "RETURNING id, account_uuid",
+            "writer-" + UUID.randomUUID(),
+            "writer-" + UUID.randomUUID() + "@example.test",
+            "test-hash",
+            "platformAdmin");
+    long accountId = Objects.requireNonNull(account).get("id", Long.class);
+    try (java.sql.Connection writer = context.dataSource().getConnection()) {
+      writer.setAutoCommit(false);
+      DSLContext writerDsl = DSL.using(writer, SQLDialect.POSTGRES);
+      int writerPid = writerDsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+      var original =
+          writerDsl.fetchSingle(
+              "INSERT INTO account_tenant_membership "
+                  + "(account_id, tenant_id, gameplay_admission_allowed, lifecycle_state, "
+                  + "membership_version, membership_authority_generation, authority_provenance) "
+                  + "VALUES (?, ?, FALSE, 'LEGACY_UNVERIFIED', 1, 1, 'LEGACY_UNVERIFIED') "
+                  + "RETURNING id, account_id, tenant_id, tenant_uuid, gameplay_admission_allowed, "
+                  + "lifecycle_state, membership_version, membership_authority_generation, "
+                  + "authority_provenance, xmin::text AS row_version",
+              accountId,
+              7102L);
+      var originalRows = original.intoMap();
+      long membershipId = original.get("id", Long.class);
+      var executor = Executors.newSingleThreadExecutor();
+      try {
+        var migration = executor.submit(() -> migrateToVersion(context, "38"));
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        boolean blocked = false;
+        while (System.nanoTime() < deadline) {
+          blocked =
+              Boolean.TRUE.equals(
+                  dsl.fetchSingle(
+                          "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE "
+                              + "wait_event_type = 'Lock' AND ? = ANY(pg_blocking_pids(pid)))",
+                          writerPid)
+                      .get(0, Boolean.class));
+          if (blocked) break;
+          Thread.sleep(10);
+        }
+        assertThat(blocked)
+            .as("canonical migration physically waits for its legacy writer")
+            .isTrue();
+        assertThat(migration.isDone()).isFalse();
+        writer.commit();
+        migration.get(60, TimeUnit.SECONDS);
+
+        // V38 waits for the committed writer without changing either evidence or row version.
+        assertThat(retainedMembership(context, membershipId).intoMap()).isEqualTo(originalRows);
+        migrateToVersion(context, "40");
+        assertThat(retainedMembership(context, membershipId).intoMap()).isEqualTo(originalRows);
+        String originalHeap = membershipHeap(context);
+
+        // V40.1 deliberately adds a STORED generated retention key, rewriting the physical heap.
+        // Logical identity/authority must remain exact; xmin is not immutable across that DDL.
+        migrateToVersion(context, "40.1");
+        var rewritten = retainedMembership(context, membershipId).intoMap();
+        var originalEvidence = new java.util.LinkedHashMap<>(originalRows);
+        var rewrittenEvidence = new java.util.LinkedHashMap<>(rewritten);
+        originalEvidence.remove("row_version");
+        rewrittenEvidence.remove("row_version");
+        assertThat(rewrittenEvidence).isEqualTo(originalEvidence);
+        assertThat(rewritten.get("row_version")).isNotEqualTo(originalRows.get("row_version"));
+        String rewrittenHeap = membershipHeap(context);
+        assertThat(rewrittenHeap).isNotEqualTo(originalHeap);
+
+        migrateToLatest(context);
+        assertThat(retainedMembership(context, membershipId).intoMap()).isEqualTo(rewritten);
+        assertThat(membershipHeap(context)).isEqualTo(rewrittenHeap);
+        assertThat(original.get("tenant_uuid", UUID.class)).isNull();
+        assertThat(
+                dsl.resultQuery(
+                        "SELECT count(*) FROM account_tenant_membership_role_snapshots "
+                            + "WHERE membership_id = ?",
+                        membershipId)
+                    .fetchOne(0, Long.class))
+            .isZero();
+        assertThat(dsl.fetchCount(org.jooq.impl.DSL.table("account_authority_outbox_events")))
+            .isZero();
+      } finally {
+        try {
+          writer.rollback();
+        } finally {
+          executor.shutdownNow();
+          assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+        }
+      }
+    }
   }
 
   @Test
@@ -441,6 +548,88 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
                     stream)
                 .fetchOne(0, Long.class))
         .isEqualTo(1L);
+  }
+
+  @Test
+  void databaseRejectsRetainedEventMutationAndStillAllowsExactAppendAndStreamAdvance() {
+    TestContext context = newTestContext();
+    AccountAuthorityOutboxRepository repository = context.repository();
+    TransactionTemplate transaction = context.transaction();
+    DSLContext dsl = context.dsl();
+    String stream = membershipStream(UUID.randomUUID(), UUID.randomUUID());
+    byte[] retainedPayload = new byte[] {31, 32, 33};
+    // Component storage proof only: this does not execute or authorize a positive JOIN.
+    Event retained =
+        inTransaction(
+            transaction,
+            () ->
+                repository.append(
+                    stream,
+                    "immutable-request-1",
+                    "immutable-event-1",
+                    "immutable-digest-1",
+                    retainedPayload));
+    Checkpoint retainedCheckpoint =
+        new Checkpoint(stream, 1L, retained.eventId(), retained.eventDigest());
+
+    for (String statement :
+        List.of(
+            "UPDATE account_authority_outbox_events SET payload = decode('ffff', 'hex') "
+                + "WHERE outbox_stream_key = ? AND outbox_sequence = 1",
+            "DELETE FROM account_authority_outbox_events "
+                + "WHERE outbox_stream_key = ? AND outbox_sequence = 1")) {
+      assertThatThrownBy(
+              () ->
+                  inTransaction(
+                      transaction,
+                      () -> {
+                        dsl.execute(statement, stream);
+                        return null;
+                      }))
+          .isInstanceOf(DataAccessException.class)
+          .hasMessageContaining("Account authority outbox event evidence is immutable");
+      assertThat(inTransaction(transaction, () -> repository.findEvent(stream, 1L)))
+          .contains(retained);
+      assertThat(inTransaction(transaction, () -> repository.readCheckpoint(stream)))
+          .contains(retainedCheckpoint);
+      assertThat(
+              dsl.resultQuery(
+                      "SELECT count(*) FROM account_authority_outbox_events "
+                          + "WHERE outbox_stream_key = ?",
+                      stream)
+                  .fetchOne(0, Long.class))
+          .isEqualTo(1L);
+    }
+
+    Event appended =
+        inTransaction(
+            transaction,
+            () ->
+                repository.append(
+                    stream,
+                    "immutable-request-2",
+                    "immutable-event-2",
+                    "immutable-digest-2",
+                    new byte[] {41, 42, 43}));
+    assertThat(appended.outboxSequence()).isEqualTo(2L);
+    assertThat(inTransaction(transaction, () -> repository.findEvent(stream, 1L)))
+        .contains(retained);
+    assertThat(
+            inTransaction(transaction, () -> repository.findEvent(stream, 1L))
+                .orElseThrow()
+                .payload())
+        .containsExactly(retainedPayload);
+    assertThat(inTransaction(transaction, () -> repository.findEvent(stream, 2L)))
+        .contains(appended);
+    assertThat(inTransaction(transaction, () -> repository.readCheckpoint(stream)))
+        .contains(new Checkpoint(stream, 2L, appended.eventId(), appended.eventDigest()));
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT count(*) FROM account_authority_outbox_events "
+                        + "WHERE outbox_stream_key = ?",
+                    stream)
+                .fetchOne(0, Long.class))
+        .isEqualTo(2L);
   }
 
   @Test
@@ -765,14 +954,39 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
   }
 
   private void migrateToLatest(TestContext context) {
-    Flyway.configure()
-        .dataSource(context.dataSource())
-        .schemas(context.schema())
-        .defaultSchema(context.schema())
-        .placeholders(Map.of("serviceSchema", context.schema()))
-        .locations("classpath:db/migration")
-        .load()
-        .migrate();
+    migrateToVersion(context, null);
+  }
+
+  private void migrateToVersion(TestContext context, String targetVersion) {
+    var configuration =
+        Flyway.configure()
+            .dataSource(context.dataSource())
+            .schemas(context.schema())
+            .defaultSchema(context.schema())
+            .placeholders(Map.of("serviceSchema", context.schema()))
+            .locations("classpath:db/migration");
+    if (targetVersion != null) configuration.target(targetVersion);
+    configuration.load().migrate();
+  }
+
+  private org.jooq.Record retainedMembership(TestContext context, long membershipId) {
+    return context
+        .dsl()
+        .fetchSingle(
+            "SELECT id, account_id, tenant_id, tenant_uuid, gameplay_admission_allowed, "
+                + "lifecycle_state, membership_version, membership_authority_generation, "
+                + "authority_provenance, xmin::text AS row_version "
+                + "FROM account_tenant_membership WHERE id = ?",
+            membershipId);
+  }
+
+  private String membershipHeap(TestContext context) {
+    return context
+        .dsl()
+        .fetchSingle(
+            "SELECT pg_relation_filenode(?::regclass)::text",
+            context.schema() + ".account_tenant_membership")
+        .get(0, String.class);
   }
 
   private String membershipStream(UUID accountId, UUID tenantId) {

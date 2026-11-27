@@ -516,7 +516,7 @@ class TestDataSeederTest {
     Path capabilityPath = directory.resolve("run-owned-initial-admission-capability.json");
     String capabilityJson =
         """
-        {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":1,"gameTemplateId":17,"ownerAccountId":27,"worldSlug":"demo","worldDisplayName":"Demo World","realmSlug":"production","realmDisplayName":"Live Realm","visible":true,"publicProductionRealm":true,"requiresCharacterSelection":false,"stateScope":"SHARED","characterCreationPolicy":"ALLOW_NEW","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","claimDigest":"%s"}%n\
+        {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":1,"gameTemplateId":17,"ownerAccountId":27,"worldSlug":"demo","worldDisplayName":"Demo World","realmSlug":"production","realmDisplayName":"Live Realm","visible":true,"publicProductionRealm":true,"requiresCharacterSelection":false,"stateScope":"SHARED","characterCreationPolicy":"PRESEEDED_ONLY","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","claimDigest":"%s"}%n\
         """
             .formatted(
                 RunOwnedInitialAdmissionFixtureWireCodec.CAPABILITY_SCHEMA,

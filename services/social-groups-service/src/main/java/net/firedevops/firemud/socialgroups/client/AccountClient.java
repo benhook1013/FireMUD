@@ -169,7 +169,10 @@ public final class AccountClient
                                   snapshot.displayName(), snapshot.bio(), visibilityPolicy.name())
                               .toJson())
                       .build());
-      return response.getSuccess() && !response.hasError();
+      return response.getSuccess()
+          && !response.hasError()
+          && accountId.equals(response.getAccountId())
+          && Long.toString(tenantId).equals(response.getTenantId());
     } catch (Exception ex) {
       logger.warn(
           "Failed to update account presence visibility policy tenantId={} accountId={} policy={}",

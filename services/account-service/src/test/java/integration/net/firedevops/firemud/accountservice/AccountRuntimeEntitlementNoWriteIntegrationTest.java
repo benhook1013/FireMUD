@@ -103,7 +103,7 @@ class AccountRuntimeEntitlementNoWriteIntegrationTest {
           "account_tenant_capacity_recovery_evidence");
   private static final GetTenantEntitlementsForRuntimeRequest REQUEST =
       GetTenantEntitlementsForRuntimeRequest.newBuilder()
-          .setTenantId("1")
+          .setTenantId("5b8d4c0e-3a1f-4f6e-9b2d-7c1e0a9f3d21")
           .setRequestId("default-runtime-entitlement-no-write")
           .build();
 

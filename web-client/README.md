@@ -22,7 +22,7 @@ See:
 - [Frontend Architecture](../design/architecture/system-architecture-frontend.md)
 - [Player Experience, Commands, and Communication implementation tracker](../design/project-management/implementation-tracking/player-experience-commands-and-communication.md)
 
-The Vite production build writes compiled assets to `dist/frontend-assets/`, so generated compiled JavaScript/CSS references use `/frontend-assets/**`. The prefix is reserved for first-party compiled files, does not SPA-fallback, and is not a Gateway route. The static host/Ingress, origin separation, and full browser proof remain target-state work under [ADR 0144](../design/architecture/decisions/adr-0144-stateless-first-party-frontend-application-boundary.md).
+The Vite production build writes compiled assets to `dist/frontend-assets/`, so generated compiled JavaScript/CSS references use `/frontend-assets/**`. The prefix is reserved for first-party compiled files, does not SPA-fallback, and is not a Gateway route. The disabled static-host/Ingress source preparation is described below; independent publication, origin qualification and full browser proof remain open under [ADR 0144](../design/architecture/decisions/adr-0144-stateless-first-party-frontend-application-boundary.md).
 
 ## Local Development
 
@@ -58,6 +58,13 @@ The accessibility audit depends on Google Chrome. See [Developer Setup](../DEVEL
 The owning [Account contract](../design/architecture/microservices/account-service/api-contracts.md) defines the behavior. Hosted static delivery and browser/SMTP proof are separate from these unit tests.
 
 ### Disabled static-host preparation
+
+Build the static image from the repository root with
+`docker build -f web-client/Dockerfile -t firemud-frontend:local .`.
+The Dockerfile-specific ignore file includes frontend sources and the shared
+TypeScript configuration without broadening service-image contexts. A
+`web-client/`-only context cannot resolve that shared configuration during Vite's
+build.
 
 The recovered unprivileged static image and Helm host remain default-off behind both `previewStack.enabled` and `previewStack.frontend.enabled`. Only an explicit frontend enablement selects the SPA/API/WebSocket split; existing Gateway ingress is unchanged by default. Image publication and fresh browser/edge qualification remain prerequisites to activation. Nginx logs the path without query strings, emits no-referrer, refuses reserved API/asset/WebSocket paths and uses immutable content-hash caching.
 

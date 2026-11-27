@@ -31,6 +31,8 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue;
 import net.firedevops.firemud.socialgroups.test.AccountUuidFixtures;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.slf4j.LoggerFactory;
 
@@ -275,6 +277,8 @@ class AccountClientTest {
         .thenReturn(
             net.firedevops.firemud.account.v1.UpdateProfileResponse.newBuilder()
                 .setSuccess(true)
+                .setAccountId(accountUuid(1L))
+                .setTenantId("11")
                 .build());
     var client = newClient(stub);
     assertThat(client.getPresenceVisibilityPolicy(11L, accountUuid(1L)))
@@ -382,6 +386,57 @@ class AccountClientTest {
     assertThat(calls.get()).isEqualTo(2);
   }
 
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "account",
+        "empty-account",
+        "numeric-account",
+        "nil-account",
+        "tenant",
+        "empty-tenant",
+        "noncanonical-tenant",
+        "legacy-response"
+      })
+  void successfulProfileUpdateRequiresExactOwnerEcho(String mismatch) throws Exception {
+    var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.getProfile(any()))
+        .thenReturn(
+            net.firedevops.firemud.account.v1.GetProfileResponse.newBuilder()
+                .setProfileJson(
+                    "{\"tenantId\":11,\"accountId\":\""
+                        + accountUuid(2L)
+                        + "\",\"displayName\":\"Name\",\"bio\":\"Bio\",\"presenceVisibilityPolicy\":\"PUBLIC\"}")
+                .build());
+    var response =
+        net.firedevops.firemud.account.v1.UpdateProfileResponse.newBuilder()
+            .setSuccess(true)
+            .setAccountId(accountUuid(2L))
+            .setTenantId("11");
+    switch (mismatch) {
+      case "account" -> response.setAccountId(accountUuid(3L));
+      case "empty-account" -> response.clearAccountId();
+      case "numeric-account" -> response.setAccountId("2");
+      case "nil-account" -> response.setAccountId("00000000-0000-0000-0000-000000000000");
+      case "tenant" -> response.setTenantId("12");
+      case "empty-tenant" -> response.clearTenantId();
+      case "noncanonical-tenant" -> response.setTenantId("011");
+      case "legacy-response" -> {
+        response.clearAccountId();
+        response.clearTenantId();
+      }
+      default -> throw new IllegalArgumentException(mismatch);
+    }
+    when(stub.updateProfile(any())).thenReturn(response.build());
+    var client = newClient(stub);
+    assertThat(
+            client.updatePresenceVisibilityPolicy(
+                11L, accountUuid(2L), FriendPresenceVisibilityPolicyValue.PRIVATE))
+        .isFalse();
+    verify(stub).updateProfile(any());
+  }
+
   private static PresenceVisibilityPolicyEntry policyEntry(String accountId, String policy) {
     return PresenceVisibilityPolicyEntry.newBuilder()
         .setAccountId(accountId)
@@ -405,6 +460,8 @@ class AccountClientTest {
         .thenReturn(
             net.firedevops.firemud.account.v1.UpdateProfileResponse.newBuilder()
                 .setSuccess(true)
+                .setAccountId(accountUuid(2L))
+                .setTenantId("11")
                 .build());
     AccountClient client = newClient(stub);
     assertThat(client.getPresenceVisibilityPolicy(11L, accountUuid(2L)))

@@ -33,16 +33,33 @@ public class AccountTenantMembershipRepository {
   private final AccountRepository accountRepository;
   private final FreshTenantIdentityAssociationRepository freshTenantIdentityAssociationRepository;
   private final AccountMembershipPairAuthorityRepository pairAuthorityRepository;
+  private final AccountAuthorityGenerationRepository authorityGenerationRepository;
 
   public AccountTenantMembershipRepository(
       DSLContext dsl,
       AccountRepository accountRepository,
       FreshTenantIdentityAssociationRepository freshTenantIdentityAssociationRepository,
       AccountMembershipPairAuthorityRepository pairAuthorityRepository) {
+    this(
+        dsl,
+        accountRepository,
+        freshTenantIdentityAssociationRepository,
+        pairAuthorityRepository,
+        new AccountAuthorityGenerationRepository(dsl));
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public AccountTenantMembershipRepository(
+      DSLContext dsl,
+      AccountRepository accountRepository,
+      FreshTenantIdentityAssociationRepository freshTenantIdentityAssociationRepository,
+      AccountMembershipPairAuthorityRepository pairAuthorityRepository,
+      AccountAuthorityGenerationRepository authorityGenerationRepository) {
     this.dsl = dsl;
     this.accountRepository = accountRepository;
     this.freshTenantIdentityAssociationRepository = freshTenantIdentityAssociationRepository;
     this.pairAuthorityRepository = pairAuthorityRepository;
+    this.authorityGenerationRepository = authorityGenerationRepository;
   }
 
   public Optional<AccountTenantMembership> findByAccountIdAndTenantId(
@@ -229,6 +246,13 @@ public class AccountTenantMembershipRepository {
         pairAuthorityRepository.readForUpdate(accountUuid, tenantUuid);
     PairAuthority baseline;
     if (existingPair.isEmpty()) {
+      // A player who never joined has no membership scope yet; the first JOIN's authority event
+      // reads it, so establish the pristine scope with the never-joined pair, as creators do.
+      var generation =
+          authorityGenerationRepository.initializeMembershipIfAbsent(accountUuid, tenantUuid);
+      if (generation.generation() != 1L || generation.sourceVersion() != 1L) {
+        throw new IllegalStateException("Fresh first JOIN membership generation is not pristine");
+      }
       baseline = pairAuthorityRepository.enrollAbsence(accountUuid, tenantUuid, expectedProvenance);
       if (!absenceBaseline.equals(baseline)) {
         throw new IllegalStateException(
@@ -337,6 +361,53 @@ public class AccountTenantMembershipRepository {
       throw new IllegalStateException("Restore membership readback differs");
     }
     return restored;
+  }
+
+  /** Stages an exact ACTIVE leave; event, pair, fence and terminal receipt must commit with it. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public AccountTenantMembership stageFreshMembershipForLeave(
+      UUID accountUuid, UUID tenantUuid, AccountTenantMembership expected) {
+    requireOwnerWriteTransaction();
+    AccountTenantMembership current =
+        findFreshMembershipForUpdate(accountUuid, tenantUuid)
+            .orElseThrow(() -> new IllegalStateException("Leave membership is absent"));
+    if (expected == null
+        || !Objects.equals(current.getId(), expected.getId())
+        || !"ACTIVE".equals(current.getLifecycleState())
+        || current.getMembershipVersion() != expected.getMembershipVersion()
+        || current.getMembershipAuthorityGeneration()
+            != expected.getMembershipAuthorityGeneration()) {
+      throw new IllegalStateException("Leave membership changed from its locked snapshot");
+    }
+    long nextVersion = increment(current.getMembershipVersion(), "membership version");
+    long nextGeneration =
+        increment(current.getMembershipAuthorityGeneration(), "membership authority generation");
+    int changed =
+        dsl.execute(
+            "UPDATE account_tenant_membership SET lifecycle_state = 'INACTIVE', "
+                + "gameplay_admission_allowed = FALSE, membership_version = ?, membership_authority_generation = ? "
+                + "WHERE id = ? AND account_id = ? AND tenant_id IS NULL AND tenant_uuid = ? "
+                + "AND lifecycle_state = 'ACTIVE' AND membership_version = ? AND membership_authority_generation = ?",
+            nextVersion,
+            nextGeneration,
+            current.getId(),
+            current.getAccount().getId(),
+            tenantUuid,
+            current.getMembershipVersion(),
+            current.getMembershipAuthorityGeneration());
+    if (changed != 1)
+      throw new IllegalStateException("Leave membership compare-and-advance failed");
+    AccountTenantMembership left =
+        findCanonicalMembershipForUpdate(accountUuid, tenantUuid).orElseThrow();
+    if (!"INACTIVE".equals(left.getLifecycleState())
+        || left.isGameplayAdmissionAllowed()
+        || left.getMembershipVersion() != nextVersion
+        || left.getMembershipAuthorityGeneration() != nextGeneration
+        || !Objects.equals(left.getId(), current.getId())
+        || !Objects.equals(left.getAuthorityProvenance(), current.getAuthorityProvenance())) {
+      throw new IllegalStateException("Leave membership readback differs");
+    }
+    return left;
   }
 
   /** Account-fenced absence enrollment for the fresh creator owner; creates no membership. */

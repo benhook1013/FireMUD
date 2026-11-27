@@ -49,7 +49,9 @@ import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
+import net.firedevops.firemud.accountservice.security.AccountTenantCapacityWorkloadGuard;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
@@ -95,6 +97,35 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   @Autowired
   void canonicalGameplayReceiver(ObjectProvider<AccountGameplayAuthenticateReceiver> receiver) {
     canonicalGameplay = receiver.getIfAvailable();
+  }
+
+  private AccountTenantCapacityGrpcService tenantCapacity;
+
+  /** Tenant capacity shares this AccountService registration; its receiver checks Game Session. */
+  @Autowired
+  void tenantCapacityReceiver(
+      ObjectProvider<AccountTenantCapacityOwner> owner,
+      ObjectProvider<AccountTenantCapacityWorkloadGuard> guard) {
+    var available = owner.getIfAvailable();
+    tenantCapacity =
+        available == null
+            ? null
+            : new AccountTenantCapacityGrpcService(available, guard.getObject());
+  }
+
+  @Override
+  public void commitTenantCapacityAdmission(
+      net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest request,
+      StreamObserver<net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse>
+          observer) {
+    if (tenantCapacity == null) {
+      observer.onError(
+          io.grpc.Status.UNIMPLEMENTED
+              .withDescription("Tenant capacity admission is not composed")
+              .asRuntimeException());
+      return;
+    }
+    tenantCapacity.commitTenantCapacityAdmission(request, observer);
   }
 
   public AccountGrpcService(PingService pingService, AccountService accountService) {
@@ -725,12 +756,12 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       StreamObserver<GetTenantEntitlementsForRuntimeResponse> responseObserver) {
     try {
       requireRuntimeEntitlementsPeer();
-      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      UUID tenantId = requireCanonicalUuid(request.getTenantId(), "tenantId");
       String requestId = requireText(request.getRequestId(), "requestId");
       var dto = accountService.getTenantEntitlementsForRuntime(tenantId, requestId);
       GetTenantEntitlementsForRuntimeResponse response =
           GetTenantEntitlementsForRuntimeResponse.newBuilder()
-              .setTenantId(String.valueOf(dto.tenantId()))
+              .setTenantId(dto.tenantId().toString())
               .setGameplayAvailable(dto.gameplayAvailable())
               .setAllowPublicJoin(dto.allowPublicJoin())
               .setEntitlementVersion(dto.entitlementVersion())
@@ -978,7 +1009,12 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           || !Long.valueOf(tenantId).equals(dto.tenantId())) {
         throw new IllegalStateException("Profile authority returned a different owner");
       }
-      UpdateProfileResponse response = UpdateProfileResponse.newBuilder().setSuccess(true).build();
+      UpdateProfileResponse response =
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(true)
+              .setAccountId(dto.accountId())
+              .setTenantId(dto.tenantId().toString())
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
