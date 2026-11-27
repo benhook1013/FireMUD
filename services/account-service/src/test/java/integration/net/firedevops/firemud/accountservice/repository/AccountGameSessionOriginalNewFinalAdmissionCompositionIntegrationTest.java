@@ -1344,7 +1344,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       // The owner has a five-second transaction budget. Start within it, with enough
       // time for the physical row wait to register before the retained evidence expires.
       var expiry = request.evidence().expiresAt();
-      waitForDatabaseTime(session.dsl, expiry.minusMillis(4_500));
+      waitForDatabaseTime(session.dsl, expiry.minusSeconds(3));
       Instant beforeSubmit = AccountTenantCapacityRepository.databaseNow(session.dsl);
       assertThat(beforeSubmit).as("database time before submitting the owner").isBefore(expiry);
       var result = worker.submit(() -> owner.commit(request, GS));

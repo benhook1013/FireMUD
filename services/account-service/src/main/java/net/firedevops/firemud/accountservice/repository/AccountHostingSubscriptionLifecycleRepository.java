@@ -26,6 +26,7 @@ import net.firedevops.firemud.accountservice.repository.AccountSubscriptionInten
 import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -458,11 +459,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         || (unpaid.intentMethodUnassigned() && !captured.allowsUnassignedIntent())
         || unpaid.readStartedAt().isBefore(observed.observedAt())
         || evaluated.isBefore(unpaid.observedAt().truncatedTo(ChronoUnit.MICROS))
-        || !evaluated.isBefore(
-            unpaid
-                .readStartedAt()
-                .truncatedTo(ChronoUnit.MICROS)
-                .plus(policy.maximumObservationAge()))) {
+        || !evaluated.isBefore(terminalUnpaidCutoff(unpaid))) {
       return new TransitionResult(
           captured.requestId, Outcome.RECONCILING, 0, "UNPAID_CANCELLATION_UNCONFIRMED");
     }
@@ -493,7 +490,31 @@ public final class AccountHostingSubscriptionLifecycleRepository {
           utc(unpaid.readStartedAt().truncatedTo(ChronoUnit.MICROS)),
           utc(unpaid.observedAt().truncatedTo(ChronoUnit.MICROS)));
     }
-    return apply(prepared, observed, true);
+    TransitionResult applied = apply(prepared, observed, true);
+    if (applied.outcome() == Outcome.COMMITTED) {
+      requireTerminalUnpaidFreshnessAtCommit(terminalUnpaidCutoff(unpaid));
+    }
+    return applied;
+  }
+
+  private Instant terminalUnpaidCutoff(TerminalUnpaidObservation unpaid) {
+    return unpaid
+        .readStartedAt()
+        .truncatedTo(ChronoUnit.MICROS)
+        .plus(policy.maximumObservationAge());
+  }
+
+  private void requireTerminalUnpaidFreshnessAtCommit(Instant cutoff) {
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void beforeCommit(boolean readOnly) {
+            if (!databaseNow().isBefore(cutoff)) {
+              throw new FenceRejectedException(
+                  "Terminal unpaid first-invoice observation expired before owner commit");
+            }
+          }
+        });
   }
 
   private static byte[] reconciliationInput(

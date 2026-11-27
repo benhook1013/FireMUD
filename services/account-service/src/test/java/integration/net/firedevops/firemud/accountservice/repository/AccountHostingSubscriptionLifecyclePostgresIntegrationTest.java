@@ -36,6 +36,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
+import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecyclePolicy.RecoveryTiming;
@@ -62,9 +63,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.core.Ordered;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -1811,6 +1816,113 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                     f.creation().requestId())
                 .get("released_at"))
         .isNull();
+  }
+
+  @Test
+  void terminalUnpaidCutoffRollsBackFreshOwnerCommitAndPreservesExactReplay() {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    checkout.claimExpiredBeforePost(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    UUID creationId = f.creation().requestId();
+    UUID cancellationId = UUID.randomUUID();
+    long version =
+        in(
+            c,
+            () ->
+                checkout
+                    .payments()
+                    .ownerRowVersion(
+                        f.creation().subscriptionId(), checkout.invoice().ownerAccountId()));
+    f.transport().json = response(f, "canceled");
+    f.clock()
+        .advanceToAtLeast(
+            one(c, "SELECT clock_timestamp()").get(0, OffsetDateTime.class).toInstant());
+    var cutoff = f.clock().instant().plusSeconds(15).atOffset(ZoneOffset.UTC);
+    var initialImage = firstInvoiceImage(c);
+    var transactions =
+        new DataSourceTransactionManager(c.source()) {
+          private static final long serialVersionUID = 1L;
+
+          @Override
+          protected void prepareSynchronization(
+              DefaultTransactionStatus status, TransactionDefinition definition) {
+            super.prepareSynchronization(status, definition);
+            if (definition.getIsolationLevel() != TransactionDefinition.ISOLATION_READ_COMMITTED)
+              return;
+            TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                  @Override
+                  public int getOrder() {
+                    return Ordered.HIGHEST_PRECEDENCE;
+                  }
+
+                  @Override
+                  public void beforeCommit(boolean readOnly) {
+                    assertThat(
+                            c.dsl()
+                                .fetchExists(
+                                    DSL.selectOne()
+                                        .from("subscription_lifecycle_receipts")
+                                        .where("request_id = ?", cancellationId)))
+                        .isTrue();
+                    assertThat(
+                            c.dsl()
+                                .fetchSingle("SELECT clock_timestamp()")
+                                .get(0, OffsetDateTime.class))
+                        .isBefore(cutoff);
+                    c.dsl().execute("SELECT pg_sleep_until(?::timestamptz)", cutoff);
+                  }
+                });
+          }
+        };
+    var service =
+        new AccountHostingSubscriptionLifecycleService(
+            f.owner(),
+            f.observer(),
+            transactions,
+            new StripeHostingFirstInvoicePaymentClient(
+                new com.stripe.StripeClient(f.terminalInvoiceTransport()),
+                f.clock(),
+                Duration.ofMillis(250),
+                Duration.ofSeconds(1)));
+
+    assertThatThrownBy(() ->
+            service.reconcileUnpaidFirstInvoiceCancellation(
+                cancellationId, creationId, version, f.providerId()))
+        .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class)
+        .hasMessage("Terminal unpaid first-invoice observation expired before owner commit");
+    assertThat(firstInvoiceImage(c)).isEqualTo(initialImage);
+    assertThat(count(c, "subscription_lifecycle_operations")).isZero();
+    assertThat(count(c, "subscription_lifecycle_receipts")).isZero();
+    assertThat(count(c, "subscription_provider_terminal_resolutions")).isZero();
+
+    f.clock().advanceToAtLeast(cutoff.toInstant().plusSeconds(1));
+    var committed =
+        f.service()
+            .reconcileUnpaidFirstInvoiceCancellation(
+                cancellationId, creationId, version, f.providerId());
+    assertThat(committed.outcome()).isEqualTo(Outcome.COMMITTED);
+    assertThat(count(c, "subscription_provider_terminal_resolutions")).isOne();
+    int providerReads = f.transport().reads;
+    int terminalReads = f.terminalInvoiceTransport().readPaths().size();
+    f.clock().advance(Duration.ofSeconds(16));
+    assertThat(
+            service.reconcileUnpaidFirstInvoiceCancellation(
+                cancellationId, creationId, version, f.providerId()))
+        .isEqualTo(committed);
+    assertThat(f.transport().reads).isEqualTo(providerReads);
+    assertThat(f.terminalInvoiceTransport().readPaths()).hasSize(terminalReads);
   }
 
   @ParameterizedTest

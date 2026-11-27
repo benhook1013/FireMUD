@@ -58,6 +58,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionSynchronizationUtils;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -289,7 +290,8 @@ class AccountTenantCapacityOwnerTest {
     when(usage.get("held_units", Long.class)).thenReturn(0L);
     org.mockito.Mockito.clearInvocations(f.dsl, f.accounts, f.memberships, f.issuances, f.scopes);
 
-    // Capacity is now available, but the owner must replay the committed denial.
+    // Capacity is now available and the evidence expired. Replay the committed denial.
+    f.databaseNow.set(f.request.evidence().expiresAt());
     for (int retry = 0; retry < 2; retry++) {
       assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
           .isInstanceOfSatisfying(
@@ -342,6 +344,46 @@ class AccountTenantCapacityOwnerTest {
       assertThat(f.originDecision).isNull();
       assertThat(f.pendingOriginDecision).isNull();
     }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void databaseExpiryBeforeCommitRollsBackNewReservationOrDenial(boolean quotaFull)
+      throws Exception {
+    var f = new Fixture(false, qualifiedRequest(true));
+    f.existing = false;
+    f.retained = true;
+    qualifySources(f);
+    Record usage = mock(Record.class);
+    when(usage.get("held_units", Long.class))
+        .thenReturn(quotaFull ? f.request.evidence().quota() : 0L);
+    when(usage.get("used_units", Long.class)).thenReturn(0L);
+    when(usage.get("usage_revision", Long.class)).thenReturn(1L);
+    org.mockito.Mockito.doReturn(usage)
+        .when(f.dsl)
+        .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
+    retainOriginThenAdvanceClock(f, f.request, quotaFull ? "NO_ACCEPT" : "ACCEPTED", () -> {});
+    when(f.dsl.execute(startsWith("UPDATE account_tenant_capacity_usage "), any(Object[].class)))
+        .thenReturn(1);
+    when(f.dsl.execute(
+            startsWith("INSERT INTO account_tenant_capacity_reservations "), any(Object[].class)))
+        .thenAnswer(ignored -> {
+          f.pendingReservation = true;
+          return 1;
+        });
+    f.transactions.beforeCommit = () -> f.databaseNow.set(f.request.evidence().expiresAt());
+
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE));
+    assertThat(f.transactionEvents).containsExactly("begin", "rollback");
+    assertThat(f.originDecision).isNull();
+    assertThat(f.pendingOriginDecision).isNull();
+    assertThat(f.existing).isFalse();
+    verify(f.dsl, times(quotaFull ? 0 : 1))
+        .execute(
+            startsWith("INSERT INTO account_tenant_capacity_reservations "), any(Object[].class));
   }
 
   @ParameterizedTest
@@ -412,6 +454,69 @@ class AccountTenantCapacityOwnerTest {
         .execute(startsWith("UPDATE account_tenant_capacity_reservations "), any(Object[].class));
     assertThat(f.originDecision).isNull();
     assertThat(f.pendingOriginDecision).isNull();
+  }
+
+  @Test
+  void applicationExpiryBeforeCommitRollsBackRearm() throws Exception {
+    var f = new Fixture(false, qualifiedRequest(true));
+    f.retained = true;
+    var scope = qualifySources(f);
+    var cutoff = CapacityAdmissionTestFixture.NOW.plusSeconds(2);
+    when(scope.connectScopeExpiresAt()).thenReturn(cutoff.toString());
+    var next =
+        new Request(
+                f.request.identity(),
+                UUID.randomUUID(),
+                2,
+                f.request.targetNamespace(),
+                f.request.context(),
+                f.request.operation(),
+                f.request.priorShape(),
+                f.request.requestedShape(),
+                f.request.evidence(),
+                f.request.capacityDelta(),
+                null)
+            .withDigest();
+    Record row =
+        java.util.Objects.requireNonNull(
+            f.dsl.fetchOne("SELECT * FROM account_tenant_capacity_reservations ", new Object[0]));
+    UUID claimOwner = UUID.randomUUID();
+    when(row.get("recovery_owner", UUID.class)).thenReturn(claimOwner);
+    when(row.get("recovery_claim_fence", Long.class)).thenReturn(7L);
+    when(row.get("recovery_claim_expires_at", java.time.OffsetDateTime.class))
+        .thenReturn(AccountTenantCapacityRepository.at(cutoff.plusSeconds(10)));
+    when(row.get("execution_status", String.class)).thenReturn("NOT_EXECUTED_AFTER_AUTHORIZATION");
+    when(row.get("owner_readback", byte[].class)).thenReturn(new byte[] {1});
+    retainOriginThenAdvanceClock(f, next, "ACCEPTED", () -> {});
+    when(f.dsl.execute(
+            startsWith("INSERT INTO account_tenant_capacity_attempt_history "),
+            any(Object[].class)))
+        .thenReturn(1);
+    when(f.dsl.execute(
+            startsWith("UPDATE account_tenant_capacity_reservations "), any(Object[].class)))
+        .thenAnswer(ignored -> {
+          when(row.get("admission_attempt_id", UUID.class)).thenReturn(next.admissionAttemptId());
+          when(row.get("capacity_rearm_fence", Long.class)).thenReturn(next.capacityRearmFence());
+          when(row.get("reservation_fence", Long.class)).thenReturn(2L);
+          when(row.get("mutation_digest", String.class)).thenReturn(next.mutationDigest());
+          when(row.get("canonical_payload", byte[].class))
+              .thenReturn(CapacityAdmissionDigest.preimage(next));
+          return 1;
+        });
+    f.transactions.beforeCommit = () -> when(f.clock.instant()).thenReturn(cutoff);
+
+    var rearm =
+        AccountTenantCapacityOwner.class.getDeclaredMethod(
+            "rearm", Request.class, Request.class, UUID.class, long.class);
+    rearm.setAccessible(true);
+    assertThatThrownBy(() -> rearm.invoke(f.owner, f.request, next, claimOwner, 7L))
+        .hasCauseInstanceOf(AccountTenantCapacityRepository.CapacityException.class)
+        .hasRootCauseMessage("ENTITLEMENT_UNAVAILABLE");
+    assertThat(f.transactionEvents).containsExactly("begin", "rollback");
+    assertThat(f.originDecision).isNull();
+    assertThat(f.pendingOriginDecision).isNull();
+    verify(f.dsl)
+        .execute(startsWith("UPDATE account_tenant_capacity_reservations "), any(Object[].class));
   }
 
   private static void retainOriginThenAdvanceClock(
@@ -1069,6 +1174,7 @@ class AccountTenantCapacityOwnerTest {
     private final UUID reservation = UUID.randomUUID();
     private final AccountTenantCapacityOwner owner;
     private boolean existing = true;
+    private boolean pendingReservation;
     private boolean retained;
     private Instant originalPaidCutoff;
     private Record originDecision;
@@ -1139,7 +1245,7 @@ class AccountTenantCapacityOwnerTest {
           .thenAnswer(invocation -> {
             String sql = invocation.getArgument(0, String.class);
             if (sql.startsWith("SELECT * FROM account_tenant_capacity_reservations "))
-              return existing ? row : null;
+              return existing || pendingReservation ? row : null;
             if (sql.startsWith("SELECT 1 FROM (SELECT tenant_uuid")) return null;
             if (sql.startsWith("SELECT * FROM account_capacity_origin_decisions "))
               return pendingOriginDecision != null ? pendingOriginDecision : originDecision;
@@ -1174,6 +1280,7 @@ class AccountTenantCapacityOwnerTest {
     }
 
     private RuntimeException commitFailure;
+    private Runnable beforeCommit = () -> {};
 
     @Override
     public TransactionStatus getTransaction(
@@ -1188,23 +1295,40 @@ class AccountTenantCapacityOwnerTest {
       fixture.transactionEvents.add("begin");
       fixture.pendingOriginDecision = null;
       TransactionSynchronizationManager.setActualTransactionActive(true);
+      TransactionSynchronizationManager.initSynchronization();
       return new SimpleTransactionStatus();
     }
 
     @Override
     public void commit(TransactionStatus status) {
-      if (commitFailure == null && fixture.pendingOriginDecision != null) {
-        fixture.originDecision = fixture.pendingOriginDecision;
+      try {
+        beforeCommit.run();
+        TransactionSynchronizationUtils.triggerBeforeCommit(false);
+        if (commitFailure != null) throw commitFailure;
+        if (fixture.pendingReservation) fixture.existing = true;
+        if (fixture.pendingOriginDecision != null) {
+          fixture.originDecision = fixture.pendingOriginDecision;
+        }
+      } catch (RuntimeException | Error failure) {
+        rollback(status);
+        throw failure;
+      } finally {
+        clearTransaction();
       }
-      fixture.pendingOriginDecision = null;
-      TransactionSynchronizationManager.setActualTransactionActive(false);
-      if (commitFailure != null) throw commitFailure;
     }
 
     @Override
     public void rollback(TransactionStatus status) {
       fixture.transactionEvents.add("rollback");
+      clearTransaction();
+    }
+
+    private void clearTransaction() {
       fixture.pendingOriginDecision = null;
+      fixture.pendingReservation = false;
+      if (TransactionSynchronizationManager.isSynchronizationActive()) {
+        TransactionSynchronizationManager.clearSynchronization();
+      }
       TransactionSynchronizationManager.setActualTransactionActive(false);
     }
   }

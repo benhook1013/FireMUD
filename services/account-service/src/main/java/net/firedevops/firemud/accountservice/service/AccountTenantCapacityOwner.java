@@ -41,6 +41,7 @@ import org.postgresql.util.PSQLException;
 import org.springframework.dao.CannotSerializeTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -205,12 +206,14 @@ public final class AccountTenantCapacityOwner {
               capacity.createIfQuotaAvailable(request, usage, request.evidence().expiresAt());
           if (reservation.isPresent()) {
             authority.requireCurrent(clock.instant());
+            requireFreshAtCommit(request, authority);
             return new CommitDecision(reservation.orElseThrow(), null);
           }
           authority.requireCurrent(clock.instant());
           UUID denialId = originDecisions.refuseQuota(request);
           capacity.requireFresh(request.evidence());
           authority.requireCurrent(clock.instant());
+          requireFreshAtCommit(request, authority);
           return new CommitDecision(null, denialId);
         });
     // Throw only after the transaction has committed the exact denial.
@@ -296,8 +299,21 @@ public final class AccountTenantCapacityOwner {
       // Reservation identity and both usage columns are deliberately untouched.
       var result = capacity.exact(next, Objects.requireNonNull(capacity.find(next.identity())));
       authority.requireCurrent(clock.instant());
+      requireFreshAtCommit(next, authority);
       return result;
     });
+  }
+
+  private void requireFreshAtCommit(Request request, AppAuthorityWindow authority) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) throw unavailable();
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void beforeCommit(boolean readOnly) {
+            capacity.requireFresh(request.evidence());
+            authority.requireCurrent(clock.instant());
+          }
+        });
   }
 
   private AppAuthorityWindow current(Request request) {
