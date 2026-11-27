@@ -1337,7 +1337,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       // Start the worker thread before narrowing the window for reaching the actual SQL lock.
       worker.submit(() -> {}).get(5, TimeUnit.SECONDS);
       // Leave the owner transaction time to recheck after the physical lock is released.
-      waitForDatabaseTime(session.dsl, request.evidence().expiresAt().minusSeconds(2));
+      waitForDatabaseTime(session.dsl, request.evidence().expiresAt().minusMillis(2500));
       var result = worker.submit(() -> owner.commit(request, GS));
       try {
         requireUsageWaitBeforeExpiry(session.dsl, blocker, request.evidence().expiresAt());
@@ -1378,23 +1378,21 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   private static void requireUsageWaitBeforeExpiry(DSLContext dsl, int blocker, Instant expiry)
       throws InterruptedException {
     long waitUntil = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-    java.time.OffsetDateTime observedWaitingAt;
+    java.time.OffsetDateTime waitStartedAt;
     do {
-      observedWaitingAt =
+      waitStartedAt =
           dsl.fetchSingle(
-                  "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_stat_activity WHERE "
-                      + "? = ANY(pg_blocking_pids(pid)) "
-                      + "AND query LIKE 'SELECT * FROM account_tenant_capacity_usage%') "
-                      + "THEN clock_timestamp() END",
+                  "SELECT min(waiter.waitstart) FROM pg_locks waiter "
+                      + "JOIN pg_stat_activity activity ON activity.pid = waiter.pid "
+                      + "WHERE NOT waiter.granted AND ? = ANY(pg_blocking_pids(waiter.pid)) "
+                      + "AND activity.query LIKE 'SELECT * FROM account_tenant_capacity_usage%'",
                   blocker)
               .get(0, java.time.OffsetDateTime.class);
-      if (observedWaitingAt == null) Thread.sleep(10);
-    } while (observedWaitingAt == null && System.nanoTime() < waitUntil);
-    assertThat(observedWaitingAt)
-        .as("the actual owner must wait on the held usage row")
-        .isNotNull();
-    assertThat(observedWaitingAt.toInstant())
-        .as("PostgreSQL observed the blocked owner before the evidence expired")
+      if (waitStartedAt == null) Thread.sleep(10);
+    } while (waitStartedAt == null && System.nanoTime() < waitUntil);
+    assertThat(waitStartedAt).as("the actual owner must wait on the held usage row").isNotNull();
+    assertThat(waitStartedAt.toInstant())
+        .as("the database recorded the usage lock wait starting before expiry")
         .isBefore(expiry);
   }
 
