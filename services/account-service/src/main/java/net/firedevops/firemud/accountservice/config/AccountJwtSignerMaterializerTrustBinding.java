@@ -81,6 +81,8 @@ public final class AccountJwtSignerMaterializerTrustBinding {
       return Optional.of(readProtectedFile(Path.of(protectedBindingPath)));
     } catch (Exception ex) {
       // Never expose config contents, file paths, or certificate details through RPC errors.
+      org.slf4j.LoggerFactory.getLogger(AccountJwtSignerMaterializerTrustBinding.class)
+          .debug("JWT materializer trust binding unavailable: {}", ex.getClass().getSimpleName());
       return Optional.empty();
     }
   }

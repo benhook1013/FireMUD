@@ -267,6 +267,44 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
 
   /** Real authenticated client decoding over controlled World/Entity response DTOs and test PKI. */
   static final class ControlledRegionSources implements AutoCloseable {
+
+    private static final java.util.Map<
+            java.util.List<Object>, net.firedevops.firemud.test.LoopbackMtlsTestPki.Pki>
+        PREPARED_PKI = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Creates the controlled sources' loopback PKI ahead of time. Key generation is slow on a
+     * loaded runner; doing it before a caller mints its 15 s controlled account lease keeps the
+     * lease budget for the admission steps themselves.
+     */
+    static void preparePki(java.nio.file.Path directory, String namespace) throws Exception {
+      pki(directory, namespace);
+    }
+
+    private static net.firedevops.firemud.test.LoopbackMtlsTestPki.Pki pki(
+        java.nio.file.Path directory, String namespace) throws Exception {
+      var key = java.util.List.<Object>of(directory.toAbsolutePath().normalize(), namespace);
+      var prepared = PREPARED_PKI.get(key);
+      if (prepared != null) return prepared;
+      String caller = "spiffe://firemud/ns/" + namespace + "/sa/game-session-service";
+      var created =
+          net.firedevops.firemud.test.LoopbackMtlsTestPki.create(
+              directory,
+              "Controlled final component source CA",
+              new net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec(
+                  "client", caller, false),
+              new net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec(
+                  "world",
+                  "spiffe://firemud/ns/" + namespace + "/sa/world-management-service",
+                  true),
+              new net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec(
+                  "entity",
+                  "spiffe://firemud/ns/" + namespace + "/sa/entity-management-service",
+                  true));
+      PREPARED_PKI.put(key, created);
+      return created;
+    }
+
     enum WorldRead {
       NONE,
       PLACEMENT,
@@ -354,20 +392,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
         throw new IllegalArgumentException("Controlled region candidates must be independent");
       }
       String caller = "spiffe://firemud/ns/" + namespace + "/sa/game-session-service";
-      var pki =
-          net.firedevops.firemud.test.LoopbackMtlsTestPki.create(
-              directory,
-              "Controlled final component source CA",
-              new net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec(
-                  "client", caller, false),
-              new net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec(
-                  "world",
-                  "spiffe://firemud/ns/" + namespace + "/sa/world-management-service",
-                  true),
-              new net.firedevops.firemud.test.LoopbackMtlsTestPki.IdentitySpec(
-                  "entity",
-                  "spiffe://firemud/ns/" + namespace + "/sa/entity-management-service",
-                  true));
+      var pki = pki(directory, namespace);
       String bindingJson =
           dsl.fetchSingle(
                   "SELECT complete_launch_binding_evidence::text FROM game_session_canonical_instance_launch"

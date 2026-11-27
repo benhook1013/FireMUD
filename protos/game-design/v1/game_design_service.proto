@@ -31,6 +31,8 @@ service GameDesignService {
   rpc GetPublishedReleaseBundle(GetPublishedReleaseBundleRequest)
       returns (GetPublishedReleaseBundleResponse);
   rpc GetVersionState(GetVersionStateRequest) returns (GetVersionStateResponse);
+  // Canonical tenant UUID for a Game Design tenant key; Game Design owns tenant identity.
+  rpc ResolveCanonicalTenant(ResolveCanonicalTenantRequest) returns (ResolveCanonicalTenantResponse);
   rpc CompareAndSetVersionState(CompareAndSetVersionStateRequest)
       returns (CompareAndSetVersionStateResponse);
   rpc ResolveLaunchDescriptor(ResolveLaunchDescriptorRequest)
@@ -329,6 +331,15 @@ message GetPublishedReleaseBundleRequest {
 
 message GetPublishedReleaseBundleResponse {
   PublishedReleaseBundle bundle = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ResolveCanonicalTenantRequest {
+  string tenant_id = 1;
+}
+
+message ResolveCanonicalTenantResponse {
+  string canonical_tenant_id = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

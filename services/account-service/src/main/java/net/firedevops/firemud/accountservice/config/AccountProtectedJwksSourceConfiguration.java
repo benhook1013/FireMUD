@@ -45,6 +45,13 @@ public class AccountProtectedJwksSourceConfiguration {
       // sources on use; a later materializer namespace cannot replace this accepted API identity.
       return api;
     } catch (RuntimeException failure) {
+      // Fixed, non-secret failure category only; the binding readers never put file contents,
+      // tokens or certificate material in their messages.
+      org.slf4j.LoggerFactory.getLogger(AccountProtectedJwksSourceConfiguration.class)
+          .warn(
+              "Protected Account JWKS API binding unavailable: {}: {}",
+              failure.getClass().getSimpleName(),
+              failure.getMessage());
       throw unavailable();
     }
   }

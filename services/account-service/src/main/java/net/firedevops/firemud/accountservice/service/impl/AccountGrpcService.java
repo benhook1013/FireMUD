@@ -725,12 +725,12 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       StreamObserver<GetTenantEntitlementsForRuntimeResponse> responseObserver) {
     try {
       requireRuntimeEntitlementsPeer();
-      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      UUID tenantId = requireCanonicalUuid(request.getTenantId(), "tenantId");
       String requestId = requireText(request.getRequestId(), "requestId");
       var dto = accountService.getTenantEntitlementsForRuntime(tenantId, requestId);
       GetTenantEntitlementsForRuntimeResponse response =
           GetTenantEntitlementsForRuntimeResponse.newBuilder()
-              .setTenantId(String.valueOf(dto.tenantId()))
+              .setTenantId(dto.tenantId().toString())
               .setGameplayAvailable(dto.gameplayAvailable())
               .setAllowPublicJoin(dto.allowPublicJoin())
               .setEntitlementVersion(dto.entitlementVersion())

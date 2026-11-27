@@ -171,10 +171,12 @@ public final class CanonicalGameplayLoginResult implements AutoCloseable {
       if (request == null
           || !request.getUnknownFields().asMap().isEmpty()
           || !request.hasSourceContext()
-          || !request.getSourceContext().getUnknownFields().asMap().isEmpty()
-          || request.getSourceContext().getTransportClass()
-              != GameplayLoginTransportClass.GAMEPLAY_LOGIN_TRANSPORT_CLASS_TRUSTED_TCP_PROXY)
-        throw invalid();
+          || !request.getSourceContext().getUnknownFields().asMap().isEmpty()) throw invalid();
+      var transport = request.getSourceContext().getTransportClass();
+      if (transport != GameplayLoginTransportClass.GAMEPLAY_LOGIN_TRANSPORT_CLASS_TRUSTED_TCP_PROXY
+          && transport
+              != GameplayLoginTransportClass
+                  .GAMEPLAY_LOGIN_TRANSPORT_CLASS_RUN_OWNED_FIXTURE_WEBSOCKET) throw invalid();
       v4(request.getRequestId());
       v4(request.getSourceContext().getCallerContextId());
       String address = request.getSourceContext().getCanonicalClientAddress();

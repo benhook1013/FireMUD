@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Telnet -> Gateway -> Game Session smoke test: WORLDS + LOGIN + PLAY + LOOK over TCP Proxy.
+# Telnet -> Gateway -> Game Session smoke test over TCP Proxy and the authenticated Gateway listener.
+# Baseline proves LOGIN and fail-closed PLAY only: Telnet WORLDS/PLAY/LOOK is deferred until the
+# canonical admission chain has a runtime owner. WebSocket keeps the LOGIN -> PLAY -> LOOK proof.
 set -euo pipefail
 
 FIREMUD_REPO_ROOT=${FIREMUD_REPO_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
@@ -49,7 +51,7 @@ fi
 if [[ "$SMOKE_MUTATION_EXTENSION" == "true" ]]; then
   echo "Running Telnet baseline plus explicit item/container/equipment mutation extension against ${SMOKE_HOST}:${TCP_PORT}"
 else
-  echo "Running Telnet WORLDS + LOGIN + PLAY + LOOK baseline against ${SMOKE_HOST}:${TCP_PORT}"
+  echo "Running Telnet LOGIN + fail-closed PLAY baseline against ${SMOKE_HOST}:${TCP_PORT}"
 fi
 echo "Using login credentials (email and password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
@@ -66,10 +68,10 @@ repo_root = Path(os.environ["FIREMUD_REPO_ROOT"])
 sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 
 from smoke_common import (
+    authenticated_telnet_login_steps,
     gameplay_item_container_equipment_steps,
     http_readiness_up,
     is_localhost_equivalent,
-    login_play_look_steps,
     recv_until_socket,
     run_telnet_smoke_session,
     verify_smoke_account,
@@ -167,27 +169,28 @@ if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
         look_expect,
         world,
     )
+    discovery_selector = world
+    login_wait_seconds = 0
 else:
-    steps = login_play_look_steps(
-        login_email,
-        password,
-        world,
-        worlds_expect,
-        login_expect,
-        play_expect,
-        look_expect,
-    )
+    # Deferred: authenticated Telnet WORLDS/PLAY/LOOK needs the canonical admission chain.
+    steps = authenticated_telnet_login_steps(login_email, password, world, login_expect)
+    discovery_selector = None
+    # Authenticated LOGIN answers UNAVAILABLE until the Account JWT signer is promoted, which the
+    # pre-v1 stand-ins complete a few minutes after Account starts.
+    login_wait_seconds = int(os.environ.get("SMOKE_TELNET_LOGIN_WAIT_SECONDS", "480"))
 run_telnet_smoke_session(
     host,
     port,
     steps,
     timeout_seconds,
+    retry_window_seconds=login_wait_seconds,
+    retry_interval_seconds=15,
     tls_enabled=False,
-    discovery_selector=world,
+    discovery_selector=discovery_selector,
 )
 
 if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
     print("Telnet WORLDS + LOGIN + PLAY + item/container/equipment mutation extension passed.")
 else:
-    print("Telnet WORLDS + LOGIN + PLAY + LOOK baseline smoke test passed.")
+    print("Telnet LOGIN + fail-closed PLAY baseline smoke test passed.")
 PYTHON

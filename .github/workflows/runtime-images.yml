@@ -1658,7 +1658,7 @@ jobs:
         continue-on-error: true
         if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
         env:
-          FIREMUD_SMOKE_ADMISSION_QUALIFICATION: held
+          FIREMUD_SMOKE_ADMISSION_QUALIFICATION: baseline
           SMOKE_MINIO_SERVER_IMAGE_ID: >-
             ${{ steps.minio-source.outputs.server_image_id }}
           SMOKE_MINIO_CLIENT_IMAGE_ID: >-
@@ -1799,11 +1799,21 @@ jobs:
             ${{ steps.minio-source.outputs.client_image_id }}
         run: |
           source ./dev-tools/smoke/run-owned-compose.sh
+          # Teardown names every file the smoke started with, so the pre-v1 signer and gRPC mTLS
+          # services are removed too; bind sources do not matter for `down`.
+          export FIREMUD_PRE_V1_SIGNER_FIXTURES="${FIREMUD_PRE_V1_SIGNER_FIXTURES:-/tmp/firemud-pre-v1-config-only}"
+          export FIREMUD_PRE_V1_NAMESPACE_UID="${FIREMUD_PRE_V1_NAMESPACE_UID:-config-only}"
+          export FIREMUD_PRE_V1_CLUSTER_UID="${FIREMUD_PRE_V1_CLUSTER_UID:-config-only}"
+          export FIREMUD_PRE_V1_CONFIG_MAP_UID="${FIREMUD_PRE_V1_CONFIG_MAP_UID:-config-only}"
+          export FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:-/tmp/firemud-compose-grpc-mtls-config-only}"
+          export FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH="${FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH:-/tmp/firemud-compose-authored-world-source-config-only}"
           if ! stop_run_owned_compose_project \
             -f docker/docker-compose.yml \
             -f docker/docker-compose.override.yml \
             -f docker/docker-compose.smoke-images.override.yml \
-            -f docker/docker-compose.pr-local-minio.override.yml; then
+            -f docker/docker-compose.pr-local-minio.override.yml \
+            -f docker/docker-compose.grpc-mtls.override.yml \
+            -f docker/docker-compose.pre-v1-login.override.yml; then
             echo "Unable to prove or release the smoke Compose project; refusing unowned teardown." >&2
             exit 1
           fi

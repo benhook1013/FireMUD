@@ -102,7 +102,7 @@ final class WorldPlayerAdmissionEntitlementComposition {
                     .build())
             .addService(
                 ServerInterceptors.intercept(
-                    loginOwner.authenticateReceiver(namespace), new GrpcPeerIdentityInterceptor()))
+                    loginOwner.authenticateService(namespace), new GrpcPeerIdentityInterceptor()))
             .build()
             .start();
     try (var loginLifetime = WorldPublishedAdmissionSourceComposition.stopOnClose(loginServer)) {

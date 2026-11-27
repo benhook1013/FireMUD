@@ -8,7 +8,8 @@ source "$FIREMUD_REPO_ROOT/dev-tools/smoke/demo-smoke-defaults.sh"
 # shellcheck disable=SC1091 # The repository root is resolved at runtime.
 source "$FIREMUD_REPO_ROOT/dev-tools/smoke/run-owned-compose.sh"
 
-SMOKE_GAME_SESSION_WS_URL=${SMOKE_GAME_SESSION_WS_URL:-ws://localhost:8086/ws/game}
+requested_websocket_url="${SMOKE_GAME_SESSION_WS_URL:-}"
+SMOKE_GAME_SESSION_WS_URL="${requested_websocket_url:-ws://localhost:8086/ws/game}"
 SMOKE_LOGIN_EMAIL=${SMOKE_LOGIN_EMAIL:-$DEMO_SMOKE_EMAIL}
 SMOKE_PASSWORD=${SMOKE_PASSWORD:-$DEMO_SMOKE_PASSWORD}
 SMOKE_SESSION_ID=${SMOKE_SESSION_ID:-1}
@@ -32,6 +33,21 @@ if [[ "$SMOKE_MUTATION_EXTENSION" == "true" ]]; then
   fi
   require_run_owned_compose_service game-session-service 8080 8086
 fi
+SMOKE_WS_FIXTURE_MODE=false
+if [[ "${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}" == true \
+    && "${FIREMUD_SMOKE_ADMISSION_QUALIFICATION:-baseline}" == baseline \
+    && -n "${FIREMUD_SMOKE_FIXTURE_WEBSOCKET_CERTIFICATE_SHA256:-}" \
+    && "$SMOKE_MUTATION_EXTENSION" != true ]]; then
+  fixture_url=wss://127.0.0.1:18444/ws/game/run-owned-fixture
+  if [[ "${requested_websocket_url:-$fixture_url}" != "$fixture_url" ]]; then
+    echo "Canonical WebSocket smoke requires the run-owned loopback listener." >&2
+    exit 1
+  fi
+  require_run_owned_compose_service game-session-service 8444 18444 127.0.0.1
+  SMOKE_WS_FIXTURE_MODE=true
+  SMOKE_GAME_SESSION_WS_URL="$fixture_url"
+fi
+export SMOKE_WS_FIXTURE_MODE SMOKE_GAME_SESSION_WS_URL
 export FIREMUD_REPO_ROOT
 
 if command -v python3 >/dev/null 2>&1; then
@@ -45,6 +61,8 @@ fi
 
 if [[ "$SMOKE_MUTATION_EXTENSION" == "true" ]]; then
   echo "Running direct WebSocket baseline plus explicit item/container/equipment mutation extension against ${SMOKE_GAME_SESSION_WS_URL}"
+elif [[ "$SMOKE_WS_FIXTURE_MODE" == true ]]; then
+  echo "Running canonical LOGIN, WORLDS, REALMS, JOIN, PLAY and LOOK over the claimed WebSocket fixture"
 else
   echo "Running direct WebSocket WORLDS + LOGIN + PLAY + LOOK baseline against ${SMOKE_GAME_SESSION_WS_URL}"
 fi
@@ -54,6 +72,7 @@ echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 "$PYTHON" - <<'PYTHON'
 import os
 import shlex
+import ssl
 import sys
 from pathlib import Path
 
@@ -62,6 +81,7 @@ sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 
 from smoke_common import (
     PlayEntitlementUnavailable,
+    canonical_fixture_play_steps,
     gameplay_item_container_equipment_steps,
     login_play_look_steps,
     run_websocket_smoke_session,
@@ -108,6 +128,8 @@ wait_for_http_readiness("game-logic-service", game_logic_api_base, startup_wait_
 wait_for_http_readiness("game-session-service", game_session_api_base, startup_wait_seconds, timeout_seconds)
 verify_smoke_account(account_api_base, login_email, password, timeout_seconds)
 world = os.environ.get("SMOKE_WORLD") or os.environ["DEMO_SMOKE_WORLD"]
+fixture_mode = os.environ["SMOKE_WS_FIXTURE_MODE"] == "true"
+connection_options = {}
 if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
     steps = gameplay_item_container_equipment_steps(
         login_email,
@@ -119,6 +141,19 @@ if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
         world,
         look_timeout_seconds,
     )
+elif fixture_mode:
+    steps = canonical_fixture_play_steps(
+        login_email, password, world, worlds_expect, login_expect, play_expect, look_expect,
+    )
+    fixture_root = Path(os.environ["FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"])
+    connection_options["sslopt"] = {
+        "ca_certs": str(fixture_root / "authority" / "ca.crt"),
+        "certfile": str(fixture_root / "websocket-client" / "client.crt"),
+        "keyfile": str(fixture_root / "websocket-client" / "client.key"),
+        "cert_reqs": ssl.CERT_REQUIRED,
+        "server_hostname": "game-session-service",
+        "check_hostname": True,
+    }
 else:
     steps = login_play_look_steps(
         login_email,
@@ -130,16 +165,18 @@ else:
         look_expect,
         look_timeout=look_timeout_seconds,
     )
-steps += [("LOGOUT", ["OK LOGOUT", "Logged out."], "LOGOUT")]
+if not fixture_mode:
+    steps += [("LOGOUT", ["OK LOGOUT", "Logged out."], "LOGOUT")]
+    connection_options["header"] = [
+        f"X-Game-Instance-Id: {session_id}",
+        f"X-Tenant-Id: {tenant_id}",
+    ]
 try:
     run_websocket_smoke_session(
         lambda: websocket.create_connection(
             websocket_url,
             timeout=timeout_seconds,
-            header=[
-                f"X-Game-Instance-Id: {session_id}",
-                f"X-Tenant-Id: {tenant_id}",
-            ],
+            **connection_options,
         ),
         steps,
         timeout_seconds,

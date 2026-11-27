@@ -105,6 +105,7 @@ class PlayCommandHandlerTest {
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
             meterRegistry);
+    handler.setGameDesignClient(tenantIdentity());
     when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
@@ -127,7 +128,7 @@ class PlayCommandHandlerTest {
         .thenAnswer(
             invocation ->
                 GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                    .setTenantId("22")
+                    .setTenantId(canonicalTenantFor(22L).toString())
                     .setGameplayAvailable(true)
                     .setAllowPublicJoin(true)
                     .setEntitlementVersion(1L)
@@ -437,6 +438,7 @@ class PlayCommandHandlerTest {
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
             meterRegistry);
+    localHandler.setGameDesignClient(tenantIdentity());
     SessionContext context =
         new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -544,7 +546,8 @@ class PlayCommandHandlerTest {
     var admissionOrder = Mockito.inOrder(accountClient, entityManagementClient);
     admissionOrder
         .verify(accountClient)
-        .getTenantEntitlementsForRuntime(Mockito.eq("22"), Mockito.anyString());
+        .getTenantEntitlementsForRuntime(
+            Mockito.eq(canonicalTenantFor(22L).toString()), Mockito.anyString());
     admissionOrder
         .verify(accountClient)
         .getTenantMembershipForRuntime(
@@ -1281,6 +1284,7 @@ class PlayCommandHandlerTest {
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
             meterRegistry);
+    authorityBackedHandler.setGameDesignClient(tenantIdentity());
     SessionContext context = new SessionContext(1L, 22L, ACCOUNT_ID, 0L, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
@@ -1336,6 +1340,7 @@ class PlayCommandHandlerTest {
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
             meterRegistry);
+    pointerBackedHandler.setGameDesignClient(tenantIdentity());
     SessionContext context =
         new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -1921,6 +1926,24 @@ class PlayCommandHandlerTest {
         .isFalse();
   }
 
+  @Test
+  void playFailsClosedWhenGameDesignHasNoCanonicalTenant() {
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    var noIdentity = Mockito.mock(net.firedevops.firemud.gamesession.client.GameDesignClient.class);
+    when(noIdentity.resolveCanonicalTenantId(Mockito.anyLong())).thenReturn(Optional.empty());
+    handler.setGameDesignClient(noIdentity);
+
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    verify(accountClient, never())
+        .getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString());
+    verifyNoGameplayBindingSideEffects();
+  }
+
   @ParameterizedTest
   @CsvSource({
     "22,1,1,-5,true", "22,1,1,-11,false", "22,1,1,-299,false",
@@ -1936,7 +1959,7 @@ class PlayCommandHandlerTest {
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             entitlementResponse(true).toBuilder()
-                .setTenantId(tenantId)
+                .setTenantId("22".equals(tenantId) ? canonicalTenantFor(22L).toString() : tenantId)
                 .setEntitlementVersion(version)
                 .setTenantBillingSequence(sequence)
                 .setEvaluatedAt(Instant.now().plusSeconds(secondsFromNow).toString())
@@ -2205,7 +2228,8 @@ class PlayCommandHandlerTest {
     var order = Mockito.inOrder(accountClient);
     order
         .verify(accountClient)
-        .getTenantEntitlementsForRuntime(Mockito.eq("22"), Mockito.anyString());
+        .getTenantEntitlementsForRuntime(
+            Mockito.eq(canonicalTenantFor(22L).toString()), Mockito.anyString());
     order
         .verify(accountClient)
         .getTenantMembershipForRuntime(
@@ -2242,7 +2266,7 @@ class PlayCommandHandlerTest {
   private static GetTenantEntitlementsForRuntimeResponse entitlementResponse(
       boolean allowPublicJoin) {
     return GetTenantEntitlementsForRuntimeResponse.newBuilder()
-        .setTenantId("22")
+        .setTenantId(canonicalTenantFor(22L).toString())
         .setGameplayAvailable(true)
         .setAllowPublicJoin(allowPublicJoin)
         .setEntitlementVersion(12L)
@@ -2378,7 +2402,7 @@ class PlayCommandHandlerTest {
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
+                .setTenantId(canonicalTenantFor(22L).toString())
                 .setGameplayAvailable(false)
                 .setEntitlementVersion(5L)
                 .setTenantBillingSequence(5L)
@@ -2792,5 +2816,21 @@ class PlayCommandHandlerTest {
         gameplayPresenceLifecycleService,
         scriptEventPublisher);
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
+  }
+
+  private static java.util.UUID canonicalTenantFor(long tenantId) {
+    return java.util.UUID.nameUUIDFromBytes(
+        ("tenant-" + tenantId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+  }
+
+  private static net.firedevops.firemud.gamesession.client.GameDesignClient tenantIdentity() {
+    var client =
+        org.mockito.Mockito.mock(net.firedevops.firemud.gamesession.client.GameDesignClient.class);
+    org.mockito.Mockito.when(
+            client.resolveCanonicalTenantId(org.mockito.ArgumentMatchers.anyLong()))
+        .thenAnswer(
+            invocation ->
+                java.util.Optional.of(canonicalTenantFor(invocation.getArgument(0, Long.class))));
+    return client;
   }
 }

@@ -131,6 +131,14 @@ python3() {
     printf 'MOCK_HELD_ADMISSION_PROBE\n'
     return "${SMOKE_TEST_HELD_ADMISSION_STATUS:-0}"
   fi
+  if [[ "${SMOKE_TEST_DIAGNOSTICS_MODE:-}" == true \
+    && "${1:-}" == */pre-v1-signer-fixtures.py ]]; then
+    # The mock certificates cannot sign real pre-v1 signer leaves; only the identity is consumed.
+    mkdir -p "$2"
+    printf '%s\n' '{"expectedNamespaceUid":"mock-ns","expectedClusterIncarnationUid":"mock-cluster","configMapUid":"mock-cm"}' \
+      >"$2/identity.json"
+    return 0
+  fi
   command python3 "$@"
 }
 export -f python3
