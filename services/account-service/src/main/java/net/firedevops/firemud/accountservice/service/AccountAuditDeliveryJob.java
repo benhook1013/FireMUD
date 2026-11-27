@@ -28,7 +28,7 @@ public class AccountAuditDeliveryJob {
     Instant capturedNow = Instant.now();
     for (var envelope : outbox.pending(50, capturedNow)) {
       try {
-        var receipt = loggingAdminClient.deliver(envelope);
+        var receipt = loggingAdminClient.deliverOrRecover(envelope);
         outbox.markDelivered(
             envelope.auditEventId(),
             receipt.receiptId(),
