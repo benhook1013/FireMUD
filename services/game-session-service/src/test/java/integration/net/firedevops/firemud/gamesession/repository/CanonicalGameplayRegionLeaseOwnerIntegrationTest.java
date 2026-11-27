@@ -1863,7 +1863,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                           preparation.operationId())
                                       .get(0, String.class))
                               .isEqualTo("INITIALIZING");
-                          awaitRedisTimelineCutoff(redis.admin(), deadlineObservation.probeCutoff());
+                          awaitRedisTimelineCutoff(
+                              redis.admin(), deadlineObservation.probeCutoff());
                           return permit;
                         })
                     .when(claimBoundary)

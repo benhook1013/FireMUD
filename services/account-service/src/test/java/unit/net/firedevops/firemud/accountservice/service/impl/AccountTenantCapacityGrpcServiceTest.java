@@ -364,8 +364,8 @@ class AccountTenantCapacityGrpcServiceTest {
 
   @ParameterizedTest
   @EnumSource(RetainedReservation.class)
-  void admissionReservationReadReturnsOnlyAnExactRetainedReservation(RetainedReservation retainedReservation)
-      throws Exception {
+  void admissionReservationReadReturnsOnlyAnExactRetainedReservation(
+      RetainedReservation retainedReservation) throws Exception {
     var request = CapacityAdmissionTestFixture.playerRequest();
     DSLContext dsl = mock();
     Connection connection = mock();

@@ -107,7 +107,8 @@ class AccountTenantCapacityWorkloadGuardTest {
   }
 
   @Test
-  void admissionReservationReadRequiresExactGameSessionTlsWithoutAmbientAuthority() throws Exception {
+  void admissionReservationReadRequiresExactGameSessionTlsWithoutAmbientAuthority()
+      throws Exception {
     var method = AccountServiceGrpc.getReadTenantCapacityAdmissionReservationMethod();
     var gameSession = tls("firemud", "game-session-service");
     assertThat(invoke(method, gameSession, "spiffe://firemud/ns/firemud/sa/game-session-service"))

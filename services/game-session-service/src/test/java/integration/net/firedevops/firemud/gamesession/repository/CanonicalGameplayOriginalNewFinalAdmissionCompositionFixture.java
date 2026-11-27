@@ -1015,8 +1015,8 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     var selectedOwner = owner.requireRequestBinding(source, request, deadline);
     if (owner.precharge(source, request, selectedOwner, deadline) != null
         || owner.authorizeAccountSend(source, request, selectedOwner, deadline)
-            != net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient
-                .SendDisposition.AUTHORIZE_NEW) {
+            != net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.SendDisposition
+                .AUTHORIZE_NEW) {
       throw new IllegalStateException("Expected a newly claimed exact Account send");
     }
   }
