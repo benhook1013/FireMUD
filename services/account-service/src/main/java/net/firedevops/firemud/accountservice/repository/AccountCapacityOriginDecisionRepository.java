@@ -11,6 +11,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -18,8 +19,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /** Immutable Account decision; unique-key arbitration also excludes caller/account aliases. */
 @SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "Private transaction collaborator.")
 public final class AccountCapacityOriginDecisionRepository {
-  private static final String QUOTA_REFUSAL = Failure.CAPACITY_QUOTA_EXCEEDED.name();
-
   private final DSLContext dsl;
 
   public AccountCapacityOriginDecisionRepository(DSLContext dsl) {
@@ -50,26 +49,33 @@ public final class AccountCapacityOriginDecisionRepository {
     return retain(request, "NO_ACCEPT", null).get("decision_id", UUID.class);
   }
 
-  /** Replays an exact durable quota refusal before any mutable eligibility check. */
-  public UUID retainedQuotaDenial(Request request) {
-    return quotaDenialId(find(request));
+  /** Replays an exact durable refusal before any mutable eligibility check. */
+  public Refusal retainedAdmissionDenial(Request request) {
+    return admissionDenial(find(request));
   }
 
   /** Historical recovery SELECT, never part of the mutation transaction. */
-  public UUID readRetainedQuotaDenial(Request request) {
+  public Refusal readRetainedAdmissionDenial(Request request) {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()) throw unavailable();
-    return quotaDenialId(findExact(request));
+    return admissionDenial(findExact(request));
   }
 
-  private static UUID quotaDenialId(Record row) {
+  private static Refusal admissionDenial(Record row) {
     if (row == null) return null;
-    return requireOutcome(row, "NO_ACCEPT", QUOTA_REFUSAL).get("decision_id", UUID.class);
+    if (!"NO_ACCEPT".equals(row.get("decision", String.class))) throw conflict();
+    String code = row.get("refusal_code", String.class);
+    if (Failure.CAPACITY_QUOTA_EXCEEDED.name().equals(code))
+      return new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, row.get("decision_id", UUID.class));
+    if (Failure.CAPACITY_EVALUATION_EXPIRED.name().equals(code))
+      return new Refusal(Failure.CAPACITY_EVALUATION_EXPIRED, row.get("decision_id", UUID.class));
+    throw conflict();
   }
 
-  /** Caller holds the Account and usage locks and found insufficient capacity before any write. */
-  public UUID refuseQuota(Request request) {
-    return retain(request, "NO_ACCEPT", QUOTA_REFUSAL).get("decision_id", UUID.class);
+  /** Caller proved the typed refusal in the owning transaction before any reservation mutation. */
+  public Refusal refuse(Request request, Failure cause) {
+    if (!cause.supportsDurableDenial()) throw new IllegalArgumentException("Invalid denial cause");
+    return admissionDenial(retain(request, "NO_ACCEPT", cause.name()));
   }
 
   private Record retain(Request request, String decision, String refusalCode) {

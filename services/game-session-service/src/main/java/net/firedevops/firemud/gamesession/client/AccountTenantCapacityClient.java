@@ -21,6 +21,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -86,22 +87,20 @@ public final class AccountTenantCapacityClient
     }
   }
 
-  /** Recovers an exact quota denial while the caller still owns the original held attempt. */
-  public UUID readRetainedQuotaDenial(Request request, long absoluteDeadlineMillis) {
+  /** Recovers an exact immutable denial while the caller owns the original held attempt. */
+  public Refusal readRetainedAdmissionDenial(Request request, long absoluteDeadlineMillis) {
     var response =
         invoke(
             request,
             absoluteDeadlineMillis,
-            AccountServiceBlockingStub::readTenantCapacityQuotaDenial);
+            AccountServiceBlockingStub::readTenantCapacityAdmissionDenial);
     try {
       return TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response)
-          .filter(refusal ->
-              refusal.code() == TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED)
-          .map(TenantCapacityAdmissionGrpcCodec.Refusal::durableDenialId)
+          .filter(refusal -> refusal.durableDenialId() != null)
           .orElseThrow(IllegalArgumentException::new);
     } catch (IllegalArgumentException inexactResponse) {
       throw Status.UNKNOWN
-          .withDescription("Account retained quota denial was not proven")
+          .withDescription("Account retained admission denial was not proven")
           .asRuntimeException();
     }
   }
@@ -183,12 +182,12 @@ public final class AccountTenantCapacityClient
       this.durableDenialId = refusal.durableDenialId();
     }
 
-    /** Replays a durable quota denial after the local owner verifies its exact retained binding. */
-    public static CapacityRefusedException retainedQuotaDenial(UUID denialId) {
-      return new CapacityRefusedException(
-          new TenantCapacityAdmissionGrpcCodec.Refusal(
-              TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED,
-              TenantCapacityAdmission.uuid(denialId)));
+    /** Replays a denial after the local owner verifies its exact retained binding. */
+    public static CapacityRefusedException retainedAdmissionDenial(Refusal denial) {
+      if (denial == null || denial.durableDenialId() == null) {
+        throw new IllegalArgumentException("A retained capacity denial requires its decision ID");
+      }
+      return new CapacityRefusedException(denial);
     }
 
     public TenantCapacityAdmissionGrpcCodec.Failure code() {
