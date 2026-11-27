@@ -316,16 +316,24 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   }
 
   @Test
-  void expiredDeadlineRefusesWithoutChangingCandidateOrAnyIndex() throws Exception {
-    ScriptCase testCase = seed();
-    byte[] candidate = admin.get(ascii(testCase.keys()[0]));
-    byte[][] arguments = testCase.arguments().clone();
-    arguments[14] = ascii(Long.toString(System.currentTimeMillis() - 1L));
+  void expiredOperationDeadlineRefusesInstallAndFinalWithoutChangingAnyKey() throws Exception {
+    ScriptCase original = seed(false);
+    ScriptCase install = action(original, "INSTALL");
+    Map<String, byte[]> beforeInstall = physicalImage(original);
+    byte[][] expiredInstall = install.arguments().clone();
+    expiredInstall[14] = ascii(Long.toString(redisTimeMillis()));
 
-    assertThat(eval(new ScriptCase(testCase.keys(), arguments))).isEqualTo(-1L);
-    assertThat(admin.get(ascii(testCase.keys()[0]))).containsExactly(candidate);
-    assertThat(admin.sismember(ascii(testCase.keys()[2]), ascii(SESSION))).isTrue();
-    assertThat(admin.sismember(ascii(testCase.keys()[3]), ascii(SESSION))).isTrue();
+    assertThat(eval(new ScriptCase(install.keys(), expiredInstall))).isEqualTo(-1L);
+    assertPhysicalImage(original, beforeInstall, original.keys().length);
+    assertThat(eval(install)).isEqualTo(3L);
+
+    Map<String, byte[]> beforeFinal = physicalImage(original);
+    byte[][] expiredFinal = original.arguments().clone();
+    expiredFinal[14] = ascii(Long.toString(redisTimeMillis()));
+
+    assertThat(eval(new ScriptCase(original.keys(), expiredFinal))).isEqualTo(-1L);
+    assertPhysicalImage(original, beforeFinal, original.keys().length);
+    assertThat(eval(original)).isEqualTo(1L);
   }
 
   @Test
