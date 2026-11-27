@@ -1194,7 +1194,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    timeout-minutes: 60
+    # The fourth partition needs time for static analysis and proof retention after integration tests.
+    timeout-minutes: ${{ matrix.partition == '4' && 75 || 60 }}
     strategy:
       fail-fast: false
       matrix:
