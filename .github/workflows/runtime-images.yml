@@ -56,7 +56,8 @@ permissions:
 
 concurrency:
   group: runtime-images-${{ github.workflow }}-${{ (github.event_name == 'pull_request' && format('pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha)) || (github.event_name == 'repository_dispatch' && github.event.client_payload.pr_number != '' && github.event.client_payload.base_sha != '' && github.event.client_payload.head_sha != '' && github.event.client_payload.merge_sha != '' && format('pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.client_payload.pr_number, github.event.client_payload.base_sha, github.event.client_payload.head_sha, github.event.client_payload.merge_sha)) || (github.event_name == 'repository_dispatch' && format('repository-dispatch-run-{0}', github.run_id)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && format('ci-pr-run-{0}-attempt-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && format('branch-{0}', github.event.workflow_run.head_branch)) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
-  cancel-in-progress: true
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   image-meta:
@@ -109,6 +110,7 @@ jobs:
           EVENT_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.client_payload.base_ref || '' }}
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.client_payload.base_sha || '' }}
           EVENT_MERGE_SHA: ${{ github.event.client_payload.merge_sha || '' }}
+          EVENT_RUNTIME_REFRESH_CLAIM: ${{ github.event.client_payload.runtime_refresh_claim || '' }}
           EVENT_ACTION: ${{ github.event.action || '' }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
@@ -119,6 +121,9 @@ jobs:
           BASE_SHA=""
           MERGE_SHA=""
           CANONICAL_PLAY_TRANSITION=false
+          RUNTIME_REFRESH_CLAIM=""
+          RUNTIME_REFRESH_CLAIM_TAG=""
+          RUNTIME_REFRESH_CLAIM_ATTEMPT=""
           if [ "$EVENT_NAME" = "pull_request" ]; then
             PR_NUMBER="$EVENT_PR_NUMBER"
             BASE_REF="$EVENT_BASE_REF"
@@ -220,6 +225,40 @@ jobs:
                 echo "Runtime PR refresh merge commit does not have the exact current base/head parents." >&2
                 exit 1
               }
+            claim_witness="$(jq -er '.client_payload.runtime_refresh_claim_witness // "" | select(type == "string")' "$GITHUB_EVENT_PATH")"
+            if [[ ! "${EVENT_RUNTIME_REFRESH_CLAIM:-}" =~ ^[1-9][0-9]{0,15}$ ]] ||
+              (( EVENT_RUNTIME_REFRESH_CLAIM > 9007199254740991 )) ||
+              [[ ! "$claim_witness" =~ ^[0-9a-f]{64}$ || ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+              echo "Runtime PR refresh claim identity is invalid." >&2
+              exit 1
+            fi
+            base_ref_hash="$(printf '%s' "$BASE_REF" | sha256sum | cut -d' ' -f1)"
+            witness_hash="$(printf '%s' "$claim_witness" | sha256sum | cut -d' ' -f1)"
+            claim="firemud-runtime-refresh-intent/v1/pr-${PR_NUMBER}/${MERGE_SHA}/${base_ref_hash}/g${EVENT_RUNTIME_REFRESH_CLAIM}"
+            claim_ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${claim}")"
+            claim_sha="$(jq -er --arg claim "refs/tags/${claim}" 'select(.ref == $claim and .object.type == "tag") | .object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' <<<"$claim_ref")"
+            claim_tag="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${claim_sha}")"
+            jq -e --arg sha "$claim_sha" --arg claim "$claim" --arg merge "$MERGE_SHA" \
+              --arg pr "$PR_NUMBER" --arg base_ref "$BASE_REF" --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
+              --arg generation "$EVENT_RUNTIME_REFRESH_CLAIM" --arg witness_hash "$witness_hash" \
+              '{pr_number:$pr,base_ref:$base_ref,base_sha:$base,head_sha:$head,merge_sha:$merge,
+                generation:$generation,witness_sha256:$witness_hash} as $tuple |
+               .sha == $sha and .tag == $claim and .object.type == "commit" and
+               ((.message | fromjson) as $annotation |
+                if $annotation | has("owner_revision") then
+                  $annotation.owner_revision as $owner |
+                  ($owner | type) == "string" and ($owner | test("^[0-9a-f]{40}\\z")) and .object.sha == $owner and
+                  .message == (($tuple + {owner_revision:$owner}) | tojson + "\n")
+                else
+                  .object.sha == $merge and .message == ($tuple | tojson + "\n")
+                end)' \
+              <<<"$claim_tag" >/dev/null || {
+                echo "Runtime PR refresh claim does not bind the verified tuple and dispatch witness." >&2
+                exit 1
+              }
+            RUNTIME_REFRESH_CLAIM="$EVENT_RUNTIME_REFRESH_CLAIM"
+            RUNTIME_REFRESH_CLAIM_TAG="$claim_sha"
+            RUNTIME_REFRESH_CLAIM_ATTEMPT="$GITHUB_RUN_ATTEMPT"
             # Only the verified live same-repository PR can authorize this
             # diagnostic marker; dispatch payload labels carry no authority.
             if jq -e '(.labels | type) == "array" and any(.labels[]; .name == "canonical-play-transition")' \
@@ -279,7 +318,14 @@ jobs:
             echo "candidate_tag=${CANDIDATE_TAG}"
             echo "base_image=${BASE_IMAGE}"
             echo "canonical_play_transition=${CANONICAL_PLAY_TRANSITION}"
+            echo "runtime_refresh_claim=${RUNTIME_REFRESH_CLAIM}"
+            echo "runtime_refresh_claim_tag=${RUNTIME_REFRESH_CLAIM_TAG}"
+            echo "runtime_refresh_claim_attempt=${RUNTIME_REFRESH_CLAIM_ATTEMPT}"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Runtime refresh claim generation ${{ steps.meta.outputs.runtime_refresh_claim }} attempt ${{ steps.meta.outputs.runtime_refresh_claim_attempt }} tag ${{ steps.meta.outputs.runtime_refresh_claim_tag }}
+        if: ${{ steps.meta.outputs.runtime_refresh_claim != '' }}
+        run: ':'
 
       - name: Verify successful CI push for manual publication
         if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -803,10 +849,85 @@ jobs:
             const samePrPath = (left, right, path, number) => left === right ||
               left === path && right === `${path}@refs/pull/${number}/merge` ||
               right === path && left === `${path}@refs/pull/${number}/merge`;
+            // Release only a proved pre-write publisher failure with a retained,
+            // expired artifact attributable to the selected producer attempt.
+            // A missing artifact, active publisher, or possibly partial write holds.
+            const expiredPublicationCanBeRebuilt = async (run, job, tuple, timestamp) => {
+              const entry = job.steps.filter(step => step?.name === "Upload preview image artifact");
+              if (entry.length !== 1 || entry[0].status !== "completed" || entry[0].conclusion !== "success") return false;
+              const started = timestamp(entry[0].started_at), completed = timestamp(entry[0].completed_at);
+              if (!Number.isFinite(started) || !Number.isFinite(completed) ||
+                  started < timestamp(job.started_at) || completed < started || completed > timestamp(job.completed_at)) return false;
+              const artifactName = `pr-runtime-images-pr-merge-${tuple.mergeSha}`;
+              const {data: inventory} = await github.rest.actions.listWorkflowRunArtifacts(fanoutOptions({
+                ...context.repo, run_id: run.id, name: artifactName, per_page: 100, page: 1,
+              }));
+              if (inventory?.total_count !== 1 || !Array.isArray(inventory.artifacts) || inventory.artifacts.length !== 1) return false;
+              const artifact = inventory.artifacts[0];
+              const artifactTime = timestamp(artifact?.created_at);
+              if (!Number.isSafeInteger(artifact?.id) || artifact.id <= 0 || artifact.name !== artifactName ||
+                  artifact.expired !== true || artifact.workflow_run?.id !== run.id || artifact.workflow_run.head_sha !== run.head_sha ||
+                  !/^sha256:[0-9a-f]{64}$/.test(artifact.digest || "") ||
+                  !Number.isFinite(artifactTime) || artifactTime < Math.floor(started / 1000) * 1000 ||
+                  artifactTime > Math.floor(completed / 1000) * 1000 + 999) return false;
+              const publisherPath = ".github/workflows/publish-pr-runtime-images.yml";
+              const publisherName = "Publish PR Runtime Images";
+              const {data: owner} = await github.rest.actions.getWorkflow(fanoutOptions({
+                ...context.repo, workflow_id: "publish-pr-runtime-images.yml",
+              }));
+              if (!Number.isSafeInteger(owner?.id) || owner.id <= 0 || owner.path !== publisherPath || owner.name !== publisherName) return false;
+              const repository = `${context.repo.owner}/${context.repo.repo}`;
+              const defaultBranch = context.payload.repository?.default_branch;
+              if (!defaultBranch) return false;
+              const request = {...context.repo, workflow_id: owner.id, created: `${artifact.created_at}..*`, per_page: 100, page: 1};
+              const dispatchTitle = `${publisherName} source-run-${run.id}`;
+              const callbackTitle = `${publisherName} ${run.display_title}`;
+              const attemptSuffix = `attempt-${run.run_attempt}`;
+              const readPublishers = async () => {
+                const {data: listing} = await github.rest.actions.listWorkflowRuns(fanoutOptions(request));
+                if (!Array.isArray(listing?.workflow_runs) || listing.workflow_runs.length > 100 ||
+                    listing.workflow_runs.length !== listing.total_count) return null;
+                return listing.workflow_runs.filter(candidate => [
+                  `${dispatchTitle} ${attemptSuffix}`, `${callbackTitle} source-run-${run.id} ${attemptSuffix}`,
+                  dispatchTitle, callbackTitle,
+                ].includes(candidate?.display_title));
+              };
+              const matching = await readPublishers();
+              if (!matching || matching.length !== 1) return false;
+              const publisher = matching[0];
+              const exactPublisher = candidate => candidate &&
+                ["id", "workflow_id", "run_attempt", "path", "display_title", "event", "head_branch", "head_sha", "created_at", "status", "conclusion"]
+                  .every(field => candidate[field] === publisher[field]) &&
+                [publisherName, publisher.display_title].includes(candidate.name) &&
+                candidate.repository?.full_name === repository && candidate.head_repository?.full_name === repository;
+              if (!exactPublisher(publisher) || publisher.id <= 0 || !Number.isSafeInteger(publisher.id) ||
+                  publisher.run_attempt <= 0 || !Number.isSafeInteger(publisher.run_attempt) ||
+                  publisher.workflow_id !== owner.id || publisher.head_branch !== defaultBranch || !shaPattern.test(publisher.head_sha || "") ||
+                  !(publisher.path === publisherPath || publisher.path === `${publisherPath}@refs/heads/${defaultBranch}`) ||
+                  (publisher.event === "repository_dispatch" ? publisher.display_title !== `${dispatchTitle} ${attemptSuffix}` :
+                    publisher.event !== "workflow_run" || publisher.display_title !== `${callbackTitle} source-run-${run.id} ${attemptSuffix}`) ||
+                  !Number.isFinite(timestamp(publisher.created_at)) || timestamp(publisher.created_at) < artifactTime ||
+                  publisher.status !== "completed" || publisher.conclusion !== "failure") return false;
+              const {data: evidence} = await github.rest.actions.listJobsForWorkflowRunAttempt(fanoutOptions({
+                ...context.repo, run_id: publisher.id, attempt_number: publisher.run_attempt, per_page: 100, page: 1,
+              }));
+              if (!Array.isArray(evidence?.jobs) || evidence.jobs.length > 100 || evidence.jobs.length !== evidence.total_count) return false;
+              const fixed = evidence.jobs.filter(value => value?.name === "Publish Fixed PR Merge Image Tags");
+              if (fixed.length !== 1 || !Number.isSafeInteger(fixed[0].id) || fixed[0].id <= 0 || fixed[0].run_id !== publisher.id || fixed[0].run_attempt !== publisher.run_attempt ||
+                  fixed[0].head_sha !== publisher.head_sha || fixed[0].status !== "completed" || fixed[0].conclusion !== "failure" ||
+                  !Array.isArray(fixed[0].steps)) return false;
+              const write = fixed[0].steps.filter(step => step?.name === "Publish fixed PR image tags");
+              if (write.length !== 1 || write[0].status !== "completed" || write[0].conclusion !== "skipped" ||
+                  fixed[0].steps.some(step => step?.name?.startsWith("PR runtime publication receipt") && step.conclusion !== "skipped")) return false;
+              const refreshed = await readPublishers();
+              if (!refreshed || refreshed.length !== 1 || !exactPublisher(refreshed[0])) return false;
+              const {data: current} = await github.rest.actions.getWorkflowRun(fanoutOptions({...context.repo, run_id: publisher.id}));
+              return exactPublisher(current);
+            };
             // The older PLAY diagnostic can leave the source run red. Only a
             // complete native attempt with its marker explicitly skipped can
             // prove that a failed producer did not supply that exception.
-            const classifyTypedOutcome = async (run, workflowName) => {
+            const classifyTypedOutcome = async (run, workflowName, tuple) => {
               const successful = run.conclusion === "success";
               const repository = `${context.repo.owner}/${context.repo.repo}`;
               const matchesSelected = candidate => candidate &&
@@ -866,11 +987,12 @@ jobs:
                 }
                 if (job.steps.some(step => step?.status !== "completed" || !["success", "skipped"].includes(step.conclusion))) return false;
               }
+              const rebuild = successful && !diagnostic && await expiredPublicationCanBeRebuilt(run, job, tuple, timestamp);
               const {data: latest} = await github.rest.actions.getWorkflowRun(fanoutOptions({...context.repo, run_id: run.id}));
               if (successful && (!matchesSelected(latest) || latest.created_at !== run.created_at)) {
                 throw new Error(`Successful typed runtime producer ${run.id} changed during exact attempt proof`);
               }
-              return matchesSelected(latest) ? (diagnostic ? "diagnostic" : "ordinary") : false;
+              return matchesSelected(latest) ? (diagnostic ? "diagnostic" : rebuild ? "expired-unpublished" : "ordinary") : false;
             };
             // Bind both admission reads to the same terminal attempt; never cache native proof.
             const disregardedTypedAttempts = new Map();
@@ -955,7 +1077,11 @@ jobs:
                       throw new Error(`Terminal typed runtime producer ${newest.id} no longer has the same trusted terminal attempt`);
                     }
                     if (["success", "failure"].includes(newest.conclusion)) {
-                      const outcome = await classifyTypedOutcome(latest, workflow.name);
+                      const outcome = await classifyTypedOutcome(latest, workflow.name, tuple);
+                      if (outcome === "expired-unpublished") {
+                        disregardedTypedAttempts.set(newest.id, attemptBinding);
+                        continue;
+                      }
                       if (newest.conclusion === "success" ? Boolean(outcome) : outcome !== "ordinary") return [newest];
                     }
                     // A recent success can be a validated transition diagnostic or
@@ -1313,7 +1439,7 @@ jobs:
                   try {
                     await github.rest.repos.createDispatchEvent(fanoutOptions({
                       ...context.repo,
-                      event_type: "pr-runtime-base-refresh",
+                      event_type: "pr-runtime-base-refresh-request",
                       client_payload: {
                         pr_number: tuple.prNumber,
                         base_ref: tuple.baseRef,

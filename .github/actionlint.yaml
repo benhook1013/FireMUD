@@ -6,6 +6,9 @@ self-hosted-runner:
 # actionlint release does not parse it, so suppress only that known parser lag
 # in workflows that use the shared preview or trusted runtime dispatch queue.
 paths:
+  .github/workflows/admit-pr-runtime-refresh.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'
   .github/workflows/preview.yml:
     ignore:
       - 'unexpected key "queue" for "concurrency" section'

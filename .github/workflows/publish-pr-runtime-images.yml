@@ -583,7 +583,7 @@ jobs:
             try {
               await github.rest.repos.createDispatchEvent(prePostOptions({
                 ...context.repo,
-                event_type: "pr-runtime-base-refresh",
+                event_type: "pr-runtime-base-refresh-request",
                 client_payload: {
                   pr_number: number, base_ref: baseRef, base_sha: base, head_sha: head, merge_sha: merge,
                 },
