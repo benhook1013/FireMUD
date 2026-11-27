@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -38,6 +39,8 @@ import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceRe
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationRequest;
 import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationResponse;
+import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetDraftDesignDigestResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
@@ -47,11 +50,14 @@ import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsRequest;
 import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
+import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -78,12 +84,61 @@ class WorldManagementGrpcServiceTest {
   }
 
   private static GrpcPeerIdentity peer(String service) {
+    return peer(TEST_NAMESPACE, service);
+  }
+
+  private static GrpcPeerIdentity peer(String namespace, String service) {
     return new GrpcPeerIdentity(
-        "spiffe://firemud/ns/" + TEST_NAMESPACE + "/sa/" + service, TEST_NAMESPACE, service);
+        "spiffe://firemud/ns/" + namespace + "/sa/" + service, namespace, service);
   }
 
   private static void runWithPeer(GrpcPeerIdentity peer, Runnable action) {
     Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(action);
+  }
+
+  private static PrepareWorldInstanceResponse invokePrepareWorldInstance(
+      WorldManagementGrpcService service, PrepareWorldInstanceRequest request) {
+    AtomicReference<PrepareWorldInstanceResponse> ref = new AtomicReference<>();
+    service.prepareWorldInstance(request, responseObserver(ref));
+    return ref.get();
+  }
+
+  private static ActivatePreparedWorldInstanceResponse invokeActivatePreparedWorldInstance(
+      WorldManagementGrpcService service, ActivatePreparedWorldInstanceRequest request) {
+    AtomicReference<ActivatePreparedWorldInstanceResponse> ref = new AtomicReference<>();
+    service.activatePreparedWorldInstance(request, responseObserver(ref));
+    return ref.get();
+  }
+
+  private static FailPreparedWorldInstanceResponse invokeFailPreparedWorldInstance(
+      WorldManagementGrpcService service, FailPreparedWorldInstanceRequest request) {
+    AtomicReference<FailPreparedWorldInstanceResponse> ref = new AtomicReference<>();
+    service.failPreparedWorldInstance(request, responseObserver(ref));
+    return ref.get();
+  }
+
+  private static TerminateWorldInstanceResponse invokeTerminateWorldInstance(
+      WorldManagementGrpcService service, TerminateWorldInstanceRequest request) {
+    AtomicReference<TerminateWorldInstanceResponse> ref = new AtomicReference<>();
+    service.terminateWorldInstance(request, responseObserver(ref));
+    return ref.get();
+  }
+
+  private static <T> StreamObserver<T> responseObserver(AtomicReference<T> ref) {
+    return new StreamObserver<>() {
+      @Override
+      public void onNext(T value) {
+        ref.set(value);
+      }
+
+      @Override
+      public void onError(Throwable t) {
+        throw new AssertionError("Lifecycle RPC failed", t);
+      }
+
+      @Override
+      public void onCompleted() {}
+    };
   }
 
   private static GetDraftDesignDigestResponse invokeDigest(
@@ -693,8 +748,7 @@ class WorldManagementGrpcServiceTest {
     WorldInstanceActivationService activationService =
         Mockito.mock(WorldInstanceActivationService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext(
-        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    SessionContext.clear();
     Mockito.when(
             activationService.prepareWorldInstance(
                 Mockito.argThat(
@@ -724,35 +778,27 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
             new ObjectMapper(),
-            (PublicationReadGuard) null);
+            publicationReadGuard());
 
     AtomicReference<PrepareWorldInstanceResponse> ref = new AtomicReference<>();
-    service.prepareWorldInstance(
-        PrepareWorldInstanceRequest.newBuilder()
-            .setTenantId("1")
-            .setGameInstanceId("55")
-            .setGameTemplateId("7")
-            .setControlPlaneRequestId("cp-1")
-            .setLaunchDescriptorId("ld-1")
-            .setVersionId("11")
-            .setRuntimeFlagsJson("{}")
-            .setGenerationConfigRevision("genrev-11")
-            .setReleaseBundleId("77")
-            .setPublishedReleaseBundleRef("prb:1:11:77")
-            .setVersionStateEpoch(4L)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(PrepareWorldInstanceResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
+    runWithPeer(
+        peer("game-session-service"),
+        () ->
+            service.prepareWorldInstance(
+                PrepareWorldInstanceRequest.newBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("55")
+                    .setGameTemplateId("7")
+                    .setControlPlaneRequestId("cp-1")
+                    .setLaunchDescriptorId("ld-1")
+                    .setVersionId("11")
+                    .setRuntimeFlagsJson("{}")
+                    .setGenerationConfigRevision("genrev-11")
+                    .setReleaseBundleId("77")
+                    .setPublishedReleaseBundleRef("prb:1:11:77")
+                    .setVersionStateEpoch(4L)
+                    .build(),
+                responseObserver(ref)));
 
     assertEquals("55", ref.get().getWorldInstance().getGameInstanceId());
     assertEquals(1L, ref.get().getWorldInstance().getLifecycleEpoch());
@@ -765,8 +811,7 @@ class WorldManagementGrpcServiceTest {
     WorldInstanceActivationService activationService =
         Mockito.mock(WorldInstanceActivationService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext(
-        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    SessionContext.clear();
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
             pingService,
@@ -778,35 +823,27 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
             new ObjectMapper(),
-            (PublicationReadGuard) null);
+            publicationReadGuard());
 
     AtomicReference<PrepareWorldInstanceResponse> ref = new AtomicReference<>();
-    service.prepareWorldInstance(
-        PrepareWorldInstanceRequest.newBuilder()
-            .setTenantId("0")
-            .setGameInstanceId("55")
-            .setGameTemplateId("7")
-            .setControlPlaneRequestId("cp-1")
-            .setLaunchDescriptorId("ld-1")
-            .setVersionId("11")
-            .setRuntimeFlagsJson("{}")
-            .setGenerationConfigRevision("genrev-11")
-            .setReleaseBundleId("77")
-            .setPublishedReleaseBundleRef("prb:1:11:77")
-            .setVersionStateEpoch(4L)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(PrepareWorldInstanceResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
+    runWithPeer(
+        peer("game-session-service"),
+        () ->
+            service.prepareWorldInstance(
+                PrepareWorldInstanceRequest.newBuilder()
+                    .setTenantId("0")
+                    .setGameInstanceId("55")
+                    .setGameTemplateId("7")
+                    .setControlPlaneRequestId("cp-1")
+                    .setLaunchDescriptorId("ld-1")
+                    .setVersionId("11")
+                    .setRuntimeFlagsJson("{}")
+                    .setGenerationConfigRevision("genrev-11")
+                    .setReleaseBundleId("77")
+                    .setPublishedReleaseBundleRef("prb:1:11:77")
+                    .setVersionStateEpoch(4L)
+                    .build(),
+                responseObserver(ref)));
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("tenantId must be positive", ref.get().getError().getMessage());
@@ -820,8 +857,7 @@ class WorldManagementGrpcServiceTest {
     WorldInstanceActivationService activationService =
         Mockito.mock(WorldInstanceActivationService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext(
-        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    SessionContext.clear();
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
             pingService,
@@ -833,31 +869,164 @@ class WorldManagementGrpcServiceTest {
             Mockito.mock(GameplaySessionAttestationService.class),
             meterRegistry,
             new ObjectMapper(),
-            (PublicationReadGuard) null);
+            publicationReadGuard());
 
     AtomicReference<ActivatePreparedWorldInstanceResponse> ref = new AtomicReference<>();
-    service.activatePreparedWorldInstance(
-        ActivatePreparedWorldInstanceRequest.newBuilder()
-            .setTenantId("1")
-            .setGameInstanceId("abc")
-            .setExpectedLifecycleEpoch(3L)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(ActivatePreparedWorldInstanceResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
+    runWithPeer(
+        peer("game-session-service"),
+        () ->
+            service.activatePreparedWorldInstance(
+                ActivatePreparedWorldInstanceRequest.newBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("abc")
+                    .setExpectedLifecycleEpoch(3L)
+                    .build(),
+                responseObserver(ref)));
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("gameInstanceId must be numeric", ref.get().getError().getMessage());
     Mockito.verifyNoInteractions(activationService);
+  }
+
+  @Test
+  void lifecycleMutationsRequireSameNamespaceGameSessionPeerBeforeParsingOrOwnerCalls() {
+    SessionContext.clear();
+    WorldInstanceActivationService activationService =
+        Mockito.mock(WorldInstanceActivationService.class);
+    WorldManagementGrpcService configuredService =
+        lifecycleService(activationService, publicationReadGuard());
+
+    assertLifecycleEndpointsDenied(configuredService, null);
+    assertLifecycleEndpointsDenied(configuredService, peer("account-service"));
+    assertLifecycleEndpointsDenied(configuredService, peer("other-test", "game-session-service"));
+
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    assertLifecycleEndpointsDenied(configuredService, peer("game-session-service"));
+    SessionContext.clear();
+
+    SessionContext.setContext(null, List.of("tenantAdmin"), Map.of());
+    assertLifecycleEndpointsDenied(configuredService, peer("game-session-service"));
+    SessionContext.clear();
+
+    WorldManagementGrpcService missingNamespaceService = lifecycleService(activationService, null);
+    assertLifecycleEndpointsDenied(missingNamespaceService, peer("game-session-service"));
+
+    Mockito.verifyNoInteractions(activationService);
+    SessionContext.clear();
+  }
+
+  @Test
+  void authorizedGameSessionPeerReachesAllLifecycleOwners() {
+    SessionContext.setContext(
+        null, List.of(), Map.of(), true, "game-session-service", "test-instance");
+    WorldInstanceActivationService activationService =
+        Mockito.mock(WorldInstanceActivationService.class);
+    WorldInstanceLifecycleSnapshotDto snapshot =
+        new WorldInstanceLifecycleSnapshotDto(
+            1L, 55L, 7L, "cp-1", "ld-1", 11L, 77L, "genrev-11", "prb:1:11:77", 4L, 2L, "ACTIVE");
+    Mockito.when(activationService.activatePreparedWorldInstance(1L, 55L, 2L)).thenReturn(snapshot);
+    Mockito.when(activationService.failPreparedWorldInstance(1L, 55L, 2L, "reason"))
+        .thenReturn(snapshot);
+    Mockito.when(activationService.terminateWorldInstance(1L, 55L, 2L, "termination-1", "reason"))
+        .thenReturn(snapshot);
+    WorldManagementGrpcService service =
+        lifecycleService(activationService, publicationReadGuard());
+
+    AtomicReference<ActivatePreparedWorldInstanceResponse> activateResponse =
+        new AtomicReference<>();
+    AtomicReference<FailPreparedWorldInstanceResponse> failResponse = new AtomicReference<>();
+    AtomicReference<TerminateWorldInstanceResponse> terminateResponse = new AtomicReference<>();
+    runWithPeer(
+        peer("game-session-service"),
+        () -> {
+          service.activatePreparedWorldInstance(
+              ActivatePreparedWorldInstanceRequest.newBuilder()
+                  .setTenantId("1")
+                  .setGameInstanceId("55")
+                  .setExpectedLifecycleEpoch(2L)
+                  .build(),
+              responseObserver(activateResponse));
+          service.failPreparedWorldInstance(
+              FailPreparedWorldInstanceRequest.newBuilder()
+                  .setTenantId("1")
+                  .setGameInstanceId("55")
+                  .setExpectedLifecycleEpoch(2L)
+                  .setReason("reason")
+                  .build(),
+              responseObserver(failResponse));
+          service.terminateWorldInstance(
+              TerminateWorldInstanceRequest.newBuilder()
+                  .setTenantId("1")
+                  .setGameInstanceId("55")
+                  .setExpectedLifecycleEpoch(2L)
+                  .setTerminationRequestId("termination-1")
+                  .setReason("reason")
+                  .build(),
+              responseObserver(terminateResponse));
+        });
+
+    assertEquals(
+        WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE,
+        activateResponse.get().getWorldInstance().getStatus());
+    assertEquals(
+        WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE,
+        failResponse.get().getWorldInstance().getStatus());
+    assertEquals(
+        WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE,
+        terminateResponse.get().getWorldInstance().getStatus());
+    Mockito.verify(activationService).activatePreparedWorldInstance(1L, 55L, 2L);
+    Mockito.verify(activationService).failPreparedWorldInstance(1L, 55L, 2L, "reason");
+    Mockito.verify(activationService)
+        .terminateWorldInstance(1L, 55L, 2L, "termination-1", "reason");
+    SessionContext.clear();
+  }
+
+  private static WorldManagementGrpcService lifecycleService(
+      WorldInstanceActivationService activationService, PublicationReadGuard readGuard) {
+    return new WorldManagementGrpcService(
+        Mockito.mock(PingService.class),
+        Mockito.mock(RoomService.class),
+        activationService,
+        Mockito.mock(WorldDraftDesignDigestService.class),
+        Mockito.mock(WorldDesignMutationService.class),
+        Mockito.mock(WorldUpgradeValidationService.class),
+        Mockito.mock(GameplaySessionAttestationService.class),
+        new SimpleMeterRegistry(),
+        new ObjectMapper(),
+        readGuard);
+  }
+
+  private static void assertLifecycleEndpointsDenied(
+      WorldManagementGrpcService service, GrpcPeerIdentity caller) {
+    Runnable assertDenied =
+        () -> {
+          var prepare =
+              invokePrepareWorldInstance(service, PrepareWorldInstanceRequest.getDefaultInstance());
+          var activate =
+              invokeActivatePreparedWorldInstance(
+                  service, ActivatePreparedWorldInstanceRequest.getDefaultInstance());
+          var fail =
+              invokeFailPreparedWorldInstance(
+                  service, FailPreparedWorldInstanceRequest.getDefaultInstance());
+          var terminate =
+              invokeTerminateWorldInstance(
+                  service, TerminateWorldInstanceRequest.getDefaultInstance());
+
+          assertEquals("PERMISSION_DENIED", prepare.getError().getCode());
+          assertFalse(prepare.hasWorldInstance());
+          assertEquals("PERMISSION_DENIED", activate.getError().getCode());
+          assertFalse(activate.hasWorldInstance());
+          assertEquals("PERMISSION_DENIED", fail.getError().getCode());
+          assertFalse(fail.hasWorldInstance());
+          assertEquals("PERMISSION_DENIED", terminate.getError().getCode());
+          assertFalse(terminate.hasWorldInstance());
+        };
+    if (caller == null) {
+      assertDenied.run();
+    } else {
+      runWithPeer(caller, assertDenied);
+    }
   }
 
   @Test
