@@ -471,9 +471,7 @@ public final class InitialGameplayReleaseModel {
       validateWriterFencing(writerFencing);
       validateInitialization(worldInitialization, OwnerService.WORLD_MANAGEMENT, scope);
       validateInitialization(entityInitialization, OwnerService.ENTITY_MANAGEMENT, scope);
-      if (regionLease.leaseIdentity().isBlank()) {
-        throw new IllegalArgumentException("current region lease identity is required");
-      }
+      requiredText(regionLease.leaseIdentity(), "current region lease identity");
     }
 
     private static void validateIssuerLayout(IssuerLayoutProof proof) {
@@ -789,7 +787,12 @@ public final class InitialGameplayReleaseModel {
     if (value == null) {
       throw new IllegalArgumentException(name + " must not be null");
     }
-    if (value.isBlank()) {
+    if (value
+        .codePoints()
+        .allMatch(codePoint ->
+            Character.isWhitespace(codePoint)
+                || Character.isSpaceChar(codePoint)
+                || codePoint == 0x85)) {
       throw new IllegalArgumentException(name + " must not be blank");
     }
     if (value.indexOf(0) >= 0) {

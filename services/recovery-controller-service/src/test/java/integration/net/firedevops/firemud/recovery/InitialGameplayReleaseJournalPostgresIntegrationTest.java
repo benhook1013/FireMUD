@@ -21,6 +21,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import javax.sql.DataSource;
 import net.firedevops.firemud.recovery.RecoveryControllerServiceApplication;
@@ -1992,8 +1993,24 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   @Test
   void finalizedOperationRequiresTheRetainedHandoffReceiptBeforeReturningNoWork() {
     Instant base = Instant.parse("2026-09-01T00:00:00Z");
-    OutboxEntry handoff = authorizedDispatch(EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF, base);
-    UUID operationId = handoff.effect().operationId();
+    OutboxEntry prepare = authorizedDispatch(base);
+    UUID operationId = prepare.effect().operationId();
+    EffectReadback prepared =
+        readbackFor(
+            prepare,
+            prepare.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "prepare-readback-for-handoff",
+            base.plusSeconds(5));
+    assertThat(journal.recordEffectReadback(prepare, prepared, base.plusSeconds(5)).phase())
+        .isEqualTo(Phase.RELEASING);
+    OutboxEntry pendingHandoff = journal.findNextEffect(operationId).orElseThrow();
+    OutboxEntry handoff =
+        journal.claimEffect(
+            operationId,
+            pendingHandoff.effect().effectId(),
+            UUID.randomUUID(),
+            base.plusSeconds(6));
     UUID effectId = handoff.effect().effectId();
     var receipt =
         readbackFor(
@@ -2013,6 +2030,23 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(controller.reconcileNextEffect(operationId)).isEqualTo(finalized);
     assertThat(journal.findTransition(resume)).contains(finalized);
     assertThat(journal.transition(resume, base.plusSeconds(9))).isEqualTo(finalized);
+    List<EffectReadback> prepareReplays =
+        List.of(
+            prepared,
+            readbackFor(
+                prepare,
+                prepare.lastAttemptId(),
+                EffectReadbackState.PREPARED_FENCED,
+                prepared.readbackIdentity(),
+                base.plusSeconds(9)));
+    String retainedPrepare = storedOutbox(operationId, prepare.effect().effectId());
+    String retainedHandoff = storedOutbox(operationId, effectId);
+    for (EffectReadback replay : prepareReplays) {
+      assertThat(journal.recordEffectReadback(prepare, replay, base.plusSeconds(10)))
+          .isEqualTo(finalized);
+    }
+    assertThat(storedOutbox(operationId, prepare.effect().effectId())).isEqualTo(retainedPrepare);
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(retainedHandoff);
     dsl.execute(
         "UPDATE recovery_control.initial_gameplay_release_outbox"
             + " SET readback_identity = NULL, readback_payload = NULL, readback_digest = NULL"
@@ -2032,6 +2066,12 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThatThrownBy(() -> journal.transition(resume, base.plusSeconds(10)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("retained handoff readback is incomplete");
+    for (EffectReadback replay : prepareReplays) {
+      assertThatThrownBy(() -> journal.recordEffectReadback(prepare, replay, base.plusSeconds(10)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("retained handoff readback is incomplete");
+    }
+    assertThat(storedOutbox(operationId, prepare.effect().effectId())).isEqualTo(retainedPrepare);
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(incomplete);
     verifyNoInteractions(port);
   }
@@ -2691,6 +2731,122 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 .claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(11))
                 .attemptCount())
         .isEqualTo(2);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void newerPartialPreparationHoldsUnclaimedHandoffUntilFreshOwnerProof(
+      boolean preparationArrivesFirst) {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatch = authorizedDispatch(base);
+    UUID operationId = dispatch.effect().operationId();
+    UUID effectId = dispatch.effect().effectId();
+    EffectKind handoffKind = EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF;
+    EffectReadback prepared =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "prepared",
+            base.plusSeconds(5));
+    EffectReadback partial =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "partial",
+            base.plusSeconds(6));
+    Optional<OutboxEntry> originalHandoff = Optional.empty();
+    if (preparationArrivesFirst) {
+      assertThat(journal.recordEffectReadback(dispatch, prepared, base.plusSeconds(8)).phase())
+          .isEqualTo(Phase.RELEASING);
+      originalHandoff = journal.findEffect(operationId, handoffKind);
+      assertThat(originalHandoff).isPresent();
+    }
+    journal.recordEffectReadback(dispatch, partial, base.plusSeconds(8));
+
+    OutboxEntry held = journal.findNextEffect(operationId).orElseThrow();
+    assertThat(held.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
+    assertThat(held.effect()).isEqualTo(dispatch.effect());
+    assertThat(held.outboxId()).isEqualTo(dispatch.outboxId());
+    assertThat(held.lastAttemptId()).isEqualTo(dispatch.lastAttemptId());
+    assertThat(held.attemptCount()).isEqualTo(dispatch.attemptCount());
+    assertThat(storedOutbox(operationId, effectId)).contains(tupleCodec.digest(partial));
+    assertThat(journal.findEffect(operationId, handoffKind)).isEqualTo(originalHandoff);
+    if (originalHandoff.isPresent()) {
+      UUID handoffId = originalHandoff.orElseThrow().effect().effectId();
+      assertThatThrownBy(() ->
+              journal.claimEffect(operationId, handoffId, UUID.randomUUID(), base.plusSeconds(9)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("preparation acknowledgement is unavailable");
+      EffectReadback contradictoryClosure =
+          readbackFor(
+              held,
+              held.lastAttemptId(),
+              EffectReadbackState.PROVEN_NO_EFFECT,
+              "contradictory-closure",
+              base.plusSeconds(8));
+      assertThatThrownBy(
+              () -> journal.recordEffectReadback(held, contradictoryClosure, base.plusSeconds(9)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class);
+      String retained = storedOutbox(operationId, effectId);
+      assertThat(
+              journal.recordRetryableEffectForDispatch(
+                  dispatch, RetrySource.OWNER_REJECTED, "LATE_REJECTION", base.plusSeconds(9)))
+          .isTrue();
+      assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+    }
+
+    for (Instant observedAt : List.of(prepared.observedAt(), partial.observedAt())) {
+      EffectReadback delayed =
+          readbackFor(
+              held,
+              held.lastAttemptId(),
+              EffectReadbackState.PREPARED_FENCED,
+              prepared.readbackIdentity(),
+              observedAt);
+      assertThatThrownBy(() -> journal.recordEffectReadback(held, delayed, base.plusSeconds(9)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class);
+    }
+    assertThat(journal.findNextEffect(operationId)).contains(held);
+    assertThat(journal.findEffect(operationId, handoffKind)).isEqualTo(originalHandoff);
+
+    EffectReadback fresh =
+        readbackFor(
+            held,
+            held.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "fresh-preparation",
+            base.plusSeconds(9));
+    assertThat(journal.recordEffectReadback(held, fresh, base.plusSeconds(10)).phase())
+        .isEqualTo(Phase.RELEASING);
+    OutboxEntry handoff = journal.findNextEffect(operationId).orElseThrow();
+    assertThat(handoff.effect().kind()).isEqualTo(handoffKind);
+    assertThat(handoff.state()).isEqualTo(EffectOutboxState.PENDING);
+    if (preparationArrivesFirst) {
+      assertThat(originalHandoff).contains(handoff);
+    }
+    UUID attemptId = UUID.randomUUID();
+    OutboxEntry claimed =
+        journal.claimEffect(
+            operationId, handoff.effect().effectId(), attemptId, base.plusSeconds(11));
+    assertThat(claimed.state()).isEqualTo(EffectOutboxState.DISPATCHED);
+    assertThat(claimed.lastAttemptId()).isEqualTo(attemptId);
+    assertThat(claimed.attemptCount()).isEqualTo(1);
+
+    EffectReadback afterClaim =
+        readbackFor(
+            held,
+            held.lastAttemptId(),
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "after-claim",
+            base.plusSeconds(12));
+    String retained = storedOutbox(operationId, effectId);
+    assertThatThrownBy(() -> journal.recordEffectReadback(held, afterClaim, base.plusSeconds(13)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("handoff was claimed");
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+    assertThat(journal.findEffect(operationId, handoffKind)).contains(claimed);
   }
 
   @Test

@@ -59,6 +59,17 @@ class InitialGameplayReleaseModelTest {
         .hasMessageContaining("owner must not be null");
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"\u00a0", "\u2007\u202f", " \t\u0085\u3000"})
+  void regionLeaseRejectsUnicodeBlankIdentityAndPreservesNonblankIdentity(String whitespace) {
+    assertThatThrownBy(() -> new RegionLeaseProof("region", whitespace, 1))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("leaseIdentity must not be blank");
+    String exactIdentity = whitespace + "lease" + whitespace;
+    assertThat(new RegionLeaseProof("region", exactIdentity, 1).leaseIdentity())
+        .isEqualTo(exactIdentity);
+  }
+
   @Test
   void journalBoundScopeAndOwnerProofRejectNoncharactersAtConstruction() {
     Scope valid = scope(UUID.randomUUID());

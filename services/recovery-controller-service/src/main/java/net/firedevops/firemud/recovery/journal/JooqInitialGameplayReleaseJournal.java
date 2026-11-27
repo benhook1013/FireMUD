@@ -265,7 +265,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             ORDER BY CASE WHEN state <> 'pending' AND
                                (last_dispatched_at IS NULL OR attempt_count = 0 OR last_attempt_id IS NULL
                                 OR last_attempt_id = '00000000-0000-0000-0000-000000000000'::uuid)
-                          THEN 0 ELSE 1 END,
+                          THEN 0
+                          WHEN effect_kind = 'prepare_playable_state_fenced' AND state = 'ambiguous'
+                          THEN 1 ELSE 2 END,
                      created_at, outbox_id
             LIMIT 1
             """,
@@ -385,6 +387,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         throw conflict("effect dispatch generation changed");
       }
       if (current.state() == EffectOutboxState.ACKNOWLEDGED
+          || isPreparationHeldBeforeHandoff(operation, current)
           || (current.lastAttemptId() != null
               && current.state() == EffectOutboxState.RETRYABLE
               && resultState == EffectOutboxState.AMBIGUOUS)) {
@@ -571,12 +574,27 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             requireValidExactStoredReadback(readback, stored, storedDigest, current);
             requireRetainedReadbackRecordingTime(readback, stored, "acknowledged_at");
             requireTerminalReplayWithinAttempt(readback, stored, now);
-            return operation;
+            return requireFinalizedHandoff(tx, operation);
           }
           if (stored != null
               && sameRetainedOutcome(readback, stored, storedDigest, "acknowledged_at")) {
             requireSuccessfulReadbackState(readback, current.effect().kind());
             requireTerminalReplayWithinAttempt(readback, stored, now);
+            return requireFinalizedHandoff(tx, operation);
+          }
+          if (operation.phase() == Phase.RELEASING
+              && current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
+              && readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL) {
+            requireUnclaimedHandoff(tx, operation);
+            requireTerminalReplayWithinAttempt(readback, stored, now);
+            EffectReadback previous = requireNonRegressingReadback(readback, stored, current);
+            if (previous == null || !readback.observedAt().isAfter(previous.observedAt())) {
+              throw conflict("partial preparation readback must be newer than its acknowledgement");
+            }
+            requireSuccessfulReadbackState(previous, current.effect().kind());
+            requireRetainedReadbackRecordingTime(previous, stored, "acknowledged_at");
+            setReadbackState(
+                tx, current, readback, readbackDigest, EffectOutboxState.AMBIGUOUS, now);
             return operation;
           }
           throw conflict("effect readback changed after acknowledgement");
@@ -676,7 +694,19 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       if (readback.observedAt().isBefore(dispatchedAt)) {
         throw conflict("effect readback is stale");
       }
-      requireNonRegressingReadback(readback, timestamps, current);
+      EffectReadback previous = requireNonRegressingReadback(readback, timestamps, current);
+      if (isPreparationHeldBeforeHandoff(operation, current)) {
+        requireUnclaimedHandoff(tx, operation);
+        if (previous == null || previous.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
+          throw conflict("held preparation has no retained partial readback");
+        }
+        if (readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
+          requireSuccessfulReadbackState(readback, current.effect().kind());
+          setReadbackState(
+              tx, current, readback, readbackDigest, EffectOutboxState.ACKNOWLEDGED, now);
+          return operation;
+        }
+      }
       if (readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL) {
         setReadbackState(tx, current, readback, readbackDigest, EffectOutboxState.AMBIGUOUS, now);
         return operation;
@@ -736,8 +766,13 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
 
   @Override
   public Optional<OutboxEntry> findEffect(UUID operationId, EffectKind effectKind) {
+    return findEffect(dsl, operationId, effectKind);
+  }
+
+  private Optional<OutboxEntry> findEffect(
+      DSLContext context, UUID operationId, EffectKind effectKind) {
     Record record =
-        dsl.fetchOne(
+        context.fetchOne(
             """
             SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
                    payload_digest, state,
@@ -748,6 +783,23 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             operationId,
             effectKind.databaseValue());
     return Optional.ofNullable(record).map(this::toOutboxEntry);
+  }
+
+  private static boolean isPreparationHeldBeforeHandoff(Operation operation, OutboxEntry effect) {
+    return operation.phase() == Phase.RELEASING
+        && effect.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
+        && effect.state() == EffectOutboxState.AMBIGUOUS;
+  }
+
+  // Callers hold the operation lock, which also serializes handoff claims.
+  private void requireUnclaimedHandoff(DSLContext tx, Operation operation) {
+    OutboxEntry handoff =
+        findEffect(tx, operation.scope().operationId(), EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF)
+            .orElseThrow(() -> conflict("retained handoff is missing"));
+    tupleCodec.requireEffectMatchesOperation(handoff.effect(), operation);
+    if (handoff.state() != EffectOutboxState.PENDING || handoff.attemptCount() != 0) {
+      throw conflict("preparation readback changed after the handoff was claimed");
+    }
   }
 
   private void setReadbackState(
@@ -1227,12 +1279,12 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     requireValidExactStoredReadback(retained.readback(), stored, storedDigest, current);
   }
 
-  private void requireNonRegressingReadback(
+  private EffectReadback requireNonRegressingReadback(
       EffectReadback readback, Record stored, OutboxEntry current) {
     JSONB payload = stored.get("readback_payload", JSONB.class);
     String digest = stored.get("readback_digest", String.class);
     if (payload == null && digest == null) {
-      return;
+      return null;
     }
     if (payload == null || digest == null) {
       throw conflict("retained effect readback is incomplete");
@@ -1252,6 +1304,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         && !readback.observedAt().isAfter(previous.observedAt())) {
       throw conflict("definitive effect readback must be newer than retained partial evidence");
     }
+    return previous;
   }
 
   private boolean hasValidatedUnknownReadback(

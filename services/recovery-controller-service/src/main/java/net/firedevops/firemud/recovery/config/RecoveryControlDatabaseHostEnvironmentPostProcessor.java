@@ -68,6 +68,10 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
       requireAbsent(binder, "spring.flyway.url");
       requireAbsent(binder, "spring.flyway.user");
       requireAbsent(binder, "spring.flyway.password");
+      if (binder.bind("spring.flyway.baseline-on-migrate", Boolean.class).orElse(false)) {
+        throw new SafeOverrideException(
+            "spring.flyway.baseline-on-migrate must be disabled for the recovery datasource");
+      }
     } catch (SafeOverrideException invalidOverride) {
       throw invalidOverride;
     } catch (RuntimeException invalidOverride) {
