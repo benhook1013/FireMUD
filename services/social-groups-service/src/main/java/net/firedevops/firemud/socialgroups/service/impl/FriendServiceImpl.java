@@ -81,10 +81,9 @@ public class FriendServiceImpl implements FriendService {
   @Timed(value = "friend.get")
   public Optional<FriendRosterEntryDto> getFriend(
       long tenantId, String accountId, String friendAccountId) {
+    JwtClaims.requireCanonicalAccountUuid(friendAccountId, "friendAccountId");
     return listFriends(tenantId, accountId, FriendRosterFilter.ALL).friends().stream()
-        .filter(
-            entry ->
-                entry.friendAccountId() != null && entry.friendAccountId().equals(friendAccountId))
+        .filter(entry -> friendAccountId.equals(entry.friendAccountId()))
         .findFirst();
   }
 
@@ -147,6 +146,7 @@ public class FriendServiceImpl implements FriendService {
 
   private FriendRosterSnapshot loadFriendRoster(
       long tenantId, String accountId, FriendRosterFilter filter) {
+    JwtClaims.requireCanonicalAccountUuid(accountId, "accountId");
     FriendRosterFilter effectiveFilter = filter;
     List<AccountFriendLink> links =
         accountFriendLinkRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
