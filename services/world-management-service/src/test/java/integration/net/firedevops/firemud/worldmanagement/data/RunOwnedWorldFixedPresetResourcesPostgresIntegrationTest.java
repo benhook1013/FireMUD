@@ -62,6 +62,7 @@ import net.firedevops.firemud.worldmanagement.repository.RoomInstanceRepository;
 import net.firedevops.firemud.worldmanagement.service.impl.RoomServiceImpl;
 import net.firedevops.firemud.worldmanagement.service.impl.RunOwnedWorldFixtureLifecycleTestFactory;
 import net.firedevops.firemud.worldmanagement.service.impl.WorldLifecycleCommandServiceImpl;
+import net.firedevops.firemud.worldmanagement.tenant.FixtureHoldStorageTestAccess;
 import net.firedevops.firemud.worldmanagement.tenant.RunOwnedFixtureInitialAdmissionHoldReconciler;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
@@ -1220,6 +1221,19 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertThat(terminal.get("owner_pointer_audit_id", String.class)).isEqualTo("23");
     assertThat(terminal.get("owner_pointer_version", Long.class)).isEqualTo(1L);
     var settled = allRows(dsl).get("initial_admission_bind_hold");
+    FixtureHoldStorageTestAccess.settle(holds, hold, provenance, committed);
+    var substituted =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            hold,
+            committed.outcome(),
+            committed.committedPointerVersion(),
+            committed.auditEventId() + 1,
+            committed.proofDigest(),
+            false,
+            committed.terminalAt());
+    assertThatThrownBy(
+            () -> FixtureHoldStorageTestAccess.settle(holds, hold, provenance, substituted))
+        .hasMessageContaining("already settled by a different terminal proof");
     fixtureReconciler.reconcilePendingHold();
     assertThat(allRows(dsl).get("initial_admission_bind_hold")).isEqualTo(settled);
   }
