@@ -188,6 +188,73 @@ class AuthoredWorldReleaseAttestationSelectorTest {
   }
 
   @Test
+  void retainedSelectorRejectsIndependentWorldParticipantCheckpointSubstitution() throws Exception {
+    var selector = selectorEvidence(4);
+    var descriptor = descriptor(selector);
+    var release =
+        release(
+            descriptor,
+            selector,
+            AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
+    release.requireValid(descriptor);
+    for (String changedField : List.of("commit", "digest")) {
+      var changedParticipants =
+          release.participantDigests().stream()
+              .map(
+                  participant -> {
+                    if (!"WORLD_MANAGEMENT".equals(participant.participantKey())) {
+                      return participant;
+                    }
+                    String changedDigest =
+                        (participant.contentDigest().startsWith("0") ? "1" : "0")
+                            + participant.contentDigest().substring(1);
+                    return new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        participant.baseVersionIdPresent(),
+                        participant.baseVersionId(),
+                        changedField.equals("commit")
+                            ? "different-world-commit"
+                            : participant.appliedCommitId(),
+                        changedField.equals("digest") ? changedDigest : participant.contentDigest(),
+                        participant.digestSchemaVersion(),
+                        participant.abilitySchemaDigestPresent(),
+                        participant.abilitySchemaDigest());
+                  })
+              .toList();
+      assertThatThrownBy(
+              () ->
+                  AuthoredWorldReleaseAttestationEvidence.createSelectedFull(
+                      release.targetNamespace(),
+                      release.descriptorResultDigest(),
+                      release.canonicalTenantId(),
+                      release.canonicalVersionId(),
+                      release.worldSlug(),
+                      release.authoredWorldSourceOperationId(),
+                      release.authoredWorldSourceEvidenceDigest(),
+                      release.launchDescriptorId(),
+                      release.publishedReleaseBundleRef(),
+                      release.versionStateEpoch(),
+                      release.publishWorkflowId(),
+                      release.commitId(),
+                      changedParticipants,
+                      release.manifestHash(),
+                      release.manifestSchemaVersion(),
+                      release.requiredManifestAssetKeys(),
+                      release.artifactDigests(),
+                      release.commandDefinitions(),
+                      release.generationConfigRevision(),
+                      selector))
+          .as("retained selector rejects independent World %s substitution", changedField)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining(
+              changedField.equals("commit")
+                  ? "Every participant must report the attested commitId"
+                  : "World selector differs from the exact attested release checkpoint");
+    }
+  }
+
+  @Test
   void terminalReleaseProjectionAcceptsExactV2AndV3OwnerSchemasAndRejectsMixedSchemas()
       throws Exception {
     for (int schema : List.of(2, 3)) {

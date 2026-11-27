@@ -675,6 +675,96 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
                 "unchanged-value"));
   }
 
+  @ParameterizedTest
+  @EnumSource(ProjectionMismatch.class)
+  void rejectsIncompleteDeclarationsAndSubstitutedSpawnRequirements(ProjectionMismatch mismatch)
+      throws Exception {
+    var fixture = publishedReadFixture();
+    var original = fixture.plan().graph();
+    var frozen = fixture.source().frozenTopology().graph();
+    var baseline = WorldPublishedSpawnRequirementsReadOwner.projectRequirements(original, frozen);
+    assertThat(baseline.familyCounts())
+        .extracting(FamilyCount::count)
+        .containsExactly(1, 1, 2, 1, 1, 1);
+    assertThat(baseline.spawnRequirements()).hasSize(1);
+
+    var selected = original;
+    var candidate = frozen;
+    String expectedMessage;
+    if (mismatch == ProjectionMismatch.MISSING_DECLARATION) {
+      selected =
+          new WorldDraftTopologyInputGraph(
+              original.tenantId(), original.versionId(), original.nodes(), null);
+      expectedMessage = "Published World source lacks its original complete family declaration";
+    } else if (mismatch == ProjectionMismatch.CHANGED_FAMILY_COUNT) {
+      var declaration = original.freshGraphDeclaration().orElseThrow();
+      var counts = new ArrayList<>(declaration.familyCounts());
+      var first = counts.getFirst();
+      counts.set(
+          0, new WorldDraftTopologyInputGraph.FamilyCount(first.family(), first.count() + 1));
+      selected =
+          new WorldDraftTopologyInputGraph(
+              original.tenantId(),
+              original.versionId(),
+              original.nodes(),
+              new FreshGraphDeclaration(
+                  declaration.tenantId(),
+                  declaration.versionId(),
+                  declaration.startLocation(),
+                  counts,
+                  declaration.inboundSourceClosure()));
+      expectedMessage = "Frozen World family count differs from its complete original declaration";
+    } else {
+      var rows = new ArrayList<>(frozen.rows());
+      var spawn = frozen.family(Family.WORLD_ENTITY_SPAWN_BINDING).getFirst();
+      var binding = spawn.content().getWorldEntitySpawnBinding().toBuilder();
+      if (mismatch == ProjectionMismatch.CHANGED_ENTITY_KIND) {
+        assertThat(binding.getEntityTemplateType())
+            .isEqualTo(EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC);
+        binding.setEntityTemplateType(
+            EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM);
+      } else {
+        assertThat(binding.getEntityTemplateId()).isNotEqualTo(uuid(999).toString());
+        binding.setEntityTemplateId(uuid(999).toString());
+      }
+      var changed =
+          new Row(
+              spawn.template(),
+              spawn.mappingKey(),
+              spawn.privateRowKey(),
+              spawn.authored(),
+              spawn.content().toBuilder().setWorldEntitySpawnBinding(binding).build());
+      rows.set(rows.indexOf(spawn), changed);
+      candidate =
+          new WorldCanonicalAuthoredGraph(
+              frozen.tenantId(),
+              frozen.versionId(),
+              frozen.localTenantKey(),
+              frozen.localVersionKey(),
+              rows,
+              frozen.inboundSourceClosure());
+      expectedMessage = "Spawn projection differs from its exact canonical Entity reference";
+    }
+    var selectedInput = selected;
+    var frozenInput = candidate;
+    assertThatThrownBy(
+            () ->
+                WorldPublishedSpawnRequirementsReadOwner.projectRequirements(
+                    selectedInput, frozenInput))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(expectedMessage);
+    assertThat(WorldPublishedSpawnRequirementsReadOwner.projectRequirements(original, frozen))
+        .isEqualTo(baseline);
+    verifyNoInteractions(gameDesign, published, transactions);
+  }
+
+  private enum ProjectionMismatch {
+    MISSING_DECLARATION,
+    CHANGED_FAMILY_COUNT,
+    CHANGED_ENTITY_KIND,
+    CHANGED_ENTITY_TEMPLATE
+  }
+
   private static PublishedReadFixture publishedReadFixture() throws Exception {
     var plan =
         includeControlPlaneOwner(WorldDraftTopologyCommitPlanTest.selectedPlanWithAllFamilies());
