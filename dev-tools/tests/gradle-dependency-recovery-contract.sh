@@ -460,6 +460,58 @@ for mutation in auth wrong-origin wrong-artifact truncated-chain extra-coordinat
   assert_no_retry
 done
 
+# The processor failure can surface an earlier Spring Boot metadata 429
+# while Gradle reports Maven Central as disabled for the Lombok lookup.
+write_disabled_processor_pom_429_cause() {
+  sed '/^> Could not resolve all files/q' "$TEMP_DIR/annotation-processor-path-resolution/cause.log" > "$CASE_DIR/cause.log"
+  cat >> "$CASE_DIR/cause.log" <<'LOG'
+   > Could not resolve org.projectlombok:lombok:1.18.48.
+     Required by:
+         project ':common-platform-core'
+      > Repository MavenRepo is disabled due to earlier error below:
+         > Could not resolve org.springframework.boot:spring-boot-starter-validation:4.2.0.
+            > Could not get resource 'https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-starter-validation/4.2.0/spring-boot-starter-validation-4.2.0.pom'.
+               > Could not GET 'https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-starter-validation/4.2.0/spring-boot-starter-validation-4.2.0.pom'.
+                  > Received status code 429 from server: Too Many Requests
+> There is 1 more failure with an identical cause.
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+}
+
+new_case annotation-processor-disabled-repository-429
+write_disabled_processor_pom_429_cause
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; exit 0'
+run_case common-saga 0
+assert_call_count 2
+for attempt in 1 2; do
+  assert_call "$attempt" "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-saga:check -PfullCheck --profile --info --console=plain"
+done
+assert_rate_limit_delay
+assert_output_contains "with cached dependency metadata"
+
+for mutation in wrong-resolver wrong-project other-coordinate wrong-origin wrong-pom incomplete-chain auth wrong-summary mixed-cause task-started; do
+  new_case "annotation-processor-disabled-repository-429-$mutation"
+  write_disabled_processor_pom_429_cause
+  case "$mutation" in
+    wrong-resolver) sed -i 's/:common-platform-core:annotationProcessor/:common-saga:annotationProcessor/' "$CASE_DIR/cause.log" ;;
+    wrong-project) sed -i "/project '/s/:common-platform-core/:common-saga/" "$CASE_DIR/cause.log" ;;
+    other-coordinate) sed -i 's/spring-boot-starter-validation/spring-boot-starter-web/g' "$CASE_DIR/cause.log" ;;
+    wrong-origin) sed -i 's/repo.maven.apache.org/repository.invalid/g' "$CASE_DIR/cause.log" ;;
+    wrong-pom) sed -i '/Could not GET/s/-4\.2\.0\.pom/-4.2.1.pom/' "$CASE_DIR/cause.log" ;;
+    incomplete-chain) sed -i '/Could not GET/d' "$CASE_DIR/cause.log" ;;
+    auth) sed -i 's/429 from server: Too Many Requests/403 from server: Forbidden/' "$CASE_DIR/cause.log" ;;
+    wrong-summary) sed -i 's/There is 1 more failure with an identical cause/There are 2 more failures with identical causes/' "$CASE_DIR/cause.log" ;;
+    mixed-cause) sed -i '/^[*] Try:/i > Could not resolve com.example:other-processor:1.0.' "$CASE_DIR/cause.log" ;;
+    task-started) sed -i '1i > Task :common-platform-core:generateJooq' "$CASE_DIR/cause.log" ;;
+  esac
+  # shellcheck disable=SC2016
+  write_wrapper 'cat "$CASE_DIR/cause.log"; exit 1'
+  run_case common-saga 1
+  assert_no_retry
+done
+
 # The common-test-support failure carries multiple Maven Central JAR chains
 # under one test fixtures classpath root, before any fixture compilation.
 write_test_fixtures_429_cause() {
