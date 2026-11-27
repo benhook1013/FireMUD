@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -62,6 +63,50 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void committedWorldSelectorReturnsOriginalSourceWithoutEnrollingTenantOrRuntime() {
+    Fixture fixture = fixture();
+    String slug = "source-world";
+    assertThat(fixture.sourceRepository.readByWorldSelector(NAMESPACE, TENANT, slug)).isEmpty();
+    IntakeReceipt original = fixture.registerFreshSource();
+    assertThat(original.source().worldSlug()).isEqualTo(slug);
+    String tenantBindingImage =
+        "SELECT xmin::text, to_jsonb(binding)::text "
+            + "FROM game_session_authored_world_tenant_source_binding binding";
+    String intakeImage =
+        "SELECT xmin::text, to_jsonb(intake)::text FROM game_session_authored_world_source_intake intake";
+    var bindingsBefore = fixture.dsl.fetch(tenantBindingImage);
+    var intakesBefore = fixture.dsl.fetch(intakeImage);
+    assertThat(bindingsBefore).hasSize(1);
+    assertThat(intakesBefore).hasSize(1);
+
+    var independentReader = new GameSessionAuthoredWorldSourceRepository(fixture.dsl);
+    assertThat(independentReader.readByWorldSelector(NAMESPACE, TENANT, slug)).contains(original);
+    assertThat(independentReader.readByWorldSelector("other-space", TENANT, slug)).isEmpty();
+    assertThat(independentReader.readByWorldSelector(NAMESPACE, uuid(605), slug)).isEmpty();
+    assertThat(independentReader.readByWorldSelector(NAMESPACE, TENANT, "unknown-world")).isEmpty();
+    assertThatThrownBy(() -> independentReader.readByWorldSelector(NAMESPACE, TENANT, "Bad Slug"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status -> independentReader.readByWorldSelector(NAMESPACE, TENANT, slug)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("committed-outcome owner read");
+
+    assertThat(fixture.dsl.fetch(tenantBindingImage)).isEqualTo(bindingsBefore);
+    assertThat(fixture.dsl.fetch(intakeImage)).isEqualTo(intakesBefore);
+    for (String table :
+        List.of(
+            "game_session_tenant_scope_reservation",
+            "game_session_tenant_canonical_claim",
+            "game_session_fresh_tenant_association",
+            "game_instances",
+            "gameplay_admission_pointer")) {
+      assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name(table)))).as(table).isZero();
+    }
+  }
 
   @Test
   void allocatesPrivateIdentityAndReturnsTheOriginalExactAssociationOnRetry() {
