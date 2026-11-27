@@ -32,6 +32,7 @@ import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal.RetrySource;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseTupleCodec;
 import net.firedevops.firemud.recovery.journal.JooqInitialGameplayReleaseJournal;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.CommitOwnerAuthorizedHandoffEffect;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectKind;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback;
@@ -102,6 +103,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class InitialGameplayReleaseJournalPostgresIntegrationTest {
   private static final String SCHEMA = "recovery_control";
   private static final String DIGEST = "b".repeat(64);
+  private static final java.util.logging.Logger POSTGRES_PROTOCOL_LOG =
+      java.util.logging.Logger.getLogger("org.postgresql.core.v3.QueryExecutorImpl");
   private static final UUID V1_OPERATION_ID =
       UUID.fromString("10000000-0000-0000-0000-000000000001");
   private static final UUID V1_PLAYABLE_NAMESPACE_ID =
@@ -405,13 +408,12 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .hasNoCause();
       assertThat(injected.find(scope.operationId())).isEmpty();
       assertThat(output.getAll()).doesNotContain(lockIdentity.toString());
-      String serverLog =
-          awaitPostgresLogSince(
-              logStart,
-              "violates check constraint \"fixture_requires_bound_phase\"",
-              Duration.ofSeconds(5));
+      String completionMarker = "recovery-journal-redaction-" + UUID.randomUUID();
+      dsl.execute("DO $$ BEGIN RAISE LOG '" + completionMarker + "'; END $$");
+      String serverLog = awaitPostgresLogSince(logStart, completionMarker, Duration.ofSeconds(5));
       assertThat(serverLog)
           .contains("violates check constraint \"fixture_requires_bound_phase\"")
+          .contains(completionMarker)
           .doesNotContain(lockIdentity.toString());
     } finally {
       dsl.execute("DROP DATABASE " + database);
@@ -896,7 +898,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     "acknowledged_at, TYPE timestamptz(3)",
     "last_dispatched_at, TYPE timestamptz(3)",
     "preparation_observation_payload, SET DEFAULT jsonb_build_object()",
-    "preparation_observation_digest, SET DEFAULT 'a'"
+    "preparation_observation_digest, SET DEFAULT 'a'",
+    "effect_id, DROP NOT NULL",
+    "effect_id, TYPE text USING effect_id::text"
   })
   @ResourceLock("packaged-recovery-control-fixture-database")
   void outboxColumnsMustHaveRequiredShapeForJournalReadiness(String column, String alteration)
@@ -1074,8 +1078,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     String database = "firemud_recovery_control";
     String role = "recovery_fixture_writer";
     dsl.execute("CREATE DATABASE " + database);
-    dsl.execute("CREATE ROLE " + role + " NOLOGIN");
+    boolean roleCreated = false;
     try {
+      dsl.execute("CREATE ROLE " + role + " NOLOGIN");
+      roleCreated = true;
       try (var migration = startPackagedApplication(true)) {
         assertThat(journalHealth(migration).health().getStatus()).isEqualTo(Status.UP);
       }
@@ -1102,8 +1108,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         }
       }
     } finally {
-      dsl.execute("DROP DATABASE " + database);
-      dsl.execute("DROP ROLE " + role);
+      try {
+        dsl.execute("DROP DATABASE " + database);
+      } finally {
+        if (roleCreated) {
+          dsl.execute("DROP ROLE " + role);
+        }
+      }
     }
   }
 
@@ -1246,6 +1257,46 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       logger.detachAppender(logCapture);
       logger.setLevel(priorLevel);
       logCapture.stop();
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void postgresDriverTracingRefusesCredentialWriteUntilTracingIsDisabled() throws Exception {
+    String database = "firemud_recovery_control";
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application = startPackagedApplication(true)) {
+      var packagedJournal = application.getBean(InitialGameplayReleaseJournal.class);
+      var health = application.getBean(HealthEndpoint.class);
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+
+      java.util.logging.Level priorLevel = POSTGRES_PROTOCOL_LOG.getLevel();
+      Scope scope = scope();
+      UUID dummyLockIdentity = UUID.randomUUID();
+      try {
+        POSTGRES_PROTOCOL_LOG.setLevel(java.util.logging.Level.FINEST);
+        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+        assertThat(health.healthForPath("readiness"))
+            .isNotNull()
+            .extracting(probe -> probe.getStatus())
+            .isEqualTo(Status.DOWN);
+        assertThat(health.healthForPath("liveness"))
+            .isNotNull()
+            .extracting(probe -> probe.getStatus())
+            .isEqualTo(Status.UP);
+        assertThatThrownBy(() -> packagedJournal.create(scope, dummyLockIdentity))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Recovery journal requires PostgreSQL driver tracing off");
+        assertThat(packagedJournal.find(scope.operationId())).isEmpty();
+      } finally {
+        POSTGRES_PROTOCOL_LOG.setLevel(priorLevel);
+      }
+
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      assertThat(packagedJournal.create(scope, dummyLockIdentity).maintenanceLockIdentity())
+          .isEqualTo(dummyLockIdentity);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
     }
   }
 
@@ -4661,14 +4712,69 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 EffectReadbackState.UNKNOWN_OR_PARTIAL,
                 "v6-observation",
                 base.plusSeconds(2));
+        Operation resumeAuthorized = legacyJournal.find(V1_OPERATION_ID).orElseThrow();
+        TypedEffect handoff =
+            new CommitOwnerAuthorizedHandoffEffect(
+                resumeAuthorized.scope().operationId(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                resumeAuthorized.maintenanceLockIdentity(),
+                resumeAuthorized.scope(),
+                tupleCodec.operationTupleDigest(resumeAuthorized),
+                resumeAuthorized.evidence().evidenceIdentity());
+        String handoffPayload = tupleCodec.toJson(handoff);
+        String handoffDigest = tupleCodec.digest(handoff);
         assertThat(
-                legacyJournal
-                    .recordEffectReadback(dispatch, acknowledgement, acknowledgement.observedAt())
-                    .phase())
-            .isEqualTo(Phase.RELEASING);
-        if (retainObservation) {
-          legacyJournal.recordEffectReadback(dispatch, observation, base.plusSeconds(3));
-        }
+                legacyDsl.execute(
+                    """
+                    UPDATE recovery_control.initial_gameplay_release_operation
+                    SET phase='releasing', revision=revision + 1, updated_at=CAST(? AS timestamptz)
+                    WHERE operation_id=? AND phase='resume_authorized'
+                    """,
+                    base.plusSeconds(1).atOffset(ZoneOffset.UTC),
+                    V1_OPERATION_ID))
+            .isEqualTo(1);
+        assertThat(
+                legacyDsl.execute(
+                    """
+                    UPDATE recovery_control.initial_gameplay_release_outbox
+                    SET state='acknowledged', last_outcome_code=?, readback_identity=?,
+                        readback_payload=CAST(? AS jsonb), readback_digest=?,
+                        acknowledged_at=CAST(? AS timestamptz), updated_at=CAST(? AS timestamptz),
+                        preparation_observation_payload=CAST(? AS jsonb),
+                        preparation_observation_digest=?
+                    WHERE outbox_id=?
+                    """,
+                    acknowledgement.state().name(),
+                    acknowledgement.readbackIdentity(),
+                    tupleCodec.toJson(acknowledgement),
+                    tupleCodec.digest(acknowledgement),
+                    acknowledgement.observedAt().atOffset(ZoneOffset.UTC),
+                    (retainObservation ? base.plusSeconds(3) : acknowledgement.observedAt())
+                        .atOffset(ZoneOffset.UTC),
+                    retainObservation ? tupleCodec.toJson(observation) : null,
+                    retainObservation ? tupleCodec.digest(observation) : null,
+                    V1_OUTBOX_ID))
+            .isEqualTo(1);
+        assertThat(
+                legacyDsl.execute(
+                    """
+                    INSERT INTO recovery_control.initial_gameplay_release_outbox (
+                        outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest,
+                        payload_digest, payload, state, attempt_count, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, CAST(? AS jsonb), 'pending', 0,
+                              CAST(? AS timestamptz), CAST(? AS timestamptz))
+                    """,
+                    UUID.randomUUID(),
+                    V1_OPERATION_ID,
+                    handoff.effectId(),
+                    handoff.kind().databaseValue(),
+                    handoff.operationTupleDigest(),
+                    handoffDigest,
+                    handoffPayload,
+                    base.plusSeconds(1).atOffset(ZoneOffset.UTC),
+                    base.plusSeconds(1).atOffset(ZoneOffset.UTC)))
+            .isEqualTo(1);
         String retained = retainedOutboxRow(legacyDsl);
         Flyway upgrade = journalFlyway(legacyUrl, "7");
         if (retainObservation) {

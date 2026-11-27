@@ -2,6 +2,7 @@ package net.firedevops.firemud.recovery.config;
 
 import java.sql.SQLException;
 import javax.sql.DataSource;
+import net.firedevops.firemud.recovery.journal.JooqInitialGameplayReleaseJournal;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
@@ -128,6 +129,11 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
         AND EXISTS (
           SELECT 1 FROM pg_catalog.pg_attribute
           WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+            AND attname = 'effect_id' AND NOT attisdropped AND attnotnull
+            AND atttypid = 'pg_catalog.uuid'::regtype)
+        AND EXISTS (
+          SELECT 1 FROM pg_catalog.pg_attribute
+          WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
             AND attname = 'payload_digest' AND NOT attisdropped AND attnotnull
             AND atttypid = 'pg_catalog.bpchar'::regtype AND atttypmod = 68)
         AND EXISTS (
@@ -243,6 +249,9 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
 
   @Override
   public Health health() {
+    if (!JooqInitialGameplayReleaseJournal.driverLoggingIsRedacted()) {
+      return Health.down().build();
+    }
     // Resolve the journal shape without reading journal rows or changing the database.
     try (var connection = dataSource.getConnection()) {
       if (!connection.getAutoCommit() || connection.isReadOnly()) {
