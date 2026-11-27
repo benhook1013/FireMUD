@@ -34,8 +34,13 @@ jobs:
           persist-credentials: false
 
       - name: Revalidate and admit the current tuple
+        id: admit
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const admit = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/admit-pr-runtime-refresh.cjs`);
             await admit({github, context, core, input: context.payload.client_payload});
+
+      - name: Runtime refresh unsent claim ${{ steps.admit.outputs.unsent_claim }}
+        if: ${{ success() && steps.admit.outputs.unsent_claim != '' }}
+        run: echo 'The verified preview claim owner stopped before invoking dispatch.'

@@ -17,6 +17,7 @@ function admissionFixture() {
   const input = {pr_number: '7', base_ref: 'develop', base_sha: B, head_sha: C, merge_sha: A};
   const repository = 'example/FireMUD';
   const runtimePath = '.github/workflows/runtime-images.yml';
+  const admissionPath = '.github/workflows/admit-pr-runtime-refresh.yml';
   const makeRun = (overrides = {}) => ({
     id: 300, run_attempt: 1, workflow_id: 42, event: 'repository_dispatch', status: 'queued', head_sha: D,
     conclusion: null, path: runtimePath, head_branch: 'develop', repository: {full_name: repository},
@@ -31,7 +32,9 @@ function admissionFixture() {
   });
   const sent = [];
   const warnings = [];
+  const outputs = new Map();
   const runs = [];
+  const admissionRuns = new Map();
   const claimRefs = new Map();
   const claimTags = new Map();
   const receiverJobs = new Map();
@@ -61,6 +64,10 @@ function admissionFixture() {
         if (claimRefs.has(ref)) throw Object.assign(new Error('ref already exists'), {status: 422});
         const record = {ref, object: {type: 'tag', sha}};
         claimRefs.set(ref, record);
+        if (ref.startsWith('refs/tags/firemud-runtime-refresh-unsent/')) {
+          if (state.loseLocatorResponse) throw new Error('response lost after locator creation');
+          return {status: 201, data: record};
+        }
         state.afterClaim?.();
         if (state.loseClaimResponse) throw new Error('response lost after ref creation');
         return {status: 201, data: record};
@@ -77,10 +84,12 @@ function admissionFixture() {
     },
     actions: {
       getWorkflow: async ({workflow_id}) => {
+        if (workflow_id === 'admit-pr-runtime-refresh.yml') return {data: {id: 43, path: admissionPath}};
         assert.equal(workflow_id, 'runtime-images.yml');
         return {data: {id: 42, path: runtimePath}};
       },
       getWorkflowRun: async ({run_id}) => {
+        if (admissionRuns.has(run_id)) return {data: admissionRuns.get(run_id)};
         state.producerReads.push(run_id);
         const run = runs.find(run => run.id === run_id);
         return {data: state.refreshProducer ? state.refreshProducer(run) : run};
@@ -122,14 +131,43 @@ function admissionFixture() {
       },
     },
   }};
-  const admission = {github, input, context: {repo: {owner: 'example', repo: 'FireMUD'},
-    payload: {repository: {full_name: repository, default_branch: 'develop'}}},
-  core: {warning: value => warnings.push(value), info() {}}, sleep: async milliseconds => {
+  const admission = {github, input, admissionAttempt: '1',
+    context: {repo: {owner: 'example', repo: 'FireMUD'}, runId: 600, ref: 'refs/heads/develop',
+      eventName: 'repository_dispatch',
+      payload: {action: 'pr-runtime-base-refresh-request', repository: {full_name: repository, default_branch: 'develop'}}},
+  core: {warning: value => warnings.push(value), info() {}, setOutput: (name, value) => outputs.set(name, value)},
+  sleep: async milliseconds => {
     state.waits.push(milliseconds);
     state.afterWait?.();
     if (!state.keepHidden && state.newRun && !runs.includes(state.newRun)) runs.push(state.newRun);
   }};
-  return {admission, makeRun, makePullRequestRun, runs, sent, state, warnings, claimRefs, claimTags, receiverJobs};
+  return {admission, makeRun, makePullRequestRun, runs, admissionRuns, sent, state,
+    warnings, outputs, claimRefs, claimTags, receiverJobs};
+}
+
+function preparePreviewRefusal(f) {
+  f.admission.input.base_ref = 'stacked';
+  f.admission.input.preview_only = true;
+  f.state.afterClaim = () => { f.state.labels = []; };
+}
+
+function completePreviewRefusalAttempt(f) {
+  const run = f.makeRun({id: 600, workflow_id: 43, path: '.github/workflows/admit-pr-runtime-refresh.yml',
+    status: 'completed', conclusion: 'success'});
+  const job = {id: 2, run_id: run.id, head_sha: run.head_sha, name: 'Admit Exact Runtime Tuple',
+    status: 'completed', conclusion: 'success',
+    steps: [{name: `Runtime refresh unsent claim ${f.outputs.get('unsent_claim')}`,
+      status: 'completed', conclusion: 'success'}]};
+  f.admissionRuns.set(run.id, run);
+  f.receiverJobs.set(`${run.id}:${run.run_attempt}`, [job]);
+  return {run, job};
+}
+
+async function admitOrdinaryRefresh(f) {
+  delete f.admission.input.preview_only;
+  delete f.state.afterClaim;
+  f.admission.context.runId = 601;
+  return admitRuntimeRefresh(f.admission);
 }
 
 function proveFixtureDispatchBase(f, run) {
@@ -503,6 +541,104 @@ test('a comparison moving during the claim is never dispatched', async () => {
   assert.deepEqual(f.sent, []);
 });
 
+test('an exact successful native preview refusal allows ordinary CI to claim the next generation', async () => {
+  const f = admissionFixture();
+  preparePreviewRefusal(f);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
+  assert.deepEqual(f.sent, []);
+  const [claim] = f.claimTags.values();
+  const locatorRef = `refs/tags/firemud-runtime-refresh-unsent/v1/${claim.sha}/600/1`;
+  assert.deepEqual(f.claimRefs.get(locatorRef), {ref: locatorRef, object: {type: 'tag', sha: claim.sha}});
+  assert.equal(f.outputs.get('unsent_claim'), `generation 1 run 600 attempt 1 tag ${claim.sha}`);
+  completePreviewRefusalAttempt(f);
+
+  assert.equal(await admitOrdinaryRefresh(f), 'dispatched-observed');
+  assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['2']);
+});
+
+test('only the successful current admission attempt can prove a claim was unsent', async t => {
+  const mismatches = {
+    'duplicate locator': f => {
+      const locator = [...f.claimRefs.values()].find(ref => ref.ref.includes('/firemud-runtime-refresh-unsent/'));
+      const ref = locator.ref.replace('/600/1', '/600/2');
+      f.claimRefs.set(ref, {...locator, ref});
+    },
+    'missing native run': f => f.admissionRuns.clear(),
+    'wrong workflow': (f, {run}) => { run.workflow_id = 42; },
+    'wrong event': (f, {run}) => { run.event = 'workflow_dispatch'; },
+    'wrong branch': (f, {run}) => { run.head_branch = 'stacked'; },
+    'wrong qualified path': (f, {run}) => { run.path += '@refs/heads/stacked'; },
+    'wrong repository': (f, {run}) => { run.head_repository.full_name = 'fork/FireMUD'; },
+    'superseded attempt': (f, {run}) => { run.run_attempt++; },
+    'failed run': (f, {run}) => { run.conclusion = 'failure'; },
+    'wrong job head': (f, {job}) => { job.head_sha = E; },
+    'skipped marker': (f, {job}) => { job.steps[0].conclusion = 'skipped'; },
+    'duplicate marker': (f, {job}) => { job.steps.push(job.steps[0]); },
+    'wrong tag': (f, {job}) => { job.steps[0].name = job.steps[0].name.replace(/[0-9a-f]{40}$/, E); },
+    'attempt moves during marker read': (f, {run}) => {
+      const read = f.admission.github.rest.actions.listJobsForWorkflowRunAttempt;
+      f.admission.github.rest.actions.listJobsForWorkflowRunAttempt = async request => {
+        run.run_attempt++;
+        return read(request);
+      };
+    },
+  };
+  for (const [name, change] of Object.entries(mismatches)) {
+    await t.test(name, async () => {
+      const f = admissionFixture();
+      preparePreviewRefusal(f);
+      assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
+      change(f, completePreviewRefusalAttempt(f));
+      assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+      assert.deepEqual(f.sent, []);
+    });
+  }
+});
+
+test('a lost locator acknowledgement does not produce a preview refusal marker', async () => {
+  const f = admissionFixture();
+  preparePreviewRefusal(f);
+  f.state.loseLocatorResponse = true;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.claimRefs.size, 2);
+  assert.equal(f.outputs.size, 0);
+  completePreviewRefusalAttempt(f);
+  assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+  assert.deepEqual(f.sent, []);
+});
+
+test('losing preview claim ownership acknowledgement never creates a refusal locator', async () => {
+  const f = admissionFixture();
+  preparePreviewRefusal(f);
+  f.state.loseClaimResponse = true;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.claimRefs.size, 1);
+  assert.equal(f.outputs.size, 0);
+  assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+  assert.deepEqual(f.sent, []);
+});
+
+test('a failed preview refusal output write fails the owning step', async () => {
+  const f = admissionFixture();
+  preparePreviewRefusal(f);
+  f.admission.core.setOutput = () => { throw new Error('output unavailable'); };
+  await assert.rejects(admitRuntimeRefresh(f.admission), /output unavailable/);
+  assert.deepEqual(f.sent, []);
+  assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+});
+
+test('a preview that invokes dispatch with ambiguous acceptance cannot record a refusal', async () => {
+  const f = admissionFixture();
+  preparePreviewRefusal(f);
+  delete f.state.afterClaim;
+  f.state.loseDispatchResponse = true;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.claimRefs.size, 1);
+  assert.equal(f.outputs.size, 0);
+  assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+  assert.equal(f.sent.length, 1);
+});
+
 test('advancing a generation requires one exact terminal receiver with a successful claim marker', async () => {
   const f = admissionFixture();
   f.state.keepHidden = true;
@@ -655,7 +791,11 @@ test('both wake inputs retain intent in one non-replacing exact tuple queue on t
   assert.deepEqual(job.permissions, {actions: 'read', contents: 'write', 'pull-requests': 'read'});
   assert.deepEqual(job.steps.find(step => step.uses.startsWith('actions/checkout@')).with,
     {ref: '${{ github.workflow_sha }}', 'persist-credentials': 'false'});
-  assert.match(job.steps.at(-1).with.script, /input: context.payload.client_payload/);
+  assert.match(job.steps.find(step => step.id === 'admit').with.script, /input: context.payload.client_payload/);
+  const marker = job.steps.at(-1);
+  assert.equal(marker.name, 'Runtime refresh unsent claim ${{ steps.admit.outputs.unsent_claim }}');
+  assert.equal(marker.if, "${{ success() && steps.admit.outputs.unsent_claim != '' }}");
+  assert.equal(marker['continue-on-error'], undefined);
 });
 
 const tupleStep = (kind, base, merge) => ({

@@ -7,9 +7,11 @@ module.exports = async function admitPrRuntimeRefresh({
   context,
   core,
   input,
+  admissionAttempt = process.env.GITHUB_RUN_ATTEMPT,
   sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
 }) {
   const runtimePath = '.github/workflows/runtime-images.yml';
+  const admissionPath = '.github/workflows/admit-pr-runtime-refresh.yml';
   const requiredFields = ['pr_number', 'base_ref', 'base_sha', 'head_sha', 'merge_sha'];
   const shaPattern = /^[0-9a-f]{40}$/;
   const activeStatuses = new Set(['queued', 'waiting', 'requested', 'pending', 'in_progress']);
@@ -285,6 +287,12 @@ module.exports = async function admitPrRuntimeRefresh({
     `${JSON.stringify({...tuple, generation: String(generation), witness_sha256})}\n`;
   const tagger = {name: 'FireMUD Runtime Refresh', email: 'runtime-refresh@firemud.dev'};
   const isSha = value => typeof value === 'string' && value.length === 40 && shaPattern.test(value);
+  const isCanonicalId = value => typeof value === 'string' &&
+    isPositiveInteger(Number(value)) && String(Number(value)) === value;
+  const unsentRefPrefix = tagSha => `refs/tags/firemud-runtime-refresh-unsent/v1/${tagSha}/`;
+  const unsentMarkerPrefix = 'Runtime refresh unsent claim';
+  const unsentMarkerIdentity = (claim, runId, attempt) =>
+    `generation ${claim.generation} run ${runId} attempt ${attempt} tag ${claim.tag_sha}`;
   const isCanonicalDate = value => validChronology(value) && secondsUtc(Date.parse(value)) === value;
   const parseGeneration = value => {
     const generation = Number(value);
@@ -332,6 +340,56 @@ module.exports = async function admitPrRuntimeRefresh({
     const tag = dataOf(await github.rest.git.getTag({...contextRepo, tag_sha}));
     if (!exactTag(tag, generation) || tag.sha !== tag_sha) fail('Invalid runtime claim annotation.');
     return {generation, date: tag.tagger.date, tag_sha};
+  };
+
+  const unsentPreviewProven = async claim => {
+    try {
+      // The ref locates the attempt. Only its native completed step can prove no-send.
+      const prefix = unsentRefPrefix(claim.tag_sha);
+      const refs = await github.rest.git.listMatchingRefs({...contextRepo, ref: prefix.slice(5)});
+      if (refs?.status !== 200 || !isRecord(refs.headers) ||
+          Object.keys(refs.headers).some(name => name.toLowerCase() === 'link') ||
+          !Array.isArray(refs.data) || refs.data.length !== 1) return false;
+      const [locator] = refs.data;
+      if (typeof locator?.ref !== 'string' || !locator.ref.startsWith(prefix) ||
+          locator.object?.type !== 'tag' || locator.object.sha !== claim.tag_sha) return false;
+      const owner = locator.ref.slice(prefix.length).split('/');
+      if (owner.length !== 2 || !owner.every(isCanonicalId)) return false;
+      const [runId, attempt] = owner.map(Number);
+      const workflow = dataOf(await github.rest.actions.getWorkflow({
+        ...contextRepo, workflow_id: 'admit-pr-runtime-refresh.yml',
+      }));
+      if (workflow?.path !== admissionPath || !isPositiveInteger(workflow.id)) return false;
+
+      const getRun = async () => dataOf(await github.rest.actions.getWorkflowRun({...contextRepo, run_id: runId}));
+      const isSuccessfulOwner = run => run?.id === runId && run.workflow_id === workflow.id &&
+        run.run_attempt === attempt && run.event === 'repository_dispatch' &&
+        run.repository?.full_name === fullName && run.head_repository?.full_name === fullName &&
+        run.head_branch === defaultBranch && isSha(run.head_sha) &&
+        [admissionPath, `${admissionPath}@${defaultBranch}`, `${admissionPath}@refs/heads/${defaultBranch}`].includes(run.path) &&
+        run.status === 'completed' && run.conclusion === 'success';
+      const run = await getRun();
+      if (!isSuccessfulOwner(run)) return false;
+
+      const inventory = dataOf(await github.rest.actions.listJobsForWorkflowRunAttempt({
+        ...contextRepo, run_id: runId, attempt_number: attempt, per_page: pageSize, page: 1,
+      }));
+      if (inventory?.total_count !== 1 || !Array.isArray(inventory.jobs) || inventory.jobs.length !== 1) return false;
+      const [job] = inventory.jobs;
+      if (!isPositiveInteger(job?.id) || job.run_id !== runId || job.head_sha !== run.head_sha ||
+          (Object.hasOwn(job, 'run_attempt') && job.run_attempt !== attempt) ||
+          job.name !== 'Admit Exact Runtime Tuple' || job.status !== 'completed' || job.conclusion !== 'success' ||
+          !Array.isArray(job.steps) || job.steps.some(step => typeof step?.name !== 'string')) return false;
+      const markers = job.steps.filter(step => step.name.startsWith(unsentMarkerPrefix));
+      if (markers.length !== 1 || markers[0].status !== 'completed' || markers[0].conclusion !== 'success' ||
+          markers[0].name !== `${unsentMarkerPrefix} ${unsentMarkerIdentity(claim, runId, attempt)}`) return false;
+
+      const latest = await getRun();
+      return isSuccessfulOwner(latest) && latest.head_sha === run.head_sha;
+    } catch {
+      // An uncertain locator or marker cannot release a claim.
+      return false;
+    }
   };
 
   const receiverProvesClaim = async (run, claim) => {
@@ -437,15 +495,15 @@ module.exports = async function admitPrRuntimeRefresh({
     }
   }
 
-  let generation;
+  let claim;
   let witness;
   try {
     const prior = await latestClaim();
-    if (prior && !await terminalReceiverProven(prior)) {
-      core.info('Runtime refresh claim has no proven terminal receiver; no dispatch.');
+    if (prior && !await unsentPreviewProven(prior) && !await terminalReceiverProven(prior)) {
+      core.info('Runtime refresh claim has no proven terminal receiver or preview refusal; no dispatch.');
       return 'claim-held';
     }
-    generation = (prior?.generation ?? 0) + 1;
+    const generation = (prior?.generation ?? 0) + 1;
     const date = secondsUtc(Date.now());
     if (!isPositiveInteger(generation) || (prior && date < prior.date)) fail('Invalid successor runtime claim.');
     const candidateWitness = randomBytes(32).toString('hex');
@@ -463,6 +521,7 @@ module.exports = async function admitPrRuntimeRefresh({
         created.data.object?.type !== 'tag' || created.data.object.sha !== tag.data.sha) {
       fail('Runtime claim ref creation is unproven.');
     }
+    claim = {generation, tag_sha: tag.data.sha};
     witness = candidateWitness;
   } catch {
     // A lost response is not ownership. Never adopt, update, delete, or retry a claim ref.
@@ -470,14 +529,37 @@ module.exports = async function admitPrRuntimeRefresh({
     return 'claim-held';
   }
 
+  let identityIsCurrent;
   try {
-    if (!await currentIdentity()) {
-      core.info('Runtime refresh tuple changed after claiming; no dispatch.');
-      return 'obsolete';
-    }
+    identityIsCurrent = await currentIdentity();
   } catch {
     core.warning('Runtime refresh tuple could not be rechecked after claiming; no dispatch.');
     return 'claim-held';
+  }
+
+  if (!identityIsCurrent) {
+    core.info('Runtime refresh tuple changed after claiming; no dispatch.');
+    if (input.preview_only === true && context.eventName === 'repository_dispatch' &&
+        context.payload.action === 'pr-runtime-base-refresh-request' &&
+        context.ref === `refs/heads/${defaultBranch}` &&
+        isPositiveInteger(context.runId) && isCanonicalId(admissionAttempt)) {
+      const ref = `${unsentRefPrefix(claim.tag_sha)}${context.runId}/${admissionAttempt}`;
+      try {
+        const locator = await github.rest.git.createRef({
+          ...contextRepo, ref, sha: claim.tag_sha, request: {retries: 0},
+        });
+        if (locator?.status !== 201 || locator.data?.ref !== ref ||
+            locator.data.object?.type !== 'tag' || locator.data.object.sha !== claim.tag_sha) {
+          fail('Preview refusal locator creation is unproven.');
+        }
+      } catch {
+        core.warning('Preview refusal locator creation is unproven; keeping the claim held.');
+        return 'claim-held';
+      }
+      // A failed output write must fail this step and prevent the success marker.
+      core.setOutput('unsent_claim', unsentMarkerIdentity(claim, context.runId, admissionAttempt));
+    }
+    return 'obsolete';
   }
 
   const dispatchCreatedSince = secondsUtc(Date.now());
@@ -489,7 +571,7 @@ module.exports = async function admitPrRuntimeRefresh({
       client_payload: {
         ...tuple,
         image_tag: `pr-merge-${input.merge_sha}`,
-        runtime_refresh_claim: String(generation),
+        runtime_refresh_claim: String(claim.generation),
         runtime_refresh_claim_witness: witness,
       },
       request: {retries: 0},
