@@ -1327,17 +1327,26 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     try (Session session = session();
         var worker = Executors.newSingleThreadExecutor();
         var lock = session.account.dataSource.getConnection()) {
+      // Exercise the same owner, transaction, and SQL path on the worker before timing the
+      // actual lock wait. Non-creating evidence makes the warm-up refuse without a reservation.
+      var warmup = session.retainControlledEvaluation(false, null);
+      var warmupOwner = session.account.capacityOwner(CLOCK);
+      assertThatThrownBy(
+              () -> worker.submit(() -> warmupOwner.commit(warmup, GS)).get(5, TimeUnit.SECONDS))
+          .hasCauseInstanceOf(AccountTenantCapacityRepository.CapacityException.class)
+          .hasStackTraceContaining("TENANT_BILLING_BLOCKED");
+      int blocker = lockGameSessionUsage(lock, warmup.identity().tenantId());
       var request = session.retainControlledEvaluation(true, null);
-      int blocker = lockGameSessionUsage(lock, request.identity().tenantId());
       String before = session.capacityImage();
       var owner =
           session.account.capacityOwner(
               Clock.fixed(request.evidence().evaluatedAt(), ZoneOffset.UTC));
-      // Complete the fixture setup before charging any of the remaining worker window.
-      // Start the worker thread before narrowing the window for reaching the actual SQL lock.
-      worker.submit(() -> {}).get(5, TimeUnit.SECONDS);
-      // Leave the owner transaction time to recheck after the physical lock is released.
-      waitForDatabaseTime(session.dsl, request.evidence().expiresAt().minusMillis(2500));
+      // The owner has a five-second transaction budget. Start within it, with enough
+      // time for the physical row wait to register before the retained evidence expires.
+      var expiry = request.evidence().expiresAt();
+      waitForDatabaseTime(session.dsl, expiry.minusMillis(4_500));
+      Instant beforeSubmit = AccountTenantCapacityRepository.databaseNow(session.dsl);
+      assertThat(beforeSubmit).as("database time before submitting the owner").isBefore(expiry);
       var result = worker.submit(() -> owner.commit(request, GS));
       try {
         requireUsageWaitBeforeExpiry(session.dsl, blocker, request.evidence().expiresAt());
