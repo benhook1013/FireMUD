@@ -218,15 +218,14 @@ public final class AccountGameplayAdmissionLeaseOwner {
           null);
     }
 
-    // Both remote authorities are read after the short Account replay lookup and before the
-    // original physical-COMMIT path. The decision reader returns only the actual retained
-    // lease-bound PROVISIONAL decision, never request echoes.
-    Evidence decision;
-    PublishedRealmEvidence published;
+    // Complete the paid observation outside SQL before reading either Game Session authority.
+    // The decision or published target can change while the provider read is in flight.
+    AccountGameplayAdmissionCurrentSources.Observed observed;
     try {
-      decision = decisionReadClient.read(request.bindingDecisionId(), lease);
+      observed = prepareCurrentSources(caller, tenantId(lease));
+      Evidence decision = decisionReadClient.read(request.bindingDecisionId(), lease);
       requireDecisionMatchesLease(decision, request.bindingDecisionId(), lease, caller, peer);
-      published =
+      PublishedRealmEvidence published =
           readPublishedTarget(requestId(lease), decision.candidate(), decision.targetEvidence());
       if (!published.currentTarget().equals(decision.targetEvidence())) throw unavailable();
     } catch (RuntimeException unavailable) {
@@ -261,7 +260,6 @@ public final class AccountGameplayAdmissionLeaseOwner {
     // through this executor to reconstruct a late acknowledgement.
     OriginalCommitAcknowledgement acknowledgement;
     try {
-      var observed = prepareCurrentSources(caller, tenantId(lease));
       acknowledgement =
           originalCommitExecutor.executeWithCurrentSources(
               lease,

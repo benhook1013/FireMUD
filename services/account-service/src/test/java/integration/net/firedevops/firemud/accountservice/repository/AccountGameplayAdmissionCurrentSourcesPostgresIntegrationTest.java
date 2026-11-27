@@ -663,6 +663,27 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
           .isEqualTo(AccountGameplayAdmissionLeaseOperation.State.PENDING);
 
       paid.hosting().providerStatus("active");
+      var publishedTarget = controlledPublishedTarget(candidate, target, requestId);
+      var targetWithdrawn = new AtomicBoolean();
+      when(decisions.readPublishedRealmAdmissionOwner(any()))
+          .thenAnswer(invocation -> {
+            if (targetWithdrawn.get()) throw Status.UNAVAILABLE.asRuntimeException();
+            return publishedTarget;
+          });
+      paid.hosting().transport().duringRead(() -> targetWithdrawn.set(true));
+      assertThatThrownBy(() -> withPeer(peer, () -> owner.finalizeLease(finalize)))
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
+      assertThat(targetWithdrawn.get()).isTrue();
+      var stillPending = caller.readLeaseOperation(lease);
+      assertThat(stillPending.state())
+          .isEqualTo(AccountGameplayAdmissionLeaseOperation.State.PENDING);
+      assertThat(stillPending.evidence().canonicalJson()).isEqualTo(lease.canonicalJson());
+      assertThat(caller.originalAckReceiptImage(requestId)).isEmpty();
+
+      targetWithdrawn.set(false);
       withPeer(peer, () -> response.set(owner.finalizeLease(finalize)));
       var committed = response.get();
       assertThat(
