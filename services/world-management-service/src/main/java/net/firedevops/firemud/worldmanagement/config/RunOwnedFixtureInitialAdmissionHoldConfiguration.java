@@ -105,9 +105,12 @@ public class RunOwnedFixtureInitialAdmissionHoldConfiguration {
   WorldCanonicalInitialAdmissionHoldGrpcService runOwnedFixtureInitialAdmissionHoldGrpcService(
       WorldCanonicalInitialAdmissionHoldRepository holds,
       GrpcGameSessionCanonicalInitialAdmissionOwnerClient gameSessionOwner,
+      RunOwnedCanonicalWorldLaunchEvidenceProvider fixtureSources,
       @Value("${firemud.grpc.workload-namespace:}") String namespace) {
     return new WorldCanonicalInitialAdmissionHoldGrpcService(
-        new WorldCanonicalInitialAdmissionHoldOwner(holds, gameSessionOwner), namespace);
+        new WorldCanonicalInitialAdmissionHoldOwner(holds, gameSessionOwner),
+        namespace,
+        fixtureSources);
   }
 
   @Bean
