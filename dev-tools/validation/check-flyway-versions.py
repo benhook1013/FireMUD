@@ -315,6 +315,7 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
                                  "spring.flyway.skipdefaultresolvers",
                                  "spring.flyway.skipexecutingmigrations",
                                  "spring.flyway.dryrunoutput",
+                                 "spring.flyway.encoding", "spring.flyway.callbacklocations",
                                  "spring.flyway.createschemas",
                                  "spring.flyway.baselineonmigrate"}
             guard_paths = {
@@ -363,6 +364,9 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
         # Qualify the complete packaged history, not a pinned migration prefix.
         return None
     if "dryrunoutput" in flyway:
+        return None
+    encoding = flyway.get("encoding", "UTF-8")
+    if not isinstance(encoding, str) or encoding.strip().lower() != "utf-8" or "callbacklocations" in flyway:
         return None
     locations = flyway.get("locations", ["classpath:db/migration"])
     if isinstance(locations, str):
@@ -424,7 +428,7 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
             issues.append(f"{project_root}: packaged Spring configuration must enable Flyway with target latest, "
                           f"select the recovery-control location, use history table {RECOVERY_HISTORY_TABLE} "
                           f"in {RECOVERY_SCHEMA}, allow schema creation, share the journal datasource, "
-                          "and apply migrations without automatic baselining or dry-run output")
+                          "and apply UTF-8 migrations without automatic baselining, dry-run output, or callback locations")
         if not recovery_versioned:
             issues.append(f"{project_root}: requires at least one versioned migration in the recovery-control location")
     recovery_sql_root = (
@@ -800,6 +804,17 @@ def run_self_test() -> None:
         recovery_config.replace("/application.yml", "/config/application.yml"):
             b"spring.flyway.dryRunOutput: recovery-dry-run.sql\n",
     }, recovery_history, "historical effective migration no longer applied")
+    check("incompatible Flyway encoding cannot qualify recovery history", {
+        **recovery_history, recovery_config: recovery_settings + b"    encoding: UTF-16\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    check("explicit UTF-8 Flyway encoding qualifies recovery history", {
+        **recovery_history, recovery_config: recovery_settings + b"    encoding: UTF-8\n",
+    }, recovery_history, None)
+    for callbacks in (b"classpath:db/recovery-callbacks", b"[classpath:db/recovery-callbacks]"):
+        check("explicit Flyway callback locations cannot qualify recovery history", {
+            **recovery_history,
+            recovery_config: recovery_settings + b"    callback-locations: " + callbacks + b"\n",
+        }, recovery_history, "historical effective migration no longer applied")
     check("disabling Flyway schema creation cannot bootstrap the recovery journal", {
         **recovery_history, recovery_config: recovery_settings + b"    create-schemas: false\n",
     }, recovery_history, "packaged Spring configuration must enable Flyway")

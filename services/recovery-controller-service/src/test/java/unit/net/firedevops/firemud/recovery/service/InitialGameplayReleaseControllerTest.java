@@ -331,8 +331,7 @@ class InitialGameplayReleaseControllerTest {
     if (!ownsClaim) {
       verifyNoInteractions(port);
     } else {
-      verify(port).apply(effect, claimedAttempt.get(), claimedOrdinal);
-      verify(port, never()).readback(any(), any(), anyInt());
+      verify(port, org.mockito.Mockito.only()).apply(effect, claimedAttempt.get(), claimedOrdinal);
     }
     if (ownsClaim && expectedRetrySource == null) {
       verify(journal)
@@ -602,8 +601,7 @@ class InitialGameplayReleaseControllerTest {
             UUID.randomUUID(),
             operation.maintenanceLockIdentity(),
             otherNamespace,
-            codec.operationTupleDigest(
-                otherNamespace, operation.maintenanceLockIdentity(), operation.evidence()),
+            codec.operationTupleDigest(operation),
             operation.evidence().evidenceIdentity());
     var outbox =
         new OutboxEntry(

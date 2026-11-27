@@ -371,6 +371,52 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         .doesNotThrowAnyException();
   }
 
+  @Test
+  void rejectsIncompatibleFlywayEncodingFromRelaxedEnvironmentOverride() {
+    var environment = fixtureEnvironment().withProperty("spring.flyway.encoding", "UTF-8");
+    environment
+        .getPropertySources()
+        .addFirst(
+            new SystemEnvironmentPropertySource(
+                "test-systemEnvironment", Map.of("SPRING_FLYWAY_ENCODING", "UTF-16")));
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.flyway.encoding must be UTF-8")
+        .hasNoCause();
+  }
+
+  @Test
+  void acceptsExplicitUtf8FlywayEncoding() {
+    var environment = fixtureEnvironment().withProperty("spring.flyway.encoding", "UTF-8");
+    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .doesNotThrowAnyException();
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"spring.flyway.callback-locations", "spring.flyway.callback-locations[0]"})
+  void rejectsScalarAndIndexedFlywayCallbackLocations(String callbackProperty) {
+    var environment = fixtureEnvironment().withProperty(callbackProperty, "classpath:db/callbacks");
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.flyway.callback-locations is unsupported")
+        .hasMessageNotContaining("classpath:db/callbacks")
+        .hasNoCause();
+  }
+
+  @Test
+  void ignoresEncodingAndCallbackLocationsForDisabledFlywayFixture() {
+    var environment =
+        fixtureEnvironment()
+            .withProperty("spring.flyway.enabled", "false")
+            .withProperty("spring.flyway.encoding", "UTF-16")
+            .withProperty("spring.flyway.callback-locations[0]", "classpath:db/callbacks");
+    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .doesNotThrowAnyException();
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void acceptsRedisExclusionAndSchemaCreationForEnabledFlyway(boolean flywayEnabled) {

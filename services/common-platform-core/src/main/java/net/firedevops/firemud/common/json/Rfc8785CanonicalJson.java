@@ -22,6 +22,7 @@ public final class Rfc8785CanonicalJson {
   private static final JsonFactory STRICT_PROPERTY_NAMES =
       JsonFactory.builder()
           .streamReadConstraints(STRICT_INPUT_LIMITS)
+          .disable(JsonFactory.Feature.CANONICALIZE_FIELD_NAMES)
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
           .build();
 

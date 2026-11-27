@@ -58,6 +58,17 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
       }
       if (flywayEnabled) {
         requireAbsent(binder, "spring.flyway.dry-run-output");
+        String encoding = binder.bind("spring.flyway.encoding", String.class).orElse(null);
+        if (encoding != null && !"UTF-8".equalsIgnoreCase(encoding.trim())) {
+          throw new SafeOverrideException(
+              "spring.flyway.encoding must be UTF-8 for the recovery migrations");
+        }
+        if (binder
+            .bind("spring.flyway.callback-locations", Bindable.listOf(String.class))
+            .isBound()) {
+          throw new SafeOverrideException(
+              "spring.flyway.callback-locations is unsupported for the recovery migrations");
+        }
       }
       String url = "jdbc:postgresql://" + host + ":" + port + "/firemud_recovery_control";
       var primaryUrl = binder.bind("spring.datasource.url", String.class);
