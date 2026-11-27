@@ -80,8 +80,8 @@ has_substantive_failure() {
       is_build_logic = task ~ /^:buildSrc(:|$)/
       is_compile = !is_build_logic && is_compile
       cached_or_skipped = outcome == "FROM-CACHE" || outcome == "UP-TO-DATE" || outcome == "NO-SOURCE" || outcome == "SKIPPED"
-      # The Checkstyle cache write occurs before the application task graph runs.
-      if (resolution_boundary == "before-compile-cached-checkstyle" && !is_build_logic && !cached_or_skipped) {
+      # These configuration-cache writes occur before the application tasks run.
+      if (resolution_boundary == "before-compile-cached-configuration-only" && !is_build_logic && !cached_or_skipped) {
         found = 1
       }
       if (!is_test && !is_compile) {
@@ -149,6 +149,31 @@ classify_failure_body() {
       sub(/^[[:space:]]+/, "", s)
       sub(/[[:space:]]+$/, "", s)
       return s
+    }
+    function is_disabled_processor_pom_429(   processor_module, version, pom_url) {
+      if (invalid || jar_download_step || jar_downloads || cache_summary > 1 ||
+          wrapped_resolution_causes != 1 || !wrapped_cache_cause || cache_cause != 1 ||
+          resolver_roots != 1 || resolved_configuration != expected_wrapped_configuration ||
+          mavenrepo_disabled != 1 || other_cause_lines != 11) {
+        return 0
+      }
+      processor_module = resolved_configuration
+      sub(/:annotationProcessor$/, "", processor_module)
+      if (cause_lines[2] != "> Could not resolve all files for configuration " quote resolved_configuration quote "." ||
+          cause_lines[3] !~ /^> Could not resolve org\.projectlombok:lombok:[0-9]+(\.[0-9]+)+\.$/ ||
+          cause_lines[4] != "Required by:" || cause_lines[5] != "project " quote processor_module quote ||
+          cause_lines[6] != "> Repository MavenRepo is disabled due to earlier error below:" ||
+          cause_lines[7] !~ /^> Could not resolve org\.springframework\.boot:spring-boot-starter-validation:[0-9]+(\.[0-9]+)+\.$/) {
+        return 0
+      }
+      version = cause_lines[7]
+      sub(/^.*:/, "", version)
+      sub(/\.$/, "", version)
+      pom_url = "https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-starter-validation/" version "/spring-boot-starter-validation-" version ".pom"
+      return cause_lines[8] == "> Could not get resource " quote pom_url quote "." &&
+        cause_lines[9] == "> Could not GET " quote pom_url quote "." &&
+        cause_lines[10] == "> Received status code 429 from server: Too Many Requests" &&
+        cause_lines[11] == "> There is 1 more failure with an identical cause."
     }
     {
       line = trim($0)
@@ -239,6 +264,7 @@ classify_failure_body() {
       }
       # A JAR-only failure may have only its owning wrapper and resolver root.
       other_cause_lines++
+      if (other_cause_lines <= 11) cause_lines[other_cause_lines] = line
 
       # buildSrc plugin resolution may wrap a pinned dependency HTTP 429 in
       # configuration, repository-disablement and parent-POM context. These
@@ -266,6 +292,10 @@ classify_failure_body() {
       }
       if (line == "> Repository MavenRepo is disabled due to earlier error below:") {
         mavenrepo_disabled++
+        next
+      }
+      if (wrapped_cache_cause && mavenrepo_disabled == 1 &&
+          line == "> There is 1 more failure with an identical cause.") {
         next
       }
       if (line ~ /^> Connect to repo\.maven\.apache\.org:443 \[repo\.maven\.apache\.org\/[0-9a-fA-F:.]+\] failed: Connect timed out$/) {
@@ -489,6 +519,10 @@ classify_failure_body() {
       invalid++
     }
     END {
+      if (is_disabled_processor_pom_429()) {
+        print "before-compile-cached-configuration-only"
+        exit 0
+      }
       if (invalid || jar_download_step || resolver_roots == 0 || coordinates == 0 ||
           (jar_downloads &&
             (coordinates != jar_downloads || transient != jar_downloads ||
@@ -542,7 +576,7 @@ classify_failure_body() {
           !((transient && repository_requests) || (searched && repository_urls))) {
         exit 1
       }
-      if (checkstyle_configuration) print "before-compile-cached-checkstyle"
+      if (checkstyle_configuration) print "before-compile-cached-configuration-only"
       else if (buildsrc_jar_downloads || cache_jar_resolver) print "before-compile-cached"
       else if (wrapped_resolution_causes || ((compile_classpath_wrapper || fixtures_resolver) && jar_downloads)) print "before-compile"
       exit 0

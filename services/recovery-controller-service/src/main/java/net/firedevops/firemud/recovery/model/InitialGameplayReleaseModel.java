@@ -717,13 +717,6 @@ public final class InitialGameplayReleaseModel {
             "No-effect proof requires durable closure of the exact owner attempt");
       }
       readbackIdentity = requiredText(readbackIdentity, "readbackIdentity");
-      if (readbackIdentity
-          .codePoints()
-          .anyMatch(codePoint ->
-              (codePoint >= 0xfdd0 && codePoint <= 0xfdef) || (codePoint & 0xffff) >= 0xfffe)) {
-        throw new IllegalArgumentException(
-            "readbackIdentity must not contain Unicode noncharacters");
-      }
       Objects.requireNonNull(observedAt, "observedAt must not be null");
     }
   }
@@ -802,17 +795,15 @@ public final class InitialGameplayReleaseModel {
     if (value.indexOf(0) >= 0) {
       throw new IllegalArgumentException(name + " must not contain NUL");
     }
-    for (int index = 0; index < value.length(); index++) {
-      char unit = value.charAt(index);
-      if (Character.isHighSurrogate(unit)) {
-        if (++index < value.length() && Character.isLowSurrogate(value.charAt(index))) {
-          continue;
-        }
+    for (int index = 0; index < value.length(); ) {
+      int codePoint = value.codePointAt(index);
+      if (codePoint >= Character.MIN_SURROGATE && codePoint <= Character.MAX_SURROGATE) {
         throw new IllegalArgumentException(name + " must contain well-formed UTF-16");
       }
-      if (Character.isLowSurrogate(unit)) {
-        throw new IllegalArgumentException(name + " must contain well-formed UTF-16");
+      if ((codePoint >= 0xfdd0 && codePoint <= 0xfdef) || (codePoint & 0xffff) >= 0xfffe) {
+        throw new IllegalArgumentException(name + " must not contain Unicode noncharacters");
       }
+      index += Character.charCount(codePoint);
     }
     return value;
   }

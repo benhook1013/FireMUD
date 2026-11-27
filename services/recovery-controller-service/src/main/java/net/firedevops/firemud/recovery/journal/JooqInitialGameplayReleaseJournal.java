@@ -104,16 +104,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   @Override
   public Optional<Operation> find(UUID operationId) {
     Objects.requireNonNull(operationId, "operationId must not be null");
-    Operation operation = selectOperationOrNull(dsl, operationId, false);
-    if (operation != null && operation.phase() == Phase.FINALIZED) {
-      requireAcknowledgedEffect(
-          dsl,
-          operation,
-          EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF,
-          operation.finalizedAt(),
-          false);
-    }
-    return Optional.ofNullable(operation);
+    return Optional.ofNullable(selectOperationOrNull(dsl, operationId, false))
+        .map(operation -> requireFinalizedHandoff(dsl, operation));
   }
 
   @Override
@@ -190,7 +182,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               tuple.verb().wireValue());
       if (previous != null) {
         requireRetainedTransition(previous, tuple, tupleDigest);
-        return current;
+        return requireFinalizedHandoff(tx, current);
       }
       if (current.phase() != tuple.expectedPhase()) {
         throw conflict("public transition expected phase is stale");
@@ -248,20 +240,21 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Operation operation = toOperation(previous);
     requireTransitionMatchesOperation(tuple, operation);
     requireRetainedTransition(previous, tuple, tupleCodec.digest(tuple));
-    return Optional.of(operation);
+    return Optional.of(requireFinalizedHandoff(dsl, operation));
   }
 
   @Override
   public Optional<OutboxEntry> findNextEffect(UUID operationId) {
     // Surface an incomplete retained dispatch to the typed row validator before normal work.
     // The operation key bounds this selection; valid acknowledged rows still do not queue work.
-    // A retry without typed provenance may ask the exact owner for evidence, but cannot claim.
+    // A held retry may ask the exact owner for evidence, but cannot claim.
     Record record =
         dsl.fetchOne(
             """
             SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
                    payload_digest,
-                   CASE WHEN state = 'retryable' AND retry_provenance IS NULL
+                   CASE WHEN state = 'retryable' AND (retry_provenance IS NULL OR
+                         (retry_provenance = 'local_no_send' AND send_outcome_uncertain IS NOT FALSE))
                         THEN 'ambiguous' ELSE state END AS state,
                    attempt_count, last_attempt_id, last_outcome_code, acknowledged_at, last_dispatched_at
             FROM recovery_control.initial_gameplay_release_outbox
@@ -542,13 +535,17 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         throw conflict("effect readback belongs to another attempt");
       }
       if (!dispatch.lastAttemptId().equals(current.lastAttemptId())) {
-        EffectReadback retainedClosure =
+        RetainedClosure retainedClosure =
             findRetainedClosure(tx, current, dispatch.lastAttemptId(), dispatch.attemptCount());
         if (retainedClosure == null) {
           throw conflict("effect readback belongs to another attempt");
         }
-        if (!readback.equals(retainedClosure) || readback.observedAt().isAfter(now)) {
+        if (!sameRetainedOutcome(retainedClosure.readback(), readback)
+            || readback.observedAt().isAfter(now)) {
           throw conflict("effect readback changed after definitive no effect");
+        }
+        if (readback.observedAt().isBefore(retainedClosure.dispatchedAt())) {
+          throw conflict("effect readback is stale");
         }
         return operation;
       }
@@ -562,7 +559,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         Record stored =
             tx.fetchOne(
                 "SELECT readback_digest, readback_payload, readback_identity, last_dispatched_at,"
-                    + " retry_provenance, updated_at, acknowledged_at FROM "
+                    + " retry_provenance, updated_at, acknowledged_at, send_outcome_uncertain FROM "
                     + OUTBOX_TABLE
                     + " WHERE operation_id = ? AND effect_id = ?",
                 operationId,
@@ -611,7 +608,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                     tx, current, readback.attemptId(), current.attemptCount());
         if (partialAfterLocalNoSend || partialAfterHeldRejection) {
           requireTerminalReplayWithinAttempt(readback, stored, now);
-          if (partialAfterLocalNoSend) {
+          if (partialAfterLocalNoSend
+              && Boolean.FALSE.equals(stored.get("send_outcome_uncertain", Boolean.class))) {
             requireExactClosureBeforeRetry(tx, current);
           } else if (hasRetainedClosure(
               tx, current, readback.attemptId(), current.attemptCount())) {
@@ -1032,6 +1030,18 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     requireRetainedReadbackRecordingTime(readback, stored, "acknowledged_at");
   }
 
+  private Operation requireFinalizedHandoff(DSLContext context, Operation operation) {
+    if (operation.phase() == Phase.FINALIZED) {
+      requireAcknowledgedEffect(
+          context,
+          operation,
+          EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF,
+          operation.finalizedAt(),
+          false);
+    }
+    return operation;
+  }
+
   private void requireTransitionMatchesOperation(PublicTransitionTuple tuple, Operation operation) {
     if (!tuple.operationId().equals(operation.scope().operationId())
         || !tuple.scopeDigest().equals(tupleCodec.digest(operation.scope()))
@@ -1049,7 +1059,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     return findRetainedClosure(tx, current, attemptId, expectedOrdinal) != null;
   }
 
-  private EffectReadback findRetainedClosure(
+  private record RetainedClosure(EffectReadback readback, Instant dispatchedAt) {}
+
+  private RetainedClosure findRetainedClosure(
       DSLContext tx, OutboxEntry current, UUID attemptId, Integer expectedOrdinal) {
     Record row =
         tx.fetchOne(
@@ -1099,7 +1111,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             .isAfter(recordedAt.toInstant())) {
       throw conflict("retained attempt closure does not match the exact dispatched tuple");
     }
-    return retained;
+    return new RetainedClosure(retained, dispatchedAt.toInstant());
   }
 
   private static boolean hasRetainedOwnerRejection(
@@ -1206,13 +1218,13 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
 
   private void requireRetainedClosureMatchesStoredReadback(
       DSLContext tx, OutboxEntry current, Record stored, String storedDigest) {
-    EffectReadback retained =
+    RetainedClosure retained =
         findRetainedClosure(tx, current, current.lastAttemptId(), current.attemptCount());
     if (retained == null) {
       throw conflict("durable owner closure has no retained attempt identity");
     }
     // Compare the first durable receipt, not a replay's possibly newer observation time.
-    requireValidExactStoredReadback(retained, stored, storedDigest, current);
+    requireValidExactStoredReadback(retained.readback(), stored, storedDigest, current);
   }
 
   private void requireNonRegressingReadback(
@@ -1295,6 +1307,10 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     }
     requireStoredReadbackIdentity(stored, acknowledged);
     requireRetainedReadbackRecordingTime(acknowledged, stored, recordedAtColumn);
+    return sameRetainedOutcome(acknowledged, readback);
+  }
+
+  private static boolean sameRetainedOutcome(EffectReadback acknowledged, EffectReadback readback) {
     // The authenticated outcome identifies the durable closure, not the read clock.
     // A valid new observation time never replaces the first durable receipt.
     return acknowledged.equals(
