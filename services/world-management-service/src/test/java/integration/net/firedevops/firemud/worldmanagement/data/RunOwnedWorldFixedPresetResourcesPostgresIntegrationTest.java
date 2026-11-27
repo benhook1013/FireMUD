@@ -896,6 +896,17 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertThat(scalarLong("SELECT row_version FROM world_instance WHERE id = ?", id)).isEqualTo(1L);
     assertThatThrownBy(
             () ->
+                dsl.execute(
+                    """
+                    SELECT world_verify_run_owned_fixed_preset_plan(
+                        p.input_json::jsonb, p.fixed_preset_content_digest,
+                        p.world_instance_id, p.private_game_instance_key)
+                    FROM world_canonical_instance_preparation p WHERE p.world_instance_id = ?
+                    """,
+                    id))
+        .hasStackTraceContaining("RUN_OWNED_WORLD_FIXED_PRESET_ASSOCIATION_MISMATCH");
+    assertThatThrownBy(
+            () ->
                 ownerTransaction()
                     .executeWithoutResult(
                         status -> {
