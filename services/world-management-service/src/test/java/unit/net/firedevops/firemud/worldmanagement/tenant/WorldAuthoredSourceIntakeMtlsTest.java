@@ -42,6 +42,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -289,12 +290,31 @@ class WorldAuthoredSourceIntakeMtlsTest {
   }
 
   @Test
-  void clientRejectsAResponseFromTheWrongAuthenticatedWorldServerIdentity() throws Exception {
-    startServer(pki.wrongWorldServer(), null);
+  void clientRejectsWrongAuthenticatedWorldServerBeforeSendingEitherRequest() throws Exception {
+    AtomicInteger receivedCalls = new AtomicInteger();
+    ServerInterceptor observeCalls =
+        new ServerInterceptor() {
+          @Override
+          public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+              ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
+            receivedCalls.incrementAndGet();
+            return next.startCall(call, headers);
+          }
+        };
+
+    startServer(pki.worldServer(), observeCalls);
+    try (WorldAuthoredSourceIntakeClient client = client(pki.gameDesignClient(), "right-server")) {
+      client.read(READ_REQUEST);
+    }
+    assertThat(receivedCalls).hasValue(1);
+    stopServer();
+
+    startServer(pki.wrongWorldServer(), observeCalls);
     try (WorldAuthoredSourceIntakeClient client = client(pki.gameDesignClient(), "wrong-server")) {
       assertUnauthenticated(() -> client.intake(INTAKE_REQUEST));
       assertUnauthenticated(() -> client.read(READ_REQUEST));
     }
+    assertThat(receivedCalls).hasValue(1);
     verifyNoInteractions(intakeService);
   }
 
