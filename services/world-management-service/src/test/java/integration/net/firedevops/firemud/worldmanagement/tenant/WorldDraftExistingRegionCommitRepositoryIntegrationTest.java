@@ -127,12 +127,12 @@ class WorldDraftExistingRegionCommitRepositoryIntegrationTest {
     assertThat(function("world_guard_graph_application()")).isEqualTo(freshGuardBeforeUpgrade);
     assertThat(catalogFacts())
         .startsWith(catalogBeforeUpgrade.substring(0, catalogBeforeUpgrade.length() - 1));
-    assertCatalogSeal(dsl, 9);
+    assertCatalogSeal(dsl, 10);
     String freshSchema =
         "world_existing_region_fresh_" + UUID.randomUUID().toString().replace("-", "");
     var fresh = source(freshSchema);
     migration(fresh, freshSchema, null).migrate();
-    assertCatalogSeal(DSL.using(fresh, SQLDialect.POSTGRES), 9);
+    assertCatalogSeal(DSL.using(fresh, SQLDialect.POSTGRES), 10);
   }
 
   @Test

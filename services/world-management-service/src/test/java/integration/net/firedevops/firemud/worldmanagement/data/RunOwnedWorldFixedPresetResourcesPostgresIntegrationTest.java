@@ -841,6 +841,29 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     long id = association.worldInstanceId();
     var request = RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence);
 
+    var preparedRows = allRows(dsl).get("world_instance");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    """
+                    INSERT INTO world_run_owned_fixture_activation (
+                        world_instance_id, canonical_game_instance_id, fixture_binding_sha256,
+                        expected_lifecycle_epoch, expected_row_version, result_lifecycle_epoch,
+                        result_row_version)
+                    SELECT id, canonical_game_instance_id, run_owned_fixture_binding_sha256,
+                        lifecycle_epoch, row_version, lifecycle_epoch + 1, row_version + 1
+                    FROM world_instance WHERE id = ?
+                    """,
+                    id))
+        .hasStackTraceContaining(
+            "Run-owned fixture activation receipt did not commit its exact ACTIVE CAS");
+    assertThat(allRows(dsl).get("world_instance")).isEqualTo(preparedRows);
+    assertThat(
+            scalarLong(
+                "SELECT count(*) FROM world_run_owned_fixture_activation WHERE world_instance_id = ?",
+                id))
+        .isZero();
+
     var activated =
         RunOwnedWorldFixtureLifecycleTestFactory.activate(
             service, evidence, controlledInstallation, 1L);
@@ -856,11 +879,12 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
         .isEqualTo(1L);
     assertThat(scalarLong("SELECT row_version FROM world_instance WHERE id = ?", id)).isEqualTo(1L);
 
+    var committedReceipt = allRows(dsl).get("world_run_owned_fixture_activation");
     var replay =
         RunOwnedWorldFixtureLifecycleTestFactory.activate(
             service, evidence, controlledInstallation, 1L);
-    assertThat(replay.status()).isEqualTo("ACTIVE");
-    assertThat(replay.lifecycleEpoch()).isEqualTo(2L);
+    assertThat(replay).isEqualTo(activated);
+    assertThat(allRows(dsl).get("world_run_owned_fixture_activation")).isEqualTo(committedReceipt);
     assertThat(scalarLong("SELECT row_version FROM world_instance WHERE id = ?", id)).isEqualTo(1L);
     assertThatThrownBy(
             () ->
@@ -1711,8 +1735,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   .fetch(
                       "SELECT catalog_epoch FROM world_runtime_family_catalog_epoch ORDER BY catalog_epoch")
                   .getValues(0, Long.class))
-          .as("V1046 through V1050 and V1070 through V1073 install nine catalog epochs")
-          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L);
+          .as("V1046 through V1050 and V1070 through V1074 install ten catalog epochs")
+          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L);
       assertThat(
               connection
                   .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_snapshot")
@@ -3504,6 +3528,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1071");
     versions.add("1072");
     versions.add("1073");
+    versions.add("1074");
     return List.copyOf(versions);
   }
 
