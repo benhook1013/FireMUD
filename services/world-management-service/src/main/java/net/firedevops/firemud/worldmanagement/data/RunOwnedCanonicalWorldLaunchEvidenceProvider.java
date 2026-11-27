@@ -233,10 +233,12 @@ public final class RunOwnedCanonicalWorldLaunchEvidenceProvider {
       throw invalidEvidence();
     }
     requireExpectedRunBinding(runId, composeProjectName);
-    var capability = RunOwnedInitialAdmissionFixtureWireCodec.parseCapability(
-        readImmutableWireFile(capabilityPath));
-    var receipt = RunOwnedInitialAdmissionFixtureWireCodec.parseSourceReceipt(
-        readImmutableWireFile(sourceReceiptPath), capability);
+    var capability =
+        RunOwnedInitialAdmissionFixtureWireCodec.parseCapability(
+            readImmutableWireFile(capabilityPath));
+    var receipt =
+        RunOwnedInitialAdmissionFixtureWireCodec.parseSourceReceipt(
+            readImmutableWireFile(sourceReceiptPath), capability);
     requireExactRun(capability, receipt);
     requireExactRecipientPins(capability, receipt);
     return receipt;

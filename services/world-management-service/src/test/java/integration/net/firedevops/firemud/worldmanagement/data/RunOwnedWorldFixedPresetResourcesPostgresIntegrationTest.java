@@ -15,10 +15,10 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -62,12 +62,13 @@ import net.firedevops.firemud.worldmanagement.repository.RoomInstanceRepository;
 import net.firedevops.firemud.worldmanagement.service.impl.RoomServiceImpl;
 import net.firedevops.firemud.worldmanagement.service.impl.RunOwnedWorldFixtureLifecycleTestFactory;
 import net.firedevops.firemud.worldmanagement.service.impl.WorldLifecycleCommandServiceImpl;
+import net.firedevops.firemud.worldmanagement.tenant.RunOwnedFixtureInitialAdmissionHoldReconciler;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityRepository;
-import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldOwner;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociation;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadRepository;
@@ -75,7 +76,6 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCompleteLaunchBindingR
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldRuntimeInstallationRegistry;
-import net.firedevops.firemud.worldmanagement.tenant.RunOwnedFixtureInitialAdmissionHoldReconciler;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
@@ -1168,12 +1168,24 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       WorldCanonicalInitialAdmissionHoldRepository holds,
       RunOwnedCanonicalWorldLaunchEvidence evidence,
       WorldCanonicalInitialAdmissionHold.HoldIdentity hold) {
-    var pending = new GameSessionCanonicalInitialAdmissionOwnerProof(
-        hold, GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING,
-        null, null, null, false, null);
-    var committed = new GameSessionCanonicalInitialAdmissionOwnerProof(
-        hold, GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
-        1L, 23L, "sha256:" + "b".repeat(64), false, Instant.now().truncatedTo(ChronoUnit.MICROS));
+    var pending =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            hold,
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING,
+            null,
+            null,
+            null,
+            false,
+            null);
+    var committed =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            hold,
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+            1L,
+            23L,
+            "sha256:" + "b".repeat(64),
+            false,
+            Instant.now().truncatedTo(ChronoUnit.MICROS));
     var receipt = evidence.sourceReceipt();
     String provenance = receipt.fixturePolicySeal().evidenceDigest();
     var source = mock(RunOwnedCanonicalWorldLaunchEvidenceProvider.class);
@@ -1181,24 +1193,28 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     var gameSession = mock(GrpcGameSessionCanonicalInitialAdmissionOwnerClient.class);
     when(gameSession.readFixture(hold, provenance, receipt.gameSessionLeafSha256()))
         .thenReturn(pending, committed);
-    var fixtureReconciler = new RunOwnedFixtureInitialAdmissionHoldReconciler(holds, source, gameSession);
+    var fixtureReconciler =
+        new RunOwnedFixtureInitialAdmissionHoldReconciler(holds, source, gameSession);
 
     var original = allRows(dsl).get("initial_admission_bind_hold");
     fixtureReconciler.reconcilePendingHold();
     assertThat(allRows(dsl).get("initial_admission_bind_hold")).isEqualTo(original);
     var genericOwner = new WorldCanonicalInitialAdmissionHoldOwner(holds, identity -> committed);
     assertThatThrownBy(() -> genericOwner.settleFromAuthenticatedOwnerRead(hold))
-        .hasStackTraceContaining("World fixture hold requires its original activation and committed terminal");
+        .hasStackTraceContaining(
+            "World fixture hold requires its original activation and committed terminal");
     assertThat(allRows(dsl).get("initial_admission_bind_hold")).isEqualTo(original);
 
     fixtureReconciler.reconcilePendingHold();
-    var terminal = dsl.fetchSingle(
-        """
+    var terminal =
+        dsl.fetchSingle(
+            """
         SELECT convert_from(canonical_owner_proof_bytes,'UTF8')::jsonb->>'authorityKind' AS kind,
                convert_from(canonical_owner_proof_bytes,'UTF8')::jsonb->>'fixturePolicySealEvidenceDigest' AS seal,
                owner_pointer_audit_id, owner_pointer_version
         FROM initial_admission_bind_hold WHERE hold_id = ?
-        """, hold.holdId());
+        """,
+            hold.holdId());
     assertThat(terminal.get("kind", String.class)).isEqualTo("RUN_OWNED_FIXTURE");
     assertThat(terminal.get("seal", String.class)).isEqualTo(provenance);
     assertThat(terminal.get("owner_pointer_audit_id", String.class)).isEqualTo("23");

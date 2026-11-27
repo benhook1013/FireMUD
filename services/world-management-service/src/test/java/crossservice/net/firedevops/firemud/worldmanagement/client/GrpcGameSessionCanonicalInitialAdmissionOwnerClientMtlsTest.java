@@ -166,44 +166,54 @@ class GrpcGameSessionCanonicalInitialAdmissionOwnerClientMtlsTest {
   @Test
   void fixtureReadPinsGameSessionLeafAndRejectsChangedAuthority(@TempDir Path temporary)
       throws Exception {
-    var pki = LoopbackMtlsTestPki.create(
-        temporary, "Run-owned fixture initial-admission owner test CA",
-        identity("gs", "firemud", "game-session-service", true),
-        identity("world", "firemud", "world-management-service", false));
+    var pki =
+        LoopbackMtlsTestPki.create(
+            temporary,
+            "Run-owned fixture initial-admission owner test CA",
+            identity("gs", "firemud", "game-session-service", true),
+            identity("world", "firemud", "world-management-service", false));
     HoldIdentity identity = holdIdentity();
     String provenance = "sha256:" + "b".repeat(64);
-    String leafSha256 = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-        .digest(pki.identity("gs").certificate().getEncoded()));
+    String leafSha256 =
+        HexFormat.of()
+            .formatHex(
+                MessageDigest.getInstance("SHA-256")
+                    .digest(pki.identity("gs").certificate().getEncoded()));
     var responseAuthority = new AtomicReference<>("RUN_OWNED_FIXTURE");
     var calls = new AtomicInteger();
-    var service = new RunOwnedFixtureInitialAdmissionOwnerReadServiceGrpc
-        .RunOwnedFixtureInitialAdmissionOwnerReadServiceImplBase() {
-      @Override
-      public void readRunOwnedFixtureInitialAdmissionOwner(
-          ReadRunOwnedFixtureInitialAdmissionOwnerRequest request,
-          StreamObserver<ReadRunOwnedFixtureInitialAdmissionOwnerResponse> observer) {
-        calls.incrementAndGet();
-        assertThat(GrpcPeerIdentity.current().uri()).isEqualTo(EXPECTED_WORLD_URI);
-        assertThat(request.getAuthorityKind()).isEqualTo("RUN_OWNED_FIXTURE");
-        assertThat(request.getFixturePolicySealEvidenceDigest()).isEqualTo(provenance);
-        assertThat(CanonicalInitialAdmissionOwnerGrpcCodec.parseRequest(request.getHold()))
-            .isEqualTo(identity);
-        observer.onNext(ReadRunOwnedFixtureInitialAdmissionOwnerResponse.newBuilder()
-            .setReadRequestId(request.getReadRequestId())
-            .setAuthorityKind(responseAuthority.get())
-            .setFixturePolicySealEvidenceDigest(provenance)
-            .setProof(pendingResponse(identity)).build());
-        observer.onCompleted();
-      }
-    };
+    var service =
+        new RunOwnedFixtureInitialAdmissionOwnerReadServiceGrpc
+            .RunOwnedFixtureInitialAdmissionOwnerReadServiceImplBase() {
+          @Override
+          public void readRunOwnedFixtureInitialAdmissionOwner(
+              ReadRunOwnedFixtureInitialAdmissionOwnerRequest request,
+              StreamObserver<ReadRunOwnedFixtureInitialAdmissionOwnerResponse> observer) {
+            calls.incrementAndGet();
+            assertThat(GrpcPeerIdentity.current().uri()).isEqualTo(EXPECTED_WORLD_URI);
+            assertThat(request.getAuthorityKind()).isEqualTo("RUN_OWNED_FIXTURE");
+            assertThat(request.getFixturePolicySealEvidenceDigest()).isEqualTo(provenance);
+            assertThat(CanonicalInitialAdmissionOwnerGrpcCodec.parseRequest(request.getHold()))
+                .isEqualTo(identity);
+            observer.onNext(
+                ReadRunOwnedFixtureInitialAdmissionOwnerResponse.newBuilder()
+                    .setReadRequestId(request.getReadRequestId())
+                    .setAuthorityKind(responseAuthority.get())
+                    .setFixturePolicySealEvidenceDigest(provenance)
+                    .setProof(pendingResponse(identity))
+                    .build());
+            observer.onCompleted();
+          }
+        };
     Server server = startServer(pki, "gs", service);
     try (var client = client(pki, temporary, "world", server.getPort())) {
       client.init();
       assertThat(client.readFixture(identity, provenance, leafSha256).outcome())
           .isEqualTo(GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
       assertThatThrownBy(() -> client.readFixture(identity, provenance, "0".repeat(64)))
-          .isInstanceOfSatisfying(StatusRuntimeException.class,
-              failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED));
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED));
       assertThat(calls).hasValue(1);
       responseAuthority.set("HUMAN");
       assertThatThrownBy(() -> client.readFixture(identity, provenance, leafSha256))

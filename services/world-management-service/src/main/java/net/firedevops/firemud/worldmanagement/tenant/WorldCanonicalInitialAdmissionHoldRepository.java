@@ -33,7 +33,8 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** Durable typed owner rows for canonical World initial-admission holds. */
 public final class WorldCanonicalInitialAdmissionHoldRepository {
-  private static final String FIXTURE_TERMINAL_SCHEMA = "world-run-owned-fixture-admission-terminal/v1";
+  private static final String FIXTURE_TERMINAL_SCHEMA =
+      "world-run-owned-fixture-admission-terminal/v1";
   private static final JsonMapper JSON = JsonMapper.builder().build();
   private final DSLContext dsl;
   private final TransactionTemplate writeTransaction;
@@ -260,8 +261,9 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
     requireNoAmbientTransaction("World fixture pending hold read");
     return readTransaction.execute(
         status -> {
-          Record row = dsl.fetchOne(
-              """
+          Record row =
+              dsl.fetchOne(
+                  """
               SELECT h.* FROM initial_admission_bind_hold h
               JOIN world_canonical_instance_association a
                   ON a.canonical_game_instance_id = h.canonical_game_instance_id
@@ -273,9 +275,17 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
                 AND h.canonical_request_bytes IS NOT NULL
                 AND a.canonical_authority_kind = 'RUN_OWNED_FIXTURE'
                 AND a.fixture_provenance_digest = ?
-              """, targetNamespace, canonicalTenant, requestId, fixtureProvenance);
-          return row == null ? Optional.empty() : Optional.of(requireStoredIdentity(
-              row, Request.fromStored(required(row, "canonical_request_bytes", byte[].class))));
+              """,
+                  targetNamespace,
+                  canonicalTenant,
+                  requestId,
+                  fixtureProvenance);
+          return row == null
+              ? Optional.empty()
+              : Optional.of(
+                  requireStoredIdentity(
+                      row,
+                      Request.fromStored(required(row, "canonical_request_bytes", byte[].class))));
         });
   }
 
@@ -284,13 +294,17 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
     settle(identity, proof, null);
   }
 
-  void settleFixture(HoldIdentity identity, String fixtureProvenance,
+  void settleFixture(
+      HoldIdentity identity,
+      String fixtureProvenance,
       GameSessionCanonicalInitialAdmissionOwnerProof proof) {
     Objects.requireNonNull(fixtureProvenance, "fixtureProvenance");
     settle(identity, proof, fixtureProvenance);
   }
 
-  private void settle(HoldIdentity identity, GameSessionCanonicalInitialAdmissionOwnerProof proof,
+  private void settle(
+      HoldIdentity identity,
+      GameSessionCanonicalInitialAdmissionOwnerProof proof,
       String fixtureProvenance) {
     Objects.requireNonNull(identity, "identity");
     Objects.requireNonNull(proof, "proof");
@@ -307,9 +321,10 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
       throw new InvalidHoldEvidenceException("Fixture terminal outcome must be COMMITTED");
     }
     requireTerminalProof(identity, proof);
-    byte[] proofBytes = fixtureProvenance == null
-        ? GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(proof)
-        : fixtureTerminalBytes(identity, fixtureProvenance, proof);
+    byte[] proofBytes =
+        fixtureProvenance == null
+            ? GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(proof)
+            : fixtureTerminalBytes(identity, fixtureProvenance, proof);
     String proofBytesDigest = prefixedDigest(proofBytes);
     String ownerProofDigest = proof.proofDigest().substring("sha256:".length());
 
@@ -363,21 +378,25 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
         });
   }
 
-  private static byte[] fixtureTerminalBytes(HoldIdentity identity, String provenance,
+  private static byte[] fixtureTerminalBytes(
+      HoldIdentity identity,
+      String provenance,
       GameSessionCanonicalInitialAdmissionOwnerProof proof) {
-    var fields = Map.ofEntries(
-        Map.entry("schema", FIXTURE_TERMINAL_SCHEMA),
-        Map.entry("authorityKind", "RUN_OWNED_FIXTURE"),
-        Map.entry("fixturePolicySealEvidenceDigest", provenance),
-        Map.entry("selectorBytesBase64", Base64.getEncoder().encodeToString(
-            identity.request().canonicalRequestBytes())),
-        Map.entry("holdId", identity.holdId().toString()),
-        Map.entry("holdFence", identity.holdFence().toString()),
-        Map.entry("outcome", proof.outcome().name()),
-        Map.entry("pointerVersion", proof.committedPointerVersion().toString()),
-        Map.entry("auditEventId", proof.auditEventId().toString()),
-        Map.entry("proofDigest", proof.proofDigest()),
-        Map.entry("terminalAt", proof.terminalAt().toString()));
+    var fields =
+        Map.ofEntries(
+            Map.entry("schema", FIXTURE_TERMINAL_SCHEMA),
+            Map.entry("authorityKind", "RUN_OWNED_FIXTURE"),
+            Map.entry("fixturePolicySealEvidenceDigest", provenance),
+            Map.entry(
+                "selectorBytesBase64",
+                Base64.getEncoder().encodeToString(identity.request().canonicalRequestBytes())),
+            Map.entry("holdId", identity.holdId().toString()),
+            Map.entry("holdFence", identity.holdFence().toString()),
+            Map.entry("outcome", proof.outcome().name()),
+            Map.entry("pointerVersion", proof.committedPointerVersion().toString()),
+            Map.entry("auditEventId", proof.auditEventId().toString()),
+            Map.entry("proofDigest", proof.proofDigest()),
+            Map.entry("terminalAt", proof.terminalAt().toString()));
     try {
       return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(fields));
     } catch (IOException impossible) {

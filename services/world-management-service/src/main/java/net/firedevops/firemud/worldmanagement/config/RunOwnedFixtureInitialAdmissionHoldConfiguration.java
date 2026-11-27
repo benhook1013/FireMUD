@@ -9,9 +9,9 @@ import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionCanonicalIni
 import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidenceProvider;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
 import net.firedevops.firemud.worldmanagement.service.impl.RunOwnedFixtureLookWorldGrpcService;
+import net.firedevops.firemud.worldmanagement.tenant.RunOwnedFixtureInitialAdmissionHoldReconciler;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityRepository;
-import net.firedevops.firemud.worldmanagement.tenant.RunOwnedFixtureInitialAdmissionHoldReconciler;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldOwner;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldRepository;
@@ -97,7 +97,8 @@ public class RunOwnedFixtureInitialAdmissionHoldConfiguration {
       PlatformTransactionManager transactionManager,
       WorldCanonicalInstanceAssociationRepository associations,
       WorldCanonicalInstanceLifecycleReadRepository lifecycle) {
-    return new WorldCanonicalInitialAdmissionHoldRepository(dsl, transactionManager, associations, lifecycle);
+    return new WorldCanonicalInitialAdmissionHoldRepository(
+        dsl, transactionManager, associations, lifecycle);
   }
 
   @Bean
@@ -114,6 +115,7 @@ public class RunOwnedFixtureInitialAdmissionHoldConfiguration {
       WorldCanonicalInitialAdmissionHoldRepository holds,
       RunOwnedCanonicalWorldLaunchEvidenceProvider sourceProvider,
       GrpcGameSessionCanonicalInitialAdmissionOwnerClient gameSessionOwner) {
-    return new RunOwnedFixtureInitialAdmissionHoldReconciler(holds, sourceProvider, gameSessionOwner);
+    return new RunOwnedFixtureInitialAdmissionHoldReconciler(
+        holds, sourceProvider, gameSessionOwner);
   }
 }

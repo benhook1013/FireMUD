@@ -32,12 +32,20 @@ public final class RunOwnedFixtureInitialAdmissionHoldReconciler {
       var source = receipt.sourceEvidence();
       String provenance = receipt.fixturePolicySeal().evidenceDigest();
       String requestId = "run-owned-fixture-" + receipt.fixtureOperationId();
-      holds.readPendingFixtureHold(
+      holds
+          .readPendingFixtureHold(
               source.targetNamespace(), source.canonicalTenantId(), requestId, provenance)
-          .ifPresent(identity -> holds.settleFixture(identity, provenance,
-              gameSession.readFixture(identity, provenance, receipt.gameSessionLeafSha256())));
+          .ifPresent(
+              identity ->
+                  holds.settleFixture(
+                      identity,
+                      provenance,
+                      gameSession.readFixture(
+                          identity, provenance, receipt.gameSessionLeafSha256())));
     } catch (RuntimeException unavailable) {
-      LOG.debug("Run-owned fixture hold remains pending after {}", unavailable.getClass().getSimpleName());
+      LOG.debug(
+          "Run-owned fixture hold remains pending after {}",
+          unavailable.getClass().getSimpleName());
     }
   }
 }

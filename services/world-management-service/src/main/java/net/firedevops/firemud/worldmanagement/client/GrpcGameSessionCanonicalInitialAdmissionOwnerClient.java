@@ -98,20 +98,23 @@ public final class GrpcGameSessionCanonicalInitialAdmissionOwnerClient
     }
     String correlation = UUID.randomUUID().toString();
     String peer = "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-session-service";
-    var channel = requireInitializedStub("Canonical Game Session owner client is unavailable")
-        .getChannel();
-    var request = ReadRunOwnedFixtureInitialAdmissionOwnerRequest.newBuilder()
-        .setReadRequestId(correlation)
-        .setAuthorityKind(FIXTURE_KIND)
-        .setFixturePolicySealEvidenceDigest(expectedProvenance)
-        .setHold(CanonicalInitialAdmissionOwnerGrpcCodec.toRequest(identity))
-        .build();
-    var response = RunOwnedFixtureInitialAdmissionOwnerReadServiceGrpc.newBlockingStub(channel)
-        .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-        .withMaxInboundMessageSize(MAX_FIXTURE_WIRE_BYTES)
-        .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(peer, expectedLeafSha256))
-        .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(peer, expectedLeafSha256))
-        .readRunOwnedFixtureInitialAdmissionOwner(request);
+    var channel =
+        requireInitializedStub("Canonical Game Session owner client is unavailable").getChannel();
+    var request =
+        ReadRunOwnedFixtureInitialAdmissionOwnerRequest.newBuilder()
+            .setReadRequestId(correlation)
+            .setAuthorityKind(FIXTURE_KIND)
+            .setFixturePolicySealEvidenceDigest(expectedProvenance)
+            .setHold(CanonicalInitialAdmissionOwnerGrpcCodec.toRequest(identity))
+            .build();
+    var response =
+        RunOwnedFixtureInitialAdmissionOwnerReadServiceGrpc.newBlockingStub(channel)
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .withMaxInboundMessageSize(MAX_FIXTURE_WIRE_BYTES)
+            .withCallCredentials(
+                new GrpcServerPeerIdentityCallCredentials(peer, expectedLeafSha256))
+            .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(peer, expectedLeafSha256))
+            .readRunOwnedFixtureInitialAdmissionOwner(request);
     if (!response.hasProof()
         || !response.getUnknownFields().asMap().isEmpty()
         || !correlation.equals(response.getReadRequestId())
@@ -119,7 +122,8 @@ public final class GrpcGameSessionCanonicalInitialAdmissionOwnerClient
         || !expectedProvenance.equals(response.getFixturePolicySealEvidenceDigest())) {
       throw new IllegalArgumentException("Game Session fixture proof changed its binding");
     }
-    var proof = CanonicalInitialAdmissionOwnerGrpcCodec.requireResponse(identity, response.getProof());
+    var proof =
+        CanonicalInitialAdmissionOwnerGrpcCodec.requireResponse(identity, response.getProof());
     if (proof.outcome() == GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED) {
       throw new IllegalArgumentException("Fixture abort proof is unavailable");
     }
