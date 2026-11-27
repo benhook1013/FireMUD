@@ -393,6 +393,12 @@ class WorldSelectedPublicationPostgresIntegrationTest {
                       acknowledgement.publicationFence())
                   .get("graph_bytes", byte[].class))
           .containsExactly(appliedResult.graphBytes());
+      assertPublishedSelectorOwnedSnapshot(
+          dsl,
+          transactionManager,
+          freezeFixture.selectorRepository(),
+          selectorRequest,
+          selectorSource);
 
       WorldPublishedStartLocationEvidence worldEvidence =
           publishedStartLocationEvidence(selectorSource);
@@ -810,6 +816,44 @@ class WorldSelectedPublicationPostgresIntegrationTest {
         acknowledgement.contentDigest(),
         acknowledgement.digestSchemaVersion(),
         tuples);
+  }
+
+  private static void assertPublishedSelectorOwnedSnapshot(
+      DSLContext dsl,
+      DataSourceTransactionManager transactionManager,
+      WorldPublishedStartLocationRepository repository,
+      WorldAuthoredGraphSnapshot.CaptureRequest request,
+      WorldPublishedStartLocationSource retained) {
+    var before = snapshotMutationRows(dsl);
+    var snapshot = new TransactionTemplate(transactionManager);
+    snapshot.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    snapshot.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    snapshot.setReadOnly(true);
+    var actual =
+        Objects.requireNonNull(
+            snapshot.execute(
+                status -> {
+                  assertThat(dsl.fetchSingle("SHOW transaction_isolation").get(0, String.class))
+                      .isEqualTo("repeatable read");
+                  assertThat(dsl.fetchSingle("SHOW transaction_read_only").get(0, String.class))
+                      .isEqualTo("on");
+                  return repository.readInOwnedSnapshot(request).orElseThrow();
+                }));
+    assertThat(actual.frozenTopology().captureId())
+        .isEqualTo(retained.frozenTopology().captureId());
+    assertThat(actual.frozenTopology().storageResultBytes())
+        .containsExactly(retained.frozenTopology().storageResultBytes());
+    assertThat(actual.appliedResult().canonicalBytes())
+        .containsExactly(retained.appliedResult().canonicalBytes());
+    assertThat(actual.selectorReceipt().canonicalBytes())
+        .containsExactly(retained.selectorReceipt().canonicalBytes());
+
+    snapshot.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    assertThatThrownBy(() -> snapshot.execute(status -> repository.readInOwnedSnapshot(request)))
+        .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+        .hasMessageContaining("read-only REPEATABLE READ owner transaction");
+    assertThat(snapshotMutationRows(dsl)).isEqualTo(before);
+    assertThat(dsl.fetchSingle("SELECT count(*) FROM world_instance").get(0, Long.class)).isZero();
   }
 
   private static WorldPublishedStartLocationEvidence publishedStartLocationEvidence(
