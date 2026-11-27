@@ -830,7 +830,7 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         JSON.readTree(verified.rawPayload()).path("data").path("object").path("id").asText();
     Record row =
         dsl.fetchOne(
-            "SELECT c.*, i.subscription_id AS original_subscription_id, i.captured_at, "
+            "SELECT c.*, i.subscription_id AS original_subscription_id, "
                 + "(s.status = 'canceled' OR "
                 + "(s.status = 'provisioning' AND EXISTS (SELECT 1 FROM subscription_provisioning_work w "
                 + "WHERE w.subscription_id = i.subscription_id AND w.request_id = i.creation_request_id "
@@ -844,12 +844,13 @@ public final class AccountHostingFirstInvoicePaymentRepository {
     var consent = row.get("consented_at", java.time.OffsetDateTime.class);
     if (consent != null
         && verified.eventCreatedAtEpochSeconds() >= consent.toInstant().getEpochSecond()) {
-      requireSignedTuple(verified, row, invoice);
+      requireSignedTuple(verified, invoice);
       return new SignedClassification(dispatch(row, invoice, false, false), false);
     }
     if (!Boolean.TRUE.equals(row.get("original_checkout_held", Boolean.class)))
       return new SignedClassification(null, false);
-    requireSignedTuple(verified, instant(row, "captured_at"), invoice);
+    // Local capture time does not change the identity of an already-existing provider intent.
+    requireSignedTuple(verified, invoice);
     return new SignedClassification(null, true);
   }
 
@@ -912,7 +913,9 @@ public final class AccountHostingFirstInvoicePaymentRepository {
             subscriptionId);
     if (row == null) throw refused();
     var invoice = Objects.requireNonNull(find(subscriptionId));
-    requireSignedTuple(verified, row, invoice);
+    requireSignedTuple(verified, invoice);
+    if (verified.eventCreatedAtEpochSeconds() < instant(row, "consented_at").getEpochSecond())
+      throw refused();
     if (!"succeeded".equals(observed.status())
         || !invoice.invoiceId().equals(observed.invoiceId())
         || !invoice.paymentIntentId().equals(observed.paymentIntentId())
@@ -952,12 +955,7 @@ public final class AccountHostingFirstInvoicePaymentRepository {
   public record SignedOutcome(ConfirmationDispatch dispatch, boolean latePaidConflict) {}
 
   private static void requireSignedTuple(
-      VerifiedEvent verified, Record confirmation, AccountHostingFirstInvoicePayment invoice) {
-    requireSignedTuple(verified, instant(confirmation, "consented_at"), invoice);
-  }
-
-  private static void requireSignedTuple(
-      VerifiedEvent verified, Instant earliestPayment, AccountHostingFirstInvoicePayment invoice) {
+      VerifiedEvent verified, AccountHostingFirstInvoicePayment invoice) {
     JsonNode object = JSON.readTree(verified.rawPayload()).path("data").path("object");
     if (!"payment_intent.succeeded".equals(verified.eventType())
         || !"payment_intent".equals(object.path("object").asText())
@@ -974,9 +972,7 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         || !invoice.currency().equals(object.path("currency").asText())
         || !object.path("livemode").isBoolean()
         || invoice.livemode() != object.path("livemode").asBoolean()
-        || invoice.livemode() != verified.livemode()
-        || verified.eventCreatedAtEpochSeconds() < earliestPayment.getEpochSecond())
-      throw refused();
+        || invoice.livemode() != verified.livemode()) throw refused();
   }
 
   public AccountHostingFirstInvoicePayment find(UUID subscriptionId) {

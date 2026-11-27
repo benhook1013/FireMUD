@@ -724,11 +724,15 @@ public final class CanonicalHostingSubscriptionTestFixture {
     }
 
     public SignedSuccess signedSuccess() {
+      return signedSuccessAt(clock.instant());
+    }
+
+    public SignedSuccess signedSuccessAt(Instant createdAt) {
       String payload =
           "{\"id\":\"evt_"
               + invoice.paymentIntentId().substring(3)
               + "\",\"object\":\"event\",\"type\":\"payment_intent.succeeded\",\"created\":"
-              + clock.instant().getEpochSecond()
+              + createdAt.getEpochSecond()
               + ",\"livemode\":false,\"data\":{\"object\":"
               + transport.intent("succeeded")
               + "}}";

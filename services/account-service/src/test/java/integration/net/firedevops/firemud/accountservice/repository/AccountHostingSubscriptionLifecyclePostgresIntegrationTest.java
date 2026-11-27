@@ -1911,9 +1911,10 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(f.terminalInvoiceTransport().confirmations()).isZero();
   }
 
-  @Test
-  void exactSignedPaymentWithoutConsentWhileCheckoutAwaitsPaymentRequiresReconciliation()
-      throws Exception {
+  @ParameterizedTest
+  @ValueSource(longs = {-1, 0})
+  void exactSignedPaymentWithoutConsentWhileCheckoutAwaitsPaymentRequiresReconciliation(
+      long secondsFromCapture) throws Exception {
     Context c = context("latest");
     Fixture f = fixture(c);
     var checkout =
@@ -1943,7 +1944,14 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
             f.service(),
             new DataSourceTransactionManager(c.source()));
     var before = firstInvoiceImage(c);
-    var signed = checkout.signedSuccess();
+    var capturedAt =
+        one(
+                c,
+                "SELECT captured_at FROM subscription_first_invoices WHERE subscription_id = ?",
+                checkout.invoice().subscriptionId())
+            .get("captured_at", java.time.OffsetDateTime.class)
+            .toInstant();
+    var signed = checkout.signedSuccessAt(capturedAt.plusSeconds(secondsFromCapture));
     assertThat(owner.completeSigned(signed.payload(), signed.signature()).state())
         .isEqualTo("RECONCILING");
     assertThat(owner.completeSigned(signed.payload(), signed.signature()).state())
