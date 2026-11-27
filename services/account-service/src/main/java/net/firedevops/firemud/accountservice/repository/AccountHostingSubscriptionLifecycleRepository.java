@@ -1104,7 +1104,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     if (claim == null) return null;
     UUID requestId = claim.get("request_id", UUID.class);
     if (dsl.fetchOne(
-            "SELECT request_id FROM subscription_first_invoice_expired_before_post WHERE request_id = ?",
+            "SELECT request_id FROM subscription_first_invoice_expired_before_post "
+                + "WHERE request_id = ? AND original_creation_proven "
+                + "AND created_transaction_id <> txid_current()",
             requestId)
         == null) {
       throw new FenceRejectedException(

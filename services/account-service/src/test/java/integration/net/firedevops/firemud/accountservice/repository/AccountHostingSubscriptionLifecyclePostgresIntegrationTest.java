@@ -1734,11 +1734,90 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(f.terminalInvoiceTransport().confirmations()).isZero();
   }
 
+  @Test
+  void migratedNoSendMarkerWithoutOriginalCreationProofKeepsClaimAndReservationHeld() {
+    Context c = context("1046.4");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var marker =
+        checkout.claimExpiredBeforePost(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    configuration(c).target("1046.9.0.7").load().migrate();
+    String markerSelect =
+        "SELECT request_id, observed_at, created_transaction_id "
+            + "FROM subscription_first_invoice_expired_before_post WHERE request_id = ?";
+    var markerBefore = one(c, markerSelect, marker.requestId());
+
+    configuration(c).target("latest").load().migrate();
+
+    assertThat(one(c, markerSelect, marker.requestId()).intoMap())
+        .isEqualTo(markerBefore.intoMap());
+    assertThat(
+            one(
+                    c,
+                    "SELECT original_creation_proven FROM subscription_first_invoice_expired_before_post WHERE request_id = ?",
+                    marker.requestId())
+                .get(0, Boolean.class))
+        .isFalse();
+    long version =
+        in(
+            c,
+            () ->
+                checkout
+                    .payments()
+                    .ownerRowVersion(
+                        f.creation().subscriptionId(), checkout.invoice().ownerAccountId()));
+    f.transport().json = response(f, "canceled");
+    int subscriptionReads = f.transport().reads;
+    assertThatThrownBy(() ->
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    UUID.randomUUID(), f.creation().requestId(), version, f.providerId()))
+        .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class)
+        .hasMessageContaining("committed no-send evidence");
+    assertThat(f.transport().reads).isEqualTo(subscriptionReads);
+    assertThat(f.terminalInvoiceTransport().reads()).isZero();
+
+    assertSqlState(
+        "23514",
+        "Claimed first-invoice cancellation requires proof of original no-send marker creation",
+        () ->
+            c.setup()
+                .execute(
+                    "INSERT INTO subscription_first_invoice_no_send_cancellations "
+                        + "(cancellation_request_id, confirmation_request_id, invoice_id, payment_intent_id, "
+                        + "read_started_at, observed_at) "
+                        + "VALUES (?, ?, ?, ?, clock_timestamp(), clock_timestamp())",
+                    UUID.randomUUID(),
+                    marker.requestId(),
+                    checkout.invoice().invoiceId(),
+                    checkout.invoice().paymentIntentId()));
+    assertThat(count(c, "subscription_first_invoice_command_claims")).isOne();
+    assertThat(count(c, "subscription_first_invoice_no_send_cancellations")).isZero();
+    assertThat(count(c, "subscription_provider_terminal_resolutions")).isZero();
+    assertThat(
+            one(
+                    c,
+                    "SELECT released_at FROM subscription_instrument_reservations WHERE request_id = ?",
+                    f.creation().requestId())
+                .get("released_at"))
+        .isNull();
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void exactTerminalInvoiceAndIntentSettleOnlyClaimWithRetainedNoSendWitness(
       boolean unassignedMethod) {
-    Context c = context("1046.4");
+    Context c = context("latest");
     Fixture f = fixture(c);
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
@@ -1766,11 +1845,17 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                 "SELECT * FROM subscription_first_invoice_command_claims WHERE request_id = ?",
                 witness.requestId())
             .intoMaps();
+    assertThat(
+            one(
+                    c,
+                    "SELECT original_creation_proven FROM subscription_first_invoice_expired_before_post WHERE request_id = ?",
+                    witness.requestId())
+                .get(0, Boolean.class))
+        .isTrue();
     assertThat(witnessImage).hasSize(1);
     assertThat(claimImage).hasSize(1);
     assertThat(count(c, "subscription_first_invoice_command_claims")).isOne();
     assertThat(checkout.confirmations()).isZero();
-    configuration(c).target("latest").load().migrate();
     assertThat(count(c, "subscription_first_invoice_no_send_cancellations")).isZero();
     long version =
         in(
