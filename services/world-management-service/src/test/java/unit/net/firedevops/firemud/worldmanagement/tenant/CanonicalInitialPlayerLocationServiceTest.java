@@ -12,11 +12,11 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
@@ -530,19 +530,22 @@ class CanonicalInitialPlayerLocationServiceTest {
   }
 
   @ParameterizedTest
-  @CsvSource({"PENDING,false,false", "COMMITTED,true,false", "COMMITTED,false,true"})
-  void inexactGameSessionTerminalStopsBeforePlacementWrite(
+  @CsvSource({
+    "PENDING,false,false",
+    "ABORTED,false,false",
+    "COMMITTED,true,false",
+    "COMMITTED,false,true"
+  })
+  void nonCommittedOrInexactGameSessionProofStopsBeforePlacementWrite(
       GameSessionCanonicalInitialAdmissionOwnerProof.Outcome outcome,
       boolean changedDigest,
       boolean changedAuditEvent) {
     var selection = CanonicalInitialPlayerLocationGrpcCodec.fromRequest(request());
     var location = emptyLocation(selection);
     var holds = mock(WorldCanonicalInitialAdmissionHoldRepository.class);
-    var readIdentity = new AtomicReference<HoldIdentity>();
     when(holds.readState(any(), any()))
         .thenAnswer(
             invocation -> {
-              readIdentity.set(invocation.getArgument(0));
               var lifecycleRequest = mock(Request.class);
               when(lifecycleRequest.canonicalGameInstanceId()).thenReturn(GAME_INSTANCE);
               when(lifecycleRequest.canonicalTenantId()).thenReturn(TENANT);
@@ -562,42 +565,47 @@ class CanonicalInitialPlayerLocationServiceTest {
               when(state.lifecycleEvidence()).thenReturn(lifecycle);
               return Optional.of(state);
             });
-    var terminal = mock(GameSessionCanonicalInitialAdmissionOwnerProof.class);
-    when(terminal.holdIdentity()).thenAnswer(invocation -> readIdentity.get());
-    when(terminal.outcome()).thenReturn(outcome);
-    when(terminal.committedPointerVersion()).thenReturn(selection.committedPointerVersion());
-    when(terminal.auditEventId())
-        .thenReturn(changedAuditEvent ? selection.auditEventId() + 1 : selection.auditEventId());
-    when(terminal.proofDigest())
-        .thenReturn(changedDigest ? "sha256:" + "0".repeat(64) : selection.terminalProofDigest());
     var gameSession = mock(GameSessionCanonicalInitialAdmissionOwnerClient.class);
-    when(gameSession.read(any())).thenReturn(terminal);
-
-    var descriptor = mock(AuthoredWorldLaunchDescriptorEvidence.class);
-    when(descriptor.requestDigest()).thenReturn("sha256:" + "a".repeat(64));
-    when(descriptor.resultDigest()).thenReturn("sha256:" + "b".repeat(64));
-    var release = mock(AuthoredWorldReleaseAttestationEvidence.class);
-    when(release.evidenceDigest()).thenReturn("sha256:" + "c".repeat(64));
-    var bindingEvidence = mock(CompleteLaunchBindingEvidence.class);
-    when(bindingEvidence.releaseAttestation()).thenReturn(release);
-    var binding = mock(WorldCompleteLaunchBindingReceipt.class);
-    when(binding.descriptor()).thenReturn(descriptor);
-    when(binding.evidence()).thenReturn(bindingEvidence);
-    var association = association(binding);
+    var terminalAt = Instant.parse("2026-10-07T00:00:00Z");
+    when(gameSession.read(any()))
+        .thenAnswer(
+            invocation -> {
+              HoldIdentity identity = invocation.getArgument(0);
+              return switch (outcome) {
+                case PENDING ->
+                    new GameSessionCanonicalInitialAdmissionOwnerProof(
+                        identity, outcome, null, null, null, false, null);
+                case ABORTED ->
+                    new GameSessionCanonicalInitialAdmissionOwnerProof(
+                        identity,
+                        outcome,
+                        null,
+                        null,
+                        selection.terminalProofDigest(),
+                        true,
+                        terminalAt);
+                case COMMITTED ->
+                    new GameSessionCanonicalInitialAdmissionOwnerProof(
+                        identity,
+                        outcome,
+                        selection.committedPointerVersion(),
+                        changedAuditEvent ? selection.auditEventId() + 1 : selection.auditEventId(),
+                        changedDigest
+                            ? "sha256:" + "0".repeat(64)
+                            : selection.terminalProofDigest(),
+                        false,
+                        terminalAt);
+              };
+            });
     var service =
-        service(
-            selection,
-            location,
-            holds,
-            gameSession,
-            ignored -> entityReceipt(selection),
-            association);
+        service(selection, location, holds, gameSession, ignored -> entityReceipt(selection));
 
     assertThatThrownBy(() -> service.place(selection))
         .isInstanceOf(StatusRuntimeException.class)
+        .hasMessageContaining("exact authenticated COMMITTED pointer and audit terminal")
         .satisfies(
             failure ->
-                org.assertj.core.api.Assertions.assertThat(Status.fromThrowable(failure).getCode())
+                assertThat(Status.fromThrowable(failure).getCode())
                     .isEqualTo(Status.Code.FAILED_PRECONDITION));
 
     verify(gameSession).read(any());
