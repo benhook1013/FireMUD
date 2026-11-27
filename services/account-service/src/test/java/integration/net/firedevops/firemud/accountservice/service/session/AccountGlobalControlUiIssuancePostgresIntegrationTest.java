@@ -12,10 +12,13 @@ import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionMutat
 import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionMutationRequest.SourceKind;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionOperationRepository;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseCacheFixture;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -36,6 +39,9 @@ class AccountGlobalControlUiIssuancePostgresIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static GenericContainer<?> credentialCache = AccountCredentialAbuseCacheFixture.container();
 
   @TempDir Path temporary;
 
@@ -65,43 +71,47 @@ class AccountGlobalControlUiIssuancePostgresIntegrationTest {
   @Test
   void unavailableCurrentRestrictionRollsBackActualOtpAndRetainsSameChallengeAcrossRetries()
       throws Exception {
-    var fixture = fixture();
-    var account = fixture.createGlobalAccount(PASSWORD);
-    var original = fixture.installGlobalOtp(account, OTP);
-    var request =
-        new AccountControlUiIssuanceService.AccountSignInRequest(
-            UUID.randomUUID(),
-            account.getEmail(),
-            OTP,
-            UUID.randomUUID(),
-            new SourceContext("192.0.2.10"));
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache)) {
+      var fixture = fixture(abuse.service());
+      var account = fixture.createGlobalAccount(PASSWORD);
+      var original = fixture.installGlobalOtp(account, OTP);
+      var request =
+          new AccountControlUiIssuanceService.AccountSignInRequest(
+              UUID.randomUUID(),
+              account.getEmail(),
+              OTP,
+              UUID.randomUUID(),
+              new SourceContext("192.0.2.10"));
 
-    try (var ignored =
-        AccountControlUiOwnerSourcesFixture.withPeer(AccountControlUiOwnerSourcesFixture.CALLER)) {
-      for (int attempt = 0; attempt < 2; attempt++) {
-        assertThatThrownBy(() -> fixture.service.issueAccount(request))
-            .isInstanceOf(
-                AccountPlatformRestrictionOperationRepository
-                    .RestrictionProjectionUnavailableException.class);
-        var retained = fixture.challenges.findByAccountId(account.getId()).orElseThrow();
-        assertThat(retained.getId()).isEqualTo(original.getId());
-        assertThat(retained.getCodeHash()).isEqualTo(original.getCodeHash());
-        assertThat(retained.getInvalidAttemptCount()).isEqualTo(original.getInvalidAttemptCount());
-        assertNoMembership(fixture, account);
-        fixture.assertNoIssuance();
+      try (var ignored =
+          AccountControlUiOwnerSourcesFixture.withPeer(
+              AccountControlUiOwnerSourcesFixture.CALLER)) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+          assertThatThrownBy(() -> fixture.service.issueAccount(request))
+              .isInstanceOf(
+                  AccountPlatformRestrictionOperationRepository
+                      .RestrictionProjectionUnavailableException.class);
+          var retained = fixture.challenges.findByAccountId(account.getId()).orElseThrow();
+          assertThat(retained.getId()).isEqualTo(original.getId());
+          assertThat(retained.getCodeHash()).isEqualTo(original.getCodeHash());
+          assertThat(retained.getInvalidAttemptCount())
+              .isEqualTo(original.getInvalidAttemptCount());
+          assertNoMembership(fixture, account);
+          fixture.assertNoIssuance();
+        }
       }
+      // The retained credential is still actually usable; neither failed issuer transaction
+      // consumed it.
+      assertThat(
+              fixture
+                  .tx(
+                      () ->
+                          fixture.primary.authenticateControlUiPrimaryIdentity(
+                              account.getEmail(), OTP))
+                  .accountId())
+          .isEqualTo(account.getAccountUuid());
+      assertThat(fixture.challenges.findByAccountId(account.getId())).isEmpty();
     }
-    // The retained credential is still actually usable; neither failed issuer transaction consumed
-    // it.
-    assertThat(
-            fixture
-                .tx(
-                    () ->
-                        fixture.primary.authenticateControlUiPrimaryIdentity(
-                            account.getEmail(), OTP))
-                .accountId())
-        .isEqualTo(account.getAccountUuid());
-    assertThat(fixture.challenges.findByAccountId(account.getId())).isEmpty();
   }
 
   @Test
@@ -184,6 +194,22 @@ class AccountGlobalControlUiIssuancePostgresIntegrationTest {
   private AccountControlUiOwnerSourcesFixture fixture() throws Exception {
     return new AccountControlUiOwnerSourcesFixture(
         postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), temporary, true);
+  }
+
+  private AccountControlUiOwnerSourcesFixture fixture(AccountCredentialAbuseService credentialAbuse)
+      throws Exception {
+    UUID tenant = UUID.randomUUID();
+    return new AccountControlUiOwnerSourcesFixture(
+        postgres.getJdbcUrl(),
+        postgres.getUsername(),
+        postgres.getPassword(),
+        temporary,
+        true,
+        tenant,
+        null,
+        false,
+        AccountControlUiOwnerSourcesFixture.defaultCreation(tenant),
+        credentialAbuse);
   }
 
   private static void assertNoMembership(

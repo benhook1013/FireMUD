@@ -199,9 +199,13 @@ public class AccountCheckoutReceivingConfiguration {
       AccountControlUiCoordination coordination,
       AccountControlUiActorService actors,
       @Qualifier("transactionManager") PlatformTransactionManager transactions,
-      AccountCheckoutReceivingProperties properties) {
+      AccountCheckoutReceivingProperties properties,
+      org.springframework.beans.factory.ObjectProvider<
+              net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService>
+          credentialAbuse) {
     return new AccountControlUiIssuanceService(
         primary,
+        credentialAbuse.getIfAvailable(),
         operations,
         authority,
         fences,

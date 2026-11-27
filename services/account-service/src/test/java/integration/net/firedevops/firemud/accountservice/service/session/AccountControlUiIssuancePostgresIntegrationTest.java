@@ -115,10 +115,11 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     c.tx(
         () ->
             c.dsl.execute(
-                "INSERT INTO account_email_login_challenge"
-                    + " (account_id, code_hash, expires_at, resend_available_at, created_at, updated_at)"
-                    + " SELECT id, 'test-only-original-otp-hash', CURRENT_TIMESTAMP + INTERVAL '5 minutes',"
-                    + " CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM accounts WHERE account_uuid = ?",
+                "INSERT INTO account_email_login_challenge (account_id, code_hash, expires_at,"
+                    + " resend_available_at, created_at, updated_at) SELECT id,"
+                    + " 'test-only-original-otp-hash', CURRENT_TIMESTAMP + INTERVAL '5 minutes',"
+                    + " CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM accounts WHERE"
+                    + " account_uuid = ?",
                 f.actor));
     var accountBefore =
         Objects.requireNonNull(
@@ -190,7 +191,8 @@ class AccountControlUiIssuancePostgresIntegrationTest {
                 c.tx(
                     () ->
                         c.dsl.execute(
-                            "INSERT INTO account_control_ui_issuance_replay_failures VALUES (?, ?, 1)",
+                            "INSERT INTO account_control_ui_issuance_replay_failures VALUES (?, ?,"
+                                + " 1)",
                             independent.operationId,
                             original.requestId)))
         .isInstanceOf(DataAccessException.class)
@@ -200,7 +202,8 @@ class AccountControlUiIssuancePostgresIntegrationTest {
                 c.tx(
                     () ->
                         c.dsl.execute(
-                            "INSERT INTO account_control_ui_issuance_replay_failures VALUES (?, ?, 6)",
+                            "INSERT INTO account_control_ui_issuance_replay_failures VALUES (?, ?,"
+                                + " 6)",
                             original.operationId,
                             original.requestId)))
         .isInstanceOf(DataAccessException.class);
@@ -209,7 +212,8 @@ class AccountControlUiIssuancePostgresIntegrationTest {
                 c.tx(
                     () ->
                         c.dsl.execute(
-                            "UPDATE account_control_ui_issuance_replay_failures SET failure_number = 1")))
+                            "UPDATE account_control_ui_issuance_replay_failures SET failure_number"
+                                + " = 1")))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("immutable");
     assertThatThrownBy(
@@ -271,6 +275,7 @@ class AccountControlUiIssuancePostgresIntegrationTest {
       Context c, AccountServiceImpl primary, AccountControlUiResponseCryptography cryptography) {
     return new AccountControlUiIssuanceService(
         primary,
+        null, // No implicit shared abuse policy or admitting fallback.
         c.operations,
         mock(AccountControlUiAuthority.class),
         mock(DraftAuthorizationFenceRepository.class),
@@ -325,11 +330,12 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     c.tx(
         () ->
             c.dsl.execute(
-                "INSERT INTO account_control_ui_issuance_operations"
-                    + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload, caller_context_id,"
-                    + " request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt,"
-                    + " issued_at_epoch_second, expires_at_epoch_second, recovery_expires_at, status)"
-                    + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')",
+                "INSERT INTO account_control_ui_issuance_operations (request_id, operation_id,"
+                    + " token_jti, account_uuid, tenant_uuid, caller_workload, caller_context_id,"
+                    + " request_mac_key_id, request_digest, claims_payload, source_payload,"
+                    + " bundle_payload, signer_receipt, issued_at_epoch_second,"
+                    + " expires_at_epoch_second, recovery_expires_at, status) VALUES (?, ?, ?, ?,"
+                    + " ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')",
                 f.request,
                 operationId,
                 tokenJti,
@@ -431,8 +437,9 @@ class AccountControlUiIssuancePostgresIntegrationTest {
                 c.tx(
                     () ->
                         c.dsl.execute(
-                            "UPDATE account_control_ui_issuance_operations"
-                                + " SET recovery_expires_at = recovery_expires_at + INTERVAL '1 second' WHERE request_id = ?",
+                            "UPDATE account_control_ui_issuance_operations SET recovery_expires_at"
+                                + " = recovery_expires_at + INTERVAL '1 second' WHERE request_id ="
+                                + " ?",
                             prepared.requestId)))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(
@@ -451,14 +458,21 @@ class AccountControlUiIssuancePostgresIntegrationTest {
                 c.tx(
                     () ->
                         c.dsl.execute(
-                            "INSERT INTO account_control_ui_issuance_operations"
-                                + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload, caller_context_id,"
-                                + " request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt,"
-                                + " issued_at_epoch_second, expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, recovery_expires_at, status)"
-                                + " SELECT ?, ?, ?, account_uuid, tenant_uuid, caller_workload, caller_context_id, request_mac_key_id,"
-                                + " request_digest, claims_payload, source_payload, bundle_payload, signer_receipt, issued_at_epoch_second,"
-                                + " expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, to_timestamp(issued_at_epoch_second + 61), 'PREPARED'"
-                                + " FROM account_control_ui_issuance_operations WHERE request_id = ?",
+                            "INSERT INTO account_control_ui_issuance_operations (request_id,"
+                                + " operation_id, token_jti, account_uuid, tenant_uuid,"
+                                + " caller_workload, caller_context_id, request_mac_key_id,"
+                                + " request_digest, claims_payload, source_payload, bundle_payload,"
+                                + " signer_receipt, issued_at_epoch_second,"
+                                + " expires_at_epoch_second,"
+                                + " registry_cleanup_deadline_epoch_millis, recovery_expires_at,"
+                                + " status) SELECT ?, ?, ?, account_uuid, tenant_uuid,"
+                                + " caller_workload, caller_context_id, request_mac_key_id,"
+                                + " request_digest, claims_payload, source_payload, bundle_payload,"
+                                + " signer_receipt, issued_at_epoch_second,"
+                                + " expires_at_epoch_second,"
+                                + " registry_cleanup_deadline_epoch_millis,"
+                                + " to_timestamp(issued_at_epoch_second + 61), 'PREPARED' FROM"
+                                + " account_control_ui_issuance_operations WHERE request_id = ?",
                             UUID.randomUUID(),
                             UUID.randomUUID(),
                             UUID.randomUUID(),
@@ -494,7 +508,8 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     var revocation =
         Objects.requireNonNull(
             c.dsl.fetchOne(
-                "SELECT revocation_receipt FROM account_control_ui_issuance_operations WHERE request_id = ?",
+                "SELECT revocation_receipt FROM account_control_ui_issuance_operations WHERE"
+                    + " request_id = ?",
                 prepared.requestId),
             "Durable non-authorizing issuance row must remain present");
     assertThat(revocation.get("revocation_receipt")).isNull();
@@ -598,10 +613,11 @@ class AccountControlUiIssuancePostgresIntegrationTest {
       c.tx(
           () ->
               c.dsl.execute(
-                  "INSERT INTO account_fresh_tenant_identity_associations"
-                      + " (schema_version, target_namespace, creation_request_id, operation_id, request_digest,"
-                      + " canonical_tenant_id, source_game_row_id, source_game_tenant_key, provenance_kind, evidence_digest)"
-                      + " VALUES (1, 'test-control', ?, ?, ?, ?, 1, ?, 'NEW_GAME_ROW', ?)",
+                  "INSERT INTO account_fresh_tenant_identity_associations (schema_version,"
+                      + " target_namespace, creation_request_id, operation_id, request_digest,"
+                      + " canonical_tenant_id, source_game_row_id, source_game_tenant_key,"
+                      + " provenance_kind, evidence_digest) VALUES (1, 'test-control', ?, ?, ?, ?,"
+                      + " 1, ?, 'NEW_GAME_ROW', ?)",
                   UUID.randomUUID(),
                   UUID.randomUUID(),
                   "sha256:" + "a".repeat(64),

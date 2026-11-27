@@ -210,6 +210,89 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
   }
 
   @Test
+  void admissionRecheckRunsAfterAccountAndOtpLockWaitsBeforeOtpMutation() throws Exception {
+    Context c = context();
+    Account account = c.account("EMAIL_OTP");
+    AccountEmailLoginChallenge original = c.challenge(account);
+    var otpLocked = new CountDownLatch(1);
+    var releaseOtpLock = new CountDownLatch(1);
+    var accountLocked = new CountDownLatch(1);
+    var releaseAccountLock = new CountDownLatch(1);
+    var authenticationEntered = new CountDownLatch(1);
+    var otpPid = new AtomicInteger();
+    var accountPid = new AtomicInteger();
+    var authenticationPid = new AtomicInteger();
+    var admissionChecks = new AtomicInteger();
+    var executor = Executors.newFixedThreadPool(3);
+    try {
+      var otpLockHolder =
+          executor.submit(
+              () ->
+                  c.tx(
+                      () -> {
+                        otpPid.set(c.pid());
+                        c.challenges.lockAccountChallenge(account.getId());
+                        otpLocked.countDown();
+                        awaitLatch(releaseOtpLock);
+                        return null;
+                      }));
+      awaitLatch(otpLocked);
+      var accountLockHolder =
+          executor.submit(
+              () ->
+                  c.tx(
+                      () -> {
+                        accountPid.set(c.pid());
+                        c.accounts.findByIdForUpdate(account.getId()).orElseThrow();
+                        accountLocked.countDown();
+                        awaitLatch(releaseAccountLock);
+                        return null;
+                      }));
+      awaitLatch(accountLocked);
+
+      var authentication =
+          executor.submit(
+              () ->
+                  c.tx(
+                      () -> {
+                        authenticationPid.set(c.pid());
+                        authenticationEntered.countDown();
+                        return c.primary
+                            .authenticateControlUiPrimaryIdentity(
+                                account.getEmail(),
+                                OTP,
+                                () -> {
+                                  admissionChecks.incrementAndGet();
+                                  throw new IllegalStateException("Credential admission expired");
+                                })
+                            .accountId();
+                      }));
+      awaitLatch(authenticationEntered);
+      awaitBlocked(c, authenticationPid.get(), accountPid.get());
+      assertThat(admissionChecks).hasValue(0);
+      releaseAccountLock.countDown();
+      awaitBlocked(c, authenticationPid.get(), otpPid.get());
+      assertThat(admissionChecks).hasValue(0);
+      assertThat(authentication.isDone()).isFalse();
+
+      releaseOtpLock.countDown();
+      assertThatThrownBy(() -> authentication.get(10, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .hasCauseInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Credential admission expired");
+      otpLockHolder.get(10, TimeUnit.SECONDS);
+      accountLockHolder.get(10, TimeUnit.SECONDS);
+      assertThat(admissionChecks).hasValue(1);
+      assertThat(c.challenges.findByAccountId(account.getId())).contains(original);
+    } finally {
+      releaseAccountLock.countDown();
+      releaseOtpLock.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  @Test
   void resetThatOwnsTheAccountLockFirstMakesIssuanceVerifyTheCommittedNewPassword()
       throws Exception {
     var resetLocked = new CountDownLatch(1);
