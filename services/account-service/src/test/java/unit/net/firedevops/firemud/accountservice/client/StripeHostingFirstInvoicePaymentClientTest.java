@@ -498,6 +498,40 @@ class StripeHostingFirstInvoicePaymentClientTest {
   }
 
   @Test
+  void terminalUnpaidObservationAcceptsMatchingCanceledUnassignedIntentWithoutCharge()
+      throws Exception {
+    var transport = new Transport(unassigned(terminalInvoice()), unassigned(intent("canceled")));
+
+    var evidence = client(transport).observeTerminalUnpaid(INVOICE);
+
+    assertThat(evidence.tupleDigest()).isEqualTo(INVOICE.digest());
+    assertThat(transport.paths)
+        .containsExactly("/v1/invoices/in_exact", "/v1/payment_intents/pi_exact");
+    assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+  }
+
+  @Test
+  void terminalUnpaidObservationRefusesConflictingMethodOrChargeOnUnassignedIntent() {
+    String unassignedInvoice = unassigned(terminalInvoice());
+    String unassignedIntent = unassigned(intent("canceled"));
+    String chargedIntent =
+        unassignedIntent.replace(
+            "\"payment_method\":null", "\"payment_method\":null,\"latest_charge\":\"ch_prior\"");
+    var transports =
+        List.of(
+            new Transport(unassignedInvoice, intent("canceled")),
+            new Transport(terminalInvoice(), unassignedIntent),
+            new Transport(unassignedInvoice, chargedIntent),
+            new Transport(
+                unassignedInvoice.replace(unassignedIntent, chargedIntent), unassignedIntent));
+    for (var transport : transports) {
+      assertThatThrownBy(() -> client(transport).observeTerminalUnpaid(INVOICE))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(transport.methods).allMatch(method -> method == RequestMethod.GET);
+    }
+  }
+
+  @Test
   void terminalUnpaidObservationRemainsAvailableAfterOriginalCheckoutExpiry() throws Exception {
     var expired =
         new AccountHostingFirstInvoicePayment(

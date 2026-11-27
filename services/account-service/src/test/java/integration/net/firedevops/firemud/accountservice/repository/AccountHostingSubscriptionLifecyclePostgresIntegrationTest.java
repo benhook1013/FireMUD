@@ -1451,8 +1451,10 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(f.terminalInvoiceTransport().reads()).isZero();
   }
 
-  @Test
-  void exactTerminalInvoiceAndIntentSettleOnlyClaimWithRetainedNoSendWitness() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void exactTerminalInvoiceAndIntentSettleOnlyClaimWithRetainedNoSendWitness(
+      boolean unassignedMethod) {
     Context c = context("1046.4");
     Fixture f = fixture(c);
     var checkout =
@@ -1497,6 +1499,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                         f.creation().subscriptionId(), checkout.invoice().ownerAccountId()));
     f.transport().json = response(f, "canceled");
 
+    f.terminalInvoiceTransport().terminalIntentUnassigned(unassignedMethod);
     var committed =
         f.service()
             .reconcileUnpaidFirstInvoiceCancellation(
@@ -1734,7 +1737,9 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         .advanceToAtLeast(
             Instant.ofEpochSecond(verified.eventCreatedAtEpochSeconds()).plusSeconds(2));
     var providerReads = checkout.providerReads();
-    checkout.prepareConfirmationDispatch(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    var dispatch =
+        checkout.prepareConfirmationDispatch(
+            CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
     var consent =
         one(
                 c,
@@ -1764,6 +1769,19 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         .isEqualTo("PENDING");
     assertThat(checkout.confirmations()).isZero();
     assertThat(checkout.providerReads()).isEqualTo(providerReads);
+    f.transport().json = response(f, "canceled");
+    assertThat(
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    UUID.randomUUID(),
+                    f.creation().requestId(),
+                    dispatch.expectedRowVersion(),
+                    f.providerId())
+                .outcome())
+        .isEqualTo(Outcome.RECONCILING);
+    assertThat(firstInvoiceImage(c)).isEqualTo(imageWithConsent);
+    assertThat(count(c, "subscription_lifecycle_operations")).isZero();
+    assertThat(count(c, "subscription_provider_terminal_resolutions")).isZero();
   }
 
   @Test
@@ -1999,6 +2017,35 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                 .get(0, String.class))
         .isEqualTo(verified.providerEventId());
     assertThat(firstInvoiceImage(c)).isEqualTo(canceledImage);
+
+    var consent =
+        c.setup()
+            .fetchSingle(
+                "SELECT consented_at FROM subscription_first_invoice_confirmations WHERE request_id = ?",
+                confirmationRequestId)
+            .get(0, java.time.OffsetDateTime.class);
+    var earlyReplay =
+        checkout.signWebhookPayload(
+            signed
+                .payload()
+                .replace("evt_", "evt_early_replay_")
+                .replace(
+                    "\"created\":" + verified.eventCreatedAtEpochSeconds() + ",",
+                    "\"created\":" + (consent.toEpochSecond() - 1) + ","));
+    var early = checkout.verifier().verify(earlyReplay.payload(), earlyReplay.signature());
+    assertThat(early.eventCreatedAtEpochSeconds()).isLessThan(consent.toEpochSecond());
+    in(c, () -> new StripeEventInboxRepository(c.dsl()).retainOrReplay(early));
+    assertSqlState(
+        "23514",
+        () ->
+            c.setup()
+                .execute(
+                    "INSERT INTO subscription_first_invoice_late_paid_event_replays "
+                        + "(provider_event_id, subscription_id, event_payload_digest) VALUES (?, ?, ?)",
+                    early.providerEventId(),
+                    checkout.invoice().subscriptionId(),
+                    early.payloadSha256()));
+    assertThat(count(c, "subscription_first_invoice_late_paid_event_replays")).isOne();
 
     checkout.status("requires_confirmation");
     int providerReadsBeforeReplay = checkout.providerReads();

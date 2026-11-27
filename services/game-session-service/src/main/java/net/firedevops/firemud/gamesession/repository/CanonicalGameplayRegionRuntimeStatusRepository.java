@@ -380,16 +380,23 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         // Lock waits and source checks cannot consume the installation deadline and still
         // grant irreversible permission to create Redis meta.
         if (installationBudget != null) installationBudget.check();
+        long previousClaim = row.get("initialization_claim_ordinal", Long.class);
+        if (previousClaim != row.get("no_write_released_through", Long.class)
+            || previousClaim == Long.MAX_VALUE) throw unavailable();
+        long claimOrdinal = previousClaim + 1;
         int updated =
             transaction.execute(
                 "UPDATE "
                     + PREPARATION_TABLE
-                    + " SET phase = 'INITIALIZING', updated_at = ?"
+                    + " SET phase = 'INITIALIZING', initialization_claim_ordinal = ?, updated_at = ?"
                     + " WHERE initialization_operation_id = ? AND phase = 'PREPARED'",
+                claimOrdinal,
                 java.sql.Timestamp.from(now),
                 current.operationId);
         if (updated != 1) throw unavailable();
-        var permit = new InitialInitializationPermit(current.operationId, current.sourceDigest());
+        var permit =
+            new InitialInitializationPermit(
+                current.operationId, current.sourceDigest(), claimOrdinal);
         issued.set(permit);
         return Optional.of(permit);
       });
@@ -419,31 +426,21 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     Objects.requireNonNull(now, "now");
     if (proof == null) throw unavailable();
     if (!proof.consumeFor(preparation)) {
-      // A commit may have succeeded before its completion signal failed. Reconcile only an
-      // already-consumed exact capability against durable PREPARED state; never restore or
-      // re-use it to mutate a later INITIALIZING claim.
+      // A contiguous release history proves this exact consumed claim even after later claims.
+      // An acknowledgement check does not restore permission to change the preparation.
       if (!proof.consumedFor(preparation)) throw unavailable();
       dsl.transaction(configuration -> {
         DSLContext transaction = DSL.using(configuration);
         lockRegionScope(transaction, preparation.tenantRegionTag);
-        Record row =
-            transaction.fetchOne(
-                "SELECT * FROM "
+        if (transaction.fetchOne(
+                "SELECT 1 FROM "
                     + PREPARATION_TABLE
-                    + " WHERE initialization_operation_id = ? FOR UPDATE",
-                preparation.operationId);
-        if (row == null) throw unavailable();
-        TimelinePreparation current = toTimelinePreparation(row);
-        if (!samePreparation(preparation, current)
-            || current.phase != TimelinePreparationPhase.PREPARED
-            || transaction.fetchExists(
-                DSL.selectOne()
-                    .from(DSL.table(TABLE))
-                    .where(DSL.field("tenant_id").eq(preparation.source.tenantId()))
-                    .and(DSL.field("game_instance_id").eq(preparation.source.gameInstanceId()))
-                    .and(DSL.field("region_id").eq(preparation.source.regionId())))) {
-          throw unavailable();
-        }
+                    + " WHERE initialization_operation_id = ? AND preparation_digest = ?"
+                    + " AND no_write_released_through >= ?",
+                preparation.operationId,
+                preparation.sourceDigest(),
+                proof.claimOrdinal())
+            == null) throw unavailable();
       });
       return;
     }
@@ -500,6 +497,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
           TimelinePreparation current = toTimelinePreparation(row);
           if (!samePreparation(preparation, current)
               || current.phase != TimelinePreparationPhase.INITIALIZING
+              || proof.claimOrdinal() != row.get("initialization_claim_ordinal", Long.class)
               || transaction.fetchExists(
                   DSL.selectOne()
                       .from(DSL.table(TABLE))
@@ -511,10 +509,13 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
               transaction.execute(
                   "UPDATE "
                       + PREPARATION_TABLE
-                      + " SET phase = 'PREPARED', updated_at = ?"
-                      + " WHERE initialization_operation_id = ? AND phase = 'INITIALIZING'",
+                      + " SET phase = 'PREPARED', no_write_released_through = ?, updated_at = ?"
+                      + " WHERE initialization_operation_id = ? AND phase = 'INITIALIZING'"
+                      + " AND initialization_claim_ordinal = ?",
+                  proof.claimOrdinal(),
                   java.sql.Timestamp.from(now),
-                  preparation.operationId);
+                  preparation.operationId,
+                  proof.claimOrdinal());
           if (changed != 1) throw unavailable();
         });
   }
@@ -1443,15 +1444,17 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
   static final class InitialInitializationPermit {
     private final UUID operationId;
     private final String sourceDigest;
+    private final long claimOrdinal;
     private final AtomicBoolean dispatched = new AtomicBoolean();
 
     boolean consumeDispatch() {
       return dispatched.compareAndSet(false, true);
     }
 
-    private InitialInitializationPermit(UUID operationId, String sourceDigest) {
+    private InitialInitializationPermit(UUID operationId, String sourceDigest, long claimOrdinal) {
       this.operationId = Objects.requireNonNull(operationId, "operationId");
       this.sourceDigest = Objects.requireNonNull(sourceDigest, "sourceDigest");
+      this.claimOrdinal = claimOrdinal;
     }
 
     UUID operationId() {
@@ -1460,6 +1463,10 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
 
     String sourceDigest() {
       return sourceDigest;
+    }
+
+    long claimOrdinal() {
+      return claimOrdinal;
     }
   }
 

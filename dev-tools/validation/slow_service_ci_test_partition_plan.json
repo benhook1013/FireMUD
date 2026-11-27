@@ -1394,8 +1394,8 @@
               "weight_seconds": 10.740437860090609
             },
             "integration.net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecyclePostgresIntegrationTest": {
-              "partition": 4,
-              "weight_seconds": 304.338
+              "partition": 1,
+              "weight_seconds": 693.235
             },
             "integration.net.firedevops.firemud.gamesession.repository.GameSessionOriginalStartSessionAssociationReadIntegrationTest": {
               "partition": 2,
@@ -3675,7 +3675,17 @@
       "run_id": 41131475765,
       "source_assessment": "R1308-independent-runner-partition-assessment",
       "source_head": "38c0da4fe656c07dad184838d8dcadf370a382c3",
-      "source_option": 2
+      "source_option": 2,
+      "timing_updates": [
+        {
+          "class": "integration.net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecyclePostgresIntegrationTest",
+          "artifact_id": 15144069479,
+          "run_id": 45871407242,
+          "run_attempt": 1,
+          "source_head": "edcfb1884bc38f7fc953bb0eb89818af3a75fe32",
+          "workflow_sha": "47bc504d94279a1f73ae4df3421f49060e3469d1"
+        }
+      ]
     },
     "world-management-service": {
       "artifact_id": 13604416967,

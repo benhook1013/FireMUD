@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.pool.ProxyConnection;
 import io.grpc.Context;
 import io.grpc.Deadline;
 import io.lettuce.core.api.StatefulConnection;
@@ -29,13 +31,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import javax.sql.DataSource;
 import org.jooq.ConnectionProvider;
 import org.jooq.DSLContext;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DataSourceConnectionProvider;
 import org.jooq.impl.DefaultTransactionProvider;
+import org.postgresql.jdbc.PgConnection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.datasource.ConnectionProxy;
+import org.springframework.jdbc.datasource.DelegatingDataSource;
 
 /** Resource boundary only for original-NEW capacity execution, never a shared datasource policy. */
 final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
@@ -47,6 +54,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   static final int MAX_BACKGROUND_OPERATIONS = 2;
   private static final Semaphore BACKGROUND_OPERATIONS = new Semaphore(MAX_BACKGROUND_OPERATIONS);
   private static final AtomicInteger RELEASE_FAILURE_RETAINED_OPERATIONS = new AtomicInteger();
+  private static final AtomicInteger RETIRE_FAILURE_RETAINED_OPERATIONS = new AtomicInteger();
   private static final AtomicInteger REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS = new AtomicInteger();
 
   static {
@@ -57,16 +65,24 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         .description("Capacity SQL operation permits retained after an uncertain provider release")
         .register(Metrics.globalRegistry);
     Gauge.builder(
+            "original_new_capacity_sql_retire_failure_retained_operations",
+            RETIRE_FAILURE_RETAINED_OPERATIONS,
+            AtomicInteger::get)
+        .description("Capacity SQL operation permits retained after unproved connection retirement")
+        .register(Metrics.globalRegistry);
+    Gauge.builder(
             "original_new_capacity_redis_close_failure_retained_operations",
             REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS,
             AtomicInteger::get)
-        .description("Capacity operation permits retained after unproved Redis disposal")
+        .description(
+            "Capacity operation permits retained after failed or over-deadline Redis disposal")
         .register(Metrics.globalRegistry);
   }
 
   private final ThreadFactory cancellationThreads;
   private final boolean background;
   private final AtomicBoolean releaseFailureRecorded = new AtomicBoolean();
+  private final AtomicBoolean retireFailureRecorded = new AtomicBoolean();
   private boolean redisCloseFailureRecorded;
   private final AtomicInteger outstandingConnections = new AtomicInteger();
   private final AtomicLong jdbcCommitInvocations = new AtomicLong();
@@ -92,7 +108,11 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private Runnable onPhysicalRelease;
 
   private CanonicalGameplayOriginalNewCapacityExecutionBudget(
-      Clock clock, long explicitDeadline, ThreadFactory cancellationThreads, boolean background) {
+      Clock clock,
+      long explicitDeadline,
+      ThreadFactory cancellationThreads,
+      boolean background,
+      Deadline enclosingDeadline) {
     this.background = background;
     this.clock = clock;
     this.cancellationThreads = Objects.requireNonNull(cancellationThreads);
@@ -101,6 +121,8 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     long nanos = TimeUnit.MILLISECONDS.toNanos(MAX_OPERATION_MILLIS);
     if (caller.getDeadline() != null)
       nanos = Math.min(nanos, caller.getDeadline().timeRemaining(TimeUnit.NANOSECONDS));
+    if (enclosingDeadline != null)
+      nanos = Math.min(nanos, enclosingDeadline.timeRemaining(TimeUnit.NANOSECONDS));
     if (explicitDeadline != Long.MAX_VALUE) {
       long remaining;
       try {
@@ -120,6 +142,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       throw unavailable();
     }
     Deadline local = Deadline.after(nanos, TimeUnit.NANOSECONDS);
+    if (enclosingDeadline != null) local = local.minimum(enclosingDeadline);
     deadline = caller.getDeadline() == null ? local : local.minimum(caller.getDeadline());
   }
 
@@ -172,6 +195,42 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         Objects.requireNonNull(onPhysicalRelease));
   }
 
+  static <T> T runBackgroundWithin(
+      Clock clock,
+      long explicitDeadline,
+      Deadline enclosingDeadline,
+      Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
+      Runnable onPhysicalRelease) {
+    return run(
+        clock,
+        explicitDeadline,
+        operation,
+        Thread.ofVirtual().name("original-new-capacity-sql-cancel").factory(),
+        true,
+        null,
+        onPhysicalRelease,
+        Objects.requireNonNull(enclosingDeadline));
+  }
+
+  /** A cleanup claim ends when its logical work can no longer issue writes. */
+  static <T> T runBackgroundCleanup(
+      Clock clock,
+      long explicitDeadline,
+      Deadline enclosingDeadline,
+      Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
+      Runnable onLogicalFinish) {
+    return run(
+        clock,
+        explicitDeadline,
+        operation,
+        Thread.ofVirtual().name("original-new-capacity-sql-cancel").factory(),
+        true,
+        null,
+        null,
+        enclosingDeadline,
+        Objects.requireNonNull(onLogicalFinish));
+  }
+
   /** A result with private resources transfers ownership only after the caller's deadline check. */
   static <T> T runOwned(
       Clock clock,
@@ -196,11 +255,53 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       boolean background,
       Consumer<T> disposeAbandoned,
       Runnable onPhysicalRelease) {
+    return run(
+        clock,
+        explicitDeadline,
+        operation,
+        cancellationThreads,
+        background,
+        disposeAbandoned,
+        onPhysicalRelease,
+        null);
+  }
+
+  private static <T> T run(
+      Clock clock,
+      long explicitDeadline,
+      Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
+      ThreadFactory cancellationThreads,
+      boolean background,
+      Consumer<T> disposeAbandoned,
+      Runnable onPhysicalRelease,
+      Deadline enclosingDeadline) {
+    return run(
+        clock,
+        explicitDeadline,
+        operation,
+        cancellationThreads,
+        background,
+        disposeAbandoned,
+        onPhysicalRelease,
+        enclosingDeadline,
+        null);
+  }
+
+  private static <T> T run(
+      Clock clock,
+      long explicitDeadline,
+      Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
+      ThreadFactory cancellationThreads,
+      boolean background,
+      Consumer<T> disposeAbandoned,
+      Runnable onPhysicalRelease,
+      Deadline enclosingDeadline,
+      Runnable onLogicalFinish) {
     final CanonicalGameplayOriginalNewCapacityExecutionBudget budget;
     try {
       budget =
           new CanonicalGameplayOriginalNewCapacityExecutionBudget(
-              clock, explicitDeadline, cancellationThreads, background);
+              clock, explicitDeadline, cancellationThreads, background, enclosingDeadline);
       // Background reads and transfer work share the same four-operation ceiling, but cannot
       // consume the two slots reserved for final admission. Neither class waits in a queue.
       if (background && !BACKGROUND_OPERATIONS.tryAcquire()) throw unavailable();
@@ -209,6 +310,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         throw unavailable();
       }
     } catch (RuntimeException | Error refusal) {
+      if (onLogicalFinish != null) onLogicalFinish.run();
       if (onPhysicalRelease != null) onPhysicalRelease.run();
       throw refusal;
     }
@@ -230,7 +332,11 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
               failure = unavailable;
             } finally {
               try {
-                budget.releaseOutstandingConnections();
+                try {
+                  if (onLogicalFinish != null) onLogicalFinish.run();
+                } finally {
+                  budget.releaseOutstandingConnections();
+                }
               } catch (RuntimeException | Error cleanupFailure) {
                 if (failure == null) failure = cleanupFailure;
                 else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
@@ -255,6 +361,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       try {
         Thread.ofVirtual().name("original-new-capacity-resource").start(resource);
       } catch (RuntimeException | Error startupFailure) {
+        if (onLogicalFinish != null) onLogicalFinish.run();
         synchronized (budget.lifecycle) {
           budget.workerDone = true;
           budget.releaseIfFinished();
@@ -359,27 +466,21 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       outstandingAsyncCloses++;
     }
     closeAttempt.whenComplete((ignored, failure) -> {
-      boolean reportFailure = false;
-      synchronized (lifecycle) {
-        if (failure == null) {
-          outstandingAsyncCloses--;
-          releaseIfFinished();
-        } else if (!redisCloseFailureRecorded) {
-          redisCloseFailureRecorded = true;
-          REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS.incrementAndGet();
-          reportFailure = true;
-        }
+      if (failure != null) {
+        recordRedisCloseRetained(redisCloseFailureCategory(failure));
+        return;
       }
-      if (reportFailure) {
-        // This local diagnostic must not emit throwable messages, command data, or selectors.
-        LOG.warn(
-            "Original NEW Redis close failed; operation permit retained (category={})",
-            redisCloseFailureCategory(failure));
+      synchronized (lifecycle) {
+        outstandingAsyncCloses--;
+        if (outstandingAsyncCloses == 0 && redisCloseFailureRecorded) {
+          redisCloseFailureRecorded = false;
+          REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS.decrementAndGet();
+        }
+        releaseIfFinished();
       }
     });
   }
 
-  /** Actual worker exit, including SQL resource cleanup; never the caller timeout. */
   /** Keeps this operation's permits until borrowed work has actually exited. */
   void retainUntilCompletion(CompletableFuture<?> work) {
     Objects.requireNonNull(work);
@@ -392,6 +493,16 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         releaseIfFinished();
       }
     });
+  }
+
+  private void recordRedisCloseRetained(String category) {
+    synchronized (lifecycle) {
+      if (outstandingAsyncCloses == 0 || redisCloseFailureRecorded) return;
+      redisCloseFailureRecorded = true;
+      REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS.incrementAndGet();
+    }
+    // Keep command data and selectors out of the diagnostic.
+    LOG.warn("Original NEW Redis close failed; operation permit retained (category={})", category);
   }
 
   private static String redisCloseFailureCategory(Throwable failure) {
@@ -418,7 +529,8 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     } catch (java.util.concurrent.ExecutionException
         | java.util.concurrent.CancellationException failedClose) {
       throw unavailable();
-    } catch (java.util.concurrent.TimeoutException expired) {
+    } catch (java.util.concurrent.TimeoutException | BudgetUnavailable expired) {
+      if (!closeAttempt.isDone()) recordRedisCloseRetained("timeout");
       throw unavailable();
     }
   }
@@ -490,6 +602,13 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         () -> {
           try {
             synchronized (resources) {
+              for (OwnedConnection connection : new ArrayList<>(connections.values())) {
+                try {
+                  connection.retire();
+                } catch (RuntimeException ignored) {
+                  // Unproved retirement leaves the connection owned and this operation admitted.
+                }
+              }
               if (active != null) {
                 try {
                   active.cancel();
@@ -555,12 +674,78 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     }
   }
 
+  private void recordRetirementFailure(Throwable failure) {
+    if (retireFailureRecorded.compareAndSet(false, true)) {
+      RETIRE_FAILURE_RETAINED_OPERATIONS.incrementAndGet();
+      LOG.warn(
+          "Original NEW SQL connection retirement is unproved; operation permit retained (category={})",
+          sqlRetirementFailureCategory(failure));
+    }
+  }
+
+  private static String sqlRetirementFailureCategory(Throwable failure) {
+    if (failure instanceof SQLException) return "sql-exception";
+    if (failure instanceof Error) return "error";
+    return "exception";
+  }
+
+  /** Package-private test seam; production uses the pinned Spring/Hikari/PostgreSQL chain below. */
+  interface ConnectionRetirer {
+    void retire(Connection connection) throws SQLException;
+  }
+
+  private static void retireConfiguredConnection(ConnectionProvider provider, Connection raw)
+      throws SQLException {
+    if (provider instanceof ConnectionRetirer testRetirer) {
+      testRetirer.retire(raw);
+      return;
+    }
+    if (!(provider instanceof DataSourceConnectionProvider dataSourceProvider)) {
+      throw new SQLException("Unsupported capacity SQL connection provider");
+    }
+    HikariDataSource pool = requireHikariDataSource(dataSourceProvider.dataSource());
+    Connection pooled = raw;
+    if (raw instanceof ConnectionProxy springProxy) {
+      pooled = springProxy.getTargetConnection();
+    }
+    if (!(pooled instanceof ProxyConnection)
+        || !pooled
+            .getClass()
+            .getName()
+            .startsWith("com.zaxxer.hikari.pool.HikariProxyConnection")) {
+      throw new SQLException("Unsupported capacity SQL pooled connection");
+    }
+    PgConnection driver = pooled.unwrap(PgConnection.class);
+    driver.abort(Runnable::run);
+    if (!driver.isClosed()) {
+      throw new SQLException("PostgreSQL connection remained open after abort");
+    }
+    // Hikari's proxy abort delegates to PostgreSQL but does not evict its PoolEntry. Evict only
+    // after the driver confirms its executor/socket is closed, and before this connection can be
+    // released to the pool or a delayed statement invocation can resume.
+    pool.evictConnection(pooled);
+  }
+
+  private static HikariDataSource requireHikariDataSource(DataSource source) throws SQLException {
+    DataSource current = source;
+    while (current instanceof DelegatingDataSource delegating) {
+      current = delegating.getTargetDataSource();
+      if (current == null) throw new SQLException("Capacity SQL datasource target is unavailable");
+    }
+    if (!(current instanceof HikariDataSource hikari)) {
+      throw new SQLException("Unsupported capacity SQL datasource");
+    }
+    return hikari;
+  }
+
   private final class OwnedConnection {
     private final ConnectionProvider provider;
     private final Connection raw;
     private final Connection proxy;
     private boolean returned;
     private boolean releaseAttempted;
+    private boolean retired;
+    private boolean retirementFailed;
 
     OwnedConnection(ConnectionProvider provider, Connection raw) {
       this.provider = provider;
@@ -658,6 +843,13 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       // Detach cancellation before pool return, serialized against a cancellation already running.
       synchronized (resources) {
         if (returned || releaseAttempted) return;
+        if (cancelled.get() && !retired) {
+          try {
+            retire();
+          } catch (RuntimeException unproved) {
+            throw unproved;
+          }
+        }
         releaseAttempted = true;
         if (activeConnection == this) {
           active = null;
@@ -674,6 +866,29 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         }
         returned = true;
         if (connections.remove(proxy) != null) outstandingConnections.decrementAndGet();
+      }
+    }
+
+    /**
+     * Must run under resources so cancellation and pool return retain single connection custody.
+     */
+    void retire() {
+      synchronized (resources) {
+        if (retired) return;
+        if (retirementFailed) throw unavailable();
+        if (returned || releaseAttempted) {
+          retirementFailed = true;
+          recordRetirementFailure(new SQLException("Connection custody already transferred"));
+          throw unavailable();
+        }
+        try {
+          retireConfiguredConnection(provider, raw);
+          retired = true;
+        } catch (SQLException | RuntimeException | Error unproved) {
+          retirementFailed = true;
+          recordRetirementFailure(unproved);
+          throw unavailable();
+        }
       }
     }
   }

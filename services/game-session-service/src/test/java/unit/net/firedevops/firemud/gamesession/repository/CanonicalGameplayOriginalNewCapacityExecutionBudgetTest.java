@@ -83,7 +83,13 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     assertThat(permits.tryAcquire(maximum, 2, TimeUnit.SECONDS))
         .as("resource and cancellation workers restore all operation permits")
         .isTrue();
-    permits.release(maximum);
+    try {
+      assertThat(permits.availablePermits())
+          .as("operation teardown has exactly the configured permits")
+          .isZero();
+    } finally {
+      permits.release(maximum);
+    }
     Semaphore background =
         (Semaphore)
             java.util.Objects.requireNonNull(
@@ -95,7 +101,13 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     assertThat(background.tryAcquire(maximumBackground, 2, TimeUnit.SECONDS))
         .as("background admission follows the same cleanup lifecycle")
         .isTrue();
-    background.release(maximumBackground);
+    try {
+      assertThat(background.availablePermits())
+          .as("background teardown has exactly the configured permits")
+          .isZero();
+    } finally {
+      background.release(maximumBackground);
+    }
   }
 
   @Test
@@ -274,20 +286,64 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
 
   @Test
   void manualFactoryEnablesPerInstallationDeadline() {
-    var owner =
-        CanonicalGameplayRegionLeaseOwnerFactory.compose(
-            mock(DSLContext.class),
-            mock(RedisClient.class),
-            RedisURI.create("redis://localhost:6379"),
-            mock(RedisScriptCatalog.class),
-            mock(CanonicalGameplayRegionIncarnationSource.class),
-            mock(
-                net.firedevops.firemud.gamesession.service
-                    .CanonicalInitialPlayerLocationRegionResolver.class),
-            mock(RuntimeIdentity.class),
-            Duration.ofSeconds(30),
-            CLOCK);
+    RedisClient client = mock();
+    when(client.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
+    var owner = composeManualLeaseOwner(client, Duration.ofSeconds(30));
     assertThat(ReflectionTestUtils.getField(owner, "deadlineBoundInstallation")).isEqualTo(true);
+  }
+
+  @Test
+  void manualFactoryRejectsReconnectEnabledCoordinationClient() {
+    RedisClient client = mock();
+    when(client.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(true).build());
+    assertThatThrownBy(() -> composeManualLeaseOwner(client, Duration.ofSeconds(30)))
+        .isExactlyInstanceOf(IllegalArgumentException.class)
+        .hasMessage("coordinationRedis requires autoReconnect=false");
+  }
+
+  @Test
+  void manualFactoryRequiresLeaseToCoverTheInstallationWindow() {
+    RedisClient client = mock();
+    when(client.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
+    var installationWindow =
+        Duration.ofMillis(CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS);
+    assertThatThrownBy(() -> composeManualLeaseOwner(client, installationWindow))
+        .isExactlyInstanceOf(IllegalArgumentException.class)
+        .hasMessage("leaseTtl must exceed the bounded installation window");
+  }
+
+  private static CanonicalGameplayRegionLeaseOwner composeManualLeaseOwner(
+      RedisClient client, Duration leaseTtl) {
+    return CanonicalGameplayRegionLeaseOwnerFactory.compose(
+        mock(DSLContext.class),
+        client,
+        RedisURI.create("redis://localhost:6379"),
+        mock(RedisScriptCatalog.class),
+        mock(CanonicalGameplayRegionIncarnationSource.class),
+        mock(
+            net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver
+                .class),
+        mock(RuntimeIdentity.class),
+        leaseTtl,
+        CLOCK);
+  }
+
+  @Test
+  void exhaustedInstallationWindowRefusesCleanupEvenWithFrozenWallClock() {
+    Clock frozen = Clock.fixed(CLOCK.instant(), java.time.ZoneOffset.UTC);
+    var cleanup = new AtomicBoolean();
+    var released = new AtomicBoolean();
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundWithin(
+                frozen,
+                frozen.millis() + 5_000,
+                io.grpc.Deadline.after(0, TimeUnit.NANOSECONDS),
+                budget -> cleanup.getAndSet(true),
+                () -> released.set(true)))
+        .isExactlyInstanceOf(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+    assertThat(cleanup.get()).isFalse();
+    assertThat(released.get()).isTrue();
   }
 
   @Test
@@ -610,9 +666,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             "controlled-image");
     var permitConstructor =
         CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit.class
-            .getDeclaredConstructor(UUID.class, String.class);
+            .getDeclaredConstructor(UUID.class, String.class, long.class);
     permitConstructor.setAccessible(true);
-    var permit = permitConstructor.newInstance(operationId, sourceDigest);
+    var permit = permitConstructor.newInstance(operationId, sourceDigest, 1L);
     long handoffDeadline = CLOCK.millis() + 4000;
     Semaphore operations =
         (Semaphore)
@@ -842,7 +898,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       release.countDown();
       verify(provider, timeout(2000)).release(connection);
       verifyNoInteractions(connection, redis);
-      assertThat(dsl.configuration().connectionProvider()).isSameAs(provider);
+      assertThat(dsl.configuration().connectionProvider())
+          .isInstanceOf(ControlledConnectionProvider.class);
     } finally {
       scheduler.shutdownNow();
     }
@@ -1084,6 +1141,175 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
   }
 
   @Test
+  void cancellationRetiresBeforeDelayedDriverWorkResumes() throws Exception {
+    ConnectionProvider delegate = mock();
+    var provider = new ControlledConnectionProvider(delegate);
+    PreparedStatement statement = mock();
+    Connection connection = preparedConnection(statement);
+    when(delegate.acquire()).thenReturn(connection);
+    CountDownLatch insideDriver = new CountDownLatch(1), resumeDriver = new CountDownLatch(1);
+    when(statement.execute())
+        .thenAnswer(invocation -> {
+          insideDriver.countDown();
+          awaitUninterruptibly(resumeDriver);
+          if (provider.retired(connection)) throw new java.sql.SQLException("retired connection");
+          return true;
+        });
+    DSLContext dsl = source(provider);
+    Semaphore permits = operationPermits();
+    int availableBefore = permits.availablePermits();
+    try (var context = Context.current().withCancellation();
+        var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var caller =
+          executor.submit(
+              context.wrap(() ->
+                  assertThatThrownBy(() ->
+                          CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                              CLOCK, Long.MAX_VALUE, budget -> execute(budget.sql(dsl))))
+                      .isInstanceOf(
+                          CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable
+                              .class)));
+      try {
+        assertThat(insideDriver.await(2, TimeUnit.SECONDS)).isTrue();
+        context.cancel(null);
+        caller.get(2, TimeUnit.SECONDS);
+        assertThat(provider.retirementAttempted.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(provider.retired(connection)).isTrue();
+        assertThat(permits.availablePermits()).isEqualTo(availableBefore - 1);
+        verify(delegate, never()).release(connection);
+
+        resumeDriver.countDown();
+        verify(delegate, timeout(2000)).release(connection);
+        assertThat(
+                permits.tryAcquire(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS,
+                    2,
+                    TimeUnit.SECONDS))
+            .isTrue();
+        permits.release(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS);
+      } finally {
+        resumeDriver.countDown();
+      }
+    }
+  }
+
+  @Test
+  void failedConnectionRetirementKeepsConnectionAndOperationPermit() throws Exception {
+    ConnectionProvider delegate = mock();
+    var provider = new ControlledConnectionProvider(delegate);
+    provider.failRetirement = true;
+    PreparedStatement statement = mock();
+    Connection connection = preparedConnection(statement);
+    when(delegate.acquire()).thenReturn(connection);
+    CountDownLatch insideDriver = new CountDownLatch(1), resumeDriver = new CountDownLatch(1);
+    when(statement.execute())
+        .thenAnswer(invocation -> {
+          insideDriver.countDown();
+          awaitUninterruptibly(resumeDriver);
+          return true;
+        });
+    DSLContext dsl = source(provider);
+    AtomicReference<CanonicalGameplayOriginalNewCapacityExecutionBudget> captured =
+        new AtomicReference<>();
+    Semaphore permits = operationPermits();
+    AtomicInteger retained =
+        (AtomicInteger)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "RETIRE_FAILURE_RETAINED_OPERATIONS"));
+    int beforeRetained = retained.get();
+    int availableBefore = permits.availablePermits();
+    try (var context = Context.current().withCancellation();
+        var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var caller =
+          executor.submit(
+              context.wrap(() ->
+                  assertThatThrownBy(() ->
+                          CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                              CLOCK,
+                              Long.MAX_VALUE,
+                              budget -> {
+                                captured.set(budget);
+                                return execute(budget.sql(dsl));
+                              }))
+                      .isInstanceOf(
+                          CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable
+                              .class)));
+      try {
+        assertThat(insideDriver.await(2, TimeUnit.SECONDS)).isTrue();
+        context.cancel(null);
+        caller.get(2, TimeUnit.SECONDS);
+        assertThat(provider.retirementAttempted.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(provider.retired(connection)).isFalse();
+        resumeDriver.countDown();
+        var budget = captured.get();
+        org.awaitility.Awaitility.await()
+            .atMost(2, TimeUnit.SECONDS)
+            .untilAsserted(() ->
+                assertThat(
+                        java.util.Objects.requireNonNull(
+                            ReflectionTestUtils.getField(budget, "workerDone")))
+                    .isEqualTo(true));
+        assertThat(permits.availablePermits()).isEqualTo(availableBefore - 1);
+        assertThat(retained.get()).isEqualTo(beforeRetained + 1);
+        assertThat(
+                (AtomicInteger)
+                    java.util.Objects.requireNonNull(
+                        ReflectionTestUtils.getField(budget, "outstandingConnections")))
+            .hasValue(1);
+        assertThat(
+                java.util.Objects.requireNonNull(ReflectionTestUtils.getField(budget, "released")))
+            .isEqualTo(false);
+        verify(delegate, never()).release(connection);
+      } finally {
+        resumeDriver.countDown();
+        var budget = captured.get();
+        if (budget != null) {
+          Object lifecycle =
+              java.util.Objects.requireNonNull(ReflectionTestUtils.getField(budget, "lifecycle"));
+          org.awaitility.Awaitility.await()
+              .atMost(2, TimeUnit.SECONDS)
+              .until(() -> {
+                synchronized (lifecycle) {
+                  return Boolean.TRUE.equals(ReflectionTestUtils.getField(budget, "workerDone"))
+                      && (!Boolean.TRUE.equals(
+                              ReflectionTestUtils.getField(budget, "cancellationStarted"))
+                          || Boolean.TRUE.equals(
+                              ReflectionTestUtils.getField(budget, "cancellationDone")));
+                }
+              });
+          synchronized (lifecycle) {
+            synchronized (
+                java.util.Objects.requireNonNull(
+                    ReflectionTestUtils.getField(budget, "resources"))) {
+              var connections =
+                  (java.util.Map<?, ?>)
+                      java.util.Objects.requireNonNull(
+                          ReflectionTestUtils.getField(budget, "connections"));
+              var outstanding =
+                  (AtomicInteger)
+                      java.util.Objects.requireNonNull(
+                          ReflectionTestUtils.getField(budget, "outstandingConnections"));
+              if (Boolean.FALSE.equals(ReflectionTestUtils.getField(budget, "released"))
+                  && connections.size() == 1
+                  && outstanding.get() == 1) {
+                // This operation owns only the one disposable mock connection.
+                assertThat(retained.get()).isEqualTo(beforeRetained + 1);
+                connections.clear();
+                outstanding.set(0);
+                retained.decrementAndGet();
+                ReflectionTestUtils.invokeMethod(budget, "releaseIfFinished");
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  @Test
   void uncertainProviderReleaseRetainsOnePermitAndExposesItThroughMicrometer() throws Exception {
     ConnectionProvider provider = mock();
     Connection first = mock(), second = mock();
@@ -1118,11 +1344,13 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       int available = permits.availablePermits();
       var rollbackFailure = new AtomicReference<Throwable>();
       var autoCommitFailure = new AtomicReference<Throwable>();
+      var logicalFinishes = new AtomicInteger();
       try {
         assertThatThrownBy(() ->
-                CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundCleanup(
                     CLOCK,
                     Long.MAX_VALUE,
+                    null,
                     budget -> {
                       captured.set(budget);
                       var scoped =
@@ -1137,8 +1365,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                           org.assertj.core.api.Assertions.catchThrowable(
                               () -> proxy.setAutoCommit(true)));
                       return true;
-                    }))
+                    },
+                    logicalFinishes::incrementAndGet))
             .isInstanceOf(IllegalStateException.class);
+        assertThat(logicalFinishes).hasValue(1);
         assertThat(rollbackFailure.get()).isInstanceOf(java.sql.SQLException.class);
         assertThat(autoCommitFailure.get()).isInstanceOf(java.sql.SQLException.class);
         assertThat(
@@ -1207,12 +1437,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     logger.addAppender(events);
     CompletableFuture<Void> late = new CompletableFuture<>();
     CompletableFuture<Void> cancelled = new CompletableFuture<>();
+    var operationsEntered = new AtomicInteger();
     try {
       assertThatThrownBy(() ->
               CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
                   CLOCK,
                   Long.MAX_VALUE,
                   budget -> {
+                    operationsEntered.incrementAndGet();
                     budget.awaitAsyncClose(
                         CompletableFuture.failedFuture(
                             new IllegalStateException(
@@ -1227,6 +1459,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
           budget -> {
             budget.retainUntilAsyncClose(cancelled);
             budget.retainUntilAsyncClose(late);
+            operationsEntered.incrementAndGet();
             return true;
           });
       assertThat(events.list).hasSize(1);
@@ -1252,9 +1485,79 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       cancelled.complete(null);
       logger.detachAppender(events);
       events.stop();
-      operations.release(priorOperations - operations.availablePermits());
-      background.release(priorBackground - background.availablePermits());
-      retained.set(priorRetained);
+      // Both runBackground calls have returned, so their resource workers have finished; neither
+      // operation acquired SQL resources or started a cancellation worker. The terminal failed
+      // and cancelled close futures therefore retain exactly the admitted operation count. Undo
+      // only that test-created retained state after proving it still exists.
+      int retainedOperationPermits = priorOperations - operations.availablePermits();
+      int retainedBackgroundPermits = priorBackground - background.availablePermits();
+      assertThat(operationsEntered.get()).isEqualTo(2);
+      assertThat(retainedOperationPermits).isEqualTo(operationsEntered.get());
+      assertThat(retainedBackgroundPermits).isEqualTo(operationsEntered.get());
+      assertThat(retainedOperationPermits).isBetween(0, operationsEntered.get());
+      assertThat(retainedBackgroundPermits).isEqualTo(retainedOperationPermits);
+      operations.release(retainedOperationPermits);
+      background.release(retainedBackgroundPermits);
+      retained.addAndGet(priorRetained - retained.get());
+      Metrics.removeRegistry(registry);
+      registry.close();
+    }
+  }
+
+  @Test
+  void timedOutRedisDisposalRetainsAndThenReleasesTheBudgetOnce() {
+    var registry = new SimpleMeterRegistry();
+    Metrics.addRegistry(registry);
+    var retained =
+        (AtomicInteger)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "REDIS_CLOSE_FAILURE_RETAINED_OPERATIONS"));
+    var operations =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    var background =
+        (Semaphore)
+            (java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "BACKGROUND_OPERATIONS")));
+    int priorOperations = operations.availablePermits();
+    int priorBackground = background.availablePermits();
+    int priorRetained = retained.get();
+    var close = new CompletableFuture<Void>();
+    try {
+      assertThatThrownBy(() ->
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                  CLOCK,
+                  CLOCK.millis() + 1_000,
+                  budget -> {
+                    budget.awaitAsyncClose(close);
+                    return true;
+                  }))
+          .isExactlyInstanceOf(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+
+      assertThat(close).isNotDone();
+      assertThat(operations.availablePermits()).isEqualTo(priorOperations - 1);
+      assertThat(background.availablePermits()).isEqualTo(priorBackground - 1);
+      assertThat(retained).hasValue(priorRetained + 1);
+      assertThat(
+              registry
+                  .get("original_new_capacity_redis_close_failure_retained_operations")
+                  .gauge()
+                  .value())
+          .isEqualTo(priorRetained + 1);
+
+      assertThat(close.complete(null)).isTrue();
+      assertThat(operations.availablePermits()).isEqualTo(priorOperations);
+      assertThat(background.availablePermits()).isEqualTo(priorBackground);
+      assertThat(retained).hasValue(priorRetained);
+    } finally {
+      close.complete(null);
       Metrics.removeRegistry(registry);
       registry.close();
     }
@@ -1262,20 +1565,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
 
   @Test
   void cancellationAfterPoolReturnCannotCancelAReusedConnectionStatement() throws Exception {
-    ConnectionProvider provider = mock();
+    ConnectionProvider delegate = mock();
+    var provider = new ControlledConnectionProvider(delegate);
     PreparedStatement statement = mock();
     Connection connection = preparedConnection(statement);
-    when(provider.acquire()).thenReturn(connection);
+    when(delegate.acquire()).thenReturn(connection);
     when(statement.execute()).thenReturn(true);
     CountDownLatch returned = new CountDownLatch(1), finish = new CountDownLatch(1);
     CountDownLatch cancellationWorkerFinished = new CountDownLatch(1);
-    doAnswer(
-            invocation -> {
-              returned.countDown();
-              return null;
-            })
-        .when(provider)
-        .release(connection);
     DSLContext dsl = source(provider);
     try (var context = Context.current().withCancellation();
         var executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -1288,6 +1585,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                             Long.MAX_VALUE,
                             budget -> {
                               execute(budget.sql(dsl));
+                              // Execute returns only after the scoped provider returned the
+                              // connection; cancellation below must happen after that custody
+                              // transition, while the operation remains active at finish.
+                              returned.countDown();
                               awaitUninterruptibly(finish);
                               return true;
                             },
@@ -1314,6 +1615,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     assertThat(cancellationWorkerFinished.await(2, TimeUnit.SECONDS)).isTrue();
     awaitResourceAndCancellationWorkerCleanup();
     verify(statement, never()).cancel();
+    assertThat(provider.retirementAttempted.getCount())
+        .as("a returned connection is no longer in cancellation custody")
+        .isEqualTo(1);
+    assertThat(provider.retired(connection)).isFalse();
   }
 
   @Test
@@ -1749,7 +2054,53 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
   }
 
   private static DSLContext source(ConnectionProvider provider) {
-    return DSL.using(new DefaultConfiguration().set(SQLDialect.POSTGRES).set(provider));
+    ConnectionProvider scoped =
+        provider instanceof CanonicalGameplayOriginalNewCapacityExecutionBudget.ConnectionRetirer
+            ? provider
+            : new ControlledConnectionProvider(provider);
+    return DSL.using(new DefaultConfiguration().set(SQLDialect.POSTGRES).set(scoped));
+  }
+
+  private static Semaphore operationPermits() {
+    return (Semaphore)
+        java.util.Objects.requireNonNull(
+            ReflectionTestUtils.getField(
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+  }
+
+  private static final class ControlledConnectionProvider
+      implements ConnectionProvider,
+          CanonicalGameplayOriginalNewCapacityExecutionBudget.ConnectionRetirer {
+    private final ConnectionProvider delegate;
+    private final java.util.Set<Connection> retired =
+        java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    private final CountDownLatch retirementAttempted = new CountDownLatch(1);
+    private volatile boolean failRetirement;
+
+    private ControlledConnectionProvider(ConnectionProvider delegate) {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public Connection acquire() {
+      return delegate.acquire();
+    }
+
+    @Override
+    public void release(Connection connection) {
+      delegate.release(connection);
+    }
+
+    @Override
+    public synchronized void retire(Connection connection) throws java.sql.SQLException {
+      retirementAttempted.countDown();
+      if (failRetirement) throw new java.sql.SQLException("controlled retirement uncertainty");
+      retired.add(connection);
+    }
+
+    private synchronized boolean retired(Connection connection) {
+      return retired.contains(connection);
+    }
   }
 
   private static boolean execute(DSLContext sql) {

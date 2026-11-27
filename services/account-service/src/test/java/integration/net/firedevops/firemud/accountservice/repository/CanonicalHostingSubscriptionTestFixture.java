@@ -746,6 +746,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
     private String terminalInvoiceStatus = "void";
     private String terminalIntentStatus = "canceled";
     private String terminalDirectIntentId;
+    private boolean terminalIntentUnassigned;
     private long terminalAmountPaid;
     private long terminalAmountRemaining;
     private long terminalAmountReceived;
@@ -801,6 +802,10 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
     public void terminalIntentId(String value) {
       terminalDirectIntentId = Objects.requireNonNull(value);
+    }
+
+    public void terminalIntentUnassigned(boolean value) {
+      terminalIntentUnassigned = value;
     }
 
     public void terminalAmounts(long paid, long remaining, long received) {
@@ -924,17 +929,9 @@ public final class CanonicalHostingSubscriptionTestFixture {
           + creation.planQuote().providerQuantity()
           + ",\"pricing\":{\"type\":\"price_details\",\"price_details\":{\"price\":\""
           + creation.planQuote().providerPriceId()
-          + "\"}}}]},\"payments\":{\"object\":\"list\",\"has_more\":false,\"data\":[{\"object\":\"invoice_payment\",\"payment\":{\"type\":\"payment_intent\",\"payment_intent\":{\"id\":\""
-          + intentId
-          + "\",\"object\":\"payment_intent\",\"customer\":\""
-          + creation.providerCustomerId()
-          + "\",\"payment_method\":\""
-          + instrument.providerPaymentMethodId()
-          + "\",\"livemode\":false,\"confirmation_method\":\"automatic\",\"status\":\""
-          + terminalIntentStatus
-          + "\",\"amount\":2400,\"amount_received\":"
-          + terminalAmountReceived
-          + ",\"currency\":\"usd\"}}}]}}";
+          + "\"}}}]},\"payments\":{\"object\":\"list\",\"has_more\":false,\"data\":[{\"object\":\"invoice_payment\",\"payment\":{\"type\":\"payment_intent\",\"payment_intent\":"
+          + terminalIntent(intentId)
+          + "}}]}}";
     }
 
     private String terminalIntent(String id) {
@@ -942,9 +939,9 @@ public final class CanonicalHostingSubscriptionTestFixture {
           + id
           + "\",\"object\":\"payment_intent\",\"customer\":\""
           + creation.providerCustomerId()
-          + "\",\"payment_method\":\""
-          + instrument.providerPaymentMethodId()
-          + "\",\"livemode\":false,\"confirmation_method\":\"automatic\",\"status\":\""
+          + "\",\"payment_method\":"
+          + (terminalIntentUnassigned ? "null" : "\"" + instrument.providerPaymentMethodId() + "\"")
+          + ",\"livemode\":false,\"confirmation_method\":\"automatic\",\"status\":\""
           + terminalIntentStatus
           + "\",\"amount\":2400,\"amount_received\":"
           + terminalAmountReceived

@@ -22,9 +22,13 @@ import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseState;
 import net.firedevops.firemud.account.v1.AcquireGameplayAdmissionLeaseRequest;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.AbortResolutionEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.AcquireRequest;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.CommittedCapacityRequest;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalAckReceiptEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.State;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OriginKind;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome;
@@ -50,6 +54,98 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
   private static final UUID HOLD_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
   private static final UUID HOLD_FENCE = UUID.fromString("66666666-6666-4666-8666-666666666666");
   private static final JsonMapper JSON = JsonMapper.builder().build();
+
+  @Test
+  void committedCapacityConfirmationRequiresExactPairedRequestAndQualifiedResult() {
+    var original = lease();
+    byte[] leaseBytes = original.canonicalJson().getBytes(StandardCharsets.UTF_8);
+    var attempt = CapacityAdmissionTestFixture.playerRequest();
+    var selector = new CommittedCapacityRequest(attempt, OTHER, 1);
+    var wire =
+        AccountGameplayAdmissionLeaseGrpcCodec.toConfirmOriginalNewGameplayAdmissionRequest(
+            JWT, leaseBytes, selector);
+    var parsed =
+        AccountGameplayAdmissionLeaseGrpcCodec.parseConfirmOriginalNewGameplayAdmissionRequest(
+            wire);
+    assertThat(parsed.committedCapacityRequest()).isEqualTo(selector);
+    var result =
+        new TenantCapacityAdmission.Result(
+            attempt.identity(),
+            attempt.admissionAttemptId(),
+            attempt.capacityRearmFence(),
+            attempt.mutationDigest(),
+            OTHER,
+            1,
+            attempt.evidence().expiresAt(),
+            TenantCapacityAdmission.State.RESERVED,
+            attempt.evidence().snapshotIdentity(),
+            attempt.evidence().evaluationIdentity());
+    var response =
+        AccountGameplayAdmissionLeaseGrpcCodec.toConfirmOriginalNewGameplayAdmissionResponse(
+            parsed,
+            ACCOUNT_ID,
+            UUID.fromString((String) original.carrier().get("leaseId")),
+            original.leaseFence().longValueExact(),
+            1,
+            2,
+            "a".repeat(64),
+            result);
+    assertThat(
+            AccountGameplayAdmissionLeaseGrpcCodec.parseConfirmOriginalNewGameplayAdmissionResponse(
+                    parsed, response)
+                .committedCapacityResult())
+        .isEqualTo(result);
+    var nested = response.getCommittedCapacityResult(0);
+    var commitment = nested.getCommitment(0);
+    for (var unqualified :
+        List.of(
+            response.toBuilder().clearCommittedCapacityResult().build(),
+            response.toBuilder().addCommittedCapacityResult(nested).build(),
+            response.toBuilder()
+                .setCommittedCapacityResult(
+                    0,
+                    nested.toBuilder()
+                        .setCommitment(0, commitment.toBuilder().setReservationFence(0, 2)))
+                .build(),
+            response.toBuilder()
+                .setCommittedCapacityResult(
+                    0,
+                    nested.toBuilder()
+                        .setCommitment(
+                            0,
+                            commitment.toBuilder()
+                                .setState(
+                                    0,
+                                    TenantCapacityAdmission.State
+                                        .QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION
+                                        .name())))
+                .build())) {
+      assertThatThrownBy(() ->
+              AccountGameplayAdmissionLeaseGrpcCodec
+                  .parseConfirmOriginalNewGameplayAdmissionResponse(parsed, unqualified))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    var legacyRequest =
+        AccountGameplayAdmissionLeaseGrpcCodec.parseConfirmOriginalNewGameplayAdmissionRequest(
+            AccountGameplayAdmissionLeaseGrpcCodec.toConfirmOriginalNewGameplayAdmissionRequest(
+                JWT, leaseBytes));
+    assertThatThrownBy(() ->
+            AccountGameplayAdmissionLeaseGrpcCodec.parseConfirmOriginalNewGameplayAdmissionResponse(
+                legacyRequest, response))
+        .isInstanceOf(IllegalArgumentException.class);
+    for (var unqualified :
+        List.of(
+            wire.toBuilder().clearExpectedReservationFence().build(),
+            wire.toBuilder().clearCommittedCapacityRequest().build(),
+            wire.toBuilder()
+                .addCommittedCapacityRequest(TenantCapacityAdmissionGrpcCodec.toRequest(attempt))
+                .build())) {
+      assertThatThrownBy(() ->
+              AccountGameplayAdmissionLeaseGrpcCodec
+                  .parseConfirmOriginalNewGameplayAdmissionRequest(unqualified))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
 
   @Test
   void

@@ -13,6 +13,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc.AccountServiceBlockingStub;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
@@ -74,6 +75,38 @@ public final class AccountTenantCapacityClient
             request,
             absoluteDeadlineMillis,
             AccountServiceBlockingStub::commitTenantCapacityAdmission);
+    return readCommitResult(request, response);
+  }
+
+  public enum SendDisposition {
+    AUTHORIZE_NEW,
+    READ_RETAINED,
+    EXPIRED_UNSENT
+  }
+
+  /** Selects exactly one creating send only after its durable local claim has committed. */
+  public Result commitWithSendBoundary(
+      Request request, long absoluteDeadlineMillis, Supplier<SendDisposition> authorize) {
+    var response =
+        invoke(
+            request,
+            absoluteDeadlineMillis,
+            (stub, wire) -> {
+              SendDisposition disposition = authorize.get();
+              if (stub.getCallOptions().getDeadline().isExpired()) {
+                throw Status.DEADLINE_EXCEEDED.asRuntimeException();
+              }
+              return switch (disposition) {
+                case AUTHORIZE_NEW -> stub.commitTenantCapacityAdmission(wire);
+                case READ_RETAINED -> stub.readTenantCapacityAdmissionOutcome(wire);
+                case EXPIRED_UNSENT -> throw Status.DEADLINE_EXCEEDED.asRuntimeException();
+              };
+            });
+    return readCommitResult(request, response);
+  }
+
+  private static Result readCommitResult(
+      Request request, CommitTenantCapacityAdmissionResponse response) {
     try {
       var refusal = TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response);
       if (refusal.isPresent()) throw new CapacityRefusedException(refusal.orElseThrow());

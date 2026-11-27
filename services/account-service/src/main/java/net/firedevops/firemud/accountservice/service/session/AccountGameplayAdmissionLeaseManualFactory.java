@@ -80,7 +80,7 @@ public final class AccountGameplayAdmissionLeaseManualFactory {
     int transportMaximum =
         Math.max(
             AccountGameplayAdmissionLeaseGrpcCodec.MAX_ACQUIRE_REQUEST_WIRE_BYTES,
-            AccountGameplayAdmissionLeaseGrpcCodec.MAX_ORIGINAL_LEASE_REQUEST_WIRE_BYTES);
+            AccountGameplayAdmissionLeaseGrpcCodec.MAX_CONFIRMATION_REQUEST_WIRE_BYTES);
     var factory =
         new BoundedGrpcServerFactory(
             address,

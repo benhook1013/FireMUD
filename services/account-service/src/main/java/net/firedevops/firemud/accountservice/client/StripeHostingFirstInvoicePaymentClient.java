@@ -185,6 +185,7 @@ public final class StripeHostingFirstInvoicePaymentClient {
 
     PaymentIntent intent = stripe.paymentIntents().retrieve(expected.paymentIntentId(), options);
     requireTerminalIntent(intent, expected);
+    require(Objects.equals(expandedIntent.getPaymentMethod(), intent.getPaymentMethod()));
 
     Instant observed = clock.instant();
     require(
@@ -201,7 +202,8 @@ public final class StripeHostingFirstInvoicePaymentClient {
             && "payment_intent".equals(intent.getObject())
             && expected.paymentIntentId().equals(intent.getId())
             && expected.providerCustomerId().equals(intent.getCustomer())
-            && expected.providerPaymentMethodId().equals(intent.getPaymentMethod())
+            && (expected.providerPaymentMethodId().equals(intent.getPaymentMethod())
+                || (intent.getPaymentMethod() == null && intent.getLatestCharge() == null))
             && Boolean.valueOf(expected.livemode()).equals(intent.getLivemode())
             && "automatic".equals(intent.getConfirmationMethod())
             && "canceled".equals(intent.getStatus())

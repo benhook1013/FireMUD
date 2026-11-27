@@ -41,6 +41,14 @@ public final class AccountTenantCapacityWorkloadGuard implements ServerIntercept
   }
 
   public String requireQuotaDenialReader() {
+    return requireGameSessionOutcomeReader();
+  }
+
+  public String requireAdmissionOutcomeReader() {
+    return requireGameSessionOutcomeReader();
+  }
+
+  private String requireGameSessionOutcomeReader() {
     String value = quotaDenialReader.get();
     if (!gameSession.equals(value) || ambient()) throw Status.UNAUTHENTICATED.asRuntimeException();
     return value;
@@ -63,6 +71,13 @@ public final class AccountTenantCapacityWorkloadGuard implements ServerIntercept
           Context.current().withValue(caller, workload), call, headers, next);
     }
     if (AccountServiceGrpc.getReadTenantCapacityQuotaDenialMethod()
+            .getFullMethodName()
+            .equals(method)
+        && gameSession.equals(workload)) {
+      return Contexts.interceptCall(
+          Context.current().withValue(quotaDenialReader, workload), call, headers, next);
+    }
+    if (AccountServiceGrpc.getReadTenantCapacityAdmissionOutcomeMethod()
             .getFullMethodName()
             .equals(method)
         && gameSession.equals(workload)) {

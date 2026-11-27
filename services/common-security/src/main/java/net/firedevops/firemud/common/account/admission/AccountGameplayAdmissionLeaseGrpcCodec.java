@@ -27,6 +27,9 @@ import net.firedevops.firemud.account.v1.IssueOriginalNewGameplayCredentialReque
 import net.firedevops.firemud.account.v1.OriginalNewAdmissionConfirmationResponse;
 import net.firedevops.firemud.account.v1.OriginalNewGameplayCredentialResult;
 import net.firedevops.firemud.account.v1.ReadGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
@@ -54,6 +57,12 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
       AccountGameplayAdmissionLeaseEvidence.MAX_EVIDENCE_BYTES
           + GameSessionAccountDelegationProfile.MAX_COMPACT_JWT_BYTES
           + 1024;
+  public static final int MAX_CONFIRMATION_REQUEST_WIRE_BYTES =
+      MAX_ORIGINAL_LEASE_REQUEST_WIRE_BYTES
+          + TenantCapacityAdmissionGrpcCodec.MAX_REQUEST_WIRE_BYTES
+          + 128;
+  private static final int MAX_CONFIRMATION_RESPONSE_WIRE_BYTES =
+      1024 + TenantCapacityAdmissionGrpcCodec.MAX_RESPONSE_WIRE_BYTES + 16;
   public static final int MAX_RESPONSE_WIRE_BYTES =
       AccountGameplayAdmissionLeaseEvidence.MAX_EVIDENCE_BYTES
           + GameSessionAccountDelegationProfile.MAX_COMPACT_JWT_BYTES
@@ -281,17 +290,47 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
     }
   }
 
+  /** A read selector derived from Game Session's exact retained attempt and reservation. */
+  public record CommittedCapacityRequest(
+      TenantCapacityAdmission.Request attempt, UUID reservationId, long reservationFence) {
+    public CommittedCapacityRequest {
+      OriginalNewCapacityExecution.requireOriginalNewRequest(attempt);
+      TenantCapacityAdmission.uuid(reservationId);
+      if (reservationFence <= 0) throw invalid("Invalid committed reservation fence");
+    }
+
+    public void requireExactResult(TenantCapacityAdmission.Result result) {
+      result.requireBinding(attempt);
+      if (!reservationId.equals(result.reservationId())
+          || reservationFence != result.reservationFence()
+          || (result.state() != TenantCapacityAdmission.State.RESERVED
+              && result.state() != TenantCapacityAdmission.State.FINALIZED)) {
+        throw invalid("Committed replay capacity is unavailable");
+      }
+    }
+  }
+
   /** Exact Account confirmation recovery request; no caller-supplied proof or time fields. */
   public static final class OriginalFinalAdmissionConfirmationRequest {
     private final String presentedInitialGsACompactJwt;
     private final AccountGameplayAdmissionLeaseEvidence originalLeaseEvidence;
     private final byte[] originalLeaseEvidenceUtf8;
 
+    private final CommittedCapacityRequest committedCapacityRequest;
+
     private OriginalFinalAdmissionConfirmationRequest(
-        String compactJwt, AccountGameplayAdmissionLeaseEvidence lease, byte[] exactLeaseBytes) {
+        String compactJwt,
+        AccountGameplayAdmissionLeaseEvidence lease,
+        byte[] exactLeaseBytes,
+        CommittedCapacityRequest committedCapacityRequest) {
       this.presentedInitialGsACompactJwt = compactJwt;
       this.originalLeaseEvidence = lease;
       this.originalLeaseEvidenceUtf8 = exactLeaseBytes.clone();
+      this.committedCapacityRequest = committedCapacityRequest;
+    }
+
+    public CommittedCapacityRequest committedCapacityRequest() {
+      return committedCapacityRequest;
     }
 
     public String presentedInitialGsACompactJwt() {
@@ -320,6 +359,7 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
     private final long admissionAtMillis;
     private final long continuityExpiresAtMillis;
     private final String confirmationReadbackSha256;
+    private final TenantCapacityAdmission.Result committedCapacityResult;
 
     private OriginalFinalAdmissionConfirmation(
         UUID lineageId,
@@ -327,13 +367,19 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
         long originalLeaseFence,
         long admissionAtMillis,
         long continuityExpiresAtMillis,
-        String confirmationReadbackSha256) {
+        String confirmationReadbackSha256,
+        TenantCapacityAdmission.Result committedCapacityResult) {
       this.lineageId = lineageId;
       this.originalLeaseId = originalLeaseId;
       this.originalLeaseFence = originalLeaseFence;
       this.admissionAtMillis = admissionAtMillis;
       this.continuityExpiresAtMillis = continuityExpiresAtMillis;
       this.confirmationReadbackSha256 = confirmationReadbackSha256;
+      this.committedCapacityResult = committedCapacityResult;
+    }
+
+    public TenantCapacityAdmission.Result committedCapacityResult() {
+      return committedCapacityResult;
     }
 
     public UUID lineageId() {
@@ -792,17 +838,29 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
   public static ConfirmOriginalNewGameplayAdmissionRequest
       toConfirmOriginalNewGameplayAdmissionRequest(
           String presentedInitialGsACompactJwt, byte[] originalLeaseEvidenceUtf8) {
+    return toConfirmOriginalNewGameplayAdmissionRequest(
+        presentedInitialGsACompactJwt, originalLeaseEvidenceUtf8, null);
+  }
+
+  public static ConfirmOriginalNewGameplayAdmissionRequest
+      toConfirmOriginalNewGameplayAdmissionRequest(
+          String presentedInitialGsACompactJwt,
+          byte[] originalLeaseEvidenceUtf8,
+          CommittedCapacityRequest committedCapacityRequest) {
     byte[] leaseBytes = requireOriginalLeaseEvidenceBytes(originalLeaseEvidenceUtf8);
-    var request =
+    var builder =
         ConfirmOriginalNewGameplayAdmissionRequest.newBuilder()
             .addSchemaVersion(SCHEMA_VERSION)
             .addPresentedInitialGsaCompactJwt(compactJwt(presentedInitialGsACompactJwt))
-            .addOriginalLeaseEvidenceUtf8(ByteString.copyFrom(leaseBytes))
-            .build();
-    requireWireSize(
-        request.getSerializedSize(),
-        MAX_ORIGINAL_LEASE_REQUEST_WIRE_BYTES,
-        "original-new admission confirmation request");
+            .addOriginalLeaseEvidenceUtf8(ByteString.copyFrom(leaseBytes));
+    if (committedCapacityRequest != null) {
+      builder
+          .addCommittedCapacityRequest(
+              TenantCapacityAdmissionGrpcCodec.toRequest(committedCapacityRequest.attempt()))
+          .addExpectedReservationUuid(committedCapacityRequest.reservationId().toString())
+          .addExpectedReservationFence(Long.toString(committedCapacityRequest.reservationFence()));
+    }
+    var request = builder.build();
     parseConfirmOriginalNewGameplayAdmissionRequest(request);
     return request;
   }
@@ -813,7 +871,9 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
     Objects.requireNonNull(request, "request");
     requireWireSize(
         request.getSerializedSize(),
-        MAX_ORIGINAL_LEASE_REQUEST_WIRE_BYTES,
+        request.getCommittedCapacityRequestCount() == 0
+            ? MAX_ORIGINAL_LEASE_REQUEST_WIRE_BYTES
+            : MAX_CONFIRMATION_REQUEST_WIRE_BYTES,
         "original-new admission confirmation request");
     requireNoUnknownFields(request.getUnknownFields().asMap().isEmpty(), "confirmation request");
     requireSchema(one(request.getSchemaVersionList(), "confirmation.schemaVersion"));
@@ -825,7 +885,29 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
             .toByteArray();
     AccountGameplayAdmissionLeaseEvidence lease = parseFreshNewLease(leaseBytes);
     requirePresentedJwtMatchesLease(lease, compactJwt);
-    return new OriginalFinalAdmissionConfirmationRequest(compactJwt, lease, leaseBytes);
+    CommittedCapacityRequest capacityRequest = null;
+    if (request.getCommittedCapacityRequestCount() != 0) {
+      capacityRequest =
+          new CommittedCapacityRequest(
+              TenantCapacityAdmissionGrpcCodec.parseRequest(
+                  one(
+                      request.getCommittedCapacityRequestList(),
+                      "confirmation.committedCapacityRequest")),
+              canonicalNonNilUuid(
+                  one(
+                      request.getExpectedReservationUuidList(),
+                      "confirmation.expectedReservationUuid")),
+              positiveLongDecimal(
+                  one(
+                      request.getExpectedReservationFenceList(),
+                      "confirmation.expectedReservationFence"),
+                  "expectedReservationFence"));
+    } else if (request.getExpectedReservationUuidCount() != 0
+        || request.getExpectedReservationFenceCount() != 0) {
+      throw invalid("Missing committed capacity request");
+    }
+    return new OriginalFinalAdmissionConfirmationRequest(
+        compactJwt, lease, leaseBytes, capacityRequest);
   }
 
   public static OriginalNewAdmissionConfirmationResponse
@@ -837,6 +919,27 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
           long admissionAtMillis,
           long continuityExpiresAtMillis,
           String confirmationReadbackSha256) {
+    return toConfirmOriginalNewGameplayAdmissionResponse(
+        request,
+        lineageId,
+        originalLeaseId,
+        originalLeaseFence,
+        admissionAtMillis,
+        continuityExpiresAtMillis,
+        confirmationReadbackSha256,
+        null);
+  }
+
+  public static OriginalNewAdmissionConfirmationResponse
+      toConfirmOriginalNewGameplayAdmissionResponse(
+          OriginalFinalAdmissionConfirmationRequest request,
+          UUID lineageId,
+          UUID originalLeaseId,
+          long originalLeaseFence,
+          long admissionAtMillis,
+          long continuityExpiresAtMillis,
+          String confirmationReadbackSha256,
+          TenantCapacityAdmission.Result committedCapacityResult) {
     Objects.requireNonNull(request);
     UUID leaseId = leaseId(request.originalLeaseEvidence());
     long leaseFence = positiveLong(request.originalLeaseEvidence().leaseFence());
@@ -846,7 +949,7 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
         || continuityExpiresAtMillis <= admissionAtMillis) {
       throw invalid("Confirmation changed the exact original lease or deadline anchors");
     }
-    var response =
+    var builder =
         OriginalNewAdmissionConfirmationResponse.newBuilder()
             .addSchemaVersion(SCHEMA_VERSION)
             .addLineageUuid(highEntropyUuid(lineageId).toString())
@@ -854,9 +957,16 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
             .addOriginalLeaseFence(Long.toString(leaseFence))
             .addAdmissionAtMs(Long.toString(admissionAtMillis))
             .addContinuityExpiresAtMs(Long.toString(continuityExpiresAtMillis))
-            .addConfirmationReadbackSha256(digest(confirmationReadbackSha256))
-            .build();
-    requireWireSize(response.getSerializedSize(), 1024, "original-new confirmation response");
+            .addConfirmationReadbackSha256(digest(confirmationReadbackSha256));
+    if (committedCapacityResult != null) {
+      if (request.committedCapacityRequest() == null) {
+        throw invalid("Unrequested committed capacity result");
+      }
+      builder.addCommittedCapacityResult(
+          TenantCapacityAdmissionGrpcCodec.toResponse(
+              request.committedCapacityRequest().attempt(), committedCapacityResult));
+    }
+    var response = builder.build();
     parseConfirmOriginalNewGameplayAdmissionResponse(request, response);
     return response;
   }
@@ -866,7 +976,10 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
       OriginalNewAdmissionConfirmationResponse response) {
     Objects.requireNonNull(request);
     Objects.requireNonNull(response);
-    requireWireSize(response.getSerializedSize(), 1024, "original-new confirmation response");
+    requireWireSize(
+        response.getSerializedSize(),
+        request.committedCapacityRequest() == null ? 1024 : MAX_CONFIRMATION_RESPONSE_WIRE_BYTES,
+        "original-new confirmation response");
     requireNoUnknownFields(response.getUnknownFields().asMap().isEmpty(), "confirmation response");
     requireSchema(one(response.getSchemaVersionList(), "confirmationResponse.schemaVersion"));
     UUID lineage =
@@ -897,8 +1010,20 @@ public final class AccountGameplayAdmissionLeaseGrpcCodec {
         || continuityExpires <= admissionAt) {
       throw invalid("Confirmation response differs from the exact original lease");
     }
+    TenantCapacityAdmission.Result capacityResult = null;
+    if (request.committedCapacityRequest() != null) {
+      capacityResult =
+          TenantCapacityAdmissionGrpcCodec.requireResponse(
+              request.committedCapacityRequest().attempt(),
+              one(
+                  response.getCommittedCapacityResultList(),
+                  "confirmation.committedCapacityResult"));
+      request.committedCapacityRequest().requireExactResult(capacityResult);
+    } else if (response.getCommittedCapacityResultCount() != 0) {
+      throw invalid("Unrequested committed capacity result");
+    }
     return new OriginalFinalAdmissionConfirmation(
-        lineage, lease, leaseFence, admissionAt, continuityExpires, readbackDigest);
+        lineage, lease, leaseFence, admissionAt, continuityExpires, readbackDigest, capacityResult);
   }
 
   public static AccountGameplayAdmissionLeaseResponse toIssueOriginalNewCredentialResponse(

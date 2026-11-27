@@ -88,6 +88,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
@@ -149,11 +151,36 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         byte[] sessionBytes = session.gs.physicalSession();
         assertPhysicalSession(sessionBytes, first);
         String rows = session.durableImage();
+        String capacity = session.capacityImage();
+        String decisions = session.capacityDecisionImage();
+        var retained =
+            session.capacityClient.commitWithSendBoundary(
+                session.capacityRequest,
+                CLOCK.millis() + 5_000L,
+                () -> AccountTenantCapacityClient.SendDisposition.READ_RETAINED);
+        assertThat(retained.identity()).isEqualTo(session.capacityRequest.identity());
+        assertThat(retained.admissionAttemptId())
+            .isEqualTo(session.capacityRequest.admissionAttemptId());
+        assertThat(retained.mutationDigest()).isEqualTo(session.capacityRequest.mutationDigest());
+        assertThat(session.durableImage()).isEqualTo(rows);
+        assertThat(session.capacityImage()).isEqualTo(capacity);
+        assertThat(session.capacityDecisionImage()).isEqualTo(decisions);
+        var physical = new java.util.TreeMap<>(session.gs.capacityStateImage());
+        var physicalLeases = session.gs.capacityLeaseOwnerImage();
+        var physicalWithoutLeaseValues = withoutLeaseValues(physical);
+        var regionFences = regionFenceImage(session);
+        session.stopCapacityServer();
         session.restartAccount();
         var retry = session.complete();
         assertThat(retry).isEqualTo(first);
         assertThat(MessageDigest.isEqual(session.gs.physicalSession(), sessionBytes)).isTrue();
         assertThat(session.durableImage()).isEqualTo(rows);
+        assertThat(session.capacityImage()).isEqualTo(capacity);
+        assertThat(session.capacityDecisionImage()).isEqualTo(decisions);
+        var replayedPhysical = new java.util.TreeMap<>(session.gs.capacityStateImage());
+        assertThat(withoutLeaseValues(replayedPhysical)).isEqualTo(physicalWithoutLeaseValues);
+        assertThat(session.gs.capacityLeaseOwnerImage()).isEqualTo(physicalLeases);
+        assertThat(regionFenceImage(session)).isEqualTo(regionFences);
         try (OriginalNewCredential replay = session.issue()) {
           assertSameCredential(before, replay, handle);
         }
@@ -648,8 +675,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                   .get(0, Long.class))
           .isZero();
       var settledState = new java.util.TreeMap<>(session.gs.capacityStateImage());
-      // The exact current owner can renew its ordinary private region lease during replay.
-      settledState.keySet().removeIf(key -> key.startsWith("redis:tick-executor-lease:"));
+      var settledLeases = session.gs.capacityLeaseOwnerImage();
+      var settledWithoutLeaseValues = withoutLeaseValues(settledState);
+      var regionFences = regionFenceImage(session);
       assertThat(settledState.keySet())
           .noneMatch(key -> key.startsWith("redis:session:game:capacity-execution:"));
 
@@ -661,8 +689,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(session.capacityDecisionImage()).isEqualTo(retainedDecision);
       assertThat(session.gsReceiptImage()).isEqualTo(transitionBefore);
       var replayState = new java.util.TreeMap<>(session.gs.capacityStateImage());
-      replayState.keySet().removeIf(key -> key.startsWith("redis:tick-executor-lease:"));
-      assertThat(replayState).isEqualTo(settledState);
+      assertThat(withoutLeaseValues(replayState)).isEqualTo(settledWithoutLeaseValues);
+      assertThat(session.gs.capacityLeaseOwnerImage()).isEqualTo(settledLeases);
+      assertThat(regionFenceImage(session)).isEqualTo(regionFences);
       assertThat(session.gs.finalReadCalls()).isZero();
       assertThat(session.genesis().tokenHash()).isEqualTo(credential.tokenSha256());
       assertThat(session.genesis().confirmedAdmissionAtMillis()).isNull();
@@ -670,25 +699,34 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
   }
 
-  @Test
-  void localSettlementRollbackPreservesAccountRefusalAndAllowsExactRetry() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void localSettlementRollbackPreservesAccountRefusalAndAllowsExactRetry(boolean openExpired)
+      throws Exception {
     try (Session session = session(CLOCK, 1, 2);
         OriginalNewCredential credential = session.issue()) {
       session.provisionCapacityRefusalBudget();
       var request = session.retainControlledEvaluation(true, "0");
       byte[] candidate = session.gs.physicalSession();
       var sql = session.gs.dsl();
+      sql.execute("CREATE SEQUENCE controlled_settlement_rollback_attempt");
       sql.execute(
           "CREATE FUNCTION controlled_settlement_rollback() RETURNS trigger LANGUAGE plpgsql"
-              + " AS $$ BEGIN RAISE EXCEPTION 'controlled settlement rollback'; END; $$");
+              + " AS $$ BEGIN PERFORM nextval('controlled_settlement_rollback_attempt');"
+              + " RAISE EXCEPTION 'controlled settlement rollback'; END; $$");
       sql.execute(
           "CREATE TRIGGER controlled_settlement_rollback BEFORE UPDATE"
               + " ON game_session_capacity_evidence_charge FOR EACH ROW"
+              + " WHEN (OLD.account_denial_id IS NULL AND NEW.account_denial_id IS NOT NULL)"
               + " EXECUTE FUNCTION controlled_settlement_rollback()");
       UUID denialId;
       try {
         var refusal = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
         denialId = assertExactAccountQuotaDenial(session, request, refusal);
+        assertThat(
+                sql.fetchSingle("SELECT is_called FROM controlled_settlement_rollback_attempt")
+                    .get(0, Boolean.class))
+            .isTrue();
         assertThat(
                 sql.fetchSingle(
                         "SELECT account_denial_id FROM game_session_capacity_evidence_charge WHERE"
@@ -705,10 +743,25 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         sql.execute(
             "DROP TRIGGER controlled_settlement_rollback ON game_session_capacity_evidence_charge");
         sql.execute("DROP FUNCTION controlled_settlement_rollback()");
+        sql.execute("DROP SEQUENCE controlled_settlement_rollback_attempt");
       }
       var beforeRetry = session.capacityDecisionImage();
-      var replay = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
-      assertThat(replay.durableDenialId()).isEqualTo(denialId);
+      if (openExpired) {
+        assertThat(
+                assertThrows(
+                    IllegalStateException.class,
+                    () ->
+                        session.gs.completeAfterInitialOpenWindow(
+                            session.client,
+                            session.jwks,
+                            session.jwt,
+                            session.capacityClient,
+                            request)))
+            .isNotInstanceOf(CapacityRefusedException.class);
+      } else {
+        var replay = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
+        assertThat(replay.durableDenialId()).isEqualTo(denialId);
+      }
       assertThat(session.capacityDecisionImage()).isEqualTo(beforeRetry);
       assertThat(
               sql.fetchSingle(
@@ -788,7 +841,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
           assertThrows(CapacityRefusedException.class, () -> session.complete(request));
       assertThat(assertExactAccountQuotaDenial(session, request, exactRetry))
           .isEqualTo(committedId);
-      assertThat(fault.calls.get()).isEqualTo(2);
+      assertThat(fault.calls.get()).isEqualTo(1);
+      assertThat(fault.retainedReads.get()).isEqualTo(1);
       assertThat(session.capacityDecisionImage()).isEqualTo(decision);
       assertThat(
               session
@@ -814,7 +868,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       session.stopCapacityServer();
       var replay = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
       assertThat(replay.durableDenialId()).isEqualTo(committedId);
-      assertThat(fault.calls.get()).isEqualTo(2);
+      assertThat(fault.calls.get()).isEqualTo(1);
+      assertThat(fault.retainedReads.get()).isEqualTo(1);
       assertThat(session.capacityDecisionImage()).isEqualTo(decision);
       assertThat(session.capacityImage()).isEqualTo(capacityBefore);
       assertThat(session.gsReceiptImage()).isEqualTo(transitionsBefore);
@@ -892,6 +947,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     private final TenantCapacityAdmission.Request exact;
     final java.util.concurrent.atomic.AtomicInteger calls =
         new java.util.concurrent.atomic.AtomicInteger();
+    final java.util.concurrent.atomic.AtomicInteger retainedReads =
+        new java.util.concurrent.atomic.AtomicInteger();
     final java.util.concurrent.atomic.AtomicReference<UUID> observedDenial =
         new java.util.concurrent.atomic.AtomicReference<>();
     final java.util.concurrent.atomic.AtomicBoolean successfullyDropped =
@@ -905,6 +962,12 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     public <ReqT, RespT> ClientCall<ReqT, RespT> interceptCall(
         MethodDescriptor<ReqT, RespT> method, CallOptions options, Channel next) {
       var delegate = next.newCall(method, options);
+      if (net.firedevops.firemud.account.v1.AccountServiceGrpc
+          .getReadTenantCapacityAdmissionOutcomeMethod()
+          .getFullMethodName()
+          .equals(method.getFullMethodName())) {
+        retainedReads.incrementAndGet();
+      }
       if (!net.firedevops.firemud.account.v1.AccountServiceGrpc
               .getCommitTenantCapacityAdmissionMethod()
               .getFullMethodName()
@@ -1096,6 +1159,12 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertPhysicalSession(second.physicalSession(), receipt);
       assertThat(session.gs.finalReadCalls()).isOne();
       assertProvisionalUnchanged(session, firstCandidate);
+
+      session.stopCapacityServer();
+      var replayAfterSlotReuse =
+          assertThrows(CapacityRefusedException.class, () -> session.complete(first));
+      assertThat(replayAfterSlotReuse.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+      assertThat(replayAfterSlotReuse.durableDenialId()).isEqualTo(denialId);
 
       var charges =
           session
@@ -1408,6 +1477,23 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                     session.gs.decisionId())
                 .get(0, String.class))
         .isEqualTo("PROVISIONAL");
+  }
+
+  private static java.util.Map<String, String> withoutLeaseValues(
+      java.util.Map<String, String> image) {
+    var result = new java.util.TreeMap<>(image);
+    result.keySet().removeIf(key -> key.startsWith("redis:tick-executor-lease:"));
+    return result;
+  }
+
+  private static java.util.List<Long> regionFenceImage(Session session) {
+    return session
+        .gs
+        .dsl()
+        .fetch(
+            "SELECT executor_fence FROM game_session_region_runtime_status"
+                + " ORDER BY tenant_id, game_instance_id, region_id")
+        .getValues("executor_fence", Long.class);
   }
 
   private static void assertCapacityFailure(
