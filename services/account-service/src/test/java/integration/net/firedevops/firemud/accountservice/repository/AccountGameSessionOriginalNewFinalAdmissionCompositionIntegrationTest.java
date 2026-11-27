@@ -805,6 +805,13 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(session.gsReceiptImage()).isEqualTo(transitionsBefore);
       assertProvisionalUnchanged(session, candidate);
 
+      // Restart the Account capacity receiver with a fresh owner and client. The exact
+      // denial must come from the retained database row after the lost response.
+      session.stopCapacityServer();
+      session.capacityOwner = session.account.capacityOwner(CLOCK);
+      session.startCapacityServer();
+      session.startCapacityClient(fault.channels());
+
       // Only the coordinator's OPEN-window check sees the advanced clock. The retained
       // charge, authenticated Account read and PostgreSQL settlement use their actual clocks.
       Clock afterOpen = Clock.offset(CLOCK, Duration.ofSeconds(60));
