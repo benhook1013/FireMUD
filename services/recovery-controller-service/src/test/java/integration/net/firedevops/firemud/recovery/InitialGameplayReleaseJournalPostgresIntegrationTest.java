@@ -96,7 +96,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.json.JsonMapper;
 
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 @SuppressWarnings("resource")
 class InitialGameplayReleaseJournalPostgresIntegrationTest {
   private static final String SCHEMA = "recovery_control";
@@ -1058,6 +1058,43 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void journalReadinessRequiresTheCompleteOperationAndPreparationKeys(boolean preparation)
+      throws Exception {
+    String database = "firemud_recovery_control";
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application = startPackagedApplication(true);
+        var connection =
+            DriverManager.getConnection(
+                packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      var schema = DSL.using(connection, SQLDialect.POSTGRES);
+      if (preparation) {
+        schema.execute(
+            """
+            ALTER TABLE recovery_control.initial_gameplay_release_preparation_receipt
+              DROP CONSTRAINT initial_gameplay_release_preparation_receipt_pkey,
+              ALTER COLUMN identity_digest TYPE CHAR(63),
+              ADD PRIMARY KEY (outbox_id)
+            """);
+      } else {
+        schema.execute(
+            """
+            ALTER TABLE recovery_control.initial_gameplay_release_operation
+              DROP CONSTRAINT initial_gameplay_release_operation_pkey CASCADE
+            """);
+      }
+      assertCompletePackagedMigrationReceipts(packagedUrl);
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
   private static HealthIndicator journalHealth(ConfigurableApplicationContext context) {
     return context.getBean("recoveryJournalHealthIndicator", HealthIndicator.class);
   }
@@ -1136,6 +1173,29 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       logger.detachAppender(logCapture);
       logger.setLevel(priorLevel);
       logCapture.stop();
+    }
+  }
+
+  @Test
+  void journalKeepsTheLockBoundEvenWhenTheSuppliedContextUsesStaticStatements() throws Exception {
+    try (var guardedConnection =
+        DriverManager.getConnection(
+            POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      DSLContext logging =
+          DSL.using(
+              guardedConnection,
+              SQLDialect.POSTGRES,
+              new Settings()
+                  .withStatementType(org.jooq.conf.StatementType.STATIC_STATEMENT)
+                  .withParamType(org.jooq.conf.ParamType.INLINED));
+      logging.execute("SET log_statement = 'mod'");
+      int logStart = POSTGRES.getLogs().length();
+      UUID lock = UUID.randomUUID();
+      var preparedJournal = new JooqInitialGameplayReleaseJournal(logging, tupleCodec);
+      assertThat(preparedJournal.create(scope(), lock).maintenanceLockIdentity()).isEqualTo(lock);
+      assertThat(POSTGRES.getLogs().substring(logStart))
+          .contains("INSERT INTO recovery_control.initial_gameplay_release_operation")
+          .doesNotContain(lock.toString());
     }
   }
 
@@ -2644,6 +2704,45 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         }
       }
     }
+  }
+
+  @Test
+  void intactPreparationAcknowledgementRejectsWrongStateAndAcceptsFreshProof() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatch = authorizedDispatch(base);
+    UUID operationId = dispatch.effect().operationId();
+    UUID effectId = dispatch.effect().effectId();
+    journal.recordEffectReadback(
+        dispatch,
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "original-preparation",
+            base.plusSeconds(5)),
+        base.plusSeconds(5));
+    String acknowledgement = storedOutbox(operationId, effectId);
+    EffectReadback wrong =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.OWNER_HANDOFF_APPLIED,
+            "wrong-preparation-state",
+            base.plusSeconds(6));
+    assertThatThrownBy(() -> journal.recordEffectReadback(dispatch, wrong, base.plusSeconds(6)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("did not prove its exact durable outcome");
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(acknowledgement);
+    EffectReadback refreshed =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "distinct-preparation",
+            base.plusSeconds(7));
+    assertThat(journal.recordEffectReadback(dispatch, refreshed, base.plusSeconds(7)).phase())
+        .isEqualTo(Phase.RELEASING);
+    assertThat(storedOutbox(operationId, effectId)).contains(tupleCodec.digest(refreshed));
   }
 
   @Test

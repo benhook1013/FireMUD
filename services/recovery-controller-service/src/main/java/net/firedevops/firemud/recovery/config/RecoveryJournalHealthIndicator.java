@@ -67,6 +67,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
           WHERE c.conrelid = 'recovery_control.initial_gameplay_release_preparation_receipt'::regclass
             AND c.contype = 'p' AND c.convalidated AND NOT c.condeferrable
             AND i.indisvalid AND i.indimmediate
+            AND cardinality(c.conkey) = 2
             AND c.conkey = ARRAY(
               SELECT a.attnum
               FROM pg_catalog.pg_attribute a
@@ -101,15 +102,15 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               WHERE a.attrelid = c.conrelid AND NOT a.attisdropped
                 AND a.attname IN ('outbox_id', 'attempt_id', 'attempt_ordinal')
               ORDER BY CASE a.attname WHEN 'outbox_id' THEN 0 WHEN 'attempt_id' THEN 1 ELSE 2 END))
-        AND EXISTS (
-          SELECT 1
+        AND (SELECT count(DISTINCT a.attname) = 2
           FROM pg_catalog.pg_index i
           JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid
              AND a.attnum = i.indkey[0] AND NOT a.attisdropped
           WHERE i.indrelid = 'recovery_control.initial_gameplay_release_operation'::regclass
             AND i.indisunique AND i.indisvalid AND i.indimmediate
             AND i.indpred IS NULL AND i.indnkeyatts = 1
-            AND a.attname = 'maintenance_lock_identity')
+            AND a.atttypid = 'pg_catalog.uuid'::regtype AND a.attnotnull
+            AND a.attname IN ('operation_id', 'maintenance_lock_identity'))
         AND EXISTS (
           SELECT 1 FROM pg_catalog.pg_attribute
           WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass

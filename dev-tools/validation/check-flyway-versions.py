@@ -29,7 +29,7 @@ RECOVERY_LOCATION = "classpath:db/recovery-control-migration"
 RECOVERY_SQL_ROOT = f"services/{RECOVERY_PROJECT}/src/main/resources/db/recovery-control-migration/"
 RECOVERY_HISTORY_TABLE = "flyway_schema_history_recovery_control"
 RECOVERY_SCHEMA = "recovery_control"
-PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties)$")
+PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties|xml)$")
 RUNTIME_DEPENDENCY_RE = re.compile(
     r'(?:implementation|api|runtimeOnly)\s*\(\s*project\(\s*":([^\"]+)"'
     r'|dependencies\.add\(\s*"(?:implementation|api|runtimeOnly)"\s*,\s*project\.project\(\s*":([^\"]+)"'
@@ -112,6 +112,8 @@ def current_snapshot(repo_root: Path) -> Snapshot:
              *repo_root.glob("services/*/src/main/resources/config/application*.y*ml"),
              *repo_root.glob("services/*/src/main/resources/application*.properties"),
              *repo_root.glob("services/*/src/main/resources/config/application*.properties"),
+             *repo_root.glob("services/*/src/main/resources/application*.xml"),
+             *repo_root.glob("services/*/src/main/resources/config/application*.xml"),
              *repo_root.glob("services/*/src/main/resources/db/migration/**/*"),
              *repo_root.glob("services/*/src/main/java/db/migration/**/*"),
              *repo_root.glob(f"{RECOVERY_SQL_ROOT}**/*"),
@@ -138,7 +140,9 @@ def parent_snapshot(repo_root: Path, base_ref: str) -> Snapshot:
     if commit.lower() != base_ref.lower():
         raise ValueError("--base-ref must identify a commit directly")
     paths = git(repo_root, "ls-tree", "-r", "-z", "--name-only", commit, "services", "buildSrc")
-    paths = [path.decode("utf-8") for path in paths.split(b"\0") if path]
+    # Git paths are arbitrary bytes. Keep them round-trippable until the scoped
+    # policy filter has established whether the path is a supported input.
+    paths = [path.decode("utf-8", errors="surrogateescape") for path in paths.split(b"\0") if path]
     return {path: git(repo_root, "show", f"{commit}:{path}") for path in paths if relevant_path(path)}
 
 
@@ -315,6 +319,9 @@ def recovery_flyway_locations(
     # check qualifies only the configuration sources it can evaluate completely.
     properties_pattern = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application(?:-[^/]+)?\.properties")
     if any(properties_pattern.fullmatch(path) for path in snapshot):
+        return None
+    xml_pattern = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application(?:-[^/]+)?\.xml")
+    if any(xml_pattern.fullmatch(path) for path in snapshot):
         return None
     # Config in the packaged config/ directory takes precedence over the root.
     # Within a location Spring Boot gives .yml precedence over .yaml.
@@ -850,6 +857,15 @@ def run_self_test() -> None:
         **recovery_history,
         recovery_config.removesuffix(".yml") + ".properties": b"spring.flyway.enabled=false\n",
     }, recovery_history, "historical effective migration no longer applied")
+    for xml_path in (
+        recovery_config.removesuffix(".yml") + ".xml",
+        recovery_config.replace("/application.yml", "/config/application.xml"),
+        recovery_config.replace("/application.yml", "/application-dev.xml"),
+        recovery_config.replace("/application.yml", "/config/application-dev.xml"),
+    ):
+        check("unqualified packaged XML cannot qualify Recovery migration inputs", {
+            **recovery_history, xml_path: b"<beans/>\n",
+        }, recovery_history, "historical effective migration no longer applied")
     check("unchecked packaged import cannot qualify recovery history", {
         **recovery_history,
         recovery_config: recovery_settings + b"spring.config.import: classpath:recovery-overrides.yml\n",
@@ -1270,16 +1286,23 @@ def run_self_test() -> None:
                 b"// outside Recovery",
         }
         unicode_migration = "services/unicode-service/src/main/resources/db/migration/V1__café.sql"
+        unrelated_non_utf8 = os.fsdecode(b"services/example-service/src/main/resources/unrelated-\xff.txt")
         combined_fixture = {**history, **recovery_history, unicode_migration: "-- café\n".encode()}
         for path, data in {**combined_fixture, **outside_recovery}.items():
             target = root / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
+        unrelated_target = root / unrelated_non_utf8
+        unrelated_target.parent.mkdir(parents=True, exist_ok=True)
+        unrelated_target.write_bytes(b"not a migration input\n")
         git(root, "init", "-q")
         git(root, "add", ".")
         git(root, "-c", "user.name=Flyway fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "history")
         base = git(root, "rev-parse", "HEAD").decode().strip()
-        if current_snapshot(root) != combined_fixture or parent_snapshot(root, base) != combined_fixture:
+        parent = parent_snapshot(root, base)
+        if current_snapshot(root) != combined_fixture:
+            raise AssertionError("current snapshot must remain scoped to migration and configuration inputs")
+        if parent != combined_fixture or unicode_migration not in parent or unrelated_non_utf8 in parent:
             raise AssertionError("snapshot migration discovery must scope the Recovery location to its owning service")
         sidecar_path = root / (recovery + "V1__journal.sql.conf")
         sidecar_path.write_text("shouldExecute=false", encoding="utf-8")

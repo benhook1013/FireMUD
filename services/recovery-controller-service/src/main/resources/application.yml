@@ -8,7 +8,8 @@ spring:
     # This endpoint must identify the isolated recovery-control PostgreSQL instance and volume.
     # Do not point it at the shared business PostgreSQL instance: business restores must not rewind
     # the recovery journal. There is deliberately no shared-database fallback.
-    url: jdbc:postgresql://${FIREMUD_RECOVERY_CONTROL_DB_HOST}:${FIREMUD_RECOVERY_CONTROL_DB_PORT:5432}/firemud_recovery_control?logServerErrorDetail=false
+    # Extended query mode keeps protected journal values in protocol-level bind parameters.
+    url: jdbc:postgresql://${FIREMUD_RECOVERY_CONTROL_DB_HOST}:${FIREMUD_RECOVERY_CONTROL_DB_PORT:5432}/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended
     username: ${FIREMUD_RECOVERY_CONTROL_DB_USER}
     password: ${FIREMUD_RECOVERY_CONTROL_DB_PASSWORD}
   flyway:

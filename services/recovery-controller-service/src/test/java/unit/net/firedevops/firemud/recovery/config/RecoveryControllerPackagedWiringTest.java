@@ -55,7 +55,7 @@ class RecoveryControllerPackagedWiringTest {
       assertThat(context.getBeansOfType(DataSource.class)).hasSize(1);
       assertThat(new BeanWrapperImpl(context.getBean(DataSource.class)).getPropertyValue("jdbcUrl"))
           .isEqualTo(
-              "jdbc:postgresql://recovery-control.invalid:5432/firemud_recovery_control?logServerErrorDetail=false");
+              "jdbc:postgresql://recovery-control.invalid:5432/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended");
       String redisConnectionFactory =
           "org.springframework.data.redis.connection.RedisConnectionFactory";
       ClassLoader loader = context.getClassLoader();

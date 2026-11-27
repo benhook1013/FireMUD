@@ -26,7 +26,9 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel;
 import org.jooq.DSLContext;
 import org.jooq.JSONB;
 import org.jooq.Record;
+import org.jooq.conf.ParamType;
 import org.jooq.conf.Settings;
+import org.jooq.conf.StatementType;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.springframework.dao.DuplicateKeyException;
@@ -47,6 +49,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Objects.requireNonNull(dsl, "dsl must not be null");
     Settings journalSettings = (Settings) dsl.configuration().settings().clone();
     journalSettings.setExecuteLogging(false);
+    journalSettings.setStatementType(StatementType.PREPARED_STATEMENT);
+    journalSettings.setParamType(ParamType.INDEXED);
     this.dsl = DSL.using(dsl.configuration().derive(journalSettings));
     this.tupleCodec = Objects.requireNonNull(tupleCodec, "tupleCodec must not be null");
   }
