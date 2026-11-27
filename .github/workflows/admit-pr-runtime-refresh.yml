@@ -48,3 +48,7 @@ jobs:
       - name: Runtime refresh rejected claim ${{ steps.admit.outputs.rejected_claim }}
         if: ${{ success() && steps.admit.outputs.rejected_claim != '' }}
         run: echo 'GitHub definitively rejected the verified claim at dispatch validation.'
+
+      - name: Runtime refresh pre-send-unavailable claim ${{ steps.admit.outputs['pre-send-unavailable_claim'] }}
+        if: ${{ success() && steps.admit.outputs['pre-send-unavailable_claim'] != '' }}
+        run: echo 'The verified claim owner could not recheck the exact comparison and stopped before invoking dispatch.'

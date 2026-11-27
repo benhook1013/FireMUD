@@ -31,12 +31,13 @@ function admissionFixture() {
   const outputs = new Map();
   const runs = [];
   const admissionRuns = new Map();
+  const admissionAttempts = new Map();
   const claimRefs = new Map();
   const claimTags = new Map();
   const receiverJobs = new Map();
   const state = {base: B, mergeParents: [B, C], keepHidden: false, afterInventory: null,
     labels: [{name: 'preview:priority'}], nextId: 301, lookups: [], pullObservations: [],
-    baseReads: 0, commitRefs: [], missingExactCommitReads: 0, waits: [], producerReads: []};
+    baseReads: 0, commitRefs: [], missingExactCommitReads: 0, waits: [], producerReads: [], ownerReads: []};
   const github = {rest: {
     pulls: {get: async ({pull_number}) => {
       assert.equal(pull_number, 7);
@@ -60,7 +61,7 @@ function admissionFixture() {
         if (claimRefs.has(ref)) throw Object.assign(new Error('ref already exists'), {status: 422});
         const record = {ref, object: {type: 'tag', sha}};
         claimRefs.set(ref, record);
-        if (/^refs\/tags\/firemud-runtime-refresh-(unsent|rejected)\//.test(ref)) {
+        if (/^refs\/tags\/firemud-runtime-refresh-(unsent|rejected|pre-send-unavailable)\//.test(ref)) {
           if (state.loseLocatorResponse) throw new Error('response lost after locator creation');
           return {status: 201, data: record};
         }
@@ -85,11 +86,17 @@ function admissionFixture() {
         return {data: {id: 42, path: runtimePath}};
       },
       getWorkflowRun: async ({run_id}) => {
-        if (admissionRuns.has(run_id)) return {data: admissionRuns.get(run_id)};
+        if (admissionRuns.has(run_id)) {
+          const run = admissionRuns.get(run_id);
+          state.ownerReads.push(run.run_attempt);
+          return {data: structuredClone(run)};
+        }
         state.producerReads.push(run_id);
         const run = runs.find(run => run.id === run_id);
         return {data: state.refreshProducer ? state.refreshProducer(run) : run};
       },
+      getWorkflowRunAttempt: async ({run_id, attempt_number}) =>
+        ({data: structuredClone(admissionAttempts.get(`${run_id}:${attempt_number}`))}),
       listJobsForWorkflowRunAttempt: async ({run_id, attempt_number}) => {
         const jobs = receiverJobs.get(`${run_id}:${attempt_number}`) || [];
         return {data: {total_count: jobs.length, jobs}};
@@ -139,7 +146,7 @@ function admissionFixture() {
     state.afterWait?.();
     if (!state.keepHidden && state.newRun && !runs.includes(state.newRun)) runs.push(state.newRun);
   }};
-  return {admission, makeRun, makePullRequestRun, runs, admissionRuns, sent, state,
+  return {admission, makeRun, makePullRequestRun, runs, admissionRuns, admissionAttempts, sent, state,
     warnings, messages, outputs, claimRefs, claimTags, receiverJobs};
 }
 
@@ -157,6 +164,7 @@ function completeOwnerReceiptAttempt(f, kind = 'unsent') {
     steps: [{name: `Runtime refresh ${kind} claim ${f.outputs.get(`${kind}_claim`)}`,
       status: 'completed', conclusion: 'success'}]};
   f.admissionRuns.set(run.id, run);
+  f.admissionAttempts.set(`${run.id}:${run.run_attempt}`, run);
   f.receiverJobs.set(`${run.id}:${run.run_attempt}`, [job]);
   return {run, job};
 }
@@ -562,6 +570,44 @@ test('an exact native provider rejection receipt allows one currently valid succ
   assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['1', '2']);
 });
 
+test('a completed rejection receipt survives a later admission rerun', async () => {
+  const f = admissionFixture();
+  f.state.dispatchError = dispatchValidationError();
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatch-rejected');
+  const {run} = completeOwnerReceiptAttempt(f, 'rejected');
+  f.admissionRuns.set(run.id, {...run, run_attempt: 2, status: 'in_progress', conclusion: null});
+  delete f.state.dispatchError;
+  assert.equal(await admitOrdinaryRefresh(f), 'dispatched-observed');
+  assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['1', '2']);
+});
+
+test('an inconclusive final identity leaves an exact unsent receipt and never dispatches', async () => {
+  const f = admissionFixture();
+  f.state.afterClaim = () => {
+    f.state.pullObservations.push(...Array.from({length: 6}, () => ({mergeable: null})));
+  };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'pre-send-unavailable');
+  assert.equal(f.sent.length, 0);
+  assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+  completeOwnerReceiptAttempt(f, 'pre-send-unavailable');
+  assert.equal(await admitOrdinaryRefresh(f), 'dispatched-observed');
+  assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['2']);
+});
+
+test('a thrown final identity read records a pre-send outcome', async () => {
+  const f = admissionFixture();
+  const exactPull = f.admission.github.rest.pulls.get;
+  let failFinalRead = false;
+  f.state.afterClaim = () => { failFinalRead = true; };
+  f.admission.github.rest.pulls.get = async request => {
+    if (failFinalRead) throw Object.assign(new Error('temporarily unavailable'), {status: 502});
+    return exactPull(request);
+  };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'pre-send-unavailable');
+  assert.equal(f.sent.length, 0);
+  assert.match(f.outputs.get('pre-send-unavailable_claim'), /^generation 1 run 600 attempt 1 tag /);
+});
+
 test('ambiguous dispatch responses never produce rejection or no-send receipts', async t => {
   const variants = {
     'bare 422': e => { delete e.response; },
@@ -680,14 +726,14 @@ test('an exact successful native preview refusal allows ordinary CI to claim the
   assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['2']);
 });
 
-test('only the successful current admission attempt can prove an unsent or rejected claim', async t => {
+test('only the exact successful admission attempt can prove an unsent or rejected claim', async t => {
   const mismatches = {
     'duplicate locator': (f, {kind}) => {
       const locator = [...f.claimRefs.values()].find(ref => ref.ref.includes(`/firemud-runtime-refresh-${kind}/`));
       const ref = locator.ref.replace('/600/1', '/600/2');
       f.claimRefs.set(ref, {...locator, ref});
     },
-    'missing native run': f => f.admissionRuns.clear(),
+    'missing native run': f => { f.admissionRuns.clear(); f.admissionAttempts.clear(); },
     'wrong workflow': (f, {run}) => { run.workflow_id = 42; },
     'wrong event': (f, {run}) => { run.event = 'workflow_dispatch'; },
     'wrong branch': (f, {run}) => { run.head_branch = 'stacked'; },
@@ -722,6 +768,9 @@ test('only the successful current admission attempt can prove an unsent or rejec
         delete f.state.dispatchError;
         assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
         assert.equal(f.sent.length, kind === 'unsent' ? 0 : 1);
+        if (kind === 'unsent' && name === 'attempt moves during marker read') {
+          assert.deepEqual(f.state.ownerReads, [1, 2]);
+        }
       });
     }
   }
@@ -956,9 +1005,13 @@ test('both wake inputs retain intent in one non-replacing exact tuple queue on t
   assert.deepEqual(job.steps.find(step => step.uses.startsWith('actions/checkout@')).with,
     {ref: '${{ github.workflow_sha }}', 'persist-credentials': 'false'});
   assert.match(job.steps.find(step => step.id === 'admit').with.script, /input: context.payload.client_payload/);
-  for (const [marker, kind] of [[job.steps.at(-2), 'unsent'], [job.steps.at(-1), 'rejected']]) {
+  for (const [marker, kind] of [[job.steps.at(-3), 'unsent'], [job.steps.at(-2), 'rejected']]) {
     assert.equal(marker.name, `Runtime refresh ${kind} claim \${{ steps.admit.outputs.${kind}_claim }}`);
     assert.equal(marker.if, `\${{ success() && steps.admit.outputs.${kind}_claim != '' }}`);
     assert.equal(marker['continue-on-error'], undefined);
   }
+  const unavailable = job.steps.at(-1);
+  assert.equal(unavailable.name, "Runtime refresh pre-send-unavailable claim \${{ steps.admit.outputs['pre-send-unavailable_claim'] }}");
+  assert.equal(unavailable.if, "\${{ success() && steps.admit.outputs['pre-send-unavailable_claim'] != '' }}");
+  assert.equal(unavailable['continue-on-error'], undefined);
 });

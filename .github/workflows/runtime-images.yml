@@ -862,8 +862,16 @@ jobs:
               const {data: inventory} = await github.rest.actions.listWorkflowRunArtifacts(fanoutOptions({
                 ...context.repo, run_id: run.id, name: artifactName, per_page: 100, page: 1,
               }));
-              if (inventory?.total_count !== 1 || !Array.isArray(inventory.artifacts) || inventory.artifacts.length !== 1) return false;
-              const artifact = inventory.artifacts[0];
+              if (!Array.isArray(inventory?.artifacts) || inventory.artifacts.length > 100 ||
+                  inventory.total_count !== inventory.artifacts.length ||
+                  new Set(inventory.artifacts.map(artifact => artifact?.id)).size !== inventory.artifacts.length) return false;
+              const currentArtifacts = inventory.artifacts.filter(artifact => {
+                const created = timestamp(artifact?.created_at);
+                return created >= Math.floor(started / 1000) * 1000 &&
+                  created <= Math.floor(completed / 1000) * 1000 + 999;
+              });
+              if (currentArtifacts.length !== 1) return false;
+              const artifact = currentArtifacts[0];
               const artifactTime = timestamp(artifact?.created_at);
               if (!Number.isSafeInteger(artifact?.id) || artifact.id <= 0 || artifact.name !== artifactName ||
                   artifact.expired !== true || artifact.workflow_run?.id !== run.id || artifact.workflow_run.head_sha !== run.head_sha ||
@@ -901,7 +909,7 @@ jobs:
                 [publisherName, publisher.display_title].includes(candidate.name) &&
                 candidate.repository?.full_name === repository && candidate.head_repository?.full_name === repository;
               if (!exactPublisher(publisher) || publisher.id <= 0 || !Number.isSafeInteger(publisher.id) ||
-                  publisher.run_attempt <= 0 || !Number.isSafeInteger(publisher.run_attempt) ||
+                  publisher.run_attempt !== 1 ||
                   publisher.workflow_id !== owner.id || publisher.head_branch !== defaultBranch || !shaPattern.test(publisher.head_sha || "") ||
                   !(publisher.path === publisherPath || publisher.path === `${publisherPath}@refs/heads/${defaultBranch}`) ||
                   (publisher.event === "repository_dispatch" ? publisher.display_title !== `${dispatchTitle} ${attemptSuffix}` :
@@ -913,12 +921,26 @@ jobs:
               }));
               if (!Array.isArray(evidence?.jobs) || evidence.jobs.length > 100 || evidence.jobs.length !== evidence.total_count) return false;
               const fixed = evidence.jobs.filter(value => value?.name === "Publish Fixed PR Merge Image Tags");
-              if (fixed.length !== 1 || !Number.isSafeInteger(fixed[0].id) || fixed[0].id <= 0 || fixed[0].run_id !== publisher.id || fixed[0].run_attempt !== publisher.run_attempt ||
-                  fixed[0].head_sha !== publisher.head_sha || fixed[0].status !== "completed" || fixed[0].conclusion !== "failure" ||
-                  !Array.isArray(fixed[0].steps)) return false;
-              const write = fixed[0].steps.filter(step => step?.name === "Publish fixed PR image tags");
-              if (write.length !== 1 || write[0].status !== "completed" || write[0].conclusion !== "skipped" ||
-                  fixed[0].steps.some(step => step?.name?.startsWith("PR runtime publication receipt") && step.conclusion !== "skipped")) return false;
+              const exactJob = job => Number.isSafeInteger(job?.id) && job.id > 0 &&
+                job.run_id === publisher.id && job.run_attempt === publisher.run_attempt &&
+                job.head_sha === publisher.head_sha && job.status === "completed";
+              if (fixed.length !== 1 || !exactJob(fixed[0])) return false;
+              if (fixed[0].conclusion === "skipped") {
+                const resolvers = evidence.jobs.filter(value => value?.name === "Resolve Exact Runtime Publication Source");
+                if (resolvers.length !== 1 || !exactJob(resolvers[0]) || resolvers[0].conclusion !== "failure" ||
+                    !Array.isArray(resolvers[0].steps)) return false;
+                const resolverSteps = resolvers[0].steps.filter(step => step?.name === "Resolve successful exact source run");
+                const expirySteps = resolvers[0].steps.filter(step => step?.name?.startsWith("Exact runtime artifact expired"));
+                if (resolverSteps.length !== 1 || resolverSteps[0].status !== "completed" ||
+                    resolverSteps[0].conclusion !== "success" || expirySteps.length !== 1 ||
+                    expirySteps[0].name !== `Exact runtime artifact expired source-${run.id}-${run.run_attempt} artifact-${artifact.id} ${artifact.digest}` ||
+                    expirySteps[0].status !== "completed" || expirySteps[0].conclusion !== "failure") return false;
+              } else {
+                if (fixed[0].conclusion !== "failure" || !Array.isArray(fixed[0].steps)) return false;
+                const write = fixed[0].steps.filter(step => step?.name === "Publish fixed PR image tags");
+                if (write.length !== 1 || write[0].status !== "completed" || write[0].conclusion !== "skipped" ||
+                    fixed[0].steps.some(step => step?.name?.startsWith("PR runtime publication receipt") && step.conclusion !== "skipped")) return false;
+              }
               const refreshed = await readPublishers();
               if (!refreshed || refreshed.length !== 1 || !exactPublisher(refreshed[0])) return false;
               const {data: current} = await github.rest.actions.getWorkflowRun(fanoutOptions({...context.repo, run_id: publisher.id}));
@@ -949,7 +971,8 @@ jobs:
                 if (successful) throw new Error(`Successful typed runtime producer ${run.id} has incomplete exact attempt jobs`);
                 return false;
               }
-              const producers = data.jobs.filter(job => job?.name === "PR Full-Stack Smoke (runtime-required=true)");
+              const producers = data.jobs.filter(job => ["PR Full-Stack Smoke (runtime-required=true)",
+                "PR Full-Stack Smoke (runtime-required=false)"].includes(job?.name));
               const job = producers[0];
               if (producers.length !== 1 || !Number.isSafeInteger(job.id) || job.id <= 0 ||
                   job.run_id !== run.id || job.run_attempt !== run.run_attempt || job.head_sha !== run.head_sha ||
@@ -977,7 +1000,16 @@ jobs:
                 if (!Number.isFinite(markerStart) || !Number.isFinite(markerEnd) ||
                     markerStart < jobStart || markerEnd < markerStart || markerEnd > jobEnd) return false;
               }
-              if (successful && !diagnostic) {
+              const requiresSmoke = job.name === "PR Full-Stack Smoke (runtime-required=true)";
+              if (!requiresSmoke) {
+                const upload = job.steps.filter(step => step?.name === "Upload preview image artifact");
+                if (diagnostic || !successful || upload.length !== 1 || upload[0].status !== "completed" ||
+                    upload[0].conclusion !== "success" || !Number.isFinite(timestamp(upload[0].started_at)) ||
+                    !Number.isFinite(timestamp(upload[0].completed_at)) || timestamp(upload[0].started_at) < jobStart ||
+                    timestamp(upload[0].completed_at) < timestamp(upload[0].started_at) ||
+                    timestamp(upload[0].completed_at) > jobEnd) return false;
+              }
+              if (successful && !diagnostic && requiresSmoke) {
                 // A green run or job alone can be a no-op or the diagnostic exception.
                 // Require affirmative ordinary smoke and authenticated cleanup in this attempt.
                 for (const name of ["Run credential-free full-stack smoke", "Stop smoke stack",
@@ -992,7 +1024,9 @@ jobs:
               if (successful && (!matchesSelected(latest) || latest.created_at !== run.created_at)) {
                 throw new Error(`Successful typed runtime producer ${run.id} changed during exact attempt proof`);
               }
-              return matchesSelected(latest) ? (diagnostic ? "diagnostic" : rebuild ? "expired-unpublished" : "ordinary") : false;
+              return matchesSelected(latest)
+                ? (diagnostic ? "diagnostic" : rebuild ? "expired-unpublished" : requiresSmoke ? "ordinary" : "artifact-only")
+                : false;
             };
             // Bind both admission reads to the same terminal attempt; never cache native proof.
             const disregardedTypedAttempts = new Map();

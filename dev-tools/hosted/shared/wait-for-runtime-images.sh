@@ -120,11 +120,19 @@ workflow_id = run.get("workflow_id") if wait_mode == "pull-request" else "-"
 if wait_mode == "pull-request":
     if any(type(value) is not int or value <= 0 for value in (run_attempt, workflow_id)):
         raise SystemExit(1)
-    if native and (any(
-        not isinstance(run.get(field), dict) or run[field].get("full_name") != native[1]
-        for field in ("repository", "head_repository")
-    ) or (run.get("event") == "pull_request" and run.get("head_sha") != head_sha)):
-        raise SystemExit(1)
+    if native:
+        repositories = [run.get(field) for field in ("repository", "head_repository")]
+        if any(not isinstance(value, dict) or not clean_field(value.get("full_name")) for value in repositories):
+            raise SystemExit(1)
+        if any(value["full_name"] != native[1] for value in repositories):
+            print("missing")
+            raise SystemExit(0)
+        if run.get("event") == "pull_request":
+            if not isinstance(run.get("head_sha"), str) or not re.fullmatch(r"[0-9a-f]{40}", run["head_sha"]):
+                raise SystemExit(1)
+            if run["head_sha"] != head_sha:
+                print("missing")
+                raise SystemExit(0)
 run_id = run.get("id")
 if type(run_id) is not int or run_id <= 0:
     raise SystemExit(1)
@@ -459,6 +467,42 @@ print(f"{artifact['id']}\t{digest}")
 PY_PUBLICATION
 }
 
+# A newer attempt can supersede this source before its publisher appears.
+check_current_source() {
+  local publisher_deadline="$1" source_run_id="$2" source_run_attempt="$3"
+  local source_created_at="$4" source_event="$5" source_workflow_id="$6"
+  local remaining current_payload current_state current_kind current_id current_status current_conclusion
+  local _current_url current_event current_created_at current_attempt current_workflow_id
+  remaining=$((publisher_deadline - SECONDS))
+  if (( remaining <= 0 )) ||
+    ! current_payload="$(timeout "${remaining}s" gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${source_run_id}")" ||
+    ! current_state="$(read_run_state native "${GITHUB_REPOSITORY}" <<<"${current_payload}")"; then
+    printf 'Current runtime-image producer evidence is unavailable for run %s attempt %s; retrying.\n' \
+      "${source_run_id}" "${source_run_attempt}" >&2
+    return 1
+  fi
+  IFS=$'\t' read -r current_kind current_id current_status current_conclusion _current_url current_event \
+    current_created_at current_attempt current_workflow_id <<<"${current_state}"
+  if [[ "${current_kind}" != "found" || "${current_id}" != "${source_run_id}" ||
+    "${current_event}" != "${source_event}" || "${current_workflow_id}" != "${source_workflow_id}" ||
+    "${current_created_at}" != "${source_created_at}" ]]; then
+    printf 'Current runtime-image producer does not match the selected run %s for %s.\n' \
+      "${source_run_id}" "${image_tag}" >&2
+    return 2
+  fi
+  if (( current_attempt > source_run_attempt )); then
+    printf 'Runtime-image producer %s advanced from attempt %s to %s; selecting fresh proof.\n' \
+      "${source_run_id}" "${source_run_attempt}" "${current_attempt}" >&2
+    return 75
+  fi
+  if [[ "${current_attempt}" != "${source_run_attempt}" ||
+    "${current_status}" != "completed" || "${current_conclusion}" != "success" ]]; then
+    printf 'Current runtime-image producer does not match the successful run %s attempt %s for %s.\n' \
+      "${source_run_id}" "${source_run_attempt}" "${image_tag}" >&2
+    return 2
+  fi
+}
+
 wait_for_pr_publisher() {
   local source_run_id="$1"
   local source_run_attempt="$2"
@@ -468,6 +512,7 @@ wait_for_pr_publisher() {
   local coverage_unavailable=false
   local publisher_start_epoch="${SECONDS}"
   local publisher_deadline=$((SECONDS + publisher_timeout_seconds))
+  if (( publisher_deadline > deadline )); then publisher_deadline="$deadline"; fi
   while (( SECONDS < publisher_deadline )); do
     local publisher_payload publisher_state event_payload publisher_event fetch_failed
     publisher_payload=""
@@ -501,6 +546,14 @@ wait_for_pr_publisher() {
     IFS=$'\t' read -r state run_id run_status run_conclusion run_url publisher_attempt \
       publisher_workflow_id publisher_event publisher_title <<<"${publisher_state}"
 
+    if [[ "${state}" == "missing" || "${run_status}" != "completed" || "${run_conclusion}" != "success" ]]; then
+      local source_status=0
+      check_current_source "${publisher_deadline}" "${source_run_id}" "${source_run_attempt}" \
+        "${source_created_at}" "${source_event}" "${source_workflow_id}" || source_status=$?
+      if (( source_status > 1 )); then return "${source_status}"; fi
+      if (( source_status == 1 )); then sleep "${sleep_seconds}"; continue; fi
+    fi
+
     if [[ "${state}" == "missing" ]]; then
       local elapsed_seconds=$((SECONDS - publisher_start_epoch))
       if (( elapsed_seconds >= missing_workflow_timeout_seconds )); then
@@ -521,30 +574,22 @@ wait_for_pr_publisher() {
         "${source_run_id}" "${source_run_attempt}" "${source_workflow_id}" "${source_event}" "$((publisher_deadline - SECONDS))")"; then
         printf 'Exact PR image publication and artifact proof is unavailable for run %s attempt %s.\n' \
           "${run_id}" "${publisher_attempt}" >&2
+        local source_status=0
+        check_current_source "${publisher_deadline}" "${source_run_id}" "${source_run_attempt}" \
+          "${source_created_at}" "${source_event}" "${source_workflow_id}" || source_status=$?
+        if (( source_status > 1 )); then return "${source_status}"; fi
         sleep "${sleep_seconds}"
         continue
       fi
-      local remaining=$((publisher_deadline - SECONDS)) current_payload current_state
-      local current_kind current_id current_status current_conclusion _current_url current_event _current_created_at
-      local current_attempt current_workflow_id artifact_id artifact_digest
-      if (( remaining <= 0 )) ||
-        ! current_payload="$(timeout "${remaining}s" gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${source_run_id}")" ||
-        ! current_state="$(read_run_state native "${GITHUB_REPOSITORY}" <<<"${current_payload}")"; then
-        printf 'Current runtime-image producer evidence is unavailable for run %s attempt %s.\n' \
-          "${source_run_id}" "${source_run_attempt}" >&2
-        return 1
-      fi
-      IFS=$'\t' read -r current_kind current_id current_status current_conclusion _current_url current_event \
-        _current_created_at current_attempt current_workflow_id <<<"${current_state}"
-      if (( SECONDS >= publisher_deadline )) ||
-        [[ "${current_kind}" != "found" || "${current_id}" != "${source_run_id}" ||
-        "${current_attempt}" != "${source_run_attempt}" || "${current_event}" != "${source_event}" ||
-        "${current_workflow_id}" != "${source_workflow_id}" || "${current_status}" != "completed" ||
-        "${current_conclusion}" != "success" ]]; then
-        printf 'Current runtime-image producer does not match the successful run %s attempt %s for %s.\n' \
-          "${source_run_id}" "${source_run_attempt}" "${image_tag}" >&2
-        return 1
-      fi
+      local source_status=0 artifact_id artifact_digest
+      check_current_source "${publisher_deadline}" "${source_run_id}" "${source_run_attempt}" \
+        "${source_created_at}" "${source_event}" "${source_workflow_id}" || source_status=$?
+      case "${source_status}" in
+        0) ;;
+        1) sleep "${sleep_seconds}"; continue ;;
+        *) return "${source_status}" ;;
+      esac
+      (( SECONDS < publisher_deadline )) || break
       IFS=$'\t' read -r artifact_id artifact_digest <<<"${artifact_evidence}"
       printf 'Trusted PR image publisher %s succeeded for %s using source artifact %s (%s).\n' \
         "${run_id}" "${image_tag}" "${artifact_id}" "${artifact_digest}"
@@ -611,7 +656,14 @@ while (( SECONDS < deadline )); do
     printf 'Matching runtime-images workflow %s succeeded for %s after %ss.\n' \
       "${run_id}" "${image_tag}" "$((SECONDS - start_epoch))"
     if [[ "${wait_mode}" == "pull-request" ]]; then
-      wait_for_pr_publisher "${run_id}" "${run_attempt}" "${run_created_at}" "${run_event}" "${run_workflow_id}"
+      publisher_status=0
+      wait_for_pr_publisher "${run_id}" "${run_attempt}" "${run_created_at}" "${run_event}" "${run_workflow_id}" ||
+        publisher_status=$?
+      if (( publisher_status == 75 )); then
+        sleep "${sleep_seconds}"
+        continue
+      fi
+      if (( publisher_status != 0 )); then exit 1; fi
     fi
     exit 0
   fi

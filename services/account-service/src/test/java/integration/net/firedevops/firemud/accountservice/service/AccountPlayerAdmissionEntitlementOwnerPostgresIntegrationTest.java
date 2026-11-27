@@ -460,6 +460,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     assertThat(f.clock.instant()).isBefore(evaluationExpiresAt);
     f.clock.setInstant(evaluationExpiresAt.plus(1, ChronoUnit.MICROS));
     assertThat(f.clock.instant()).isAfter(evaluationExpiresAt);
+    awaitDatabaseExpiry(f, evaluationExpiresAt);
     var retainedReservations =
         f.dsl
             .fetch(
@@ -499,11 +500,9 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             NAMESPACE,
             f.clock)) {
       recovered.init();
-      assertThat(
-              recovered
-                  .readRetainedAdmissionDenial(request, f.clock.millis() + 5_000L)
-                  .durableDenialId())
-          .isEqualTo(decision.get());
+      var refusal = recovered.readRetainedAdmissionDenial(request, f.clock.millis() + 5_000L);
+      assertThat(refusal.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+      assertThat(refusal.durableDenialId()).isEqualTo(decision.get());
     } finally {
       server.shutdownNow();
       assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
@@ -545,19 +544,25 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     Fixture f = fixture(true, true);
     var request = capacityRequest(f);
     var expiry = request.evidence().expiresAt();
-    f.clock.setInstant(expiry.plus(1, ChronoUnit.MICROS));
-    org.awaitility.Awaitility.await("PostgreSQL reaches the retained evaluation expiry")
-        .atMost(java.time.Duration.ofSeconds(20))
-        .until(() ->
-            !f.dsl
-                .fetchSingle("SELECT clock_timestamp()")
-                .get(0, OffsetDateTime.class)
-                .toInstant()
-                .isBefore(expiry));
+    awaitDatabaseExpiry(f, expiry);
     String usage =
         "SELECT held_units, used_units, usage_revision FROM account_tenant_capacity_usage"
             + " WHERE tenant_uuid=? AND owner_service='game-session-service'";
     var originalUsage = f.dsl.fetchSingle(usage, f.tenantId).intoMap();
+    f.clock.setInstant(expiry.minus(1, ChronoUnit.MICROS));
+    assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
+        .isInstanceOfSatisfying(
+            CapacityException.class,
+            error -> {
+              assertThat(error.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE);
+              assertThat(error.durableDenialId()).isNull();
+            });
+    assertThat(f.dsl.fetchSingle(usage, f.tenantId).intoMap()).isEqualTo(originalUsage);
+    assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations"))).isZero();
+    assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isZero();
+    assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_refusal_slots"))).isZero();
+
+    f.clock.setInstant(expiry.plus(1, ChronoUnit.MICROS));
     var decisionId = new AtomicReference<UUID>();
     assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
         .isInstanceOfSatisfying(
@@ -574,10 +579,24 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
         .isInstanceOfSatisfying(
             CapacityException.class,
-            error -> assertThat(error.durableDenialId()).isEqualTo(decisionId.get()));
+            error -> {
+              assertThat(error.code()).isEqualTo(Failure.CAPACITY_EVALUATION_EXPIRED);
+              assertThat(error.durableDenialId()).isEqualTo(decisionId.get());
+            });
     assertThat(f.dsl.fetchSingle(usage, f.tenantId).intoMap()).isEqualTo(originalUsage);
     assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations"))).isZero();
     assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_refusal_slots"))).isOne();
+  }
+
+  private static void awaitDatabaseExpiry(Fixture f, Instant expiry) {
+    org.awaitility.Awaitility.await("PostgreSQL reaches the retained evaluation expiry")
+        .atMost(java.time.Duration.ofSeconds(20))
+        .until(() ->
+            !f.dsl
+                .fetchSingle("SELECT clock_timestamp()")
+                .get(0, OffsetDateTime.class)
+                .toInstant()
+                .isBefore(expiry));
   }
 
   private static TenantCapacityAdmission.Request capacityRequest(Fixture f) {
