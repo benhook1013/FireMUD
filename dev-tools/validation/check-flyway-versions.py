@@ -296,6 +296,20 @@ def recovery_flyway_locations(
             properties[path] = child
             flatten_properties(child, (*prefix, *parts), properties, ambiguous)
 
+    def reject_recursive_aliases(value: object, active: set[int], config_path: str) -> None:
+        if not isinstance(value, (dict, list)):
+            return
+        identity = id(value)
+        if identity in active:
+            raise ValueError(f"{config_path}: recursive YAML aliases are unsupported")
+        active.add(identity)
+        try:
+            children = value.values() if isinstance(value, dict) else value
+            for child in children:
+                reject_recursive_aliases(child, active, config_path)
+        finally:
+            active.remove(identity)
+
     resource_root = f"services/{project}/src/main/resources"
     # Properties and imported files can override the packaged YAML. This static
     # check qualifies only the configuration sources it can evaluate completely.
@@ -322,31 +336,12 @@ def recovery_flyway_locations(
         except yaml.YAMLError as error:
             raise ValueError(f"{config_path}: invalid packaged Spring configuration: {error}") from error
 
-        def reject_recursive_aliases(value: object, active: set[int]) -> None:
-            if not isinstance(value, (dict, list)):
-                return
-            identity = id(value)
-            if identity in active:
-                raise ValueError(f"{config_path}: recursive YAML aliases are unsupported")
-            active.add(identity)
-            try:
-                children = value.values() if isinstance(value, dict) else value
-                for child in children:
-                    if isinstance(value, dict) and isinstance(child, dict):
-                        reject_recursive_aliases(child, active)
-                    elif isinstance(value, dict) and isinstance(child, list):
-                        reject_recursive_aliases(child, active)
-                    elif isinstance(value, list):
-                        reject_recursive_aliases(child, active)
-            finally:
-                active.remove(identity)
-
         for document in documents:
             if document is None:
                 continue
             if not isinstance(document, dict):
                 return None
-            reject_recursive_aliases(document, set())
+            reject_recursive_aliases(document, set(), config_path)
             properties: dict[str, object] = {}
             ambiguous: set[str] = set()
             flatten_properties(document, (), properties, ambiguous)
