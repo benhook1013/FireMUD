@@ -66,7 +66,7 @@ assert value["visible"] is True
 assert value["publicProductionRealm"] is True
 assert value["requiresCharacterSelection"] is False
 assert value["stateScope"] == "SHARED"
-assert value["characterCreationPolicy"] == "ALLOW_NEW"
+assert value["characterCreationPolicy"] == "PRESEEDED_ONLY"
 assert value["gameSessionUriSan"] == "spiffe://firemud/ns/dev/sa/game-session-service"
 assert value["worldManagementUriSan"] == "spiffe://firemud/ns/dev/sa/world-management-service"
 assert len(value["worldManagementLeafSha256"]) == 64

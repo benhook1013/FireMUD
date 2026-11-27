@@ -380,6 +380,7 @@ DEV_TOOLS_TEST_DISCOVERY_COMMAND = "python3 -m unittest discover -s dev-tools/te
 # Frozen full-run ownership: splitting lanes must neither lose nor repeat work.
 REMAINING_FULL_RUN_COMMANDS = (
     'bash ./dev-tools/tests/cloc-report-contract.sh',
+    'bash ./dev-tools/tests/pre-v1-gate-waivers-contract.sh',
     'bash ./dev-tools/tests/ci-lightweight-scope-contract.sh',
     'bash ./dev-tools/tests/gradle-dependency-recovery-contract.sh',
     'bash ./dev-tools/tests/workflow-version-authority-contract.sh',

@@ -154,6 +154,14 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       justification = "MeterRegistry is injected and not exposed")
   private final MeterRegistry meterRegistry;
 
+  private net.firedevops.firemud.gamedesign.repository.GameRepository gameRepository;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setGameRepository(
+      net.firedevops.firemud.gamedesign.repository.GameRepository repository) {
+    this.gameRepository = repository;
+  }
+
   @Override
   @Timed(value = "gamedesignGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
@@ -824,6 +832,49 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               meterRegistry, logger, "GetVersionState", "INVALID_ARGUMENT", ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "GetVersionState", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.resolveCanonicalTenant")
+  public void resolveCanonicalTenant(
+      net.firedevops.firemud.gamedesign.v1.ResolveCanonicalTenantRequest request,
+      StreamObserver<net.firedevops.firemud.gamedesign.v1.ResolveCanonicalTenantResponse>
+          responseObserver) {
+    var builder = net.firedevops.firemud.gamedesign.v1.ResolveCanonicalTenantResponse.newBuilder();
+    try {
+      requireCanonicalTenantReadAccess();
+      if (gameRepository == null) {
+        throw new IllegalStateException("Game Design tenant identity is unavailable");
+      }
+      var identity =
+          gameRepository
+              .findRuntimeTenantIdentityByTenantKey(request.getTenantId())
+              .orElseThrow(() -> new IllegalArgumentException("Unknown Game Design tenant"));
+      if (identity.canonicalTenantId() == null) {
+        throw new IllegalArgumentException("Game Design tenant has no canonical identity");
+      }
+      builder.setCanonicalTenantId(identity.canonicalTenantId().toString());
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ResolveCanonicalTenant",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ResolveCanonicalTenant",
+              "INVALID_ARGUMENT",
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "ResolveCanonicalTenant", ex));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
@@ -2326,6 +2377,18 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   private void requirePublishedReleaseBundleReadAccess() {
     requireCandidatePeerThenDeny(
         Set.of("game-session-service", "world-management-service", "automation-scripting-service"));
+  }
+
+  /** Exact same-namespace Game Session workload; tenant identity grants no launch authority. */
+  private void requireCanonicalTenantReadAccess() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+        || peer == null
+        || !workloadNamespace.equals(peer.namespace())
+        || !peer.isService("game-session-service")) {
+      throw new AdminAuthorizationException(
+          "Exact same-namespace Game Session workload identity is required");
+    }
   }
 
   private void requireCandidatePeerThenDeny(Set<String> candidateServices) {

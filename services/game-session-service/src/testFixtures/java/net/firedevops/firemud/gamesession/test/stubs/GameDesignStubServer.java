@@ -36,9 +36,30 @@ public final class GameDesignStubServer implements AutoCloseable {
                             .build());
                     responseObserver.onCompleted();
                   }
+
+                  @Override
+                  public void resolveCanonicalTenant(
+                      net.firedevops.firemud.gamedesign.v1.ResolveCanonicalTenantRequest request,
+                      StreamObserver<
+                              net.firedevops.firemud.gamedesign.v1.ResolveCanonicalTenantResponse>
+                          responseObserver) {
+                    responseObserver.onNext(
+                        net.firedevops.firemud.gamedesign.v1.ResolveCanonicalTenantResponse
+                            .newBuilder()
+                            .setCanonicalTenantId(
+                                canonicalTenantFor(request.getTenantId()).toString())
+                            .build());
+                    responseObserver.onCompleted();
+                  }
                 })
             .build()
             .start();
+  }
+
+  /** Deterministic canonical tenant UUID for a stub Game Design tenant key. */
+  public static java.util.UUID canonicalTenantFor(String tenantKey) {
+    return java.util.UUID.nameUUIDFromBytes(
+        ("tenant-" + tenantKey).getBytes(java.nio.charset.StandardCharsets.UTF_8));
   }
 
   public String endpoint() {

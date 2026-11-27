@@ -514,6 +514,9 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
                       .CanonicalGameplayCapacityOriginCustodyRedisScriptContribution(),
                   new net.firedevops.firemud.gamesession.service
                       .CanonicalGameplayOriginalNewOriginFinalAdmissionRedisScriptContribution()));
+      // Slow loopback key generation happens before the 15 s controlled account lease is minted.
+      CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources.preparePki(
+          directory, "test");
       var decision = fixture.originalPreparedDecisionWithControlledAccountLease(withOtherCandidate);
       var inventory = new CanonicalGameplayBindingInventoryRepository(sql);
       CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(redis, scripts, inventory, tags)

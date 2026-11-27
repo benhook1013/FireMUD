@@ -29,8 +29,13 @@ public final class AccountTenantCapacityGrpcService
   private final AccountTenantCapacityWorkloadGuard guard;
 
   public AccountTenantCapacityGrpcService(AccountTenantCapacityOwner owner, String namespace) {
+    this(owner, new AccountTenantCapacityWorkloadGuard(namespace));
+  }
+
+  public AccountTenantCapacityGrpcService(
+      AccountTenantCapacityOwner owner, AccountTenantCapacityWorkloadGuard guard) {
     this.owner = Objects.requireNonNull(owner);
-    guard = new AccountTenantCapacityWorkloadGuard(namespace);
+    this.guard = Objects.requireNonNull(guard);
   }
 
   public Server createUnregisteredServer(

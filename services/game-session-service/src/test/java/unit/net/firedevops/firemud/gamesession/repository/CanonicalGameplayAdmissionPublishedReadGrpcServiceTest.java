@@ -27,8 +27,10 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecis
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
+import net.firedevops.firemud.common.world.CanonicalGameplayRunOwnedFixtureSourceEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldRunOwnedFixtureLifecycleEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionLaunchTarget;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
@@ -509,6 +511,82 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
     assertFailure(f.publishedObserver, Status.Code.FAILED_PRECONDITION);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"ACTIVE", "TERMINATING"})
+  void strictReadServesRunOwnedFixtureFromRetainedSourceAndFixtureLifecycleOnlyWhenActive(
+      String lifecycleStatus) {
+    Fixture f = new Fixture();
+    var request = GetPublishedRealmAdmissionOwnerReadRequest.getDefaultInstance();
+    var parsed = mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmRequest.class);
+    var selector = strictSelector(f.selector);
+    when(parsed.selector()).thenReturn(selector);
+    f.configureStrictRoute(selector);
+    String provenance = "sha256:" + "e".repeat(64);
+    var association =
+        f.launches
+            .readForInitialAdmission(
+                "test", TENANT, selector.realmUuid(), selector.canonicalGameInstanceUuid())
+            .orElseThrow()
+            .association();
+    var descriptor = f.binding.descriptor();
+    when(association.isRunOwnedFixture()).thenReturn(true);
+    when(association.launchBindingEvidence()).thenReturn(null);
+    when(association.descriptor()).thenReturn(descriptor);
+    when(association.attestationDigest()).thenReturn(provenance);
+    when(association.fixtureProvenanceDigest()).thenReturn(provenance);
+    var fixtureSource = mock(CanonicalGameplayRunOwnedFixtureSourceEvidence.class);
+    when(fixtureSource.fixturePolicySealEvidenceDigest()).thenReturn(provenance);
+    when(f.published.readCurrentAdmissionSource(selector))
+        .thenReturn(
+            new CanonicalPublishedPlayerRouteReadService.AdmissionSource(null, fixtureSource));
+    when(f.world.readRunOwnedFixture(any(), any()))
+        .thenAnswer(
+            invocation ->
+                new WorldRunOwnedFixtureLifecycleEvidence(
+                    invocation.getArgument(0),
+                    provenance,
+                    "sha256:" + "f".repeat(64),
+                    lifecycleStatus,
+                    7,
+                    1));
+    var response =
+        GetPublishedRealmAdmissionOwnerReadResponse.newBuilder().addSchemaVersion(1).build();
+    var encodedWorld = ArgumentCaptor.forClass(WorldRunOwnedFixtureLifecycleEvidence.class);
+    try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
+      codec
+          .when(
+              () ->
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
+                      request))
+          .thenReturn(parsed);
+      codec
+          .when(
+              () ->
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmFixtureResponse(
+                      eq(parsed), eq(fixtureSource), any(), encodedWorld.capture()))
+          .thenReturn(response);
+      f.service.getPublishedRealmAdmissionOwnerRead(request, f.publishedObserver);
+    }
+    verify(f.world, never()).read(any());
+    verify(f.published, never())
+        .readCurrent(any(CanonicalGameplayRosterOwnerReadEvidence.Request.class));
+    if (!"ACTIVE".equals(lifecycleStatus)) {
+      verify(f.published, times(1)).readCurrentAdmissionSource(selector);
+      assertFailure(f.publishedObserver, Status.Code.FAILED_PRECONDITION);
+      return;
+    }
+    verify(f.published, times(2)).readCurrentAdmissionSource(selector);
+    var worldRequest = encodedWorld.getValue().request();
+    assertThat(worldRequest.readRequestId()).isEqualTo(selector.requestUuid());
+    assertThat(worldRequest.canonicalVersionId()).isEqualTo(selector.canonicalVersionUuid());
+    assertThat(worldRequest.expectedDescriptorRequestDigest())
+        .isEqualTo("sha256:" + "a".repeat(64));
+    assertThat(worldRequest.expectedDescriptorResultDigest()).isEqualTo("sha256:" + "b".repeat(64));
+    assertThat(worldRequest.expectedReleaseAttestationDigest()).isEqualTo(provenance);
+    verify(f.publishedObserver).onNext(response);
+    verify(f.publishedObserver).onCompleted();
+  }
+
   @Test
   void closedInvalidRequestAndAbsentCompositionFailWithoutSourceReads() {
     Fixture f = new Fixture();
@@ -545,6 +623,7 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
 
   private static CanonicalPlayableTarget route() {
     var route = mock(CanonicalPlayableTarget.class);
+    when(route.admissionDecisionTarget()).thenCallRealMethod();
     when(route.initialAdmissionOriginKind())
         .thenReturn(CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER);
     when(route.ownerProofOutcome())

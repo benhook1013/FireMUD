@@ -31,11 +31,28 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * first-NEW session-binding bridge.
  */
 final class CanonicalGameplayRegionLeaseOwner {
+  /**
+   * Package-private placement port. Production reads World's authenticated initial placement; the
+   * pre-v1 run-owned fixture stand-in (ADR 0185 waiver) supplies its fixture lifecycle and start
+   * room instead. Either result is still revalidated at every binding gate.
+   */
+  @FunctionalInterface
+  interface PlacementSource {
+    CanonicalInitialPlayerLocationRegionResolver.ResolvedRegion resolve(
+        CanonicalInitialPlayerLocationRequest request, Deadline operationDeadline);
+
+    static PlacementSource world(CanonicalInitialPlayerLocationRegionResolver resolver) {
+      Objects.requireNonNull(resolver, "worldRegionResolver");
+      return (request, deadline) ->
+          deadline == null ? resolver.resolve(request) : resolver.resolve(request, deadline);
+    }
+  }
+
   private final CanonicalGameplayBindingInventoryRepository bindingInventory;
   private final CanonicalGameplayRegionRuntimeStatusRepository statusRepository;
   private final CanonicalGameplayRegionLeaseRedisOwner redisOwner;
   private final CanonicalGameplayRegionIncarnationSource incarnationSource;
-  private final CanonicalInitialPlayerLocationRegionResolver worldRegionResolver;
+  private final PlacementSource placementSource;
   private final RuntimeIdentity runtimeIdentity;
   private final Duration leaseTtl;
   private final Clock clock;
@@ -49,11 +66,31 @@ final class CanonicalGameplayRegionLeaseOwner {
       RuntimeIdentity runtimeIdentity,
       Duration leaseTtl,
       Clock clock) {
+    this(
+        bindingInventory,
+        statusRepository,
+        redisOwner,
+        incarnationSource,
+        PlacementSource.world(worldRegionResolver),
+        runtimeIdentity,
+        leaseTtl,
+        clock);
+  }
+
+  CanonicalGameplayRegionLeaseOwner(
+      CanonicalGameplayBindingInventoryRepository bindingInventory,
+      CanonicalGameplayRegionRuntimeStatusRepository statusRepository,
+      CanonicalGameplayRegionLeaseRedisOwner redisOwner,
+      CanonicalGameplayRegionIncarnationSource incarnationSource,
+      PlacementSource placementSource,
+      RuntimeIdentity runtimeIdentity,
+      Duration leaseTtl,
+      Clock clock) {
     this.bindingInventory = Objects.requireNonNull(bindingInventory, "bindingInventory");
     this.statusRepository = Objects.requireNonNull(statusRepository, "statusRepository");
     this.redisOwner = Objects.requireNonNull(redisOwner, "redisOwner");
     this.incarnationSource = Objects.requireNonNull(incarnationSource, "incarnationSource");
-    this.worldRegionResolver = Objects.requireNonNull(worldRegionResolver, "worldRegionResolver");
+    this.placementSource = Objects.requireNonNull(placementSource, "placementSource");
     this.runtimeIdentity = Objects.requireNonNull(runtimeIdentity, "runtimeIdentity");
     this.leaseTtl = Objects.requireNonNull(leaseTtl, "leaseTtl");
     if (leaseTtl.isZero() || leaseTtl.isNegative()) {
@@ -1038,8 +1075,8 @@ final class CanonicalGameplayRegionLeaseOwner {
         || !acknowledgement.canonicalRegionId().equals(source.canonicalRegionId())
         || acknowledgement.worldLifecycleEpoch() != source.lifecycleEpoch()
         || acknowledgement.worldLifecycleRowVersion() != source.lifecycleRowVersion()
-        || !acknowledgement.worldCaptureId().equals(source.captureId())
-        || !acknowledgement.worldGraphSha256().equals(source.graphSha256())
+        || !Objects.equals(acknowledgement.worldCaptureId(), source.captureId())
+        || !Objects.equals(acknowledgement.worldGraphSha256(), source.graphSha256())
         || !acknowledgement.worldPreparationInputDigest().equals(source.preparationInputDigest())
         || !acknowledgement.worldSourceDigest().equals(worldSourceDigest)
         || !acknowledgement.regionEpoch().equals(BigInteger.valueOf(status.regionEpoch()))
@@ -1326,9 +1363,8 @@ final class CanonicalGameplayRegionLeaseOwner {
     }
 
     CanonicalInitialPlayerLocationRegionResolver.ResolvedRegion resolved =
-        operationDeadline == null
-            ? worldRegionResolver.resolve(request)
-            : worldRegionResolver.resolve(request, operationDeadline);
+        placementSource.resolve(request, operationDeadline);
+    if (resolved == null) throw unavailable();
     var assignment = resolved.lifecycleAssignment();
     if (!identity.tenantId().equals(assignment.request().canonicalTenantId())
         || !identity.gameInstanceId().equals(assignment.request().canonicalGameInstanceId())

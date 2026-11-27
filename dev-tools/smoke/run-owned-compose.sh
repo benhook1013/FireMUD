@@ -470,7 +470,7 @@ expected = {
     "publicProductionRealm": True,
     "requiresCharacterSelection": False,
     "stateScope": "SHARED",
-    "characterCreationPolicy": "ALLOW_NEW",
+    "characterCreationPolicy": "PRESEEDED_ONLY",
     "gameSessionLeafSha256": game_session_leaf_sha256,
     "gameSessionUriSan": "spiffe://firemud/ns/dev/sa/game-session-service",
     "worldManagementLeafSha256": world_management_leaf_sha256,
@@ -633,7 +633,7 @@ value = {
     "publicProductionRealm": True,
     "requiresCharacterSelection": False,
     "stateScope": "SHARED",
-    "characterCreationPolicy": "ALLOW_NEW",
+    "characterCreationPolicy": "PRESEEDED_ONLY",
     "gameSessionLeafSha256": game_session_leaf_sha256,
     "gameSessionUriSan": "spiffe://firemud/ns/dev/sa/game-session-service",
     "worldManagementLeafSha256": world_management_leaf_sha256,
@@ -700,6 +700,7 @@ require_run_owned_compose_service() {
   local service="$1"
   local container_port="$2"
   local host_port="$3"
+  local host_address="${4:-}"
   local ids id service_id="" count=0 binding bindings
 
   require_run_owned_compose_project || return 1
@@ -730,7 +731,10 @@ require_run_owned_compose_service() {
     return 1
   }
   while IFS= read -r binding; do
-    [[ "$binding" == *":$host_port" ]] && return 0
+    if [[ "$binding" == *":$host_port" \
+        && ( -z "$host_address" || "$binding" == "$host_address:$host_port" ) ]]; then
+      return 0
+    fi
   done <<<"$bindings"
   _firemud_smoke_fail "Compose service $service does not publish ${container_port}/tcp on host port $host_port."
 }
@@ -797,6 +801,19 @@ release_run_owned_compose_project() {
   esac
 }
 
+_firemud_smoke_down_owned_project() {
+  local argument
+  for argument in "$@"; do
+    case "$argument" in
+      -p|-p?*|--project-name|--project-name=*)
+        _firemud_smoke_fail "Compose teardown uses only the authenticated project name."
+        return 1
+        ;;
+    esac
+  done
+  docker compose --project-name "$FIREMUD_SMOKE_EXPECTED_PROJECT" "$@" down -v --remove-orphans
+}
+
 stop_run_owned_compose_project() {
   _firemud_smoke_prepare || return 1
   _firemud_smoke_lock || return 1
@@ -809,7 +826,7 @@ stop_run_owned_compose_project() {
   _firemud_smoke_resource_status "$FIREMUD_SMOKE_EXPECTED_PROJECT" || status=$?
   case "$status" in
     0)
-      docker compose "$@" down -v --remove-orphans || {
+      _firemud_smoke_down_owned_project "$@" || {
         _firemud_smoke_unlock
         return 1
       }
@@ -831,6 +848,31 @@ stop_run_owned_compose_project() {
     _firemud_smoke_unlock
     return 1
   fi
+}
+
+reset_run_owned_fixture_for_next_transport() {
+  if [[ "${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}" != true ]]; then
+    _firemud_smoke_fail "transport reset requires the verified initial-admission fixture."
+    return 1
+  fi
+  require_run_owned_compose_project || return 1
+  _firemud_smoke_prepare_authored_world_source_receipt_directory reuse-only || return 1
+  local receipt="$FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH/source-receipt.json"
+  if [[ -L "$receipt" || ! -f "$receipt" ]]; then
+    _firemud_smoke_fail "expected the first transport's regular authored-world source receipt."
+    return 1
+  fi
+
+  _firemud_smoke_down_owned_project "$@" || return 1
+  local status=0
+  _firemud_smoke_resource_status "$FIREMUD_SMOKE_EXPECTED_PROJECT" || status=$?
+  if ((status != 1)); then
+    _firemud_smoke_fail "could not prove the claimed project is empty before the second transport."
+    return 1
+  fi
+  # Retain the claim, certificate authority and fixture capability. The newly seeded
+  # Game Design owner publishes a fresh receipt for this same isolated project.
+  unlink -- "$receipt"
 }
 
 # Proof wrappers share one local resource admission with nested jar builds.

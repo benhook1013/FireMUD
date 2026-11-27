@@ -21,6 +21,10 @@ import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.common.world.WorldRunOwnedFixtureLifecycleEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldFixedPresetResources;
+import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
+import net.firedevops.firemud.worldmanagement.service.RoomService;
 import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -114,6 +118,215 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
   }
 
   /**
+   * Reads the exact run-owned fixture lifecycle. A fixture has no Human release attestation: its
+   * request carries the retained fixture descriptor digests and the fixture provenance digest in
+   * place of the release attestation. Any other association is an ordinary empty read.
+   */
+  public Optional<WorldRunOwnedFixtureLifecycleEvidence> readRunOwnedFixture(
+      WorldCanonicalInstanceLifecycleEvidence.Request request) {
+    Objects.requireNonNull(request, "request");
+    requireNoActiveTransaction("World run-owned fixture lifecycle read");
+    return Optional.ofNullable(
+        transaction.execute(
+            status -> {
+              requireReadOnlyRepeatableReadOwnerTransaction();
+              var snapshot = readRunOwnedFixtureSnapshotInCurrentOwnerTransaction(request);
+              return snapshot == null ? null : snapshot.lifecycle();
+            }));
+  }
+
+  /**
+   * Reads the actual fixed-preset starter room and exact ACTIVE fixture lifecycle in one owner
+   * snapshot. This supplies neither placement nor admission authority and never adopts legacy
+   * rooms.
+   */
+  public Optional<FixtureStartRoom> readRunOwnedFixtureStartRoom(
+      WorldCanonicalInstanceLifecycleEvidence.Request request) {
+    Objects.requireNonNull(request, "request");
+    requireNoActiveTransaction("World run-owned fixture start-room read");
+    return Optional.ofNullable(
+        transaction.execute(
+            status -> {
+              requireReadOnlyRepeatableReadOwnerTransaction();
+              var snapshot = readRunOwnedFixtureSnapshotInCurrentOwnerTransaction(request);
+              if (snapshot == null || !"ACTIVE".equals(snapshot.lifecycle().lifecycleStatus())) {
+                return null;
+              }
+              long roomId = requireRunOwnedFixtureStartRoom(snapshot.association());
+              return new FixtureStartRoom(snapshot.lifecycle(), "R-" + roomId);
+            }));
+  }
+
+  public record FixtureStartRoom(WorldRunOwnedFixtureLifecycleEvidence lifecycle, String roomKey) {}
+
+  /**
+   * Reads the existing room snapshot only after the exact ACTIVE fixture and its mapped starter
+   * room match the requested room key in the same owner snapshot. Private numeric selectors are
+   * resolved solely from retained World evidence; inconsistent room readback is refused.
+   */
+  public Optional<FixtureStartRoomView> readRunOwnedFixtureStartRoomView(
+      WorldCanonicalInstanceLifecycleEvidence.Request request,
+      String expectedRoomKey,
+      String preferredLocale,
+      RoomService rooms) {
+    Objects.requireNonNull(request, "request");
+    Objects.requireNonNull(expectedRoomKey, "expectedRoomKey");
+    Objects.requireNonNull(rooms, "rooms");
+    requireNoActiveTransaction("World run-owned fixture start-room view read");
+    return Optional.ofNullable(
+        transaction.execute(
+            status -> {
+              requireReadOnlyRepeatableReadOwnerTransaction();
+              var fixture = readRunOwnedFixtureSnapshotInCurrentOwnerTransaction(request);
+              if (fixture == null || !"ACTIVE".equals(fixture.lifecycle().lifecycleStatus())) {
+                return null;
+              }
+              long roomId = requireRunOwnedFixtureStartRoom(fixture.association());
+              if (!("R-" + roomId).equals(expectedRoomKey)) {
+                return null;
+              }
+              if (!Boolean.FALSE.equals(
+                  dsl.fetchValue(
+                      "SELECT EXISTS (SELECT 1 FROM character_location"
+                          + " WHERE canonical_game_instance_id = ? AND runtime_room_instance_id = ?)",
+                      request.canonicalGameInstanceId(),
+                      roomId))) {
+                throw invalid("Run-owned starter LOOK does not support populated World occupancy");
+              }
+              var keys = fixture.association().runOwnedFixture().worldPrivateKeys();
+              RoomSnapshotDto snapshot =
+                  rooms.getRoomSnapshot(
+                      keys.tenantId(), keys.gameInstanceId(), roomId, preferredLocale);
+              if (snapshot == null
+                  || !Long.valueOf(roomId).equals(snapshot.roomInstanceRowId())
+                  || !Long.valueOf(keys.tenantId()).equals(snapshot.tenantId())
+                  || !Long.valueOf(keys.gameInstanceId()).equals(snapshot.gameInstanceId())) {
+                throw invalid("Run-owned fixture room snapshot differs from its mapped room scope");
+              }
+              return new FixtureStartRoomView(fixture.lifecycle(), snapshot);
+            }));
+  }
+
+  public record FixtureStartRoomView(
+      WorldRunOwnedFixtureLifecycleEvidence lifecycle, RoomSnapshotDto snapshot) {}
+
+  private record RunOwnedFixtureSnapshot(
+      WorldCanonicalInstanceAssociation association,
+      WorldRunOwnedFixtureLifecycleEvidence lifecycle) {}
+
+  private RunOwnedFixtureSnapshot readRunOwnedFixtureSnapshotInCurrentOwnerTransaction(
+      WorldCanonicalInstanceLifecycleEvidence.Request request) {
+    try {
+      Optional<WorldCanonicalInstanceAssociation> maybeAssociation =
+          associationRepository.readOwnerAssociationInOwnerTransaction(
+              request.canonicalGameInstanceId());
+      if (maybeAssociation.isEmpty()) return null;
+      WorldCanonicalInstanceAssociation association = maybeAssociation.orElseThrow();
+      if (!association.isRunOwnedFixture() || !matchesFixtureRequest(request, association)) {
+        return null;
+      }
+      Record row =
+          dsl.fetchOne(
+              "SELECT status,lifecycle_epoch,row_version FROM world_instance WHERE id=?",
+              association.worldInstanceId());
+      if (row == null) return null;
+      var fixture = association.runOwnedFixture();
+      return new RunOwnedFixtureSnapshot(
+          association,
+          new WorldRunOwnedFixtureLifecycleEvidence(
+              request,
+              fixture.fixtureProvenanceDigest(),
+              fixture.preparationInputDigest(),
+              required(row, "status", String.class),
+              required(row, "lifecycle_epoch", Long.class),
+              required(row, "row_version", Long.class)));
+    } catch (org.springframework.dao.DataAccessException | DataAccessException unavailable) {
+      throw unavailable;
+    } catch (
+        WorldCanonicalInstanceAssociationRepository.InvalidAssociationEvidenceException
+            inconsistent) {
+      throw new InvalidLifecycleEvidenceException(
+          "Canonical World fixture association source evidence is inconsistent", inconsistent);
+    }
+  }
+
+  private long requireRunOwnedFixtureStartRoom(WorldCanonicalInstanceAssociation association) {
+    var keys = association.runOwnedFixture().worldPrivateKeys();
+    UUID templateId = RunOwnedWorldFixedPresetResources.starterRoomTemplateId();
+    Record room =
+        dsl.fetchOne(
+            "SELECT m.runtime_room_instance_id,m.runtime_row_id,m.template_private_row_key,"
+                + "r.id AS room_row_id,r.room_instance_row_id,r.template_room_id "
+                + "FROM world_canonical_instance_topology_identity m "
+                + "JOIN room_instance r ON r.id=m.runtime_row_id "
+                + "JOIN region_instance ri ON ri.id=r.region_instance_id "
+                + "JOIN zone_instance zi ON zi.id=r.zone_instance_id "
+                + "WHERE m.world_instance_id=? AND m.canonical_game_instance_id=? "
+                + "AND m.family='ROOM' AND m.template_id=? "
+                + "AND r.tenant_id=? AND r.game_instance_id=? "
+                + "AND ri.world_instance_id=? AND ri.tenant_id=? AND ri.game_instance_id=? "
+                + "AND zi.tenant_id=? AND zi.game_instance_id=? "
+                + "AND zi.region_instance_id=ri.id",
+            association.worldInstanceId(),
+            association.identity().canonicalGameInstanceId(),
+            templateId,
+            keys.tenantId(),
+            keys.gameInstanceId(),
+            association.worldInstanceId(),
+            keys.tenantId(),
+            keys.gameInstanceId(),
+            keys.tenantId(),
+            keys.gameInstanceId());
+    if (room == null) {
+      throw invalid("Active run-owned fixture lacks its exact mapped scoped starter room");
+    }
+    Long roomId = room.get("runtime_room_instance_id", Long.class);
+    Long templateRowId = room.get("template_private_row_key", Long.class);
+    if (roomId == null
+        || roomId <= 0
+        || !roomId.equals(room.get("runtime_row_id", Long.class))
+        || !roomId.equals(room.get("room_row_id", Long.class))
+        || !roomId.equals(room.get("room_instance_row_id", Long.class))
+        || templateRowId == null
+        || templateRowId <= 0
+        || !templateRowId.equals(room.get("template_room_id", Long.class))) {
+      throw invalid("Run-owned fixture starter ROOM mapping differs from its actual runtime room");
+    }
+    return roomId;
+  }
+
+  private boolean matchesFixtureRequest(
+      WorldCanonicalInstanceLifecycleEvidence.Request request,
+      WorldCanonicalInstanceAssociation association) {
+    var identity = association.identity();
+    Record descriptor =
+        dsl.fetchOne(
+            "SELECT descriptor_request_digest, descriptor_result_digest "
+                + "FROM world_canonical_instance_association "
+                + "WHERE canonical_game_instance_id = ? AND canonical_authority_kind = 'RUN_OWNED_FIXTURE'",
+            identity.canonicalGameInstanceId());
+    return descriptor != null
+        && request.canonicalGameInstanceId().equals(identity.canonicalGameInstanceId())
+        && request.targetNamespace().equals(identity.targetNamespace())
+        && request.canonicalTenantId().equals(identity.canonicalTenantId())
+        && request.worldSlug().equals(identity.worldSlug())
+        && request.playableStateNamespaceId().equals(identity.playableStateNamespaceId())
+        && request.playableStateScope().equals(identity.playableStateScope())
+        && request.publicProduction() == identity.publicProduction()
+        && request.controlPlaneRequestId().equals(identity.controlPlaneRequestId())
+        && request.canonicalVersionId().equals(association.canonicalVersionId())
+        && request
+            .expectedDescriptorRequestDigest()
+            .equals(required(descriptor, "descriptor_request_digest", String.class))
+        && request
+            .expectedDescriptorResultDigest()
+            .equals(required(descriptor, "descriptor_result_digest", String.class))
+        && request
+            .expectedReleaseAttestationDigest()
+            .equals(association.runOwnedFixture().fixtureProvenanceDigest());
+  }
+
+  /**
    * Reconstructs the same exact owner evidence while a writable activation transaction holds it.
    */
   Optional<WorldCanonicalInstanceLifecycleEvidence> readForActivationInOwnerTransaction(
@@ -142,7 +355,8 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
                   request.canonicalGameInstanceId());
       if (maybeAssociation.isEmpty()) return null;
       WorldCanonicalInstanceAssociation association = maybeAssociation.orElseThrow();
-      if (!matchesRequest(request, association)) return null;
+      // The run-owned fixture has no Human launch binding; it answers readRunOwnedFixture only.
+      if (association.isRunOwnedFixture() || !matchesRequest(request, association)) return null;
 
       Record preparation =
           dsl.fetchOne(

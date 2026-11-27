@@ -174,6 +174,30 @@ public final class DirectTextAuthenticatedLobbyOwner {
     return observe(retained, original, verified, custody);
   }
 
+  /** Borrows the persisted current PLAY scope under the same exact LOGIN and transport custody. */
+  public <T> T withCurrentScope(
+      InitialGameplayLoginAttemptCoordinates original,
+      CanonicalGameplayLoginResult verified,
+      DirectTextAuthenticatedLobbyCustody custody,
+      DirectTextAuthenticatedLobbyScope expected,
+      Function<ObservedDirectTextTransport, T> action) {
+    requireNoTransaction();
+    return current(
+        original,
+        verified,
+        custody,
+        transport -> {
+          var selected =
+              transaction.execute(
+                  status -> repository.current(original, verified, transport, clock));
+          if (selected == null || !selected.recordId().equals(expected.recordId())) {
+            throw unavailable();
+          }
+          selected.requireCurrent(original, verified, transport, clock);
+          return action.apply(transport);
+        });
+  }
+
   private Observation observe(
       DirectTextAuthenticatedLobbyJoin originalJoin,
       InitialGameplayLoginAttemptCoordinates original,

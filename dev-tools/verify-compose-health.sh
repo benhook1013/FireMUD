@@ -7,7 +7,9 @@ if (( $# > 0 )); then
 else
   COMPOSE_FILES=(-f "$ROOT_DIR/docker/docker-compose.yml" -f "$ROOT_DIR/docker/docker-compose.override.yml")
 fi
-WAIT_TIMEOUT_SECONDS="${SMOKE_HEALTH_TIMEOUT_SECONDS:-240}"
+# Game Session starts only after Account publishes its first JWT signer, and signer readiness waits
+# out the 300 s maximum validator JWKS cache age (AccountJwtReadinessProbeRepository) first.
+WAIT_TIMEOUT_SECONDS="${SMOKE_HEALTH_TIMEOUT_SECONDS:-600}"
 POLL_INTERVAL_SECONDS="${SMOKE_HEALTH_POLL_INTERVAL_SECONDS:-5}"
 REQUIRED_SERVICES=(
   account-service

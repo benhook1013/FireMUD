@@ -11,6 +11,7 @@ import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.repository.PreV1CanonicalPlayAdmissionOwner;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginOwner;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyOwner;
 import org.springframework.beans.factory.ObjectProvider;
@@ -24,16 +25,19 @@ public final class AuthenticatedDirectTextCommandReceiver {
   private final ObjectProvider<InitialGameplayLoginOwner> logins;
   private final ObjectProvider<DirectTextWorldSelectionService> selections;
   private final ObjectProvider<DirectTextAuthenticatedLobbyOwner> lobbies;
+  private final ObjectProvider<PreV1CanonicalPlayAdmissionOwner> admissions;
 
   public AuthenticatedDirectTextCommandReceiver(
       AuthenticatedDirectTextSessions sessions,
       ObjectProvider<InitialGameplayLoginOwner> logins,
       ObjectProvider<DirectTextWorldSelectionService> selections,
-      ObjectProvider<DirectTextAuthenticatedLobbyOwner> lobbies) {
+      ObjectProvider<DirectTextAuthenticatedLobbyOwner> lobbies,
+      ObjectProvider<PreV1CanonicalPlayAdmissionOwner> admissions) {
     this.sessions = sessions;
     this.logins = logins;
     this.selections = selections;
     this.lobbies = lobbies;
+    this.admissions = admissions;
   }
 
   public TextCommandInterpretationResult receive(WebSocketSession socket, TextCommand command) {
@@ -107,14 +111,13 @@ public final class AuthenticatedDirectTextCommandReceiver {
                 return success("Joined public production realm");
               });
         }
-        // LOGIN and JOIN are not admission. Until the canonical binding owner is qualified, the
-        // retired numeric entitlement route must never be selected by this protected receiver.
-        case PLAY -> failure("ADMISSION_UNAVAILABLE", "Canonical gameplay admission unavailable");
+        case PLAY -> play(connection, command);
+        case LOOK -> look(connection, command);
         case LOGOUT -> success("Logged out");
         default -> failure("FEATURE_UNAVAILABLE", "Command unavailable");
       };
     } catch (AuthenticatedDirectTextSessions.LoginRequiredException missingLogin) {
-      return failure("LOGIN_REQUIRED", "Use LOGIN <email> <password> before REALMS or JOIN");
+      return failure("LOGIN_REQUIRED", "Use LOGIN <email> <password> to authenticate");
     } catch (ExpiredWorldSelectionException expiredSelection) {
       return failure(
           "INVALID_ARGUMENT", "World menu expired. Run WORLDS and choose a listed selector again.");
@@ -137,6 +140,83 @@ public final class AuthenticatedDirectTextCommandReceiver {
     } catch (RuntimeException unavailable) {
       return failure("UNAVAILABLE", "Authenticated gameplay authority unavailable");
     }
+  }
+
+  private TextCommandInterpretationResult play(
+      AuthenticatedDirectTextSessions.Connection connection, TextCommand command) {
+    var owner = admissions.getIfAvailable();
+    if (owner == null || !owner.ready()) return admissionUnavailable();
+    var request = command.playRequestPayload().orElse(null);
+    if (request == null
+        || request.worldSelector() == null
+        || request.worldSelector().isBlank()
+        || request.characterSelector() != null) {
+      return failure("INVALID_ARGUMENT", "Usage: PLAY <world> [realm]");
+    }
+    return connection.withLogin(
+        (original, login) -> {
+          var scope = connection.selectedScope;
+          if (connection.menu == null || scope == null) {
+            return failure("INVALID_ARGUMENT", "Run WORLDS and REALMS <world> before PLAY <world>");
+          }
+          var selected =
+              required(selections).resolve(connection.menu, request.worldSelector()).orElseThrow();
+          if (!selected.equals(scope.publicTarget())
+              || request.realmSelector() != null
+                  && !request.realmSelector().equalsIgnoreCase(selected.realmSlug())) {
+            return failure("INVALID_ARGUMENT", "Select the current world and realm before PLAY");
+          }
+          return required(lobbies)
+              .withCurrentScope(
+                  original,
+                  login,
+                  connection,
+                  scope,
+                  transport -> {
+                    if (!connection.beginPlay()) return admissionUnavailable();
+                    try {
+                      connection.admitted =
+                          owner.play(
+                              scope,
+                              original,
+                              login,
+                              transport,
+                              () -> connection.isCurrent() && connection.selectedScope == scope);
+                      return success("Entered world: " + selected.worldSlug());
+                    } catch (IllegalStateException unavailable) {
+                      return admissionUnavailable();
+                    }
+                  });
+        });
+  }
+
+  private TextCommandInterpretationResult look(
+      AuthenticatedDirectTextSessions.Connection connection, TextCommand command) {
+    if (!command.args().isEmpty()) return failure("INVALID_ARGUMENT", "Usage: LOOK");
+    return connection.withLogin(
+        (original, login) -> {
+          var admitted = connection.admitted;
+          if (admitted == null) return failure("PLAY_REQUIRED", "Use PLAY to enter a world");
+          if (!connection.isCurrent()) return admissionUnavailable();
+          var owner = admissions.getIfAvailable();
+          if (owner == null) return admissionUnavailable();
+          try {
+            var result = owner.look(admitted);
+            if (!connection.isCurrent() || connection.admitted != admitted) {
+              return admissionUnavailable();
+            }
+            return new TextCommandInterpretationResult(
+                CommandEnqueueResult.success(), List.of(result));
+          } catch (PreV1CanonicalPlayAdmissionOwner.LookAdmissionUnavailableException unavailable) {
+            return admissionUnavailable();
+          } catch (RuntimeException unavailable) {
+            return failure("ROOM_UNAVAILABLE", "The current room is unavailable");
+          }
+        });
+  }
+
+  private static TextCommandInterpretationResult admissionUnavailable() {
+    return failure("ADMISSION_UNAVAILABLE", "Canonical gameplay admission unavailable");
   }
 
   private static <T> T required(ObjectProvider<T> provider) {

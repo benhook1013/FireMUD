@@ -106,8 +106,13 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     this.issuances = Objects.requireNonNull(issuances);
     this.memberships = Objects.requireNonNull(memberships);
     this.scopes = Objects.requireNonNull(scopes);
-    this.hosting = Objects.requireNonNull(hosting);
-    this.observer = Objects.requireNonNull(observer);
+    if ((hosting == null) != (observer == null)) {
+      throw new IllegalArgumentException(
+          "Paid hosting sources are composed together or not at all");
+    }
+    // Null when checkout receiving is not composed; paid tenants then fail closed.
+    this.hosting = hosting;
+    this.observer = observer;
     this.demos = Objects.requireNonNull(demos);
     this.sources = Objects.requireNonNull(sources);
     this.targets = Objects.requireNonNull(targets);
@@ -156,6 +161,9 @@ public final class AccountPlayerAdmissionEntitlementOwner {
 
   private RuntimePlayerAdmissionEntitlementEvidence capturePaidSources(
       Request request, VerifiedCaller caller, Prepared prepared) {
+    if (hosting == null) {
+      throw unavailable();
+    }
     var fence =
         inSourceTransaction(
             () -> {
@@ -564,6 +572,8 @@ public final class AccountPlayerAdmissionEntitlementOwner {
       if (!resolved.strictSelector().equals(result.selector())
           || !resolved.currentTarget().equals(result.currentTarget())) throw targetPrecondition();
       requireSupportedTarget(result.currentTarget());
+      // The run-owned fixture (pre-v1 gate waiver) binds its sealed policy and World fixture
+      // lifecycle through the evidence's fixture source shape instead of Human publication.
       return result;
     } catch (CanonicalGameplayAdmissionDecisionReadClient.ClientUnavailableException failure) {
       throw unavailable();
@@ -611,7 +621,6 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     binding.put("evaluatedAt", scope.evaluatedAt());
     binding.put("connectScopeExpiresAt", scope.connectScopeExpiresAt());
     var caller = player.issuance();
-    var world = target.worldLifecycleEvidence();
     Map<String, Object> sources = new LinkedHashMap<>();
     sources.put("callerTokenJti", caller.identity().tokenJti().toString());
     sources.put(
@@ -627,19 +636,33 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     sources.put("callerOperationId", caller.identity().operationId().toString());
     sources.put("scopeDigest", scope.scopeDigest());
     sources.put("entitlementSourceDigest", entitlementSourceDigest);
-    sources.put(
-        "admissionPointerSnapshotDigest", target.sourceEvidence().admissionPointerSnapshotDigest());
-    sources.put(
-        "gameSessionOwnerProofDigest",
-        target.sourceEvidence().gameSessionOwnerProof().proofDigest());
-    sources.put(
-        "publishedPolicySetDigest",
-        target.sourceEvidence().publishedPolicySetEvidence().policySetDigest());
-    sources.put(
-        "worldLifecycleDigest",
-        RuntimePlayerAdmissionEntitlementEvidence.digestBytes(world.canonicalBytes()));
-    sources.put("worldCaptureId", world.captureId().toString());
-    sources.put("worldRowVersion", Long.toString(world.rowVersion()));
+    if (target.isRunOwnedFixture()) {
+      var fixture = target.fixtureSource();
+      var lifecycle = target.fixtureLifecycleEvidence();
+      sources.put("admissionPointerSnapshotDigest", fixture.admissionPointerSnapshotDigest());
+      sources.put("gameSessionOwnerProofDigest", fixture.gameSessionOwnerProof().proofDigest());
+      sources.put("fixturePolicySealDigest", fixture.fixturePolicySealEvidenceDigest());
+      sources.put(
+          "fixtureLifecycleDigest",
+          RuntimePlayerAdmissionEntitlementEvidence.digestBytes(lifecycle.canonicalBytes()));
+      sources.put("worldRowVersion", Long.toString(lifecycle.rowVersion()));
+    } else {
+      var world = target.worldLifecycleEvidence();
+      sources.put(
+          "admissionPointerSnapshotDigest",
+          target.sourceEvidence().admissionPointerSnapshotDigest());
+      sources.put(
+          "gameSessionOwnerProofDigest",
+          target.sourceEvidence().gameSessionOwnerProof().proofDigest());
+      sources.put(
+          "publishedPolicySetDigest",
+          target.sourceEvidence().publishedPolicySetEvidence().policySetDigest());
+      sources.put(
+          "worldLifecycleDigest",
+          RuntimePlayerAdmissionEntitlementEvidence.digestBytes(world.canonicalBytes()));
+      sources.put("worldCaptureId", world.captureId().toString());
+      sources.put("worldRowVersion", Long.toString(world.rowVersion()));
+    }
     // The capacity bundle and its live caller/receipt deadlines must agree with the PostgreSQL
     // clock that stamps the evidence, so application/database skew cannot future-date the bundle.
     Instant capacityEvaluatedAt = AccountTenantCapacityRepository.databaseNow(dsl);

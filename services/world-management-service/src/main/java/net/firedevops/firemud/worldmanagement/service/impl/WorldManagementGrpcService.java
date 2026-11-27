@@ -671,18 +671,28 @@ public class WorldManagementGrpcService
   }
 
   private RoomSnapshot toProto(RoomSnapshotDto snapshot) {
+    return projectRoomSnapshot(
+        snapshot,
+        snapshot.tenantId().toString(),
+        snapshot.gameInstanceId().toString(),
+        readFence(
+            snapshot.tenantId(),
+            snapshot.gameInstanceId(),
+            RuntimeRoomInstanceIds.canonical(snapshot.roomInstanceRowId())));
+  }
+
+  static RoomSnapshot projectRoomSnapshot(
+      RoomSnapshotDto snapshot, String tenantId, String gameInstanceId, String scopeMarker) {
     RoomSnapshot.Builder builder = RoomSnapshot.newBuilder();
-    String runtimeRoomInstanceId = RuntimeRoomInstanceIds.canonical(snapshot.roomInstanceRowId());
     builder
-        .setRoomInstanceId(runtimeRoomInstanceId)
-        .setTenantId(snapshot.tenantId().toString())
-        .setGameInstanceId(snapshot.gameInstanceId().toString())
-        .setWorldSnapshotId(
-            readFence(snapshot.tenantId(), snapshot.gameInstanceId(), runtimeRoomInstanceId))
+        .setRoomInstanceId(RuntimeRoomInstanceIds.canonical(snapshot.roomInstanceRowId()))
+        .setTenantId(tenantId)
+        .setGameInstanceId(gameInstanceId)
+        .setWorldSnapshotId(scopeMarker)
         .setRoomName(snapshot.roomName())
         .setShortDescription(snapshot.shortDescription())
         .setLongDescription(snapshot.longDescription());
-    snapshot.exits().forEach(exit -> builder.addExits(toProto(exit)));
+    snapshot.exits().forEach(exit -> builder.addExits(projectRoomExit(exit)));
     if (snapshot.ambientState() != null) {
       applyAmbientState(builder, snapshot);
     }
@@ -779,7 +789,7 @@ public class WorldManagementGrpcService
     };
   }
 
-  private void applyAmbientState(RoomSnapshot.Builder builder, RoomSnapshotDto snapshot) {
+  private static void applyAmbientState(RoomSnapshot.Builder builder, RoomSnapshotDto snapshot) {
     String weather = snapshot.ambientState().get("weather");
     if (weather == null || weather.isBlank()) {
       return;
@@ -791,7 +801,7 @@ public class WorldManagementGrpcService
             .build());
   }
 
-  private RoomExitSnapshot toProto(RoomExitSnapshotDto exit) {
+  private static RoomExitSnapshot projectRoomExit(RoomExitSnapshotDto exit) {
     RoomExitSnapshot.Builder builder = RoomExitSnapshot.newBuilder();
     String targetRuntimeRoomInstanceId =
         RuntimeRoomInstanceIds.canonical(exit.targetRoomInstanceRowId());

@@ -38,7 +38,8 @@ public final class AccountPublicBootstrapEntitlementOwner {
       PlatformTransactionManager transactions,
       Clock clock) {
     this.sources = Objects.requireNonNull(sources);
-    this.hosting = Objects.requireNonNull(hosting);
+    // Null when checkout receiving is not composed; paid tenants then fail closed.
+    this.hosting = hosting;
     this.demos = Objects.requireNonNull(demos);
     this.clock = Objects.requireNonNull(clock);
     transaction = new TransactionTemplate(Objects.requireNonNull(transactions));
@@ -69,8 +70,9 @@ public final class AccountPublicBootstrapEntitlementOwner {
       Evaluation evaluation =
           switch (prepared.selection().kind()) {
             case PAID_HOSTING ->
-                hosting.readCurrentAndCapture(
-                    tenantId, receipt -> capturePaid(tenantId, prepared.selection(), receipt));
+                requirePaidHosting()
+                    .readCurrentAndCapture(
+                        tenantId, receipt -> capturePaid(tenantId, prepared.selection(), receipt));
             case NON_PAID_DEMO ->
                 Objects.requireNonNull(
                     transaction.execute(status -> captureDemo(tenantId, prepared)));
@@ -80,6 +82,13 @@ public final class AccountPublicBootstrapEntitlementOwner {
     } catch (RuntimeException exception) {
       throw new UnavailableException(exception);
     }
+  }
+
+  private AccountHostingSubscriptionLifecycleService requirePaidHosting() {
+    if (hosting == null) {
+      throw new IllegalStateException("Paid hosting entitlement source is not composed");
+    }
+    return hosting;
   }
 
   private Evaluation capturePaid(

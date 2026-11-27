@@ -3,15 +3,10 @@ package net.firedevops.firemud.springcloudgateway.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.withSettings;
 
-import io.netty.channel.Channel;
-import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -39,8 +34,6 @@ import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import reactor.core.publisher.Mono;
-import reactor.netty.Connection;
-import reactor.netty.http.server.HttpServerRequest;
 
 class AccountCheckoutReceivingConfigurationTest {
   @TempDir Path temporaryDirectory;
@@ -140,12 +133,21 @@ class AccountCheckoutReceivingConfigurationTest {
             + "\"email\":\"owner@example.test\",\"secret\":\""
             + secret
             + "\"}";
+    // Direct Account login trusts only the raw socket peer of the native Reactor Netty request.
+    var socketPeer = new java.net.InetSocketAddress("192.0.2.10", 443);
+    var nativeConnection = mock(reactor.netty.Connection.class);
+    var channel = mock(io.netty.channel.Channel.class);
+    when(nativeConnection.channel()).thenReturn(channel);
+    when(channel.remoteAddress()).thenReturn(socketPeer);
+    var headers = new HttpHeaders();
+    headers.set(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
     var request =
-        MockServerHttpRequest.post("https://localhost/api/account/auth/login")
-            .sslInfo(mock(SslInfo.class))
-            .remoteAddress(new java.net.InetSocketAddress("192.0.2.10", 443))
-            .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-            .body(body);
+        new NativeSocketLoginRequest(
+            URI.create("https://localhost/api/account/auth/login"),
+            headers,
+            socketPeer,
+            nativeConnection,
+            body.getBytes(StandardCharsets.UTF_8));
 
     var headerProperties = new GatewayHeaderTrustProperties();
     var trust =
@@ -160,7 +162,12 @@ class AccountCheckoutReceivingConfigurationTest {
     var responseHolder = new AtomicReference<org.springframework.http.ResponseEntity<byte[]>>();
     trust
         .filter(
-            MockServerWebExchange.from(withNativeSocketPeer(request)),
+            new org.springframework.web.server.adapter.DefaultServerWebExchange(
+                request,
+                new org.springframework.mock.http.server.reactive.MockServerHttpResponse(),
+                new org.springframework.web.server.session.DefaultWebSessionManager(),
+                org.springframework.http.codec.ServerCodecConfigurer.create(),
+                new org.springframework.web.server.i18n.AcceptHeaderLocaleContextResolver()),
             exchange -> controller.login(exchange).doOnNext(responseHolder::set).then())
         .block();
     var response = responseHolder.get();
@@ -234,18 +241,6 @@ class AccountCheckoutReceivingConfigurationTest {
 
     assertThat(login.getResponse().getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
     assertThat(login.getResponse().getHeaders().getCacheControl()).contains("no-store");
-  }
-
-  private static MockServerHttpRequest withNativeSocketPeer(MockServerHttpRequest request) {
-    HttpServerRequest nativeRequest =
-        mock(HttpServerRequest.class, withSettings().extraInterfaces(Connection.class));
-    Connection nativeConnection = (Connection) nativeRequest;
-    Channel channel = mock(Channel.class);
-    when(nativeConnection.channel()).thenReturn(channel);
-    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("192.0.2.10", 443));
-    MockServerHttpRequest requestWithNativePeer = spy(request);
-    doReturn(nativeRequest).when(requestWithNativePeer).getNativeRequest();
-    return requestWithNativePeer;
   }
 
   private static AccountCheckoutReceivingProperties receivingProperties() {
@@ -325,6 +320,55 @@ class AccountCheckoutReceivingConfigurationTest {
         return new Object();
       }
     };
+  }
+
+  /** A login request whose native request is the Reactor Netty connection carrying the peer. */
+  private static final class NativeSocketLoginRequest
+      extends org.springframework.http.server.reactive.AbstractServerHttpRequest {
+    private final java.net.InetSocketAddress remoteAddress;
+    private final Object nativeRequest;
+    private final byte[] body;
+
+    private NativeSocketLoginRequest(
+        URI uri,
+        HttpHeaders headers,
+        java.net.InetSocketAddress remoteAddress,
+        Object nativeRequest,
+        byte[] body) {
+      super(HttpMethod.POST, uri, "", headers);
+      this.remoteAddress = remoteAddress;
+      this.nativeRequest = nativeRequest;
+      this.body = body.clone();
+    }
+
+    @Override
+    public java.net.InetSocketAddress getRemoteAddress() {
+      return remoteAddress;
+    }
+
+    @Override
+    protected SslInfo initSslInfo() {
+      return mock(SslInfo.class);
+    }
+
+    @Override
+    protected org.springframework.util.MultiValueMap<String, org.springframework.http.HttpCookie>
+        initCookies() {
+      return new org.springframework.util.LinkedMultiValueMap<>();
+    }
+
+    @Override
+    public reactor.core.publisher.Flux<org.springframework.core.io.buffer.DataBuffer> getBody() {
+      return reactor.core.publisher.Flux.just(
+          org.springframework.core.io.buffer.DefaultDataBufferFactory.sharedInstance.wrap(
+              body.clone()));
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> T getNativeRequest() {
+      return (T) nativeRequest;
+    }
   }
 
   @FunctionalInterface

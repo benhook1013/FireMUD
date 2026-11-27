@@ -2,13 +2,18 @@ package net.firedevops.firemud.gamesession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import net.firedevops.firemud.account.v1.GameplayLoginTransportClass;
 import net.firedevops.firemud.gamesession.command.text.ObservedDirectTextTransport;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.server.ServerHttpResponse;
@@ -21,6 +26,107 @@ class GameSessionWebSocketHandshakeInterceptorTest {
 
   private final GameSessionWebSocketHandshakeInterceptor interceptor =
       new GameSessionWebSocketHandshakeInterceptor();
+
+  @Test
+  void claimedFixtureWebSocketUsesItsOwnPinnedCertificateAndServerCoordinates() throws Exception {
+    byte[] leaf = {1, 2, 3};
+    Runnable verifyFixture = mock(Runnable.class);
+    var configured =
+        new GameSessionWebSocketHandshakeInterceptor(
+            true, 8444, "test", certificateDigest(leaf), verifyFixture);
+    var request = fixtureWebSocketRequest(8444, leaf);
+    request.addHeader(GameSessionWebSocketHandshakeInterceptor.TRANSPORT_SESSION_HEADER, "12345");
+    request.addHeader(GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_HEADER, "untrusted");
+    request.addHeader("X-Client-IP", "203.0.113.7");
+    var attributes = new HashMap<String, Object>();
+
+    assertThat(fixtureHandshake(configured, request, attributes, new MockHttpServletResponse()))
+        .isTrue();
+
+    verify(verifyFixture).run();
+    var ingress =
+        (AuthenticatedDirectTextIngress) attributes.get(AuthenticatedDirectTextIngress.ATTRIBUTE);
+    assertThat(ingress.loginTransport())
+        .isEqualTo(
+            GameplayLoginTransportClass.GAMEPLAY_LOGIN_TRANSPORT_CLASS_RUN_OWNED_FIXTURE_WEBSOCKET);
+    assertThat(ingress.clientAddress()).isEqualTo("127.0.0.1");
+    assertThat(ingress.transport().transportSessionId()).isNotEqualTo("12345");
+    assertThat(attributes)
+        .doesNotContainKey(GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR);
+  }
+
+  @Test
+  void fixtureWebSocketRefusesUnpinnedLeafAndOrdinaryConnectorBeforeReadingFixture()
+      throws Exception {
+    byte[] leaf = {1, 2, 3};
+    Runnable verifyFixture = mock(Runnable.class);
+    var configured =
+        new GameSessionWebSocketHandshakeInterceptor(
+            true, 8444, "test", certificateDigest(leaf), verifyFixture);
+    for (var request :
+        List.of(
+            fixtureWebSocketRequest(8080, leaf), fixtureWebSocketRequest(8444, new byte[] {6}))) {
+      var attributes = new HashMap<String, Object>();
+      var response = new MockHttpServletResponse();
+      assertThat(fixtureHandshake(configured, request, attributes, response)).isFalse();
+      assertThat(response.getStatus()).isEqualTo(403);
+      assertThat(attributes).doesNotContainKey(AuthenticatedDirectTextIngress.ATTRIBUTE);
+    }
+    verifyNoInteractions(verifyFixture);
+  }
+
+  @Test
+  void fixtureWebSocketRefusesWhenRunOwnedLaunchEvidenceIsUnavailable() throws Exception {
+    byte[] leaf = {1, 2, 3};
+    var configured =
+        new GameSessionWebSocketHandshakeInterceptor(
+            true,
+            8444,
+            "test",
+            certificateDigest(leaf),
+            () -> {
+              throw new IllegalStateException("unavailable");
+            });
+    var attributes = new HashMap<String, Object>();
+    var response = new MockHttpServletResponse();
+
+    assertThat(
+            fixtureHandshake(configured, fixtureWebSocketRequest(8444, leaf), attributes, response))
+        .isFalse();
+    assertThat(response.getStatus()).isEqualTo(403);
+    assertThat(attributes).doesNotContainKey(AuthenticatedDirectTextIngress.ATTRIBUTE);
+  }
+
+  private static boolean fixtureHandshake(
+      GameSessionWebSocketHandshakeInterceptor configured,
+      MockHttpServletRequest request,
+      Map<String, Object> attributes,
+      MockHttpServletResponse response) {
+    return configured.beforeHandshake(
+        new ServletServerHttpRequest(request),
+        new ServletServerHttpResponse(response),
+        null,
+        attributes);
+  }
+
+  private static MockHttpServletRequest fixtureWebSocketRequest(int port, byte[] leaf)
+      throws Exception {
+    var request =
+        new MockHttpServletRequest("GET", AuthenticatedDirectTextIngress.FIXTURE_WEBSOCKET_PATH);
+    request.setSecure(true);
+    request.setLocalPort(port);
+    request.setRemoteAddr("127.0.0.1");
+    var certificate = mock(X509Certificate.class);
+    when(certificate.getExtendedKeyUsage()).thenReturn(List.of("1.3.6.1.5.5.7.3.2"));
+    when(certificate.getEncoded()).thenReturn(leaf);
+    request.setAttribute(
+        "jakarta.servlet.request.X509Certificate", new X509Certificate[] {certificate});
+    return request;
+  }
+
+  private static String certificateDigest(byte[] leaf) throws Exception {
+    return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(leaf));
+  }
 
   @Test
   void explicitNumericTransportSessionIdIsPreserved() {

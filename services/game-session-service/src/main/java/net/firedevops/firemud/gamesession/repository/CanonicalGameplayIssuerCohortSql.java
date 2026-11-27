@@ -65,7 +65,7 @@ final class CanonicalGameplayIssuerCohortSql {
           // V1042's untouched bridge extension is absence-equivalent to the old row shape.
           // Its CHECK makes every extension field NULL until a real bridge operation exists.
           // Once materialized, capture the entire bridge source, including all readback evidence.
-          + " CASE WHEN to_jsonb(g)->'bridge_operation_id' = 'null'::jsonb"
+          + " (CASE WHEN to_jsonb(g)->'bridge_operation_id' = 'null'::jsonb"
           + " AND (to_jsonb(g)->'entity_created_origin' IS NULL"
           + " OR to_jsonb(g)->'entity_created_origin' = 'null'::jsonb)"
           + " THEN (to_jsonb(g) - ARRAY['bridge_operation_id', 'bridge_preimage_state',"
@@ -75,10 +75,14 @@ final class CanonicalGameplayIssuerCohortSql {
           + " 'world_lifecycle_epoch', 'world_lifecycle_row_version', 'world_capture_id',"
           + " 'world_graph_sha256', 'world_preparation_input_digest', 'executor_fence',"
           + " 'lease_token_correlation', 'redis_readback_digest', 'acknowledged_at',"
-          + " 'entity_created_origin'])::text"
+          + " 'entity_created_origin'])"
           + " WHEN to_jsonb(g)->'entity_created_origin' = 'null'::jsonb"
-          + " THEN (to_jsonb(g) - 'entity_created_origin')::text"
-          + " ELSE to_jsonb(g)::text END AS source_row_json"
+          + " THEN to_jsonb(g) - 'entity_created_origin'"
+          + " ELSE to_jsonb(g) END"
+          // Before V1072 every region obligation used Human capture. Keep that frozen shape
+          // and retain an explicit run-owned World source in every fixture cohort.
+          + " - CASE WHEN to_jsonb(g)->>'world_source_kind' = 'HUMAN_CAPTURE'"
+          + " THEN ARRAY['world_source_kind'] ELSE ARRAY[]::text[] END)::text AS source_row_json"
           + " FROM game_session_canonical_binding_region_bridge_obligation g"
           + " WHERE g.inventory_revision <= ?"
           + ") captured_cohort ORDER BY source_kind COLLATE \"C\", source_key COLLATE \"C\"";

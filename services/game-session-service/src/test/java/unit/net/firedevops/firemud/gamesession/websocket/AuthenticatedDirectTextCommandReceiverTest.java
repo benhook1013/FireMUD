@@ -26,6 +26,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
+import net.firedevops.firemud.gamesession.repository.PreV1CanonicalPlayAdmissionOwner;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginOwner;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyOwner;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyScope;
@@ -68,7 +69,13 @@ class AuthenticatedDirectTextCommandReceiverTest {
     ObjectProvider<DirectTextWorldSelectionService> selections = mock(ObjectProvider.class);
     ObjectProvider<DirectTextAuthenticatedLobbyOwner> lobbies = mock(ObjectProvider.class);
     var receiver =
-        new AuthenticatedDirectTextCommandReceiver(sessions, logins, selections, lobbies);
+        new AuthenticatedDirectTextCommandReceiver(
+            sessions,
+            logins,
+            selections,
+            lobbies,
+            new StaticListableBeanFactory()
+                .getBeanProvider(PreV1CanonicalPlayAdmissionOwner.class));
     var malformedEmail = " \u0000 ";
     var command =
         new TextCommand(
@@ -226,6 +233,17 @@ class AuthenticatedDirectTextCommandReceiverTest {
     verifyNoInteractions(fixture.lobby, fixture.selections);
   }
 
+  @Test
+  void lookBeforePlayRequiresAdmissionOnTheSameConnection() {
+    var fixture = fixture();
+    var command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
+
+    var result = fixture.receiver.receive(fixture.socket, command);
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_REQUIRED");
+    verifyNoInteractions(fixture.lobby, fixture.selections);
+  }
+
   @ParameterizedTest
   @MethodSource("malformedCommands")
   void malformedCommandsReturnUsageBeforeOwnerOrLoginDispatch(TextCommand command) {
@@ -371,7 +389,8 @@ class AuthenticatedDirectTextCommandReceiverTest {
             sessions,
             beans.getBeanProvider(InitialGameplayLoginOwner.class),
             beans.getBeanProvider(DirectTextWorldSelectionService.class),
-            beans.getBeanProvider(DirectTextAuthenticatedLobbyOwner.class));
+            beans.getBeanProvider(DirectTextAuthenticatedLobbyOwner.class),
+            beans.getBeanProvider(PreV1CanonicalPlayAdmissionOwner.class));
     return new Fixture(socket, connection, selections, lobby, receiver);
   }
 

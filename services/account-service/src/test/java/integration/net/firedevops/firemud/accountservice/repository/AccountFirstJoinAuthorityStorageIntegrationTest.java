@@ -18,6 +18,7 @@ import java.util.function.Supplier;
 import javax.sql.DataSource;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
@@ -225,9 +226,19 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
                 .fetchOne(0, Long.class))
         .isZero();
 
+    Account freshAccount = new Account();
+    freshAccount.setUsername("first-join");
+    freshAccount.setEmail("first-join@example.test");
+    freshAccount.setPasswordHash("first-join-test-hash");
+    inTransaction(transaction, () -> accounts.save(freshAccount));
+    UUID freshAccountUuid = freshAccount.getAccountUuid();
     UUID tenantUuid = UUID.fromString("f8871fb0-7810-4b72-bb13-09e29a3509f2");
     FreshTenantCreationEvidence tenantSource = freshTenantEvidence(tenantUuid);
-    transaction.executeWithoutResult(status -> freshTenants.importVerified(tenantSource));
+    transaction.executeWithoutResult(
+        status -> {
+          freshTenants.importVerified(tenantSource);
+          new AccountAuthorityGenerationRepository(dsl).initializeTenantIfAbsent(tenantUuid);
+        });
     VerifiedTenantProvenance provenance =
         new VerifiedTenantProvenance(
             null,
@@ -239,11 +250,11 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
         transaction.execute(
             status -> {
               AccountTenantMembership pendingMembership =
-                  memberships.createFreshMembershipForJoin(account.getAccountUuid(), tenantUuid);
+                  memberships.createFreshMembershipForJoin(freshAccountUuid, tenantUuid);
               long membershipId = Objects.requireNonNull(pendingMembership.getId());
               assertThat(
                       roleSnapshots.findForCanonicalUpdate(
-                          account.getAccountUuid(),
+                          freshAccountUuid,
                           tenantUuid,
                           provenance,
                           membershipId,
@@ -253,13 +264,13 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
               AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot written =
                   roleSnapshots.replaceCanonical(
                       pendingMembership,
-                      account.getAccountUuid(),
+                      freshAccountUuid,
                       tenantUuid,
                       provenance,
                       pendingMembership.getMembershipVersion(),
                       List.of());
               assertThat(written.roles()).isEmpty();
-              assertThat(written.accountUuid()).isEqualTo(account.getAccountUuid());
+              assertThat(written.accountUuid()).isEqualTo(freshAccountUuid);
               assertThat(written.tenantUuid()).isEqualTo(tenantUuid);
               assertThat(written.tenantId()).isNull();
               assertThat(written.tenantProvenance()).isEqualTo(provenance);
@@ -273,7 +284,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
               assertThatThrownBy(
                       () ->
                           roleSnapshots.findForCanonicalUpdate(
-                              account.getAccountUuid(),
+                              freshAccountUuid,
                               tenantUuid,
                               changedProvenance,
                               membershipId,
@@ -283,7 +294,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
               assertThatThrownBy(
                       () ->
                           roleSnapshots.findForCanonicalUpdate(
-                              account.getAccountUuid(),
+                              freshAccountUuid,
                               tenantUuid,
                               provenance,
                               membershipId,
@@ -292,7 +303,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
                   .hasMessageContaining("membership version is missing or mismatched");
               assertThat(
                       roleSnapshots.findForCanonicalUpdate(
-                          account.getAccountUuid(),
+                          freshAccountUuid,
                           tenantUuid,
                           provenance,
                           membershipId,
@@ -300,7 +311,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
                   .contains(written);
 
               assertThatThrownBy(
-                      () -> memberships.findFreshMembership(account.getAccountUuid(), tenantUuid))
+                      () -> memberships.findFreshMembership(freshAccountUuid, tenantUuid))
                   .isInstanceOf(IllegalStateException.class)
                   .hasMessageContaining("no positive authority event");
               status.setRollbackOnly();
@@ -311,7 +322,7 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
             dsl.resultQuery(
                     "SELECT count(*) FROM account_tenant_membership "
                         + "WHERE account_id = ? AND tenant_uuid = ?",
-                    accountId,
+                    freshAccount.getId(),
                     tenantUuid)
                 .fetchOne(0, Long.class))
         .isZero();

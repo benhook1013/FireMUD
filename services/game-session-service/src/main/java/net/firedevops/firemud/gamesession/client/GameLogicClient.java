@@ -8,8 +8,11 @@ import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.JwtClaims;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec;
 import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
 import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
@@ -46,6 +49,9 @@ import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
+import net.firedevops.firemud.gamelogic.v1.ResolveRunOwnedFixtureLookRequest;
+import net.firedevops.firemud.gamelogic.v1.ResolveRunOwnedFixtureLookResponse;
+import net.firedevops.firemud.gamelogic.v1.RunOwnedFixtureLookServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
@@ -53,6 +59,7 @@ import net.firedevops.firemud.gamesession.service.GameplayRuntimeRoomIds;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
+import net.firedevops.firemud.worldmanagement.v1.ReadRunOwnedFixtureLookRoomRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -66,6 +73,7 @@ public class GameLogicClient
   private static final long READINESS_DEADLINE_SECONDS = 2L;
 
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
+  private RunOwnedFixtureLookServiceGrpc.RunOwnedFixtureLookServiceBlockingStub fixtureLookStub;
 
   public GameLogicClient(
       ServiceEndpointsProperties endpoints,
@@ -95,6 +103,8 @@ public class GameLogicClient
   @Override
   protected GameLogicServiceGrpc.GameLogicServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
+    // The protected fixture receiver authenticates only the mTLS workload.
+    fixtureLookStub = RunOwnedFixtureLookServiceGrpc.newBlockingStub(channel);
     return applyStubCustomizer(
         GameLogicServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
@@ -123,6 +133,29 @@ public class GameLogicClient
             .setSessionAttestation(sessionAttestation(context, canonicalRoomId))
             .build();
     return callStub().resolveLook(request);
+  }
+
+  public LookResult resolveRunOwnedFixtureLook(ReadRunOwnedFixtureLookRoomRequest request) {
+    var target = WorldCanonicalInstanceLifecycleGrpcCodec.fromRequest(request.getLifecycle());
+    String peer = "spiffe://firemud/ns/" + target.targetNamespace() + "/sa/game-logic-service";
+    ResolveRunOwnedFixtureLookResponse response;
+    try {
+      response =
+          fixtureLookStub
+              .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(peer))
+              .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(peer))
+              .withDeadlineAfter(8, TimeUnit.SECONDS)
+              .resolveRunOwnedFixtureLook(
+                  ResolveRunOwnedFixtureLookRequest.newBuilder().setRoom(request).build());
+    } catch (io.grpc.StatusRuntimeException unavailable) {
+      LOG.warn(
+          "Protected fixture LOOK failed with gRPC status {}", unavailable.getStatus().getCode());
+      throw unavailable;
+    }
+    if (!response.hasLook() || !response.getUnknownFields().asMap().isEmpty()) {
+      throw new IllegalStateException("The fixture LOOK response is unavailable");
+    }
+    return response.getLook();
   }
 
   /** Authenticated connectivity conjunct; downstream readiness is checked separately. */
