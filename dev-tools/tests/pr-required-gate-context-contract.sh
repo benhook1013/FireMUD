@@ -4234,7 +4234,7 @@ async function selectedProducerFinalFence(event, moved = false, superseded = fal
     ++proofs === 1 && superseded ? "attempt-superseded" : true,
     TerminalGitHubRequestError, core, async (_label, current) => {
       required.push(current);
-      attemptChanged = rerunDuringIdentity;
+      attemptChanged = rerunDuringIdentity || (afterAttempt && duringFinal === "rerun");
       if (afterAttempt && ["closed", "head", "retarget"].includes(duringFinal)) return {obsolete: true};
       return {...identity, canonicalPlayEligible: !labelRemoved,
         ...(current ? {sourceEvent: "repository_dispatch"} : {}),
@@ -4249,12 +4249,12 @@ async function selectedProducerFinalFence(event, moved = false, superseded = fal
       return !attemptChanged;
     }, resolve => {sleeps++; resolve();}, 0);
   assert.equal(proofs, superseded ? 2 : 1);
-  assert.equal(sleeps, superseded || rerunDuringIdentity ? 1 : 0);
+  assert.equal(sleeps, superseded || rerunDuringIdentity || duringFinal === "rerun" ? 1 : 0);
   const fenceCount = !(event === "repository_dispatch" && moved) && !rerunDuringIdentity ? 2 : 1;
   assert.deepEqual(required, Array((proofs - (superseded ? 1 : 0)) * fenceCount).fill(event === "repository_dispatch"));
   assert.deepEqual(failures, duringFinal === "label"
     ? ["Canonical PLAY transition exception label is absent or no longer eligible."] : []);
-  assert.equal(outputs.length, duringFinal === "label" || (event === "repository_dispatch" && (moved || duringFinal)) || rerunDuringIdentity ? 0 : 1,
+  assert.equal(outputs.length, ["label", "rerun"].includes(duringFinal) || (event === "repository_dispatch" && (moved || duringFinal)) || rerunDuringIdentity ? 0 : 1,
     "an exception must retain its exact attempt through the final live identity read");
 }
 // Execute the failed-run branch so proof errors retain the deterministic failure diagnostic.
@@ -4296,7 +4296,7 @@ async function recoveredFinalFence(disposition, change = null) {
     value => Number.isSafeInteger(value) && value > 0, async selected => {
       assert.deepEqual(selected, proofRun); finalAttempts++; return true;
     }, resolve => resolve(), 0, () => {resumedPolling = true;});
-  assert.equal(finalAttempts, 1);
+  assert.equal(finalAttempts, change === null ? 2 : 1);
   assert.equal(postAttemptFences, 1);
   assert.deepEqual(failures, []);
   assert.deepEqual(outputs, disposition === "verified" && change === null ? [["known_play_exception", "true"]] : []);
@@ -4613,7 +4613,7 @@ async function movedCancellation(ordinaryProof, listedOldReplacement = false, op
       return options.listAttempts ? finalAttemptCheck(refresh, null, () => {}, run) : true;
     }, async () => "ordinary");
   if (!options.listAttempts && !options.incompleteOrdinary) {
-    assert.equal(typedReads, 2); assert.equal(proofReads, 1); assert.equal(finalReads, ordinaryProof ? 1 : 0);
+    assert.equal(typedReads, 2); assert.equal(proofReads, 1); assert.equal(finalReads, ordinaryProof ? 2 : 0);
     assert.deepEqual(failures, ordinaryProof ? [] : ["Moved cancelled-run recovery did not supply authenticated smoke proof."]);
   }
   assert.deepEqual(outputs, [], "ordinary proof never publishes an exception output");
@@ -4786,7 +4786,7 @@ function markerAccepted(overrides = {}) {
       assert.equal(marker.proofReads, conclusion === "success" ? 2 : 1);
       assert.deepEqual(marker.outputs, conclusion === "success" ? [["known_play_exception", "true"]] : []);
       assert.equal(marker.writes, conclusion === "success" ? 1 : 0);
-      assert.equal(marker.finalReads, conclusion === "success" ? 1 : 0);
+      assert.equal(marker.finalReads, conclusion === "success" ? 2 : 0);
     }
   }
   const missingMarker = await pendingMarkerSnapshot([null, undefined, null, undefined, "success"]);
@@ -4848,7 +4848,7 @@ function markerAccepted(overrides = {}) {
     assert.equal(converged.movedLists, 2);
     assert.deepEqual(converged.proofAttempts, [2], "only the newly complete exact native attempt is verified");
     assert.equal(converged.exceptionReads, 0);
-    assert.equal(converged.finalReads, 1);
+    assert.equal(converged.finalReads, 2);
   }
   const sparseMoved = await movedCancellation(true, false, {listAttempts: [null, undefined, null, undefined, 2]});
   assert.deepEqual(sparseMoved.failures,
@@ -4921,9 +4921,9 @@ function markerAccepted(overrides = {}) {
     assert.equal(finalReadOverrun.finalAttemptReads, 1);
   }
   const finalReadsWithinBudget = await sameTupleCancellation("completed", ["ordinary"], false,
-    {overallMs: 31, finalIdentityReadMs: 10, finalAttemptReadMs: 10});
+    {overallMs: 41, finalIdentityReadMs: 10, finalAttemptReadMs: 10});
   assert.deepEqual(finalReadsWithinBudget.failures, [], "the final deadline fence still accepts within the same allowance");
-  assert.equal(finalReadsWithinBudget.now, 30);
+  assert.equal(finalReadsWithinBudget.now, 40);
   const delayedSibling = await sameTupleCancellation("completed", [], false, {siblingConclusions: [null, "skipped"]});
   assert.deepEqual(delayedSibling.failures, []);
   assert.deepEqual(delayedSibling.outputs, [["known_play_exception", "true"]]);
@@ -5315,7 +5315,7 @@ function markerAccepted(overrides = {}) {
   }
   await selectedProducerFinalFence("repository_dispatch", false, true);
   await selectedProducerFinalFence("repository_dispatch", false, false, true);
-  for (const change of ["base", "closed", "head", "retarget"]) {
+  for (const change of ["base", "closed", "head", "retarget", "rerun"]) {
     await selectedProducerFinalFence("repository_dispatch", false, false, false, change);
   }
   for (const disposition of ["ordinary", "verified"]) {
@@ -5508,7 +5508,7 @@ def queue_paths(value, prefix=()):
         return []
     return [prefix + (key,) for key in value if key == "queue"] + [path for key, child in value.items() for path in queue_paths(child, prefix + (key,))]
 assert queue_paths(publisher) == [("jobs", "reconcile-failed-pr-runtime", "concurrency", "queue")]
-assert queue_paths(runtime) == [("jobs", "dispatch-pr-base-refreshes", "concurrency", "queue")]
+assert queue_paths(runtime) == [("concurrency", "queue"), ("jobs", "dispatch-pr-base-refreshes", "concurrency", "queue")]
 
 assert all("checkout" not in step.get("uses", "") for step in job["steps"])
 assert "github.event.workflow_run.event == 'pull_request'" in job["if"]
@@ -5535,12 +5535,15 @@ const validationName = `CI — Validation pr-42 base-${topologyBase} head-${topo
 function admits(job, overrides = {}) {
   const {eventName = "workflow_run", event = "pull_request", name = runtimeName, path = runtimePath,
     conclusion = "success", foreign = false, action = "", branch = "main"} = overrides;
-  const expression = admission[job];
+  // The fixture exercises the workflow's string-only admission expressions.
+  // Fold string literals and input values as Actions does for comparisons.
+  const expression = admission[job].replace(/'[^']*'/g, literal => literal.toLowerCase());
   assert.match(expression, /^\$\{\{ .* \}\}$/);
   const evaluate = new Function("github", "contains", "fromJSON", "format", "startsWith", "return " + expression.slice(3, -2));
-  return Boolean(evaluate({event_name: eventName, repository: "example/firemud", ref: "refs/heads/" + branch,
-    event: {action, repository: {default_branch: "main"},
-      workflow_run: {name, display_title: name, path, event, conclusion,
+  return Boolean(evaluate({event_name: eventName.toLowerCase(), repository: "example/firemud", ref: "refs/heads/" + branch.toLowerCase(),
+    event: {action: action.toLowerCase(), repository: {default_branch: "main"},
+      workflow_run: {name: name.toLowerCase(), display_title: name.toLowerCase(), path: path.toLowerCase(),
+        event: event.toLowerCase(), conclusion: conclusion.toLowerCase(),
         head_repository: {full_name: foreign ? "fork/foreign" : "example/firemud"}}}},
     (values, value) => values.includes(value), JSON.parse, (template, arg) => template.replace("{0}", arg),
     (value, prefix) => value.toLowerCase().startsWith(prefix.toLowerCase())));
@@ -5565,6 +5568,7 @@ assert.equal(admits(reconciler, {...validation, conclusion: "cancelled", foreign
 assert.equal(admits("source", {event: "repository_dispatch"}), true);
 assert.equal(admits("source", {eventName: "repository_dispatch", action: "pr-runtime-image-publication"}), true);
 assert.equal(admits("source", {eventName: "repository_dispatch", action: "pr-runtime-image-publication", branch: "other"}), false);
+assert.equal(admits("source", {eventName: "REPOSITORY_DISPATCH", action: "PR-RUNTIME-IMAGE-PUBLICATION", branch: "Main"}), true);
 const execute = new Function("github", "context", "core", "Date", "setTimeout",
   `return (async () => {${fs.readFileSync(process.argv[2], "utf8")}\n})()`);
 async function run(kind, shared = {visible: false, posts: 0}) {
@@ -5732,7 +5736,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
       createDispatchEvent: async ({request, ...payload}) => {
         assert.equal(request.retries, 0);
         assert.ok(request.signal instanceof AbortSignal && !request.signal.aborted);
-        assert.deepEqual(payload, {owner: "example", repo: "firemud", event_type: "pr-runtime-base-refresh",
+        assert.deepEqual(payload, {owner: "example", repo: "firemud", event_type: "pr-runtime-base-refresh-request",
           client_payload: {pr_number: "42", base_ref: "develop", base_sha: base, head_sha: head, merge_sha: merge}});
         shared.posts++;
         const createdTime = sameSecond ? Math.floor(clock / 1000) * 1000 : clock + 1000;
@@ -6044,7 +6048,7 @@ async function dispatch(kind) {
     repos: {
       getCommit: async () => ({data: {sha: merge, parents: [{sha: base}, {sha: head}]}}),
       createDispatchEvent: async ({event_type, request}) => {
-        assert.equal(event_type, "pr-runtime-base-refresh");
+        assert.equal(event_type, "pr-runtime-base-refresh-request");
         assert.equal(request.retries, 0);
         posts++;
       },

@@ -160,7 +160,12 @@ classify_failure_body() {
 
       # Require the complete matching coordinate, repository path and 429 chain.
       if (jar_download_step) {
-        if (jar_download_step == 1 && line == "> Could not get resource " quote jar_resource_url quote ".") {
+        if (jar_download_step == 1 && buildsrc_jar && !buildsrc_jar_requester && line == "Required by:") {
+          jar_download_step = 4
+        } else if (jar_download_step == 4 && line ~ /^buildscript of project \047:buildSrc\047( > [[:alnum:]_.-]+:[[:alnum:]_.-]+:[0-9][[:alnum:]_.-]*)*$/) {
+          buildsrc_jar_requester = 1
+          jar_download_step = 1
+        } else if (jar_download_step == 1 && line == "> Could not get resource " quote jar_resource_url quote ".") {
           jar_download_step = 2
         } else if (jar_download_step == 2 && line == "> Could not GET " quote jar_url quote ".") {
           jar_download_step = 3
@@ -207,13 +212,14 @@ classify_failure_body() {
         classified_fixture_jar = fixtures_resolver && index(jar_name, jar_stem "-") == 1 &&
           substr(jar_name, length(jar_stem) + 2) ~ /^[[:alnum:]][[:alnum:]_.-]*\.jar$/
         if ((jar_name != jar_stem ".jar" && !classified_fixture_jar && !gradle_variant_jar) ||
-            ((fixtures_resolver || buildsrc_jar) && (jar_coordinate[2] == "." || jar_coordinate[2] == ".."))) {
+            jar_coordinate[2] == "." || jar_coordinate[2] == "..") {
           invalid++
         }
         gsub(/\./, "/", jar_coordinate[1])
         jar_path = jar_coordinate[1] "/" jar_coordinate[2] "/" jar_version "/" jar_name
         jar_url = "https://repo.maven.apache.org/maven2/" jar_path
         jar_resource_url = buildsrc_jar ? "https://plugins.gradle.org/m2/" jar_path : jar_url
+        buildsrc_jar_requester = 0
         jar_download_step = 1
         next
       }

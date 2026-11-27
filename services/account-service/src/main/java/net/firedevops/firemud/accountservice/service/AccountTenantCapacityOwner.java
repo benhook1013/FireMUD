@@ -193,25 +193,38 @@ public final class AccountTenantCapacityOwner {
           var evidence = request.evidence();
           Instant retainedExpiry = capacity.requireRetained(evidence);
           Instant now = clock.instant();
-          if (!now.isBefore(evidence.evaluatedAt())
-              && !now.isBefore(retainedExpiry)
-              && evidence.permitsCreation()
-              && capacity.retainedEvaluationExpired(retainedExpiry)) {
-            requireSupportedShape(request);
+          if (now.isBefore(evidence.evaluatedAt()))
+            throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+          if (!evidence.permitsCreation()) requireCurrentLifetime(evidence, now);
+          var parsed = currentMembership(request);
+          requireSupportedShape(request);
+          boolean expired = capacity.retainedEvaluationExpired(retainedExpiry);
+          if (!expired && now.isBefore(retainedExpiry)) {
+            currentDelegationAndScope(request, parsed, now);
+            now = clock.instant();
+            expired = capacity.retainedEvaluationExpired(retainedExpiry);
+          }
+          if (expired && !now.isBefore(retainedExpiry) && evidence.permitsCreation()) {
             return new CommitDecision(
                 null, originDecisions.refuse(request, Failure.CAPACITY_EVALUATION_EXPIRED));
           }
-          current(request, now);
-          requireSupportedShape(request);
-          if (!request.evidence().permitsCreation())
+          requireCurrentLifetime(evidence, now);
+          if (expired) throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+          if (!evidence.permitsCreation())
             throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
           var reservation =
               capacity.createIfQuotaAvailable(request, request.evidence().expiresAt(), clock);
+          // The quota lock and write path can outlive the last qualification read. A late
+          // database observation rolls back any provisional acceptance, reservation and usage.
+          if (capacity.retainedEvaluationExpired(retainedExpiry))
+            throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
           if (reservation.isPresent()) {
             return new CommitDecision(reservation.orElseThrow(), null);
           }
           Refusal denial = originDecisions.refuse(request, Failure.CAPACITY_QUOTA_EXCEEDED);
           requireCurrentLifetime(evidence, clock.instant());
+          if (capacity.retainedEvaluationExpired(retainedExpiry))
+            throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
           return new CommitDecision(null, denial);
         });
     // Throw only after the transaction has committed the exact denial.
@@ -300,15 +313,19 @@ public final class AccountTenantCapacityOwner {
   private void current(Request request, Instant now) {
     var evidence = request.evidence();
     requireCurrentLifetime(evidence, now);
+    var parsed = currentMembership(request);
+    currentDelegationAndScope(request, parsed, now);
+    requireCurrentLifetime(evidence, clock.instant());
+  }
+
+  private RuntimePlayerAdmissionEntitlementEvidence currentMembership(Request request) {
+    var evidence = request.evidence();
     if (!(request.context() instanceof PlayerContext player)) throw unavailable();
     var parsed =
         RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(
             request.evidence().canonicalBytes());
     var current =
         qualifiedSource(() -> memberships.readCurrent(player.accountId(), player.tenantId()));
-    if (!current.membershipExists()
-        || !current.gameplayAdmissionAllowed()
-        || !"ACTIVE".equals(current.membershipLifecycleState())) throw unavailable();
     var fields = evidence.fields();
     if (!current.equals(parsed.membershipSource())) {
       var billing =
@@ -322,6 +339,16 @@ public final class AccountTenantCapacityOwner {
         throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
       throw unavailable();
     }
+    if (!current.membershipExists()
+        || !current.gameplayAdmissionAllowed()
+        || !"ACTIVE".equals(current.membershipLifecycleState())) throw unavailable();
+    return parsed;
+  }
+
+  private void currentDelegationAndScope(
+      Request request, RuntimePlayerAdmissionEntitlementEvidence parsed, Instant now) {
+    if (!(request.context() instanceof PlayerContext player)) throw unavailable();
+    var fields = request.evidence().fields();
     if (!(fields.get("sourceReferences") instanceof Map<?, ?> source)) throw unavailable();
     var issuance =
         qualifiedSource(() ->
@@ -351,9 +378,6 @@ public final class AccountTenantCapacityOwner {
         || !scope.realmId().equals(player.realmId())
         || !scope.playableStateScope().equals(player.playableStateScope())
         || !now.isBefore(Instant.parse(scope.connectScopeExpiresAt()))) throw unavailable();
-    // Source reads can consume the remaining evaluation lifetime. Retained replays
-    // return before current(), but a fresh refusal must still be current after qualification.
-    requireCurrentLifetime(evidence, clock.instant());
   }
 
   private static <T> T qualifiedSource(Supplier<T> read) {

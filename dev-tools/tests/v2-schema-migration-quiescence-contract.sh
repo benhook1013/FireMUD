@@ -81,6 +81,8 @@ case "$*" in
     case "${QUIESCE_MODE:-}" in
       account-hpa) printf '%s\n' '{"items":[{"spec":{"scaleTargetRef":{"kind":"Deployment","name":"account-service"}}}]}' ;;
       hpa) printf '%s\n' '{"items":[{"spec":{"scaleTargetRef":{"kind":"Deployment","name":"game-session-service"}}}]}' ;;
+      hpa-missing-items) printf '%s\n' '{"kind":"HorizontalPodAutoscalerList"}' ;;
+      hpa-malformed-items) printf '%s\n' '{"items":{}}' ;;
       hpa-denied) echo 'forbidden: horizontalpodautoscalers is forbidden' >&2; exit 1 ;;
       *) printf '%s\n' '{"items":[]}' ;;
     esac
@@ -177,12 +179,12 @@ for service in account-service game-session-service automation-scripting-service
   }
 done
 
-for failure_mode in account-hpa bad-account-selector malformed-pod-item wrong-kind-pod-item mixed-pod-items pod-api-denied preexisting-closed-pod hpa hpa-denied bad-selector endpoint-denied malformed-endpoint-item wrong-kind-endpoint-item account-scale-failure writer-pod-api-denied restore-failure scale-failure; do
+for failure_mode in account-hpa bad-account-selector malformed-pod-item wrong-kind-pod-item mixed-pod-items pod-api-denied preexisting-closed-pod hpa hpa-denied hpa-missing-items hpa-malformed-items bad-selector endpoint-denied malformed-endpoint-item wrong-kind-endpoint-item account-scale-failure writer-pod-api-denied restore-failure scale-failure; do
   if run_quiesce "$failure_mode" >"$fixture_dir/${failure_mode}.out" 2>&1; then
     echo "quiesce helper unexpectedly succeeded for ${failure_mode}" >&2
     exit 1
   fi
-  if [[ "$failure_mode" == account-hpa || "$failure_mode" == bad-account-selector || "$failure_mode" == malformed-pod-item || "$failure_mode" == wrong-kind-pod-item || "$failure_mode" == mixed-pod-items || "$failure_mode" == pod-api-denied || "$failure_mode" == preexisting-closed-pod || "$failure_mode" == hpa || "$failure_mode" == hpa-denied || "$failure_mode" == bad-selector ]]; then
+  if [[ "$failure_mode" == account-hpa || "$failure_mode" == bad-account-selector || "$failure_mode" == malformed-pod-item || "$failure_mode" == wrong-kind-pod-item || "$failure_mode" == mixed-pod-items || "$failure_mode" == pod-api-denied || "$failure_mode" == preexisting-closed-pod || "$failure_mode" == hpa || "$failure_mode" == hpa-denied || "$failure_mode" == hpa-missing-items || "$failure_mode" == hpa-malformed-items || "$failure_mode" == bad-selector ]]; then
     if grep -q ' scale deployment/' "$fixture_dir/calls-$failure_mode" ||
       grep -q ' patch service ' "$fixture_dir/calls-$failure_mode"; then
       echo "quiesce helper mutated workloads after ${failure_mode} preflight failure" >&2

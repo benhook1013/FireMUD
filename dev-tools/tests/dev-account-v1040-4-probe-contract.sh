@@ -138,6 +138,8 @@ echo "Dev Account V1040.4 probe contract passed (mock PostgreSQL transport)."
 
 export PROBE_JOB_MANIFEST="$temp_dir/probe-job.json"
 export PROBE_JOB_DELETED="$temp_dir/probe-job-deleted"
+export PROBE_DELETE_ATTEMPT="$temp_dir/probe-delete-attempt"
+export PROBE_DRY_RUN="$temp_dir/probe-dry-run"
 export PROBE_JOB_READ="$temp_dir/probe-job-read"
 PROBE_FIXTURE_HEAD="$(git -C "$root_dir" rev-parse HEAD)"
 export PROBE_FIXTURE_HEAD
@@ -188,6 +190,13 @@ kubectl() {
       [[ "$KUBECONFIG" == fixture-runtime ]] || return 2
       printf '{"spec":{"replicas":0}}\n'
       ;;
+    '--request-timeout=10s -n dev auth can-i '*)
+      [[ "${PROBE_SCENARIO:-}" != missing-delete-permission || "$*" != *'delete jobs.batch' ]]
+      ;;
+    '--request-timeout=10s -n dev create --dry-run=server -f - -o name')
+      cat >"$PROBE_DRY_RUN"
+      [[ "${PROBE_SCENARIO:-}" != admission-denied ]]
+      ;;
     '--request-timeout=10s -n dev create -f - -o json')
       cat >"$PROBE_JOB_MANIFEST"
       [[ "${PROBE_SCENARIO:-}" != ambiguous-create ]] || return 1
@@ -195,6 +204,7 @@ kubectl() {
       ;;
     "--request-timeout=10s -n dev get job $PROBE_FIXTURE_JOB_NAME -o json" | \
     "--request-timeout=10s -n dev get job $PROBE_FIXTURE_JOB_NAME --ignore-not-found -o json")
+      [[ ! -f "$PROBE_JOB_DELETED" ]] || return 0
       local observed_uid=fixture-owned-job-uid
       if [[ "${PROBE_SCENARIO:-}" == job-replacement ]]; then
         observed_uid=different-job-uid
@@ -219,10 +229,12 @@ kubectl() {
     "--request-timeout=10s delete --raw /apis/batch/v1/namespaces/dev/jobs/$PROBE_FIXTURE_JOB_NAME -f -")
       jq -e '.preconditions.uid == "fixture-owned-job-uid" and .propagationPolicy == "Foreground"' >/dev/null || return 1
       [[ "${PROBE_SCENARIO:-}" != job-replacement ]] || return 1
+      if [[ "${PROBE_SCENARIO:-}" == delete-first-fails && ! -f "$PROBE_DELETE_ATTEMPT" ]]; then
+        touch "$PROBE_DELETE_ATTEMPT"
+        return 1
+      fi
       touch "$PROBE_JOB_DELETED"
-      ;;
-    "--request-timeout=10s -n dev wait --for=delete --timeout=30s job/$PROBE_FIXTURE_JOB_NAME")
-      [[ -f "$PROBE_JOB_DELETED" ]]
+      [[ "${PROBE_SCENARIO:-}" != delete-response-lost ]]
       ;;
     *)
       echo "unexpected kubectl command in the protected probe fixture: $*" >&2
@@ -241,12 +253,24 @@ fi
 
 run_protected_probe() {
   bash "$root_dir/dev-tools/deploy/run-dev-account-v1040-4-probe.sh" \
-    dev "$namespace_uid" "$deployed_sha" "$PROBE_FIXTURE_HEAD" 3
+    "$@" dev "$namespace_uid" "$deployed_sha" "$PROBE_FIXTURE_HEAD" 3
 }
+
+run_protected_probe --check-permissions
+[[ -s "$PROBE_DRY_RUN" && ! -e "$PROBE_JOB_MANIFEST" ]]
+for scenario in missing-delete-permission admission-denied; do
+  if PROBE_SCENARIO="$scenario" run_protected_probe --check-permissions >"$temp_dir/receipt" 2>"$temp_dir/error"; then
+    echo "Protected probe access check accepted $scenario." >&2
+    exit 1
+  fi
+  grep -q 'before writer quiescence' "$temp_dir/error"
+  [[ ! -e "$PROBE_JOB_MANIFEST" ]]
+done
 
 run_protected_probe >"$temp_dir/receipt"
 grep -q 'checksum_comparison=verified-v1040-prefix' "$temp_dir/receipt"
 [[ -f "$PROBE_JOB_DELETED" ]]
+cmp -- "$PROBE_DRY_RUN" "$PROBE_JOB_MANIFEST"
 jq -e \
   --arg probe "$(cat "$root_dir/dev-tools/deploy/probe-dev-account-v1040-4.sh")" \
   --arg namespace dev --arg uid "$namespace_uid" --arg base "$deployed_sha" \
@@ -264,7 +288,7 @@ jq -e \
   else false end)
 ' "$PROBE_JOB_MANIFEST" >/dev/null
 
-for scenario in duplicate replaced renewed-writer ambiguous-create job-replacement; do
+for scenario in duplicate replaced renewed-writer ambiguous-create job-replacement delete-first-fails; do
   rm -f -- "$PROBE_JOB_DELETED" "$PROBE_JOB_READ"
   if PROBE_SCENARIO="$scenario" run_protected_probe >"$temp_dir/receipt" 2>"$temp_dir/error"; then
     echo "Protected probe accepted $scenario." >&2
@@ -277,6 +301,11 @@ for scenario in duplicate replaced renewed-writer ambiguous-create job-replaceme
     [[ -f "$PROBE_JOB_DELETED" ]]
   fi
 done
+
+[[ -f "$PROBE_DELETE_ATTEMPT" ]]
+rm -f -- "$PROBE_JOB_DELETED"
+PROBE_SCENARIO=delete-response-lost run_protected_probe >"$temp_dir/receipt"
+[[ -f "$PROBE_JOB_DELETED" && -s "$temp_dir/receipt" ]]
 
 rm -f -- "$PROBE_JOB_MANIFEST" "$PROBE_JOB_DELETED"
 if PROBE_SCENARIO=wrong-postgres-kind run_protected_probe >"$temp_dir/receipt" 2>"$temp_dir/error"; then

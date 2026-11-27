@@ -38,6 +38,7 @@ import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.PingRequest;
 import net.firedevops.firemud.gamedesign.v1.PingResponse;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -299,6 +300,7 @@ class AbstractReloadingBlockingGrpcClientTest {
   }
 
   @Test
+  @Timeout(value = 15, threadMode = Timeout.ThreadMode.SAME_THREAD)
   void callSelectionDoesNotWaitForReplacementChannelConstruction() throws Exception {
     var grpc = new CommonGrpcClientProperties();
     grpc.setPlaintext(true);
@@ -311,7 +313,7 @@ class AbstractReloadingBlockingGrpcClientTest {
         .thenReturn(previous)
         .thenAnswer(invocation -> {
           building.countDown();
-          assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+          release.await();
           return replacement;
         });
     var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
@@ -324,16 +326,16 @@ class AbstractReloadingBlockingGrpcClientTest {
             return null;
           });
       try {
-        assertThat(building.await(5, TimeUnit.SECONDS)).isTrue();
+        building.await();
         var call =
             executor.submit(
                 () -> client.withPublishedInitializedStub("missing", stub -> stub.getChannel()));
-        assertThat(call.get(1, TimeUnit.SECONDS)).isSameAs(previous);
+        assertThat(call.get()).isSameAs(previous);
         assertThat(release.getCount()).isEqualTo(1);
       } finally {
         release.countDown();
       }
-      reload.get(5, TimeUnit.SECONDS);
+      reload.get();
     } finally {
       release.countDown();
       executor.shutdownNow();

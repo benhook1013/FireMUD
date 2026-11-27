@@ -158,13 +158,13 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
               }))
           .isInstanceOf(AccountTenantCapacityRepository.CapacityException.class);
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_refusal_budget"))).isZero();
-      transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 4));
+      transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 5));
       assertThat(
               transaction.<Long>execute(
-                  status -> budgets.requireReady(tenant.canonicalTenantId(), 4, 1)))
-          .isEqualTo(1);
+                  status -> budgets.requireReady(tenant.canonicalTenantId(), 5, 2)))
+          .isEqualTo(2);
       assertThatThrownBy(() ->
-              transaction.execute(status -> budgets.requireReady(tenant.canonicalTenantId(), 4, 2)))
+              transaction.execute(status -> budgets.requireReady(tenant.canonicalTenantId(), 5, 3)))
           .isInstanceOfSatisfying(
               AccountTenantCapacityRepository.CapacityException.class,
               failure ->
@@ -178,7 +178,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                       "SELECT *, xmin::text AS row_version FROM"
                           + " account_capacity_origin_refusal_budget"))
               .intoMap();
-      transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 4));
+      transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 5));
       assertThatThrownBy(() ->
               transaction.executeWithoutResult(
                   status -> budgets.provision(tenant.canonicalTenantId(), 2)))

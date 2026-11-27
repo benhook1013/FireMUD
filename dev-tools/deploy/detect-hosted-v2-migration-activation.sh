@@ -116,6 +116,10 @@ while IFS= read -r changed_path; do
           probe_account_origin=true
         fi
         ;;
+      "$account_migrations/V1040.7__retain_expired_original_capacity_denials.sql")
+        echo "refusing hosted deployment: Account V1040.7 retained activation is held pending an approved writer and consumer boundary: $changed_path" >&2
+        exit 1
+        ;;
       *)
         echo "refusing hosted deployment: unsupported Flyway migration path in exact range: $changed_path" >&2
         exit 1

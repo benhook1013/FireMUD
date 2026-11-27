@@ -897,7 +897,7 @@ const runsDescending = (event, firstCreatedAt) => Array.from({ length: 100 }, (_
 async function runDispatcher({
   tuples, inventories = {}, apiFailure = null, sourceTuples = [], callback = {},
   branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, mergeReadFailures = {}, ciEvidence = {},
-  hideDispatchVisibility = false, filesByPr = {}, postFailurePr = null, previewFailurePr = null,
+  hideDispatchVisibility = false, admissionFails = false, filesByPr = {}, postFailurePr = null, previewFailurePr = null,
   visibilityResponse = null, filesFailurePr = null, postFailureVisible = false, postFailureStatus = null,
   fanoutCutoffAfterInventory = false, fanoutCutoffAfterPreviewPr = null, expireAfterFirstApiRequest = false,
   pullGetFailures = {}, lateProducer = null, runtimeWorkflowLookupFailures = [],
@@ -1067,7 +1067,7 @@ async function runDispatcher({
           }
           const ambiguousRuntimePost = request.event_type === "pr-runtime-base-refresh-request" &&
             request.client_payload.pr_number === postFailurePr;
-          if (request.event_type === "pr-runtime-base-refresh-request" && !hideDispatchVisibility &&
+          if (request.event_type === "pr-runtime-base-refresh-request" && !hideDispatchVisibility && !admissionFails &&
               (!ambiguousRuntimePost || postFailureVisible)) {
             const payload = request.client_payload;
             postedRuns.push(producer({
@@ -1132,7 +1132,8 @@ async function runDispatcher({
           recordApiRequest("actions.listJobsForWorkflowRunAttempt", request);
           if (request.run_id === publication.run?.id) {
             assert.equal(request.attempt_number, publication.run.run_attempt);
-            return {data: {total_count: 1, jobs: [publication.job]}};
+            const jobs = publication.jobs ?? [publication.job];
+            return {data: {total_count: jobs.length, jobs}};
           }
           if (request.run_id !== ciRun.id) {
             const producer = inventoriedRuntimeRuns().find(run => run?.id === request.run_id);
@@ -1972,15 +1973,28 @@ async function runDispatcher({
   const artifact = {id: 404, name: `pr-runtime-images-pr-merge-${tuple.mergeSha}`, expired: true,
     workflow_run: {id: completedRefresh.id, head_sha: completedRefresh.head_sha},
     digest: `sha256:${"b".repeat(64)}`, created_at: "2026-01-01T12:02:35Z"};
-  const publisher = {id: 991, workflow_id: 702, run_attempt: 3, name: "Publish PR Runtime Images",
+  const publisher = {id: 991, workflow_id: 702, run_attempt: 1, name: "Publish PR Runtime Images",
     path: ".github/workflows/publish-pr-runtime-images.yml", event: "repository_dispatch",
     display_title: `Publish PR Runtime Images source-run-${completedRefresh.id} attempt-${completedRefresh.run_attempt}`,
     head_branch: "develop", head_sha: sha("e"), status: "completed", conclusion: "failure",
     created_at: "2026-01-01T12:12:00Z", repository: {full_name: repository}, head_repository: {full_name: repository}};
   const noWrite = {name: "Publish fixed PR image tags", status: "completed", conclusion: "skipped"};
-  const publisherJob = {id: 992, run_id: publisher.id, run_attempt: 3, name: "Publish Fixed PR Merge Image Tags",
+  const publisherJob = {id: 992, run_id: publisher.id, run_attempt: 1, name: "Publish Fixed PR Merge Image Tags",
     head_sha: publisher.head_sha, status: "completed", conclusion: "failure", steps: [noWrite]};
+  const expiredBeforeWrite = [
+    {...publisherJob, conclusion: "skipped", steps: []},
+    {...publisherJob, id: 993, name: "Resolve Exact Runtime Publication Source", steps: [
+      {name: "Resolve successful exact source run", status: "completed", conclusion: "success"},
+      {name: `Exact runtime artifact expired source-${completedRefresh.id}-${completedRefresh.run_attempt} artifact-${artifact.id} ${artifact.digest}`,
+        status: "completed", conclusion: "failure"},
+    ]},
+  ];
   for (const [disposition, overrides, expected] of [
+    ["expiry rejected by the exact resolver before any tag writer", {jobs: expiredBeforeWrite}, ["101"]],
+    ["resolver failure lacks a typed expiry marker", {jobs: [expiredBeforeWrite[0],
+      {...expiredBeforeWrite[1], steps: [{...expiredBeforeWrite[1].steps[0], conclusion: "failure"}]}]}, []],
+    ["rerun might follow an earlier tag write", {run: {...publisher, run_attempt: 2},
+      jobs: expiredBeforeWrite.map(job => ({...job, run_attempt: 2}))}, []],
     ["proven expired artifact and pre-write failure", {}, ["101"]],
     ["publisher may still be running", {run: {...publisher, status: "in_progress", conclusion: null}}, []],
     ["publisher already succeeded", {run: {...publisher, conclusion: "success"}}, []],
@@ -2000,6 +2014,16 @@ async function runDispatcher({
     assert.deepEqual(numbers(result), expected, disposition);
     assert.deepEqual(result.errors, []);
   }
+  const artifactOnly = {...successfulJob, name: "PR Full-Stack Smoke (runtime-required=false)",
+    steps: successfulJob.steps.filter(step => !["Run credential-free full-stack smoke", "Stop smoke stack",
+      "Require successful runtime smoke and authenticated cleanup"].includes(step.name)).concat(upload)};
+  const recoveredArtifactOnly = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-04T00:00:00Z"},
+    inventories: {repository_dispatch: [completedRefresh]},
+    runtimeAttemptJobs: {[completedRefresh.id]: {total_count: 1, jobs: [artifactOnly]}},
+    publication: {run: publisher, artifact, job: publisherJob}});
+  assert.deepEqual(numbers(recoveredArtifactOnly), ["101"],
+    "an expired, positively identified artifact-only producer can be replaced without smoke proof");
+  assert.deepEqual(recoveredArtifactOnly.errors, []);
   for (const job of [
     {...successfulJob, name: "PR Full-Stack Smoke (runtime-required=false)"},
     {...successfulJob, steps: successfulJob.steps.filter(step => step.name !== "Stop smoke stack")},
@@ -2173,7 +2197,9 @@ async function runDispatcher({
   });
   assert.deepEqual(numbers(missingTerminalAttempt), [], "the inventory must identify a positive attempt before native proof lookup");
   assert.deepEqual(missingTerminalAttempt.runtimeRunReads, []);
-  const invisible = await runDispatcher({ tuples: [tuple], hideDispatchVisibility: true });
+  // GitHub accepts the admission wake, but an unavailable final admission
+  // never creates a runtime producer row. The dispatcher must not retry.
+  const invisible = await runDispatcher({ tuples: [tuple], admissionFails: true });
   assert.deepEqual(numbers(invisible), ["101"], "accepted invisible POST must never be repeated");
   assert(invisible.errors.some(message => message.includes("visibility is unknown")));
   const many = Array.from({length: 12}, (_, index) => tupleFor(201 + index, "a", "c"));
@@ -3234,7 +3260,7 @@ if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
   echo "A superseded producer must not pass even after exact publisher job success" >&2
   exit 1
 fi
-require_contains "$contract_fixture_dir/stale-current-attempt.error" 'Current runtime-image producer does not match the successful run 101 attempt 2'
+require_contains "$contract_fixture_dir/stale-current-attempt.error" 'Runtime-image producer 101 advanced from attempt 2 to 3; selecting fresh proof.'
 
 for job_proof in skipped missing-step wrong-attempt incomplete; do
   case "$job_proof" in

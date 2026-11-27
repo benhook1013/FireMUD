@@ -51,10 +51,14 @@ class TenantCapacityAdmissionGrpcCodecTest {
       assertThat(failure.isDomainRefusal()).isEqualTo(domainCodes.contains(failure));
       if (domainCodes.contains(failure)) {
         assertThatThrownBy(failure::toStatusException).isInstanceOf(IllegalArgumentException.class);
+        var status =
+            failure == Failure.CAPACITY_EVALUATION_EXPIRED
+                ? Status.Code.FAILED_PRECONDITION
+                : Status.Code.RESOURCE_EXHAUSTED;
         var oldTransport =
             StatusProto.toStatusRuntimeException(
                 com.google.rpc.Status.newBuilder()
-                    .setCode(Status.Code.RESOURCE_EXHAUSTED.value())
+                    .setCode(status.value())
                     .setMessage("Tenant capacity commitment did not complete")
                     .addDetails(
                         Any.pack(
@@ -64,7 +68,7 @@ class TenantCapacityAdmissionGrpcCodecTest {
                                 .build()))
                     .build());
         var verified = TenantCapacityAdmissionGrpcCodec.validateFailure(oldTransport);
-        assertThat(verified.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+        assertThat(verified.getStatus().getCode()).isEqualTo(status);
         assertThat(StatusProto.fromThrowable(verified).getDetailsList()).isEmpty();
       } else {
         var canonical = failure.toStatusException();

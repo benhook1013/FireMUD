@@ -1139,6 +1139,68 @@ assert_rate_limit_delay
 assert_output_contains "Received status code 429"
 assert_output_contains "buildsrc-refresh-result"
 
+# Gradle 9.9.2's pinned buildSrc classpath can fail on several JARs after the
+# Plugin Portal redirects each request to its matching Maven Central URL.
+write_buildsrc_jar_429_cause() {
+  cat > "$CASE_DIR/buildsrc-cause.log" <<'LOG'
+FAILURE: Build failed with an exception.
+* What went wrong:
+A problem occurred configuring project ':buildSrc'.
+> Could not resolve all artifacts for configuration 'classpath'.
+   > Could not download kotlin-stdlib-2.4.21.jar (org.jetbrains.kotlin:kotlin-stdlib:2.4.21)
+      Required by:
+          buildscript of project ':buildSrc'
+      > Could not get resource 'https://plugins.gradle.org/m2/org/jetbrains/kotlin/kotlin-stdlib/2.4.21/kotlin-stdlib-2.4.21.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.4.21/kotlin-stdlib-2.4.21.jar'.
+            > Received status code 429 from server: Too Many Requests
+   > Could not download kotlin-gradle-plugin-api-2.4.21-gradle96.jar (org.jetbrains.kotlin:kotlin-gradle-plugin-api:2.4.21)
+      > Could not get resource 'https://plugins.gradle.org/m2/org/jetbrains/kotlin/kotlin-gradle-plugin-api/2.4.21/kotlin-gradle-plugin-api-2.4.21-gradle96.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugin-api/2.4.21/kotlin-gradle-plugin-api-2.4.21-gradle96.jar'.
+            > Received status code 429 from server: Too Many Requests
+   > Could not download gson-2.11.0.jar (com.google.code.gson:gson:2.11.0)
+      Required by:
+          buildscript of project ':buildSrc'
+      > Could not get resource 'https://plugins.gradle.org/m2/com/google/code/gson/gson/2.11.0/gson-2.11.0.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/com/google/code/gson/gson/2.11.0/gson-2.11.0.jar'.
+            > Received status code 429 from server: Too Many Requests
+* Try:
+> Run with --stacktrace for details.
+LOG
+}
+
+new_case captured-buildsrc-multi-jar-429
+write_buildsrc_jar_429_cause
+# Native classpath download failures need not include dependency requester context.
+sed -i '/Required by:/,+1d' "$CASE_DIR/buildsrc-cause.log"
+write_buildsrc_wrapper
+run_case logging-admin-service 0
+assert_call_count 2
+assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
+assert_rate_limit_delay
+assert_output_contains "buildsrc-refresh-result"
+
+new_case captured-buildsrc-jar-with-requester-context
+write_buildsrc_jar_429_cause
+write_buildsrc_wrapper
+run_case logging-admin-service 0
+assert_call_count 2
+assert_rate_limit_delay
+
+for mutation in url host mixed unpinned-root unsupported-variant; do
+  new_case "buildsrc-jar-invalid-$mutation"
+  write_buildsrc_jar_429_cause
+  case "$mutation" in
+    url) sed -i '/Could not get resource/s/kotlin-stdlib/annotations/' "$CASE_DIR/buildsrc-cause.log" ;;
+    host) sed -i '0,/plugins.gradle.org/s//example.invalid/' "$CASE_DIR/buildsrc-cause.log" ;;
+    mixed) sed -i '/^[*] Try:/i > Received status code 403 from server: Forbidden' "$CASE_DIR/buildsrc-cause.log" ;;
+    unpinned-root) sed -i "s/configuration 'classpath'/configuration 'runtimeClasspath'/" "$CASE_DIR/buildsrc-cause.log" ;;
+    unsupported-variant) sed -i 's/-gradle96/-arbitrary-variant/g' "$CASE_DIR/buildsrc-cause.log" ;;
+  esac
+  write_buildsrc_wrapper
+  run_case logging-admin-service 1
+  assert_no_retry
+done
+
 # A Retry-After beyond the short retry budget fails closed without waiting.
 new_case long-retry-after
 write_wrapper 'cat <<"LOG"
