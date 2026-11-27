@@ -164,6 +164,79 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
   }
 
   @Test
+  void legacyAttemptDigestsAndRowsSurviveSelectedDigestWidthAndRevisionUpgrades() {
+    String schema = "gd_legacy_attempts_" + UUID.randomUUID().toString().replace("-", "");
+    var source =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    source.setSchema(schema);
+    flyway(source, schema, "50.3").migrate();
+    var dsl = DSL.using(source, SQLDialect.POSTGRES);
+
+    var requested = new Game();
+    requested.setTenantId("retained-attempt-test");
+    requested.setName("Historical publication attempts");
+    var game = new GameRepository(dsl).save(requested);
+    long versionId = insertHistoricalDraftVersion(dsl, game.getId());
+    dsl.execute(
+        """
+        INSERT INTO publish_attempt
+          (tenant_id, publish_workflow_id, publish_type, status, version_id,
+           version_number, request_digest)
+        VALUES (?, 'retained-pending', 'FULL_VERSION', 'PENDING', ?, 1, ?),
+               (?, 'retained-success', 'FULL_VERSION', 'SUCCEEDED', ?, 1, ?),
+               (?, 'retained-patch', 'SCRIPT_PATCH', 'FAILED', ?, 1, NULL)
+        """,
+        game.getTenantId(),
+        versionId,
+        "a".repeat(64),
+        game.getTenantId(),
+        versionId,
+        "b".repeat(64),
+        game.getTenantId(),
+        versionId);
+
+    String attemptImageQuery =
+        """
+        SELECT attempt.xmin::text, (to_jsonb(attempt) - 'revision')::text
+          FROM publish_attempt attempt
+         ORDER BY attempt.id
+        """;
+    var attemptImages = dsl.fetch(attemptImageQuery);
+    assertThat(attemptImages).hasSize(3);
+    int priorRank =
+        dsl.fetchSingle("SELECT max(installed_rank) FROM flyway_schema_history_game_design_service")
+            .get(0, int.class);
+    String historyQuery =
+        """
+        SELECT to_jsonb(history)::text FROM flyway_schema_history_game_design_service history
+         WHERE installed_rank <= ? ORDER BY installed_rank
+        """;
+    var history = dsl.fetch(historyQuery, priorRank);
+
+    flyway(source, schema, "50.4").migrate();
+    assertThat(dsl.fetch(attemptImageQuery)).isEqualTo(attemptImages);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT character_maximum_length FROM information_schema.columns "
+                        + "WHERE table_schema = ? AND table_name = 'publish_attempt' AND column_name = 'request_digest'",
+                    schema)
+                .get(0, int.class))
+        .isEqualTo(71);
+
+    var latest = flyway(source, schema, null);
+    latest.migrate();
+    latest.validate();
+    assertThat(dsl.fetch(attemptImageQuery)).isEqualTo(attemptImages);
+    assertThat(dsl.fetch(historyQuery, priorRank)).isEqualTo(history);
+    assertThat(
+            dsl.fetch("SELECT revision FROM publish_attempt ORDER BY id").getValues(0, Long.class))
+        .containsExactly(1L, 1L, 1L);
+    assertThat(dsl.fetchCount(DSL.table("game_design_publication_operation"))).isZero();
+    assertThat(dsl.fetchCount(DSL.table("game_design_draft_terminal_operation"))).isZero();
+  }
+
+  @Test
   void actualReceivingParentIncludingSagaUpgradePreservesHistoryAndAppliesStorageTail(
       @TempDir Path parentMigrations) throws Exception {
     var fixture = fixture(true);
@@ -748,20 +821,10 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
               var game = new GameRepository(dsl).save(requested);
               // Reproduce the original owner insertion under its actual pre-tail schema. The
               // current Version writer requires ordinary asset genesis, which did not exist here.
-              var inserted =
-                  java.util.Objects.requireNonNull(
-                      dsl.fetchOne(
-                          "INSERT INTO version (tenant_id, canonical_version_id, canonical_tenant_id, "
-                              + "identity_source_game_row_id, identity_source_game_tenant_key, "
-                              + "identity_source_provenance_kind, version_number, version_state, "
-                              + "version_state_epoch, is_script_only, created_at, updated_at) "
-                              + "SELECT g.tenant_id, ?, g.canonical_tenant_id, g.id, g.tenant_id, "
-                              + "g.tenant_identity_provenance_kind, 1, 'DRAFT', 1, FALSE, "
-                              + "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM game g WHERE g.id = ? RETURNING id",
-                          UUID.randomUUID(),
-                          game.getId()));
               var version =
-                  new VersionRepository(dsl).findById(inserted.get("id", Long.class)).orElseThrow();
+                  new VersionRepository(dsl)
+                      .findById(insertHistoricalDraftVersion(dsl, game.getId()))
+                      .orElseThrow();
               var target =
                   new TargetProof(
                       version.getCanonicalTenantId(),
@@ -881,6 +944,24 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
     attempt.setRequestDigest(operation.selectionDigest());
     new PublishAttemptRepository(dsl).save(attempt);
     return operation;
+  }
+
+  private static long insertHistoricalDraftVersion(DSLContext dsl, long gameId) {
+    return dsl.fetchSingle(
+            """
+            INSERT INTO version
+              (tenant_id, canonical_version_id, canonical_tenant_id, identity_source_game_row_id,
+               identity_source_game_tenant_key, identity_source_provenance_kind, version_number,
+               version_state, version_state_epoch, is_script_only, created_at, updated_at)
+            SELECT g.tenant_id, ?, g.canonical_tenant_id, g.id, g.tenant_id,
+                   g.tenant_identity_provenance_kind, 1, 'DRAFT', 1, FALSE,
+                   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+              FROM game g WHERE g.id = ?
+            RETURNING id
+            """,
+            UUID.randomUUID(),
+            gameId)
+        .get(0, long.class);
   }
 
   private byte[] historicalReviewedGenesisBytes(
