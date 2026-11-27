@@ -1666,8 +1666,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   .fetch(
                       "SELECT catalog_epoch FROM world_runtime_family_catalog_epoch ORDER BY catalog_epoch")
                   .getValues(0, Long.class))
-          .as("V1046 through V1050 and V1070 install six consecutive catalog epochs")
-          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
+          .as("V1046 through V1050 and V1070 through V1072 install eight catalog epochs")
+          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L);
       assertThat(
               connection
                   .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_snapshot")
@@ -3456,6 +3456,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1049");
     versions.add("1050");
     versions.add("1070");
+    versions.add("1071");
+    versions.add("1072");
     return List.copyOf(versions);
   }
 

@@ -75,7 +75,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
     try (Fixture f = fixture(null)) {
       var evidence = f.owner().read(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(6);
+      assertThat(catalog.catalogEpoch()).isEqualTo(8);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -207,7 +207,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(
               f.dsl
                   .fetch(
-                      "SELECT to_jsonb(h)::text FROM flyway_schema_history_world_management_service h WHERE version IS DISTINCT FROM '1046' AND version IS DISTINCT FROM '1047' AND version IS DISTINCT FROM '1048' AND version IS DISTINCT FROM '1049' AND version IS DISTINCT FROM '1050' AND version IS DISTINCT FROM '1070' ORDER BY installed_rank")
+                      "SELECT to_jsonb(h)::text FROM flyway_schema_history_world_management_service h WHERE version IS DISTINCT FROM '1046' AND version IS DISTINCT FROM '1047' AND version IS DISTINCT FROM '1048' AND version IS DISTINCT FROM '1049' AND version IS DISTINCT FROM '1050' AND version IS DISTINCT FROM '1070' AND version IS DISTINCT FROM '1071' AND version IS DISTINCT FROM '1072' ORDER BY installed_rank")
                   .getValues(0, String.class))
           .isEqualTo(historyBefore);
       f.owner().read(request());
@@ -316,7 +316,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
         migration(f.source, f.schema, null).migrate();
         Request read = request();
         var original = f.owner().read(read);
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(6);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(8);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(
                 fact ->
@@ -368,7 +368,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
           .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().read(request()))
           .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
-      assertThat(f.count("world_runtime_family_catalog_epoch")).isEqualTo(6);
+      assertThat(f.count("world_runtime_family_catalog_epoch")).isEqualTo(8);
     }
   }
 
@@ -393,10 +393,11 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
-  void directSnapshotInsertRequiresBothSuccessfulExactCatalogMigrationRows() throws Exception {
+  void directSnapshotInsertRequiresEverySuccessfulExactCatalogMigrationRow() throws Exception {
     try (Fixture f = fixture(null)) {
       var catalog = f.owner().read(request()).catalog();
-      for (String version : List.of("1046", "1047", "1048", "1049", "1050", "1070")) {
+      for (String version :
+          List.of("1046", "1047", "1048", "1049", "1050", "1070", "1071", "1072")) {
         for (String column : List.of("success", "script")) {
           Request read = request();
           var evidence = new Evidence(read, UUID.randomUUID(), catalog);
@@ -543,14 +544,17 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
     try (Fixture f = fixture(null)) {
       Request read = request();
       var original = f.owner().read(read);
+      long nextEpoch = original.catalog().catalogEpoch() + 1L;
       // Controlled owner-local revision installation, not a runtime catalog mutation API.
       f.dsl.execute(
           "INSERT INTO world_runtime_family_classification VALUES"
               + " ('region_instance.name','region_instance','name','RUNTIME_PAYLOAD','S3','REQUIRED_TOPOLOGY')");
       f.dsl.execute(
           "INSERT INTO world_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
-              + " SELECT 7,bytes,'sha256:'||encode(sha256(bytes),'hex') FROM"
-              + " (SELECT world_runtime_family_catalog_bytes(7) AS bytes) revised");
+              + " SELECT ?,bytes,'sha256:'||encode(sha256(bytes),'hex') FROM"
+              + " (SELECT world_runtime_family_catalog_bytes(?) AS bytes) revised",
+          nextEpoch,
+          nextEpoch);
       assertThatThrownBy(() -> f.owner().readExact(read))
           .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().read(read))
@@ -563,9 +567,9 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
                   .get(0, byte[].class))
           .isEqualTo(WorldRuntimeFamilyCatalogCodec.evidenceBytes(original));
       var revised = f.owner().read(request());
-      assertThat(revised.catalog().catalogEpoch()).isEqualTo(7);
+      assertThat(revised.catalog().catalogEpoch()).isEqualTo(nextEpoch);
       assertThat(revised.catalog().digest()).isNotEqualTo(original.catalog().digest());
-      assertThat(f.count("world_runtime_family_catalog_epoch")).isEqualTo(7);
+      assertThat(f.count("world_runtime_family_catalog_epoch")).isEqualTo(nextEpoch);
     }
   }
 
