@@ -198,29 +198,6 @@ def effective_sets(snapshot: Snapshot) -> tuple[dict[str, list[MigrationFile]], 
 
 
 def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | None:
-    def exclusion_names(value: object) -> list[str] | None:
-        if isinstance(value, str):
-            return value.split(",")
-        if isinstance(value, list):
-            names = []
-            for child in value:
-                child_names = exclusion_names(child)
-                if child_names is None:
-                    return None
-                names.extend(child_names)
-            return names
-        if isinstance(value, dict) and all(
-                (isinstance(key, int) and key >= 0)
-                or (isinstance(key, str) and key.isdigit()) for key in value):
-            names = []
-            for child in value.values():
-                child_names = exclusion_names(child)
-                if child_names is None:
-                    return None
-                names.extend(child_names)
-            return names
-        return None
-
     def flatten_properties(
         value: object,
         prefix: tuple[str, ...],
@@ -252,7 +229,8 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
                   for extension in ("yaml", "yml")]
     profile_pattern = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application-[^/]+\.ya?ml")
     profile_paths = sorted(path for path in snapshot if profile_pattern.fullmatch(path))
-    flyway = {}
+    effective_settings = {}
+    auto_configuration_switch = "spring.boot.enableautoconfiguration"
     effective_exclusions: list[str] | None = None
     for config_path in [*base_paths, *profile_paths]:
         try:
@@ -286,44 +264,35 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
                     return None
                 if exclusion_paths & ambiguous:
                     return None
-                # A single YAML list/map is flattened into its base property and
-                # child paths. Prefer the base value; indexed property syntax is
-                # otherwise assembled in numeric order. Mixed representations
-                # cannot be resolved safely by this static check.
+                # Boot binds bracketed list indices. YAML integer map keys also
+                # flatten to bracketed indices, unlike string keys such as "0".
                 if exclusion_property in exclusion_paths:
                     exclusion_value = properties[exclusion_property]
-                    descendants = exclusion_paths - {exclusion_property}
-                    if descendants:
-                        if not isinstance(exclusion_value, dict) or not all(
-                            (isinstance(key, int) and key >= 0)
-                            or (isinstance(key, str) and key.isdigit())
-                            for key in exclusion_value
-                        ):
+                    if exclusion_paths != {exclusion_property}:
+                        return None
+                    if isinstance(exclusion_value, dict):
+                        indices = range(len(exclusion_value))
+                        if (not exclusion_value or any(type(key) is not int for key in exclusion_value)
+                                or set(exclusion_value) != set(indices)):
                             return None
-                        expected_descendants = {
-                            f"{exclusion_property}.{key}" for key in exclusion_value
-                        }
-                        if descendants != expected_descendants:
-                            return None
+                        exclusion_value = [exclusion_value[index] for index in indices]
                 else:
-                    indexed_paths = sorted(
-                        exclusion_paths,
-                        key=lambda path: tuple(int(part) if part.isdigit() else part
-                                               for part in re.findall(r"\d+|[^.\[\]]+", path)),
-                    )
-                    if any(not re.fullmatch(r"spring\.autoconfigure\.exclude(?:\[\d+\]|\.\d+)", path)
-                           for path in indexed_paths):
+                    indexed_paths = [f"{exclusion_property}[{index}]" for index in range(len(exclusion_paths))]
+                    if exclusion_paths != set(indexed_paths):
                         return None
                     exclusion_value = [properties[path] for path in indexed_paths]
-                excluded_auto_configurations = exclusion_names(exclusion_value)
-                if excluded_auto_configurations is None:
+                if isinstance(exclusion_value, str):
+                    exclusion_value = exclusion_value.split(",")
+                if not isinstance(exclusion_value, list) or not all(
+                        isinstance(name, str) and "${" not in name for name in exclusion_value):
                     return None
-                effective_exclusions = excluded_auto_configurations
+                effective_exclusions = exclusion_value
             if any(path == "spring.config.import" or
                    path.startswith(("spring.config.import.", "spring.config.import["))
                    for path in properties):
                 return None
-            exact_guard_paths = {"spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
+            exact_guard_paths = {auto_configuration_switch,
+                                 "spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
                                  "spring.flyway.sqlmigrationsuffixes", "spring.flyway.sqlmigrationprefix",
                                  "spring.flyway.sqlmigrationseparator",
                                  "spring.flyway.repeatablesqlmigrationprefix",
@@ -335,7 +304,7 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
                 or any(path.startswith((guard + ".", guard + "[")) for guard in exact_guard_paths)
             }
             if not guard_paths:
-                # Profile configuration with no Flyway guard properties does not
+                # Profile configuration with no migration guard properties does not
                 # affect this static qualification.
                 continue
             if guard_paths & ambiguous or not guard_paths <= exact_guard_paths:
@@ -354,14 +323,20 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
                 return None
 
             for path in guard_paths:
-                flyway[path.rsplit(".", 1)[-1]] = properties[path]
+                effective_settings[path] = properties[path]
 
+    auto_configuration_enabled = effective_settings.pop(auto_configuration_switch, True)
+    if auto_configuration_enabled is not True and not (
+            isinstance(auto_configuration_enabled, str)
+            and auto_configuration_enabled.strip().lower() in {"true", "on", "yes", "1"}):
+        return None
     if effective_exclusions is not None and any(
         name.strip().rsplit(".", 1)[-1] == "FlywayAutoConfiguration"
         for name in effective_exclusions
     ):
         return None
 
+    flyway = {path.rsplit(".", 1)[-1]: value for path, value in effective_settings.items()}
     enabled = flyway.get("enabled", True)
     if enabled is not True and not (isinstance(enabled, str) and enabled.lower() == "true"):
         return None
@@ -609,6 +584,22 @@ def run_self_test() -> None:
             b"      - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration\n"
         ),
     }, recovery_history, None)
+    root_flyway_exclusion = (
+        recovery_settings
+        + b"spring.autoconfigure.exclude[0]: org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration\n"
+    )
+    redis_auto_configuration = b"org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration"
+    for exclusion_key, expected in (
+        (b"spring.autoconfigure.exclude[0]: ", None),
+        (b"spring.autoconfigure.exclude.0: ", "historical effective migration no longer applied"),
+        (b"spring.autoconfigure.exclude:\n  '0': ", "historical effective migration no longer applied"),
+    ):
+        check(f"higher-priority exclusions with {exclusion_key!r}", {
+            **recovery_history,
+            recovery_config: root_flyway_exclusion,
+            recovery_config.replace("/application.yml", "/config/application.yml"):
+                exclusion_key + redis_auto_configuration + b"\n",
+        }, recovery_history, expected)
     for exclusion_form, exclusion_yaml in (
         ("indexed Redis-only", (
             b"spring.autoconfigure.exclude[0]: org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration\n"
@@ -646,6 +637,28 @@ def run_self_test() -> None:
             **recovery_history,
             recovery_config: exclusion_yaml,
         }, recovery_history, "packaged Spring configuration must enable Flyway")
+    for exclusion in (
+        b"spring.autoconfigure.exclude: '${TEST_AUTO_CONFIGURATION_EXCLUDES}'\n",
+        b"spring.autoconfigure.exclude: ['${TEST_AUTO_CONFIGURATION_EXCLUDES}']\n",
+        b"spring.autoconfigure.exclude[0]: '${TEST_AUTO_CONFIGURATION_EXCLUDES}'\n",
+    ):
+        check(f"unresolved auto-configuration exclusion {exclusion!r} fails closed", {
+            **recovery_history, recovery_config: recovery_settings + exclusion,
+        }, recovery_history, "historical effective migration no longer applied")
+    disabled_auto_configuration = b"spring.boot.enableautoconfiguration: false\n"
+    check("global Spring Boot auto-configuration disable cannot qualify recovery history", {
+        **recovery_history, recovery_config: recovery_settings + disabled_auto_configuration,
+    }, recovery_history, "historical effective migration no longer applied")
+    check("higher-priority global Spring Boot auto-configuration enable qualifies recovery history", {
+        **recovery_history,
+        recovery_config: recovery_settings + disabled_auto_configuration,
+        recovery_config.replace("/application.yml", "/config/application.yml"):
+            b"spring:\n  boot:\n    enableautoconfiguration: 'TrUe'\n",
+    }, recovery_history, None)
+    check("profile-only global Spring Boot switch cannot qualify recovery history", {
+        **recovery_history,
+        recovery_config.replace("/application.yml", "/application-dev.yml"): disabled_auto_configuration,
+    }, recovery_history, "historical effective migration no longer applied")
     check("Flyway SQL suffix override cannot disconnect the recovery journal", {
         **recovery_history,
         recovery_config: recovery_settings + b"    sql-migration-suffixes: [.ddl]\n",

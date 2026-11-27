@@ -10,6 +10,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 import org.springframework.mock.env.MockEnvironment;
 
@@ -37,13 +38,21 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   @Test
   void bootDiscoversAndInvokesTheRegisteredDatasourceGuard() {
     // Exercise normal Boot factory discovery without registering connection-capable beans.
+    var environment = new StandardEnvironment();
+    environment
+        .getPropertySources()
+        .remove(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
+    environment
+        .getPropertySources()
+        .remove(StandardEnvironment.SYSTEM_PROPERTIES_PROPERTY_SOURCE_NAME);
     var application = new SpringApplication(FactoryDiscoveryProbe.class);
+    application.setEnvironment(environment);
     application.setWebApplicationType(WebApplicationType.NONE);
     assertThatThrownBy(
             () -> {
               try (var context =
                   application.run(
-                      "--spring.config.name=recovery-factory-discovery-fixture",
+                      "--spring.config.location=optional:classpath:/recovery-factory-discovery-fixture.yml",
                       "--spring.flyway.enabled=false",
                       "--spring.grpc.server.enabled=false",
                       "--FIREMUD_RECOVERY_CONTROL_DB_HOST=recovery-control.invalid",

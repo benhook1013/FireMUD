@@ -487,10 +487,8 @@ public final class InitialGameplayReleaseModel {
         throw new IllegalArgumentException(
             "issuer layout lacks an exact partition acknowledgement set");
       }
-      if (!proof
-          .descriptor()
-          .partitionIds()
-          .equals(new ArrayList<>(new TreeMap<>(proof.capacityVector()).keySet()))) {
+      Map<Integer, Integer> capacityVector = proof.capacityVector();
+      if (!proof.descriptor().partitionIds().equals(new ArrayList<>(capacityVector.keySet()))) {
         throw new IllegalArgumentException("issuer layout capacity vector is incomplete");
       }
       for (PartitionAcknowledgement acknowledgement : proof.acknowledgements()) {
@@ -499,7 +497,7 @@ public final class InitialGameplayReleaseModel {
             acknowledgement.acknowledgedLayoutDigest(),
             "partition acknowledged layout digest");
         requireExact(
-            proof.capacityVector().get(acknowledgement.partitionId()),
+            capacityVector.get(acknowledgement.partitionId()),
             acknowledgement.capacity(),
             "partition capacity");
       }

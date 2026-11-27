@@ -590,6 +590,23 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             && "local_no_send".equals(provenance)) {
           requireTerminalReplayWithinAttempt(readback, stored, now);
           requireExactClosureBeforeRetry(tx, current);
+          requireNonRegressingReadback(readback, stored, current);
+          if (!readbackDigest.equals(storedDigest)) {
+            // Keep the partial observation as the floor for owner closure while the exact
+            // local no-send receipt still authorizes a retry of this dispatch identity.
+            tx.execute(
+                """
+                UPDATE recovery_control.initial_gameplay_release_outbox
+                SET readback_identity = ?, readback_payload = CAST(? AS jsonb),
+                    readback_digest = ?, updated_at = GREATEST(updated_at, CAST(? AS timestamptz))
+                WHERE outbox_id = ?
+                """,
+                readback.readbackIdentity(),
+                JSONB.valueOf(tupleCodec.toJson(readback)),
+                readbackDigest,
+                toOffsetDateTime(now),
+                current.outboxId());
+          }
           return operation;
         }
         boolean heldUntyped = stored != null && provenance == null;
@@ -732,7 +749,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         readback.readbackIdentity(),
         JSONB.valueOf(tupleCodec.toJson(readback)),
         readbackDigest,
-        acknowledged ? toOffsetDateTime(now) : null,
+        acknowledged
+            ? toOffsetDateTime(now.truncatedTo(java.time.temporal.ChronoUnit.MICROS))
+            : null,
         toOffsetDateTime(now),
         readback.operationId(),
         readback.effectId(),
