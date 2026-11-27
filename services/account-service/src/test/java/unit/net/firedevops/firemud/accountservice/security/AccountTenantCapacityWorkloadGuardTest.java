@@ -91,11 +91,12 @@ class AccountTenantCapacityWorkloadGuardTest {
 
   @Test
   void quotaDenialReadRequiresExactGameSessionTlsWithoutAmbientAuthority() throws Exception {
-    var method = AccountServiceGrpc.getReadTenantCapacityQuotaDenialMethod();
+    var method = AccountServiceGrpc.getReadTenantCapacityAdmissionDenialMethod();
     var gameSession = tls("firemud", "game-session-service");
     assertThat(invoke(method, gameSession, "spiffe://firemud/ns/firemud/sa/game-session-service"))
         .isNull();
-    assertThatThrownBy(guard::requireQuotaDenialReader).isInstanceOf(StatusRuntimeException.class);
+    assertThatThrownBy(guard::requireAdmissionDenialReader)
+        .isInstanceOf(StatusRuntimeException.class);
     assertThat(invoke(method, null).getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
     assertThat(invoke(method, tls("firemud", "world-management-service")).getCode())
         .isEqualTo(Status.Code.PERMISSION_DENIED);
@@ -121,15 +122,15 @@ class AccountTenantCapacityWorkloadGuardTest {
     AtomicInteger starts = new AtomicInteger();
     ServerCallHandler next =
         (ignored, headers) -> {
-          if (AccountServiceGrpc.getReadTenantCapacityQuotaDenialMethod()
+          if (AccountServiceGrpc.getReadTenantCapacityAdmissionDenialMethod()
               .getFullMethodName()
               .equals(method.getFullMethodName())) {
-            assertThat(guard.requireQuotaDenialReader()).isEqualTo(expectedCallerUri);
+            assertThat(guard.requireAdmissionDenialReader()).isEqualTo(expectedCallerUri);
             assertThatThrownBy(guard::requireAuthenticatedCaller)
                 .isInstanceOf(StatusRuntimeException.class);
           } else {
             assertThat(guard.requireAuthenticatedCaller()).isEqualTo(expectedCallerUri);
-            assertThatThrownBy(guard::requireQuotaDenialReader)
+            assertThatThrownBy(guard::requireAdmissionDenialReader)
                 .isInstanceOf(StatusRuntimeException.class);
           }
           starts.incrementAndGet();

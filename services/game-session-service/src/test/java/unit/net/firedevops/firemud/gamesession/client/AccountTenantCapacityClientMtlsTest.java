@@ -52,6 +52,8 @@ import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -296,15 +298,21 @@ class AccountTenantCapacityClientMtlsTest {
 
   @Test
   void restartedClientRecoversTheOriginalQuotaDenialWithoutAnotherCommit() throws Exception {
-    assertOriginalQuotaDenialRecovery(true);
+    assertOriginalDenialRecovery(Failure.CAPACITY_QUOTA_EXCEEDED, true);
   }
 
   @Test
   void restartedClientRefusesQuotaDenialWithoutAReceiptAndDoesNotCommitAgain() throws Exception {
-    assertOriginalQuotaDenialRecovery(false);
+    assertOriginalDenialRecovery(Failure.CAPACITY_QUOTA_EXCEEDED, false);
   }
 
-  private void assertOriginalQuotaDenialRecovery(boolean receiptPresent) throws Exception {
+  @Test
+  void restartedClientRecoversTheOriginalExpiredEvaluationDenialWithoutAnotherCommit()
+      throws Exception {
+    assertOriginalDenialRecovery(Failure.CAPACITY_EVALUATION_EXPIRED, true);
+  }
+
+  private void assertOriginalDenialRecovery(Failure code, boolean receiptPresent) throws Exception {
     var request = CapacityAdmissionTestFixture.playerRequest();
     UUID denialId = receiptPresent ? UUID.randomUUID() : null;
     var commits = new AtomicInteger();
@@ -324,16 +332,13 @@ class AccountTenantCapacityClientMtlsTest {
               }
 
               @Override
-              public void readTenantCapacityQuotaDenial(
+              public void readTenantCapacityAdmissionDenial(
                   CommitTenantCapacityAdmissionRequest wire,
                   StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
                 reads.incrementAndGet();
                 assertThat(TenantCapacityAdmissionGrpcCodec.parseRequest(wire)).isEqualTo(request);
                 observer.onNext(
-                    TenantCapacityAdmissionGrpcCodec.toRefusal(
-                        request,
-                        TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED,
-                        denialId));
+                    TenantCapacityAdmissionGrpcCodec.toRefusal(request, code, denialId));
                 observer.onCompleted();
               }
             });
@@ -347,9 +352,10 @@ class AccountTenantCapacityClientMtlsTest {
       try (var restarted = client(server)) {
         restarted.init();
         if (receiptPresent) {
-          assertThat(restarted.readRetainedQuotaDenial(request, deadline())).isEqualTo(denialId);
+          assertThat(restarted.readRetainedAdmissionDenial(request, deadline()))
+              .isEqualTo(new Refusal(code, denialId));
         } else {
-          assertThatThrownBy(() -> restarted.readRetainedQuotaDenial(request, deadline()))
+          assertThatThrownBy(() -> restarted.readRetainedAdmissionDenial(request, deadline()))
               .isInstanceOfSatisfying(
                   StatusRuntimeException.class,
                   failure ->
@@ -366,13 +372,15 @@ class AccountTenantCapacityClientMtlsTest {
   @Test
   void localDenialReplayRequiresADurableDecisionId() {
     var denialId = UUID.randomUUID();
-    var replay = AccountTenantCapacityClient.CapacityRefusedException.retainedQuotaDenial(denialId);
+    var replay = AccountTenantCapacityClient.CapacityRefusedException.retainedAdmissionDenial(
+        new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, denialId));
     assertThat(replay.code())
         .isEqualTo(TenantCapacityAdmissionGrpcCodec.Failure.CAPACITY_QUOTA_EXCEEDED);
     assertThat(replay.durableDenialId()).isEqualTo(denialId);
     assertThatThrownBy(() ->
             assertThat(
-                    AccountTenantCapacityClient.CapacityRefusedException.retainedQuotaDenial(null))
+                    AccountTenantCapacityClient.CapacityRefusedException.retainedAdmissionDenial(
+                        new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, null)))
                 .isNotNull())
         .isInstanceOf(IllegalArgumentException.class);
   }

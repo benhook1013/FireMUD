@@ -279,7 +279,7 @@ class AccountTenantCapacityGrpcServiceTest {
     StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
     try (var guards = quotaDenialReader(CapacityAdmissionTestFixture.PEER)) {
       new AccountTenantCapacityGrpcService(owner, "prod")
-          .readTenantCapacityQuotaDenial(
+          .readTenantCapacityAdmissionDenial(
               TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
     } finally {
       TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
@@ -315,13 +315,14 @@ class AccountTenantCapacityGrpcServiceTest {
     try (var guards = quotaDenialReader("spiffe://firemud/ns/prod/sa/world-management-service")) {
       StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
       new AccountTenantCapacityGrpcService(owner, "prod")
-          .readTenantCapacityQuotaDenial(wire, observer);
+          .readTenantCapacityAdmissionDenial(wire, observer);
       assertFailure(observer, Failure.PERMISSION_DENIED);
     }
     try (var guards = quotaDenialReader(CapacityAdmissionTestFixture.PEER)) {
       StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
       new AccountTenantCapacityGrpcService(owner, "prod")
-          .readTenantCapacityQuotaDenial(wire.toBuilder().setCapacityDelta(0).build(), observer);
+          .readTenantCapacityAdmissionDenial(
+              wire.toBuilder().setCapacityDelta(0).build(), observer);
       assertFailure(observer, Failure.INVALID_ARGUMENT);
     }
     verifyNoInteractions(owner);
@@ -357,7 +358,7 @@ class AccountTenantCapacityGrpcServiceTest {
       String peer) {
     return mockConstruction(
         AccountTenantCapacityWorkloadGuard.class,
-        (guard, context) -> when(guard.requireQuotaDenialReader()).thenReturn(peer));
+        (guard, context) -> when(guard.requireAdmissionDenialReader()).thenReturn(peer));
   }
 
   private static void assertFailure(

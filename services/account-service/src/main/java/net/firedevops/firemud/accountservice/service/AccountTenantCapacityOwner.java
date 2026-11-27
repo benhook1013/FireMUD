@@ -34,6 +34,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Pl
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -101,8 +102,8 @@ public final class AccountTenantCapacityOwner {
     denialReadTransaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
   }
 
-  /** Reads only an exact historical quota refusal; absence does not resolve an unknown commit. */
-  public UUID readRetainedQuotaDenial(Request request, String authenticatedCaller) {
+  /** Reads an exact historical admission refusal without mutating the original attempt. */
+  public Refusal readRetainedAdmissionDenial(Request request, String authenticatedCaller) {
     requireCaller(request, authenticatedCaller);
     if (!TenantCapacityAdmission.expectedWorkload(namespace, Owner.GAME_SESSION)
         .equals(authenticatedCaller)) throw new CapacityException(Failure.PERMISSION_DENIED);
@@ -114,16 +115,16 @@ public final class AccountTenantCapacityOwner {
         || TransactionSynchronizationManager.isSynchronizationActive()
         || Context.current().isCancelled()) throw unavailable();
     try {
-      UUID denialId =
+      Refusal denial =
           denialReadTransaction.execute(status -> {
             if (Context.current().isCancelled()) throw unavailable();
             dsl.connection(connection -> {
               if (connection.getAutoCommit() || !connection.isReadOnly()) throw unavailable();
             });
-            return originDecisions.readRetainedQuotaDenial(request);
+            return originDecisions.readRetainedAdmissionDenial(request);
           });
-      if (denialId == null) throw unavailable();
-      return TenantCapacityAdmission.uuid(denialId);
+      if (denial == null) throw unavailable();
+      return denial;
     } catch (CapacityException failure) {
       // A different original or decision is not settlement evidence on this read.
       if (failure.code() == Failure.IDEMPOTENCY_CONFLICT) throw unavailable();
@@ -146,11 +147,22 @@ public final class AccountTenantCapacityOwner {
             return new CommitDecision(capacity.exact(request, existing), null);
           }
           if (request.capacityRearmFence() != 1) throw conflict();
-          UUID retainedDenial = originDecisions.retainedQuotaDenial(request);
+          Refusal retainedDenial = originDecisions.retainedAdmissionDenial(request);
           if (retainedDenial != null) return new CommitDecision(null, retainedDenial);
           originDecisions.requireFreshAttemptBinding(request);
           lockPlayerAccount(request);
-          current(request);
+          var evidence = request.evidence();
+          Instant retainedExpiry = capacity.requireRetained(evidence);
+          Instant now = clock.instant();
+          if (!now.isBefore(evidence.evaluatedAt())
+              && !now.isBefore(retainedExpiry)
+              && evidence.permitsCreation()
+              && capacity.retainedEvaluationExpired(retainedExpiry)) {
+            requireSupportedShape(request);
+            return new CommitDecision(
+                null, originDecisions.refuse(request, Failure.CAPACITY_EVALUATION_EXPIRED));
+          }
+          current(request, now);
           requireSupportedShape(request);
           if (!request.evidence().permitsCreation())
             throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
@@ -159,17 +171,17 @@ public final class AccountTenantCapacityOwner {
           if (reservation.isPresent()) {
             return new CommitDecision(reservation.orElseThrow(), null);
           }
-          UUID denialId = originDecisions.refuseQuota(request);
-          requireCurrentLifetime(request.evidence(), clock.instant());
-          return new CommitDecision(null, denialId);
+          Refusal denial = originDecisions.refuse(request, Failure.CAPACITY_QUOTA_EXCEEDED);
+          requireCurrentLifetime(evidence, clock.instant());
+          return new CommitDecision(null, denial);
         });
     // Throw only after the transaction has committed the exact denial.
-    if (decision.denialId() != null)
-      throw new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED, decision.denialId());
+    if (decision.denial() != null)
+      throw new CapacityException(decision.denial().code(), decision.denial().durableDenialId());
     return decision.reservation();
   }
 
-  private record CommitDecision(Result reservation, UUID denialId) {}
+  private record CommitDecision(Result reservation, Refusal denial) {}
 
   /** Only the Account-owned recovery worker calls this after storing terminal no-commit proof. */
   Result rearm(Request prior, Request next, UUID recoveryOwner, long claimFence) {
@@ -199,7 +211,8 @@ public final class AccountTenantCapacityOwner {
       if (!"RESERVED".equals(row.get("state", String.class))
           || !"NOT_EXECUTED_AFTER_AUTHORIZATION".equals(row.get("execution_status", String.class))
           || row.get("owner_readback", byte[].class) == null) throw conflict();
-      current(next);
+      capacity.requireRetained(next.evidence());
+      current(next, clock.instant());
       requireSupportedShape(next);
       // Match the fresh reservation/refusal path before arbitrating the attempt UUID.
       capacity.usage(next);
@@ -245,10 +258,8 @@ public final class AccountTenantCapacityOwner {
     });
   }
 
-  private void current(Request request) {
+  private void current(Request request, Instant now) {
     var evidence = request.evidence();
-    capacity.requireRetained(evidence);
-    Instant now = clock.instant();
     requireCurrentLifetime(evidence, now);
     if (!(request.context() instanceof PlayerContext player)) throw unavailable();
     var parsed =

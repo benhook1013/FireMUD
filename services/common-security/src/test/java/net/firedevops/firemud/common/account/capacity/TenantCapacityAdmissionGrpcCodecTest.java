@@ -20,9 +20,33 @@ import org.junit.jupiter.api.Test;
 
 class TenantCapacityAdmissionGrpcCodecTest {
   @Test
+  void expiredEvaluationCarriesTheExactDurableDenial() {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    var decisionId = UUID.randomUUID();
+    var code = Failure.CAPACITY_EVALUATION_EXPIRED;
+    var response = TenantCapacityAdmissionGrpcCodec.toRefusal(request, code, decisionId);
+
+    assertThat(TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response))
+        .contains(new Refusal(code, decisionId));
+    assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.toRefusal(request, code))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    var missingReceipt =
+        response.toBuilder()
+            .setRefusal(0, response.getRefusal(0).toBuilder().clearDurableDenialId())
+            .build();
+    assertThatThrownBy(
+            () -> TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, missingReceipt))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void onlyCanonicalFailureDetailsSurviveWithoutChangingTransportStatus() {
     var domainCodes =
-        java.util.Set.of(Failure.TENANT_BILLING_BLOCKED, Failure.CAPACITY_QUOTA_EXCEEDED);
+        java.util.Set.of(
+            Failure.TENANT_BILLING_BLOCKED,
+            Failure.CAPACITY_QUOTA_EXCEEDED,
+            Failure.CAPACITY_EVALUATION_EXPIRED);
     for (var failure : Failure.values()) {
       assertThat(failure.isDomainRefusal()).isEqualTo(domainCodes.contains(failure));
       if (domainCodes.contains(failure)) {
