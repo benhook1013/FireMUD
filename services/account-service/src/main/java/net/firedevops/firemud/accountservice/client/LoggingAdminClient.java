@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.client;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
+import io.grpc.StatusRuntimeException;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -23,6 +24,9 @@ import net.firedevops.firemud.loggingadmin.v1.AccountAuditScope;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventRequest;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventResponse;
 import net.firedevops.firemud.loggingadmin.v1.LoggingAdminServiceGrpc;
+import net.firedevops.firemud.loggingadmin.v1.ReadLogEventReceiptRequest;
+import net.firedevops.firemud.loggingadmin.v1.ReadLogEventReceiptResponse;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -66,6 +70,23 @@ public class LoggingAdminClient
 
   /** Send one unchanged owner-local outbox envelope and verify the exact receiver receipt. */
   public AuditDeliveryResult deliver(AccountAuditEnvelope envelope) {
+    return deliver(toCreateRequest(envelope));
+  }
+
+  /** Reconcile an ambiguous original delivery through an independent, exact receipt read. */
+  public AuditDeliveryResult deliverOrRecover(AccountAuditEnvelope envelope) {
+    CreateLogEventRequest request = toCreateRequest(envelope);
+    try {
+      return deliver(request);
+    } catch (StatusRuntimeException failure) {
+      return switch (failure.getStatus().getCode()) {
+        case CANCELLED, DEADLINE_EXCEEDED, INTERNAL, UNKNOWN, UNAVAILABLE -> readReceipt(request);
+        default -> throw failure;
+      };
+    }
+  }
+
+  private static CreateLogEventRequest toCreateRequest(AccountAuditEnvelope envelope) {
     envelope.tenantIdentity().requireScope(envelope.scope());
     AccountAuditScope scope =
         switch (envelope.scope()) {
@@ -97,47 +118,116 @@ public class LoggingAdminClient
     if (envelope.tenantUuid() != null) {
       builder.setTenantUuid(envelope.tenantUuid().toString());
     }
+    return builder.build();
+  }
+
+  private AuditDeliveryResult deliver(CreateLogEventRequest request) {
     CreateLogEventResponse response =
-        stub().withDeadlineAfter(5, TimeUnit.SECONDS).createLogEvent(builder.build());
-    if (response.hasError()) {
-      String errorCode = response.getError().getCode();
-      if (errorCode == null || !errorCode.matches("[A-Z][A-Z0-9_]{0,63}")) {
-        errorCode = "UNKNOWN";
-      }
-      throw new IllegalStateException("Account audit receiver returned error code " + errorCode);
+        stub().withDeadlineAfter(5, TimeUnit.SECONDS).createLogEvent(request);
+    requireNoReceiverError(response.hasError() ? response.getError() : null);
+    return verifyReceipt(
+        request,
+        response.getScope(),
+        response.getTenantIdentityVersion(),
+        response.getTenantId(),
+        response.getTenantUuid(),
+        response.getAuditEventId(),
+        response.getSchemaVersion(),
+        response.getPayloadDigestVersion(),
+        response.getPayloadDigest(),
+        response.getStatus(),
+        response.getOutcome(),
+        response.getReceiptId(),
+        response.getLogEventId());
+  }
+
+  private AuditDeliveryResult readReceipt(CreateLogEventRequest original) {
+    ReadLogEventReceiptRequest request =
+        ReadLogEventReceiptRequest.newBuilder()
+            .setScope(original.getScope())
+            .setTenantIdentityVersion(original.getTenantIdentityVersion())
+            .setTenantId(original.getTenantId())
+            .setTenantUuid(original.getTenantUuid())
+            .setAuditEventId(original.getAuditEventId())
+            .setProducerService(original.getProducerService())
+            .setEventType(original.getEventType())
+            .setOccurredAt(original.getOccurredAt())
+            .setSchemaVersion(original.getSchemaVersion())
+            .setPayload(original.getPayload())
+            .setPayloadDigestVersion(original.getPayloadDigestVersion())
+            .setPayloadDigest(original.getPayloadDigest())
+            .build();
+    ReadLogEventReceiptResponse response =
+        stub().withDeadlineAfter(5, TimeUnit.SECONDS).readLogEventReceipt(request);
+    requireNoReceiverError(response.hasError() ? response.getError() : null);
+    return verifyReceipt(
+        original,
+        response.getScope(),
+        response.getTenantIdentityVersion(),
+        response.getTenantId(),
+        response.getTenantUuid(),
+        response.getAuditEventId(),
+        response.getSchemaVersion(),
+        response.getPayloadDigestVersion(),
+        response.getPayloadDigest(),
+        response.getStatus(),
+        response.getOutcome(),
+        response.getReceiptId(),
+        response.getLogEventId());
+  }
+
+  private static void requireNoReceiverError(ErrorDetail error) {
+    if (error == null) {
+      return;
     }
-    int receiptTenantIdentityVersion = response.getTenantIdentityVersion();
-    // An old proto's absent scalar version denotes V1 only without a UUID; never infer V2.
-    if (receiptTenantIdentityVersion == 0 && response.getTenantUuid().isEmpty()) {
-      receiptTenantIdentityVersion = AccountAuditTenantIdentity.VERSION_1;
+    String errorCode = error.getCode();
+    if (!errorCode.matches("[A-Z][A-Z0-9_]{0,63}")) {
+      errorCode = "UNKNOWN";
     }
-    if (!response.getAuditEventId().equals(envelope.auditEventId().toString())
-        || !response.getPayloadDigest().equals(envelope.payloadDigest())
-        || response.getSchemaVersion() != envelope.schemaVersion()
-        || response.getPayloadDigestVersion() != envelope.payloadDigestVersion()
-        || response.getScope() != builder.getScope()
-        || !response.getTenantId().equals(builder.getTenantId())
-        || receiptTenantIdentityVersion != envelope.tenantIdentityVersion()
-        || !response.getTenantUuid().equals(builder.getTenantUuid())) {
+    throw new IllegalStateException("Account audit receiver returned error code " + errorCode);
+  }
+
+  private static AuditDeliveryResult verifyReceipt(
+      CreateLogEventRequest original,
+      AccountAuditScope scope,
+      int identityVersion,
+      String tenantId,
+      String tenantUuid,
+      String auditEventId,
+      int schemaVersion,
+      int digestVersion,
+      String digest,
+      AccountAuditReceiptStatus status,
+      AccountAuditReceiptOutcome outcome,
+      String receiptId,
+      String logEventId) {
+    // Absence of the version was the wire representation for V1 without a UUID.
+    int receiptVersion =
+        identityVersion == 0 && tenantUuid.isEmpty()
+            ? AccountAuditTenantIdentity.VERSION_1
+            : identityVersion;
+    if (!auditEventId.equals(original.getAuditEventId())
+        || !digest.equals(original.getPayloadDigest())
+        || schemaVersion != original.getSchemaVersion()
+        || digestVersion != original.getPayloadDigestVersion()
+        || scope != original.getScope()
+        || !tenantId.equals(original.getTenantId())
+        || receiptVersion != original.getTenantIdentityVersion()
+        || !tenantUuid.equals(original.getTenantUuid())) {
       throw new IllegalStateException(
           "Account audit receiver returned mismatched receipt evidence");
     }
     boolean minimized =
-        response.getStatus() == AccountAuditReceiptStatus.ACCOUNT_AUDIT_RECEIPT_STATUS_MINIMIZED
-            && response.getOutcome()
-                == AccountAuditReceiptOutcome.ACCOUNT_AUDIT_RECEIPT_OUTCOME_NON_REPLAYABLE;
+        status == AccountAuditReceiptStatus.ACCOUNT_AUDIT_RECEIPT_STATUS_MINIMIZED
+            && outcome == AccountAuditReceiptOutcome.ACCOUNT_AUDIT_RECEIPT_OUTCOME_NON_REPLAYABLE;
     boolean committed =
-        response.getStatus() == AccountAuditReceiptStatus.ACCOUNT_AUDIT_RECEIPT_STATUS_COMMITTED
-            && (response.getOutcome()
-                    == AccountAuditReceiptOutcome.ACCOUNT_AUDIT_RECEIPT_OUTCOME_ACCEPTED
-                || response.getOutcome()
-                    == AccountAuditReceiptOutcome.ACCOUNT_AUDIT_RECEIPT_OUTCOME_DUPLICATE);
-    if ((!committed && !minimized)
-        || response.getReceiptId().isBlank()
-        || response.getLogEventId().isBlank()) {
+        status == AccountAuditReceiptStatus.ACCOUNT_AUDIT_RECEIPT_STATUS_COMMITTED
+            && (outcome == AccountAuditReceiptOutcome.ACCOUNT_AUDIT_RECEIPT_OUTCOME_ACCEPTED
+                || outcome == AccountAuditReceiptOutcome.ACCOUNT_AUDIT_RECEIPT_OUTCOME_DUPLICATE);
+    if ((!committed && !minimized) || receiptId.isBlank() || logEventId.isBlank()) {
       throw new IllegalStateException("Account audit receiver did not prove a terminal receipt");
     }
-    return new AuditDeliveryResult(response.getReceiptId(), response.getLogEventId(), minimized);
+    return new AuditDeliveryResult(receiptId, logEventId, minimized);
   }
 
   /** Existing deferred-commerce path remains best effort until its own outbox convergence. */

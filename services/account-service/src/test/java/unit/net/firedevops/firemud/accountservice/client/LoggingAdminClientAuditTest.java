@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -31,6 +32,8 @@ import net.firedevops.firemud.loggingadmin.v1.AccountAuditScope;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventRequest;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventResponse;
 import net.firedevops.firemud.loggingadmin.v1.LoggingAdminServiceGrpc;
+import net.firedevops.firemud.loggingadmin.v1.ReadLogEventReceiptRequest;
+import net.firedevops.firemud.loggingadmin.v1.ReadLogEventReceiptResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -298,6 +301,70 @@ class LoggingAdminClientAuditTest {
     LoggingAdminClient client = newClient(stub);
 
     assertThatThrownBy(() -> client.deliver(canonicalEnvelope())).isSameAs(failure);
+
+    capturedRequest(stub);
+    verifyOnlyCreate(stub);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void ambiguityReadsTheExactOriginalTupleOnceAndRequiresMatchingIdentity(boolean wrongTenant)
+      throws Exception {
+    var stub = mockStub();
+    var envelope = canonicalEnvelope();
+    when(stub.createLogEvent(any())).thenThrow(Status.DEADLINE_EXCEEDED.asRuntimeException());
+    when(stub.readLogEventReceipt(any()))
+        .thenReturn(
+            ReadLogEventReceiptResponse.newBuilder()
+                .setScope(AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT)
+                .setTenantIdentityVersion(2)
+                .setTenantUuid(wrongTenant ? OTHER_TENANT_UUID : TENANT_UUID)
+                .setAuditEventId(envelope.auditEventId().toString())
+                .setSchemaVersion(envelope.schemaVersion())
+                .setPayloadDigestVersion(envelope.payloadDigestVersion())
+                .setPayloadDigest(envelope.payloadDigest())
+                .setReceiptId("receipt-2")
+                .setLogEventId("log-9")
+                .setStatus(AccountAuditReceiptStatus.ACCOUNT_AUDIT_RECEIPT_STATUS_COMMITTED)
+                .setOutcome(AccountAuditReceiptOutcome.ACCOUNT_AUDIT_RECEIPT_OUTCOME_DUPLICATE)
+                .build());
+    var client = newClient(stub);
+    if (wrongTenant) {
+      assertThatThrownBy(() -> client.deliverOrRecover(envelope))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("mismatched receipt evidence");
+    } else {
+      assertThat(client.deliverOrRecover(envelope))
+          .isEqualTo(new LoggingAdminClient.AuditDeliveryResult("receipt-2", "log-9", false));
+    }
+    var original = capturedRequest(stub);
+    var captor = ArgumentCaptor.forClass(ReadLogEventReceiptRequest.class);
+    verify(stub).readLogEventReceipt(captor.capture());
+    var read = captor.getValue();
+    assertThat(read.getScope()).isEqualTo(original.getScope());
+    assertThat(read.getTenantIdentityVersion()).isEqualTo(original.getTenantIdentityVersion());
+    assertThat(read.getTenantId()).isEqualTo(original.getTenantId());
+    assertThat(read.getTenantUuid()).isEqualTo(original.getTenantUuid());
+    assertThat(read.getAuditEventId()).isEqualTo(original.getAuditEventId());
+    assertThat(read.getProducerService()).isEqualTo(original.getProducerService());
+    assertThat(read.getEventType()).isEqualTo(original.getEventType());
+    assertThat(read.getOccurredAt()).isEqualTo(original.getOccurredAt());
+    assertThat(read.getSchemaVersion()).isEqualTo(original.getSchemaVersion());
+    assertThat(read.getPayloadDigestVersion()).isEqualTo(original.getPayloadDigestVersion());
+    assertThat(read.getPayloadDigest()).isEqualTo(original.getPayloadDigest());
+    assertThat(read.getPayload()).isEqualTo(original.getPayload());
+    verify(stub, times(2)).withDeadlineAfter(5L, TimeUnit.SECONDS);
+    verifyNoMoreInteractions(stub);
+  }
+
+  @Test
+  void definitiveDenialCannotTriggerReceiptRead() throws Exception {
+    var stub = mockStub();
+    var failure = Status.PERMISSION_DENIED.asRuntimeException();
+    when(stub.createLogEvent(any())).thenThrow(failure);
+    var client = newClient(stub);
+
+    assertThatThrownBy(() -> client.deliverOrRecover(canonicalEnvelope())).isSameAs(failure);
 
     capturedRequest(stub);
     verifyOnlyCreate(stub);
