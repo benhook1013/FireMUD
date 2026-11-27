@@ -67,6 +67,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.accountservice.client.WorldGameplayAdmissionHoldClient;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository;
@@ -1986,8 +1987,24 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                     finalAccountRows.get("account_start_session_activation_protection_settlements"))
                 .hasSize(1);
             if (activeWorldCheck == ActiveWorldCheck.SERVING_PLAYER_HOLD) {
-              exerciseServingPlayerAdmissionHold(
-                  world, gs, association, lifecycleRepository, active);
+              boundWorld.addService(
+                  new WorldCanonicalPlayerAdmissionHoldGrpcService(
+                          servingPlayerHoldService(world), NAMESPACE)
+                      .bindService());
+              try (var accountHoldClient =
+                  new WorldGameplayAdmissionHoldClient(
+                      worldEndpoints, pki.client("account-service"), factory, NAMESPACE)) {
+                accountHoldClient.init();
+                exerciseServingPlayerAdmissionHold(
+                    world,
+                    gs,
+                    association,
+                    lifecycleRepository,
+                    active,
+                    accountHoldClient,
+                    pki,
+                    factory);
+              }
             }
             if (exerciseCanonicalInitialAdmissionHold) {
               exerciseCanonicalInitialAdmissionHold(
@@ -2076,7 +2093,10 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       Database gs,
       WorldCanonicalInstanceAssociationRepository associations,
       WorldCanonicalInstanceLifecycleReadRepository lifecycles,
-      WorldCanonicalInstanceLifecycleEvidence active)
+      WorldCanonicalInstanceLifecycleEvidence active,
+      WorldGameplayAdmissionHoldClient accountHoldClient,
+      WorldOriginalStartSessionPreparationProofPki pki,
+      GrpcChannelFactory factory)
       throws Exception {
     var association =
         associations.readOwnerAssociation(active.request().canonicalGameInstanceId()).orElseThrow();
@@ -2106,20 +2126,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     long epoch = active.lifecycleEpoch();
     long version = active.rowVersion();
     var request = new WorldCanonicalPlayerAdmissionHoldEvidence.Request(lease, epoch, version);
-    // Explicitly controlled peer context, not mTLS proof for this hold service. The preceding
-    // protected ACTIVE and exact Account activation settlement use the existing real owner chain.
-    var accountContext =
-        Context.current()
-            .withValue(
-                GrpcPeerIdentity.CONTEXT_KEY,
-                GrpcPeerIdentity.parseUri(
-                        "spiffe://firemud/ns/" + target.targetNamespace() + "/sa/account-service")
-                    .orElseThrow());
-    var service = servingPlayerHoldService(world);
-    assertThat(
-            accountContext.call(
-                () -> service.read(lease.canonicalJson(), lease.sha256(), epoch, version)))
-        .isEmpty();
+    assertServingPlayerHoldRefusesWrongWorldPeer(request, pki, factory);
+    assertUnresolvedServingPlayerHold(() -> accountHoldClient.read(request));
     WorldCanonicalPlayerAdmissionHoldEvidence held;
     try (var repeatableRead = world.pool().getConnection();
         var serializable = world.pool().getConnection()) {
@@ -2136,9 +2144,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         assertThat(snapshot.fetchCount(DSL.table("world_canonical_player_admission_hold")))
             .isZero();
       }
-      held =
-          accountContext.call(
-              () -> service.acquire(lease.canonicalJson(), lease.sha256(), epoch, version));
+      held = accountHoldClient.acquire(request);
       for (Connection stale : List.of(repeatableRead, serializable)) {
         DSLContext snapshot = DSL.using(stale, SQLDialect.POSTGRES);
         assertThatThrownBy(
@@ -2186,64 +2192,101 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             "world_canonical_instance_activation_fence",
             "world_canonical_instance_activation_operation",
             "initial_admission_bind_hold");
-    assertThat(
-            accountContext
-                .call(() -> service.acquire(lease.canonicalJson(), lease.sha256(), epoch, version))
-                .canonicalBytes())
+    assertThat(accountHoldClient.acquire(request).canonicalBytes())
         .containsExactly(held.canonicalBytes());
 
-    // Reconstruct all local repositories and the service; no previous in-memory hold is supplied.
-    var reconstructed = servingPlayerHoldService(world);
-    var readback =
-        accountContext.call(
-            () ->
-                reconstructed
-                    .read(lease.canonicalJson(), lease.sha256(), epoch, version)
-                    .orElseThrow());
-    assertThat(readback.canonicalBytes()).containsExactly(held.canonicalBytes());
-    assertThat(readback.sha256()).isEqualTo(held.sha256());
-    assertThat(
-            accountContext
-                .call(
-                    () ->
-                        reconstructed.acquire(
-                            lease.canonicalJson(), lease.sha256(), epoch, version))
-                .canonicalBytes())
-        .containsExactly(held.canonicalBytes());
+    // A separate socket and reconstructed World repositories recover the original durable hold.
+    var reconstructed =
+        server(
+            "world-management-service",
+            pki,
+            new WorldCanonicalPlayerAdmissionHoldGrpcService(
+                servingPlayerHoldService(world), NAMESPACE));
+    try {
+      var endpoints = new ServiceEndpointsProperties();
+      endpoints.setWorldManagementService("localhost:" + reconstructed.getPort());
+      try (var recoveryClient =
+          new WorldGameplayAdmissionHoldClient(
+              endpoints, pki.client("account-service"), factory, NAMESPACE)) {
+        recoveryClient.init();
+        var readback = recoveryClient.readExact(held);
+        assertThat(readback.canonicalBytes()).containsExactly(held.canonicalBytes());
+        assertThat(readback.sha256()).isEqualTo(held.sha256());
+        assertThat(recoveryClient.acquire(request).canonicalBytes())
+            .containsExactly(held.canonicalBytes());
 
-    var changedCarrier = new LinkedHashMap<>(lease.carrier());
-    changedCarrier.put("leaseFence", "2");
-    var changedLease = AccountGameplayAdmissionLeaseEvidence.fromCarrier(changedCarrier);
-    accountContext.run(
-        () -> {
-          assertThatThrownBy(
-                  () ->
-                      reconstructed.acquire(
-                          changedLease.canonicalJson(), changedLease.sha256(), epoch, version))
-              .isInstanceOf(IllegalStateException.class)
-              .hasMessageContaining("Retained hold conflicts");
-          assertThatThrownBy(
-                  () ->
-                      reconstructed.read(
-                          changedLease.canonicalJson(), changedLease.sha256(), epoch, version))
-              .isInstanceOf(IllegalStateException.class)
-              .hasMessageContaining("Retained hold conflicts");
-          assertThatThrownBy(
-                  () ->
-                      reconstructed.acquire(
-                          lease.canonicalJson(), lease.sha256(), epoch, version + 1))
-              .isInstanceOf(IllegalStateException.class)
-              .hasMessageContaining("Retained hold conflicts");
-          assertThatThrownBy(
-                  () ->
-                      reconstructed.read(lease.canonicalJson(), lease.sha256(), epoch, version + 1))
-              .isInstanceOf(IllegalStateException.class)
-              .hasMessageContaining("Retained hold conflicts");
-        });
+        var changedCarrier = new LinkedHashMap<>(lease.carrier());
+        changedCarrier.put("leaseFence", "2");
+        var changedLease = AccountGameplayAdmissionLeaseEvidence.fromCarrier(changedCarrier);
+        for (var changed :
+            List.of(
+                new WorldCanonicalPlayerAdmissionHoldEvidence.Request(changedLease, epoch, version),
+                new WorldCanonicalPlayerAdmissionHoldEvidence.Request(lease, epoch, version + 1))) {
+          assertUnresolvedServingPlayerHold(() -> recoveryClient.acquire(changed));
+          assertUnresolvedServingPlayerHold(() -> recoveryClient.read(changed));
+        }
+      }
+    } finally {
+      shutdown(reconstructed);
+    }
     assertThat(world.dsl().fetchCount(DSL.table("world_canonical_player_admission_hold")))
         .isEqualTo(1);
     assertThat(rows(world.dsl(), retainedRows.keySet().toArray(String[]::new)))
         .isEqualTo(retainedRows);
+  }
+
+  private static void assertUnresolvedServingPlayerHold(Runnable operation) {
+    assertThatThrownBy(operation::run)
+        .isInstanceOfSatisfying(
+            StatusRuntimeException.class,
+            failure ->
+                assertThat(failure.getStatus().getCode())
+                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+  }
+
+  private static void assertServingPlayerHoldRefusesWrongWorldPeer(
+      WorldCanonicalPlayerAdmissionHoldEvidence.Request request,
+      WorldOriginalStartSessionPreparationProofPki pki,
+      GrpcChannelFactory factory)
+      throws Exception {
+    var deliveries = new AtomicInteger();
+    var wrongPeer =
+        buildServer(
+            "game-session-service",
+            pki,
+            0,
+            () ->
+                ServerInterceptors.intercept(
+                    new WorldCanonicalPlayerAdmissionHoldGrpcService(
+                        Mockito.mock(WorldCanonicalPlayerAdmissionHoldService.class), NAMESPACE),
+                    new ServerInterceptor() {
+                      @Override
+                      public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+                          ServerCall<ReqT, RespT> call,
+                          io.grpc.Metadata headers,
+                          ServerCallHandler<ReqT, RespT> next) {
+                        deliveries.incrementAndGet();
+                        return next.startCall(call, headers);
+                      }
+                    }));
+    try {
+      var endpoints = new ServiceEndpointsProperties();
+      endpoints.setWorldManagementService("localhost:" + wrongPeer.getPort());
+      try (var client =
+          new WorldGameplayAdmissionHoldClient(
+              endpoints, pki.client("account-service"), factory, NAMESPACE)) {
+        client.init();
+        assertThatThrownBy(() -> client.acquire(request))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode())
+                        .isEqualTo(Status.Code.UNAUTHENTICATED));
+      }
+      assertThat(deliveries).hasValue(0);
+    } finally {
+      shutdown(wrongPeer);
+    }
   }
 
   private static WorldCanonicalPlayerAdmissionHoldService servingPlayerHoldService(Database world) {
