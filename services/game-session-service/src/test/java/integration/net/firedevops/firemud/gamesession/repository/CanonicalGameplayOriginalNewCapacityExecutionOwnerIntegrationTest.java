@@ -223,6 +223,50 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     }
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void abortedOriginalRetainsPhysicalClosureAcrossAbortOrdering(boolean closeBeforeAbort)
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    if (closeBeforeAbort)
+      capacityOwner()
+          .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(fixture.recordOriginalAccountAbort().isAccountAborted()).isTrue();
+    if (!closeBeforeAbort)
+      capacityOwner()
+          .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
+    var proof =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(proof.disposition()).isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
+    var terminal =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT status, terminal_readback FROM game_session_original_new_capacity_execution");
+    assertThat(terminal.get("status", String.class)).isEqualTo("CLOSED");
+    byte[] terminalReadback = terminal.get("terminal_readback", byte[].class);
+    assertThat(terminalReadback).containsExactly(proof.canonicalReadback());
+    assertThat(terminalReadback.length).isBetween(1, 512);
+    byte[] tombstone =
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(
+            admin,
+            ascii(
+                capacityKey(tags.assignmentForRetainedCapacityExecution(fixture.transitionId()))));
+    assertThat(
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                .canonicalReadback())
+        .containsExactly(proof.canonicalReadback());
+    assertThat(
+            CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(
+                admin,
+                ascii(
+                    capacityKey(
+                        tags.assignmentForRetainedCapacityExecution(fixture.transitionId())))))
+        .containsExactly(tombstone);
+  }
+
   @Test
   void physicalImageRetainsAbsoluteExpiryRatherThanOnlyItsPresence() {
     byte[] key = "physical-image-expiry".getBytes(StandardCharsets.US_ASCII);
@@ -317,6 +361,78 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     assertThat(admin.type(key)).isEqualTo("none");
     assertThat(sqlImage()).isEqualTo(rows);
     assertThat(physicalImage()).isEqualTo(physical);
+  }
+
+  @Test
+  void executionAndTerminalReadbackShareOnePrechargedRecord() throws Exception {
+    repairAccountMember();
+    bridge(false, 1, 1048576);
+    DSLContext sql = fixture.dsl();
+    UUID attempt = controlledCapacity.request().admissionAttemptId();
+    byte[] canonical = controlledCapacity.canonicalBytes();
+    // Pad with JSON whitespace in the SQL boundary fixture. The actual codec output is smaller.
+    String insert =
+        """
+        WITH payload AS (
+            SELECT ?::bytea || convert_to(repeat(' ', ?), 'UTF8') AS bytes
+        )
+        INSERT INTO game_session_original_new_capacity_execution (
+            tenant_id, request_id, admission_id, admission_attempt_id, transition_id,
+            capacity_rearm_fence, reservation_id, reservation_fence, mutation_digest,
+            execution_digest, canonical_execution, selected_owner_id, selected_owner_fence,
+            tenant_gameplay_tag, status)
+        SELECT c.tenant_id, c.request_id, c.admission_id, c.admission_attempt_id, c.admission_id,
+            c.capacity_rearm_fence, ?, ?, c.mutation_digest,
+            'sha256:' || encode(sha256(p.bytes), 'hex'), p.bytes, c.selected_owner_id,
+            c.selected_owner_fence, t.tenant_gameplay_tag, 'INSTALL_DISPATCHED'
+        FROM game_session_capacity_evidence_charge c
+        JOIN game_session_canonical_tenant_gameplay_tag t USING (tenant_id)
+        CROSS JOIN payload p
+        WHERE c.admission_attempt_id = ?
+        """;
+    assertThatThrownBy(() ->
+            sql.execute(
+                insert,
+                canonical,
+                1048065 - canonical.length,
+                controlledCapacity.reservation().reservationId(),
+                controlledCapacity.reservation().reservationFence(),
+                attempt))
+        .isInstanceOfSatisfying(
+            org.jooq.exception.DataAccessException.class,
+            failure -> {
+              assertThat(failure.sqlState()).isEqualTo("23514");
+              assertThat(failure).hasMessageContaining("gs_capacity_execution_record_bytes");
+            });
+    assertThat(
+            sql.execute(
+                insert,
+                canonical,
+                1048064 - canonical.length,
+                controlledCapacity.reservation().reservationId(),
+                controlledCapacity.reservation().reservationFence(),
+                attempt))
+        .isEqualTo(1);
+
+    String close =
+        "UPDATE game_session_original_new_capacity_execution"
+            + " SET status = 'CLOSED', terminal_readback = ? WHERE admission_attempt_id = ?";
+    assertThatThrownBy(() -> sql.execute(close, new byte[513], attempt))
+        .isInstanceOfSatisfying(
+            org.jooq.exception.DataAccessException.class,
+            failure -> {
+              assertThat(failure.sqlState()).isEqualTo("23514");
+              assertThat(failure).hasMessageContaining("gs_capacity_terminal_record_bytes");
+            });
+    assertThat(sql.execute(close, new byte[512], attempt)).isEqualTo(1);
+    assertThat(
+            sql.fetchSingle(
+                    "SELECT octet_length(canonical_execution) + octet_length(terminal_readback)"
+                        + " FROM game_session_original_new_capacity_execution"
+                        + " WHERE admission_attempt_id = ?",
+                    attempt)
+                .get(0, Integer.class))
+        .isEqualTo(1048576);
   }
 
   @Test

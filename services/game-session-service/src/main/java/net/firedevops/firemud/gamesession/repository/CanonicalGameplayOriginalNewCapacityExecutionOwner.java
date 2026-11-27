@@ -30,6 +30,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Pl
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import org.jooq.DSLContext;
@@ -233,7 +234,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   record CommittedCapacitySource(CommittedCapacityRequest selector, String executionDigest) {}
 
   /** Returns a retained terminal denial on exact replay, otherwise reserves execution evidence. */
-  UUID precharge(
+  Refusal precharge(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       Request request,
       CurrentOwner selected,
@@ -286,7 +287,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         });
   }
 
-  boolean hasUnsettledPossibleSend(
+  CanonicalGameplayCapacityEvidenceBudget.RetainedCharge requireExistingCharge(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       Request request,
       CurrentOwner selected,
@@ -302,7 +303,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
               .transactionResult(configuration -> {
                 var tx = DSL.using(configuration);
                 requireSelectedOwner(tx, candidate, selected);
-                return CanonicalGameplayCapacityEvidenceBudget.hasUnsettledPossibleSend(
+                return CanonicalGameplayCapacityEvidenceBudget.requireExistingCharge(
                     tx,
                     request,
                     source.candidateDigest(),
@@ -316,7 +317,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       Request request,
       CurrentOwner selected,
-      UUID accountDenialId,
+      Refusal denial,
       long deadline) {
     within(
         deadline,
@@ -335,7 +336,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                     source.candidateDigest(),
                     selected,
                     assignment.tenantGameplayTag(),
-                    accountDenialId);
+                    denial);
               });
           return null;
         });

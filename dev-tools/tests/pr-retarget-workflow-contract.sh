@@ -706,7 +706,8 @@ if "github.sha" in concurrency_group.split("github.event_name == 'repository_dis
     raise SystemExit("repository_dispatch concurrency must not use the default-branch github.sha")
 # Execute the workflow-level selector before its dispatcher can classify a CI
 # callback. A title/body CI completion must not evict substantive reconciliation.
-assert runtime["concurrency"]["cancel-in-progress"] == "true"
+assert runtime["concurrency"]["cancel-in-progress"] == "false"
+assert runtime["concurrency"]["queue"] == "max"
 
 def callback_group(branch, source_id, source_attempt, source_event="pull_request", head="a" * 40):
     values = {
@@ -734,8 +735,8 @@ for branch in ("main", "develop", "feature/parent"):
     metadata = callback_group(branch, 7002, 1)
     subsequent_attempt = callback_group(branch, 7001, 2)
     active = {}
-    # With cancel-in-progress enabled, assigning the same group evicts its
-    # earlier run. Interleave both callback orders to retain substantive work.
+    # Distinct groups keep the metadata callback out of the substantive queue.
+    # Interleave both callback orders to verify the separation.
     for callbacks in (((substantive, "substantive"), (metadata, "metadata")),
                       ((metadata, "metadata"), (substantive, "substantive"))):
         active.clear()
@@ -896,12 +897,12 @@ const runsDescending = (event, firstCreatedAt) => Array.from({ length: 100 }, (_
 async function runDispatcher({
   tuples, inventories = {}, apiFailure = null, sourceTuples = [], callback = {},
   branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, mergeReadFailures = {}, ciEvidence = {},
-  hideDispatchVisibility = false, filesByPr = {}, postFailurePr = null, previewFailurePr = null,
+  hideDispatchVisibility = false, admissionFails = false, filesByPr = {}, postFailurePr = null, previewFailurePr = null,
   visibilityResponse = null, filesFailurePr = null, postFailureVisible = false, postFailureStatus = null,
   fanoutCutoffAfterInventory = false, fanoutCutoffAfterPreviewPr = null, expireAfterFirstApiRequest = false,
   pullGetFailures = {}, lateProducer = null, runtimeWorkflowLookupFailures = [],
   pullListResponse = null, apiRequestMillis = 0, runtimeRunOverrides = {}, runtimeAttemptJobs = {}, runtimeNativeAttempts = {},
-  initialTime = "2026-01-08T00:00:00Z", afterPreviewDispatch = null,
+  initialTime = "2026-01-08T00:00:00Z", afterPreviewDispatch = null, publication = {},
 }) {
   const dispatches = [];
   const postedRuns = [];
@@ -1064,9 +1065,9 @@ async function runDispatcher({
           if (request.event_type === "preview-deploy" && request.client_payload.pr_number === previewFailurePr) {
             throw new Error("ambiguous preview POST timeout");
           }
-          const ambiguousRuntimePost = request.event_type === "pr-runtime-base-refresh" &&
+          const ambiguousRuntimePost = request.event_type === "pr-runtime-base-refresh-request" &&
             request.client_payload.pr_number === postFailurePr;
-          if (request.event_type === "pr-runtime-base-refresh" && !hideDispatchVisibility &&
+          if (request.event_type === "pr-runtime-base-refresh-request" && !hideDispatchVisibility && !admissionFails &&
               (!ambiguousRuntimePost || postFailureVisible)) {
             const payload = request.client_payload;
             postedRuns.push(producer({
@@ -1092,6 +1093,7 @@ async function runDispatcher({
         getWorkflow: async (request) => {
           recordApiRequest("actions.getWorkflow", request);
           const {workflow_id} = request;
+          if (workflow_id === "publish-pr-runtime-images.yml") return {data: {id: 702, path: ".github/workflows/publish-pr-runtime-images.yml", name: "Publish PR Runtime Images"}};
           if (workflow_id === "runtime-images.yml") {
             runtimeWorkflowLookupCount += 1;
             const failure = runtimeWorkflowLookupFailures[runtimeWorkflowLookupCount - 1];
@@ -1103,6 +1105,7 @@ async function runDispatcher({
         },
         getWorkflowRun: async (request) => {
           recordApiRequest("actions.getWorkflowRun", request);
+          if (request.run_id === publication.run?.id) return {data: publication.latest ?? publication.run};
           if (request.run_id !== ciRun.id) {
             runtimeRunReads.push(request.run_id);
             const reads = runtimeRunReads.filter(id => id === request.run_id).length;
@@ -1127,6 +1130,11 @@ async function runDispatcher({
         },
         listJobsForWorkflowRunAttempt: async (request) => {
           recordApiRequest("actions.listJobsForWorkflowRunAttempt", request);
+          if (request.run_id === publication.run?.id) {
+            assert.equal(request.attempt_number, publication.run.run_attempt);
+            const jobs = publication.jobs ?? [publication.job];
+            return {data: {total_count: jobs.length, jobs}};
+          }
           if (request.run_id !== ciRun.id) {
             const producer = inventoriedRuntimeRuns().find(run => run?.id === request.run_id);
             assert(producer, "native job listing must address an inventoried producer");
@@ -1140,10 +1148,20 @@ async function runDispatcher({
             jobs: jobs.slice((request.page - 1) * 100, request.page * 100),
           }};
         },
+        listWorkflowRunArtifacts: async (request) => {
+          recordApiRequest("actions.listWorkflowRunArtifacts", request);
+          assert.equal(request.run_id, publication.artifact?.workflow_run.id);
+          assert.equal(request.name, publication.artifact.name);
+          return {data: {total_count: 1, artifacts: [publication.artifact]}};
+        },
         listWorkflowRuns: async (request) => {
           recordApiRequest("actions.listWorkflowRuns", request);
+          if (request.workflow_id === 702) {
+            const workflow_runs = publication.inventory ?? [publication.run];
+            return {data: {total_count: publication.totalCount ?? workflow_runs.length, workflow_runs}};
+          }
           inventoryCalls.push(request);
-          observationPostCounts.push(dispatches.filter(item => item.event_type === "pr-runtime-base-refresh").length);
+          observationPostCounts.push(dispatches.filter(item => item.event_type === "pr-runtime-base-refresh-request").length);
           if (visibilityResponse && request.created === "2026-01-08T00:00:00.000Z..*") {
             assert.equal(request.event, "repository_dispatch");
             const response = visibilityResponse(request, postedRuns);
@@ -1233,7 +1251,7 @@ async function runDispatcher({
     },
   };
   global.setTimeout = (resolve, millis) => {
-    timerPostCounts.push(dispatches.filter(item => item.event_type === "pr-runtime-base-refresh").length);
+    timerPostCounts.push(dispatches.filter(item => item.event_type === "pr-runtime-base-refresh-request").length);
     timerDelays.push(millis);
     waitedMillis += millis;
     fakeNow += millis;
@@ -1260,7 +1278,7 @@ async function runDispatcher({
 
 (async () => {
   const tuple = tupleFor(101, "a", "c");
-  const runtimeDispatches = (result) => result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh");
+  const runtimeDispatches = (result) => result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request");
   const previewDispatches = (result) => result.dispatches.filter((item) => item.event_type === "preview-deploy");
   const assertRequestContracts = (result) => {
     assert.equal(result.fatalError, null, "the mocked dispatcher must complete unless a deadline-abort fixture is selected");
@@ -1528,7 +1546,7 @@ async function runDispatcher({
       tuples: [tuple],
       inventories: { [event]: [producer(tuple, event, status)] },
     });
-    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
       `${event} ${status} exact producer must suppress duplicate runtime dispatch`);
     assert.equal(result.dispatches.filter((item) => item.event_type === "preview-deploy").length, 1,
       "runtime deduplication must retain preview reconciliation");
@@ -1548,7 +1566,7 @@ async function runDispatcher({
       callback: {updated_at: "2026-01-02T00:00:00Z"},
       inventories: { [event]: [producer(tuple, event, "completed", "success")] },
     });
-    assert.equal(completedSuccess.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    assert.equal(completedSuccess.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
       `${event} completed source success must preserve recovery dispatch for missing or expired publication`);
   }
 
@@ -1564,7 +1582,7 @@ async function runDispatcher({
         path: `.github/workflows/runtime-images.yml@${validRef}`,
       })] },
     });
-    assert.equal(refSuffixedPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+    assert.equal(refSuffixedPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
       `the exact owning workflow path with valid Git ref ${validRef} must remain eligible`);
   }
   for (const invalidRef of ["@", "refs/heads/trailing.", "refs/heads/feature/.hidden", "refs/heads/feature[/test"]) {
@@ -1574,7 +1592,7 @@ async function runDispatcher({
         path: `.github/workflows/runtime-images.yml@${invalidRef}`,
       })] },
     });
-    assert.equal(invalidRefPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+    assert.equal(invalidRefPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
       `an invalid Git ref ${invalidRef} must not authorize another dispatch`);
     assert(invalidRefPath.errors.some(message => message.includes("no dispatch issued")),
       "invalid ref must be explicit rejection, not successful reuse");
@@ -1585,7 +1603,7 @@ async function runDispatcher({
       path: ".github/workflows/other.yml@refs/heads/develop",
     })] },
   });
-  assert.equal(wrongWorkflowPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+  assert.equal(wrongWorkflowPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
     "an unrelated workflow path must fail closed");
   assert(wrongWorkflowPath.errors.some((message) => message.includes("no dispatch issued")),
     "an exact-tuple producer with an unrelated workflow path must emit an error");
@@ -1598,7 +1616,7 @@ async function runDispatcher({
       tuples: [tuple],
       inventories: { pull_request: [producer(tuple, "pull_request", status, conclusion)] },
     });
-    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
       `${conclusion} producer must allow an exact-tuple retry`);
   }
 
@@ -1619,7 +1637,7 @@ async function runDispatcher({
     const newestFailure = await orderedProducerInventory(
       ["completed", "success"], ["completed", conclusion], conclusion
     );
-    assert.equal(newestFailure.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    assert.equal(newestFailure.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
       `newer ${conclusion} producer must allow refresh despite an older success`);
   }
   for (const [olderStatus, olderConclusion, newestStatus, newestConclusion, suppress] of [
@@ -1630,7 +1648,7 @@ async function runDispatcher({
     const newestUsable = await orderedProducerInventory(
       [olderStatus, olderConclusion], [newestStatus, newestConclusion], newestConclusion
     );
-    assert.equal(newestUsable.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length,
+    assert.equal(newestUsable.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length,
       suppress ? 0 : 1,
       `newer ${newestStatus}/${newestConclusion} producer must determine whether runtime recovery dispatches`);
   }
@@ -1641,7 +1659,7 @@ async function runDispatcher({
       producer(tuple, "pull_request", "completed", "failure", { id: 10104 }),
     ] },
   });
-  assert.equal(ambiguousNewest.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+  assert.equal(ambiguousNewest.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
     "ambiguous equal-time exact producers must fail closed");
   assert(ambiguousNewest.errors.some((message) => message.includes("ambiguous created_at timestamp")),
     "ambiguous producer ordering must emit an explicit error");
@@ -1651,7 +1669,7 @@ async function runDispatcher({
     tuples: [tuple],
     inventories: { repository_dispatch: [producer(staleTuple, "repository_dispatch", "completed", "success")] },
   });
-  assert.equal(stale.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+  assert.equal(stale.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
     "stale base tuple must not suppress a current runtime refresh");
 
   const changedBaseTuple = tupleFor(101, "a", "c", sha("e"));
@@ -1659,7 +1677,7 @@ async function runDispatcher({
     tuples: [changedBaseTuple],
     inventories: { pull_request: [producer(tuple, "pull_request", "completed", "success")] },
   });
-  assert.equal(changedBase.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+  assert.equal(changedBase.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
     "a changed base requires a fresh exact tuple producer");
 
   const sibling = tupleFor(102, "f", "d");
@@ -1950,6 +1968,62 @@ async function runDispatcher({
     assert.deepEqual(result.errors, []);
     assert.deepEqual(result.runtimeRunReads, [completedRefresh.id, completedRefresh.id], "reuse requires a final current-attempt read");
   }
+  const upload = {name: "Upload preview image artifact", status: "completed", conclusion: "success",
+    started_at: "2026-01-01T12:02:30Z", completed_at: "2026-01-01T12:02:40Z"};
+  const artifact = {id: 404, name: `pr-runtime-images-pr-merge-${tuple.mergeSha}`, expired: true,
+    workflow_run: {id: completedRefresh.id, head_sha: completedRefresh.head_sha},
+    digest: `sha256:${"b".repeat(64)}`, created_at: "2026-01-01T12:02:35Z"};
+  const publisher = {id: 991, workflow_id: 702, run_attempt: 1, name: "Publish PR Runtime Images",
+    path: ".github/workflows/publish-pr-runtime-images.yml", event: "repository_dispatch",
+    display_title: `Publish PR Runtime Images source-run-${completedRefresh.id} attempt-${completedRefresh.run_attempt}`,
+    head_branch: "develop", head_sha: sha("e"), status: "completed", conclusion: "failure",
+    created_at: "2026-01-01T12:12:00Z", repository: {full_name: repository}, head_repository: {full_name: repository}};
+  const noWrite = {name: "Publish fixed PR image tags", status: "completed", conclusion: "skipped"};
+  const publisherJob = {id: 992, run_id: publisher.id, run_attempt: 1, name: "Publish Fixed PR Merge Image Tags",
+    head_sha: publisher.head_sha, status: "completed", conclusion: "failure", steps: [noWrite]};
+  const expiredBeforeWrite = [
+    {...publisherJob, conclusion: "skipped", steps: []},
+    {...publisherJob, id: 993, name: "Resolve Exact Runtime Publication Source", steps: [
+      {name: "Resolve successful exact source run", status: "completed", conclusion: "success"},
+      {name: `Exact runtime artifact expired source-${completedRefresh.id}-${completedRefresh.run_attempt} artifact-${artifact.id} ${artifact.digest}`,
+        status: "completed", conclusion: "failure"},
+    ]},
+  ];
+  for (const [disposition, overrides, expected] of [
+    ["expiry rejected by the exact resolver before any tag writer", {jobs: expiredBeforeWrite}, ["101"]],
+    ["resolver failure lacks a typed expiry marker", {jobs: [expiredBeforeWrite[0],
+      {...expiredBeforeWrite[1], steps: [{...expiredBeforeWrite[1].steps[0], conclusion: "failure"}]}]}, []],
+    ["rerun might follow an earlier tag write", {run: {...publisher, run_attempt: 2},
+      jobs: expiredBeforeWrite.map(job => ({...job, run_attempt: 2}))}, []],
+    ["proven expired artifact and pre-write failure", {}, ["101"]],
+    ["publisher may still be running", {run: {...publisher, status: "in_progress", conclusion: null}}, []],
+    ["publisher already succeeded", {run: {...publisher, conclusion: "success"}}, []],
+    ["publisher could have written some tags", {job: {...publisherJob, steps: [{...noWrite, conclusion: "failure"}]}}, []],
+    ["artifact is still retained", {artifact: {...artifact, expired: false}}, []],
+    ["artifact is from a different upload window", {artifact: {...artifact, created_at: "2026-01-01T11:58:00Z"}}, []],
+    ["other exact publisher exists", {inventory: [publisher, {...publisher, id: 999}]}, []],
+    ["publisher inventory is incomplete", {totalCount: 101}, []],
+    ["publisher rerun became current", {latest: {...publisher, run_attempt: 4}}, []],
+    ["legacy publisher cannot be tied to the selected attempt", {run: {...publisher,
+      display_title: `Publish PR Runtime Images source-run-${completedRefresh.id}`}}, []],
+  ]) {
+    const result = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-04T00:00:00Z"},
+      inventories: {repository_dispatch: [completedRefresh]},
+      runtimeAttemptJobs: {[completedRefresh.id]: {total_count: 1, jobs: [{...successfulJob, steps: [...successfulJob.steps, upload]}]}},
+      publication: {run: publisher, artifact, job: publisherJob, ...overrides}});
+    assert.deepEqual(numbers(result), expected, disposition);
+    assert.deepEqual(result.errors, []);
+  }
+  const artifactOnly = {...successfulJob, name: "PR Full-Stack Smoke (runtime-required=false)",
+    steps: successfulJob.steps.filter(step => !["Run credential-free full-stack smoke", "Stop smoke stack",
+      "Require successful runtime smoke and authenticated cleanup"].includes(step.name)).concat(upload)};
+  const recoveredArtifactOnly = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-04T00:00:00Z"},
+    inventories: {repository_dispatch: [completedRefresh]},
+    runtimeAttemptJobs: {[completedRefresh.id]: {total_count: 1, jobs: [artifactOnly]}},
+    publication: {run: publisher, artifact, job: publisherJob}});
+  assert.deepEqual(numbers(recoveredArtifactOnly), ["101"],
+    "an expired, positively identified artifact-only producer can be replaced without smoke proof");
+  assert.deepEqual(recoveredArtifactOnly.errors, []);
   for (const job of [
     {...successfulJob, name: "PR Full-Stack Smoke (runtime-required=false)"},
     {...successfulJob, steps: successfulJob.steps.filter(step => step.name !== "Stop smoke stack")},
@@ -2123,7 +2197,9 @@ async function runDispatcher({
   });
   assert.deepEqual(numbers(missingTerminalAttempt), [], "the inventory must identify a positive attempt before native proof lookup");
   assert.deepEqual(missingTerminalAttempt.runtimeRunReads, []);
-  const invisible = await runDispatcher({ tuples: [tuple], hideDispatchVisibility: true });
+  // GitHub accepts the admission wake, but an unavailable final admission
+  // never creates a runtime producer row. The dispatcher must not retry.
+  const invisible = await runDispatcher({ tuples: [tuple], admissionFails: true });
   assert.deepEqual(numbers(invisible), ["101"], "accepted invisible POST must never be repeated");
   assert(invisible.errors.some(message => message.includes("visibility is unknown")));
   const many = Array.from({length: 12}, (_, index) => tupleFor(201 + index, "a", "c"));
@@ -2383,7 +2459,7 @@ require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, 
 require_contains "$runtime_images_path" 'types: [pr-runtime-base-refresh]'
 require_contains "$runtime_images_path" 'repository_dispatch:'
 require_contains "$runtime_images_path" "&& 'metadata' || 'required' }}"
-require_contains "$runtime_images_path" '  cancel-in-progress: true'
+require_contains "$runtime_images_path" '  cancel-in-progress: false'
 require_contains "$runtime_images_path" 'run-name: Build Runtime Images '
 require_contains "$runtime_images_path" "format('secure-pr-artifact pr-{0}"
 require_contains "$runtime_images_path" 'github.event.pull_request.base.sha'
@@ -2422,7 +2498,7 @@ assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'currentBaseRe
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents.length !== 2'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents[0] !== baseSha'
 assert_job_excludes runtime-images.yml dispatch-pr-base-refreshes '.base.sha'
-assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'event_type: "pr-runtime-base-refresh"'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'event_type: "pr-runtime-base-refresh-request"'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'pr_number: tuple.prNumber'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'base_sha: tuple.baseSha'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'head_sha: tuple.headSha'
@@ -2442,8 +2518,8 @@ require_contains "$image_wait_path" 'display_title = run.get("display_title", ""
 require_contains "$image_wait_path" 'display_title.startswith("Build Runtime Images trusted-branch ")'
 require_contains "$image_wait_path" 'and f"sha-{head_sha}" in tokens'
 require_contains "$image_wait_path" 'and "branch-develop" in tokens'
-require_contains "$image_wait_path" 'and f"base-{base_sha}" in tokens'
-require_contains "$image_wait_path" 'and f"merge-{merge_sha}" in tokens'
+require_contains "$image_wait_path" 'rf"Build Runtime Images secure-pr-artifact pr-[1-9][0-9]* base-{base_sha}"'
+require_contains "$image_wait_path" 'rf" head-{head_sha} merge-{merge_sha} mode-required", display_title'
 require_contains "$image_wait_path" 'run.get("event") == "workflow_run"'
 require_contains "$image_wait_path" 'gh api --paginate --slurp'
 require_contains "$image_wait_path" 'GitHub API poll failed while %s; retrying within the existing wait deadline.'
@@ -2755,7 +2831,8 @@ done
 require_contains "$pr_image_publisher_path" 'workflow_run:'
 require_exact_line "$pr_image_publisher_path" 'permissions: {}'
 # shellcheck disable=SC2016 # This assertion intentionally matches a literal GitHub expression.
-require_contains "$pr_image_publisher_path" "run-name: Publish PR Runtime Images \${{ github.event.workflow_run.display_title || format('source-run-{0}', github.event.client_payload.source_run_id) }}"
+require_contains "$pr_image_publisher_path" "format('{0} source-run-{1} attempt-{2}', github.event.workflow_run.display_title, github.event.workflow_run.id, github.event.workflow_run.run_attempt)"
+require_contains "$pr_image_publisher_path" "format('source-run-{0} attempt-{1}', github.event.client_payload.source_run_id, github.event.client_payload.source_run_attempt)"
 require_contains "$pr_image_publisher_path" "github.event.workflow_run.event == 'pull_request'"
 require_contains "$pr_image_publisher_path" "github.event.workflow_run.conclusion == 'success'"
 require_contains "$pr_image_publisher_path" 'github.event.workflow_run.head_repository.full_name == github.repository'
@@ -2805,6 +2882,9 @@ with tempfile.NamedTemporaryFile(mode="r+", encoding="utf-8") as summary_file:
         "GITHUB_STEP_SUMMARY": summary_file.name,
         "SOURCE_RUN_ID": "123",
         "SOURCE_RUN_URL": "https://github.example/runs/123",
+        "SOURCE_RUN_ATTEMPT": "2",
+        "SOURCE_ARTIFACT_ID": "456",
+        "SOURCE_ARTIFACT_DIGEST": "sha256:" + "a" * 64,
         "SOURCE_RUN_TITLE": "build `title` <script>&\nnext",
         "SOURCE_HEAD_BRANCH": "feature/`branch` <b>&",
         "SOURCE_HEAD_SHA": "abc123",
@@ -2978,6 +3058,37 @@ if [[ -n "${CONTRACT_GH_STATE_FILE:-}" ]]; then
   fi
 fi
 
+if [[ "$*" == *'/actions/runs/101' ]]; then
+  printf '{"id":101,"workflow_id":501,"repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"},"run_attempt":%s,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}' "${CONTRACT_CURRENT_SOURCE_ATTEMPT:-2}"
+  exit 0
+fi
+if [[ "$*" == *'/attempts/1/jobs?per_page=100&page=1' ]]; then
+  if [[ -n "${CONTRACT_JOB_PAYLOAD:-}" ]]; then
+    cat "$CONTRACT_JOB_PAYLOAD"
+    exit 0
+  fi
+  case "$*" in
+    *'/actions/runs/201/'*) run=201 ;;
+    *'/actions/runs/202/'*) run=202 ;;
+    *) exit 1 ;;
+  esac
+  printf '{"total_count":1,"jobs":[{"id":1001,"run_id":%s,"run_attempt":1,"head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","name":"Publish Fixed PR Merge Image Tags","status":"completed","conclusion":"success","steps":[{"name":"Download successful PR image artifacts","number":5,"status":"completed","conclusion":"success"},{"name":"Validate exact PR source and artifact before registry login","number":6,"status":"completed","conclusion":"success"},{"name":"Publish fixed PR image tags","number":8,"status":"completed","conclusion":"success"},{"name":"PR runtime publication receipt v1 source-101-2 publisher-%s-1 artifact-9001 sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","number":9,"status":"completed","conclusion":"success"}]}]}\n' "$run" "$run"
+  exit 0
+fi
+if [[ "$*" == *'/actions/runs/201/attempts/1' || "$*" == *'/actions/runs/202/attempts/1' ]]; then
+  if [[ "$*" == *'/actions/runs/201/attempts/1' ]]; then
+    run=201
+    event=workflow_run
+    title='Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required source-run-101 attempt-2'
+  else
+    run=202
+    event=repository_dispatch
+    title='Publish PR Runtime Images source-run-101 attempt-2'
+  fi
+  printf '{"id":%s,"workflow_id":502,"path":".github/workflows/publish-pr-runtime-images.yml","head_branch":"main","head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","run_attempt":1,"name":"Publish PR Runtime Images","event":"%s","status":"completed","conclusion":"success","display_title":"%s","repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"}}' \
+    "$run" "$event" "$title"
+  exit 0
+fi
 if [[ "$*" == *"publish-pr-runtime-images.yml"* ]]; then
   [[ "$*" != *"--paginate"* ]] || { echo 'publisher inventory must be bounded' >&2; exit 1; }
   if [[ -n "${CONTRACT_PUBLISHER_PAYLOAD:-}" ]]; then
@@ -3003,7 +3114,7 @@ PY_PAGE
     exit 0
   fi
   cat <<'JSON'
-{"total_count":1,"workflow_runs":[{"id":201,"event":"workflow_run","status":"completed","conclusion":"success","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:03:00Z"}]}
+{"total_count":1,"workflow_runs":[{"id":201,"workflow_id":502,"run_attempt":1,"event":"workflow_run","status":"completed","conclusion":"success","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required source-run-101 attempt-2","created_at":"2026-07-24T00:03:00Z"}]}
 JSON
 else
   if [[ -n "${CONTRACT_SOURCE_PAYLOAD:-}" ]]; then
@@ -3011,7 +3122,7 @@ else
     exit 0
   fi
   cat <<'JSON'
-[{"workflow_runs":[{"id":102,"status":"completed","conclusion":"skipped","html_url":"https://example.test/runtime/102","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-metadata","created_at":"2026-07-24T00:02:00Z"}]},{"workflow_runs":[{"id":101,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}]}]
+[{"workflow_runs":[{"id":102,"status":"completed","conclusion":"skipped","html_url":"https://example.test/runtime/102","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-metadata","created_at":"2026-07-24T00:02:00Z"}]},{"workflow_runs":[{"id":101,"workflow_id":501,"run_attempt":2,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}]}]
 JSON
 fi
 EOF
@@ -3052,17 +3163,17 @@ from pathlib import Path
 root = Path(sys.argv[1])
 waiter = Path(sys.argv[2]).read_text()
 source_parser = waiter.split("read_run_state() {\n  python3 -c '\n", 1)[1].split("\n' \"${wait_mode}\"", 1)[0]
-source = {"id": 101, "event": "pull_request", "status": "completed", "conclusion": "success", "head_sha": "a" * 40, "html_url": "https://example.test/runtime/101", "display_title": "Build Runtime Images secure-pr-artifact pr-1 base-" + "b" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required", "created_at": "2026-07-24T00:01:00Z"}
+source = {"id": 101, "workflow_id": 501, "run_attempt": 2, "event": "pull_request", "status": "completed", "conclusion": "success", "head_sha": "a" * 40, "html_url": "https://example.test/runtime/101", "display_title": "Build Runtime Images secure-pr-artifact pr-1 base-" + "b" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required", "created_at": "2026-07-24T00:01:00Z"}
 for created_at in [source["created_at"], "2026-02-31T00:01:00Z", "2026-07-24T00:01:00+00:00", "not-a-date", None]:
     result = subprocess.run([sys.executable, "-c", source_parser, "pull-request", "pr-merge-" + "c" * 40, "c" * 40, "b" * 40, "a" * 40], input=json.dumps({"workflow_runs": [{**source, "created_at": created_at}]}), capture_output=True, text=True)
     if created_at == source["created_at"]:
-        assert result.returncode == 0 and result.stdout.rstrip().endswith("\tpull_request\t" + created_at)
+        assert result.returncode == 0 and result.stdout.rstrip().endswith("\tpull_request\t" + created_at + "\t2\t501")
     else:
         assert result.returncode != 0, "source creation time must be a real UTC timestamp"
 def parse_source(run):
     return subprocess.run([sys.executable, "-c", source_parser, "pull-request", "pr-merge-" + "c" * 40, "c" * 40, "b" * 40, "a" * 40], input=json.dumps({"workflow_runs": [run]}), capture_output=True, text=True)
 
-for field, values in {"id": [None, 0, True, "101"], "status": [None, "", "completed\t"], "html_url": [None, "", "https://example.test/\t101"], "conclusion": [None, "", "success\n"]}.items():
+for field, values in {"id": [None, 0, True, "101"], "run_attempt": [None, 0, True, "2"], "status": [None, "", "completed\t"], "html_url": [None, "", "https://example.test/\t101"], "conclusion": [None, "", "success\n"]}.items():
     for value in values:
         assert parse_source({**source, field: value}).returncode != 0, f"malformed source {field} must be rejected"
 for name, run in {"missing-url": {key: value for key, value in source.items() if key != "html_url"}, "empty-url": {**source, "html_url": ""}}.items():
@@ -3071,22 +3182,26 @@ for name, run in {"missing-url": {key: value for key, value in source.items() if
 for conclusion in [None, ""]:
     result = parse_source({**source, "status": "in_progress", "conclusion": conclusion})
     assert result.returncode == 0
-    split = subprocess.run(["bash", "-c", "IFS=$'\\t' read -r state id status conclusion url event created; printf '%s\\n' \"$state\" \"$id\" \"$status\" \"$conclusion\" \"$url\" \"$event\" \"$created\""], input=result.stdout, capture_output=True, text=True)
-    assert split.stdout.splitlines() == ["found", "101", "in_progress", "pending", source["html_url"], source["event"], source["created_at"]], "optional conclusion must preserve Bash field positions"
+    split = subprocess.run(["bash", "-c", "IFS=$'\\t' read -r state id status conclusion url event created attempt workflow; printf '%s\\n' \"$state\" \"$id\" \"$status\" \"$conclusion\" \"$url\" \"$event\" \"$created\" \"$attempt\" \"$workflow\""], input=result.stdout, capture_output=True, text=True)
+    assert split.stdout.splitlines() == ["found", "101", "in_progress", "pending", source["html_url"], source["event"], source["created_at"], "2", "501"], "optional conclusion must preserve Bash field positions"
 
-base = {"id": 202, "event": "repository_dispatch", "status": "completed", "conclusion": "success", "html_url": "https://example.test/publisher/202", "display_title": "Publish PR Runtime Images source-run-101", "created_at": "2026-07-24T00:04:00Z"}
+base = {"id": 202, "workflow_id": 502, "run_attempt": 1, "event": "repository_dispatch", "status": "completed", "conclusion": "success", "html_url": "https://example.test/publisher/202", "display_title": "Publish PR Runtime Images source-run-101 attempt-2", "created_at": "2026-07-24T00:04:00Z"}
 fixtures = {
     "dispatch-success": base,
-    "dispatch-wrong-source": {**base, "display_title": "Publish PR Runtime Images source-run-999"},
+    "dispatch-earlier-attempt": {**base, "display_title": "Publish PR Runtime Images source-run-101 attempt-1"},
+    "dispatch-legacy": {**base, "display_title": "Publish PR Runtime Images source-run-101"},
+    "callback-earlier-attempt": {**base, "event": "workflow_run",
+        "display_title": "Publish PR Runtime Images " + source["display_title"] + " source-run-101 attempt-1"},
+    "dispatch-wrong-source": {**base, "display_title": "Publish PR Runtime Images source-run-999 attempt-2"},
     "dispatch-wrong-event": {**base, "event": "push"},
     "dispatch-malformed-title": {**base, "display_title": "Publish PR Runtime Images source-run-101 extra"},
     "dispatch-failure": {**base, "conclusion": "failure"},
-    "callback-wrong-tuple": {**base, "event": "workflow_run", "display_title": "Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-" + "d" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required"},
+    "callback-wrong-tuple": {**base, "event": "workflow_run", "display_title": "Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-" + "d" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required source-run-101 attempt-2"},
 }
 for name, run in fixtures.items():
-    (root / (name + ".json")).write_text(json.dumps({"total_count": 1, "fixture_event": "workflow_run" if name == "callback-wrong-tuple" else "repository_dispatch", "workflow_runs": [run]}))
+    (root / (name + ".json")).write_text(json.dumps({"total_count": 1, "fixture_event": "workflow_run" if name.startswith("callback-") else "repository_dispatch", "workflow_runs": [run]}))
 # Matching publication remains discoverable beyond the first page.
-many = [{**base, "id": 300 + index, "display_title": f"Publish PR Runtime Images source-run-{500 + index}"} for index in range(100)] + [base]
+many = [{**base, "id": 300 + index, "display_title": f"Publish PR Runtime Images source-run-{500 + index} attempt-2"} for index in range(100)] + [base]
 (root / "dispatch-second-page.json").write_text(json.dumps([{"total_count": 101, "workflow_runs": many[:100]}, {"total_count": 101, "workflow_runs": many[100:]}]))
 (root / "dispatch-overflow.json").write_text(json.dumps({"total_count": 1001, "workflow_runs": many[:100]}))
 (root / "dispatch-incomplete.json").write_text(json.dumps([{"total_count": 101, "workflow_runs": many[:100]}, {"total_count": 101, "workflow_runs": []}]))
@@ -3110,7 +3225,7 @@ for fixture in missing-url empty-url; do
     exit 1
   fi
 done
-for fixture in dispatch-success dispatch-wrong-source dispatch-wrong-event dispatch-malformed-title dispatch-failure callback-wrong-tuple dispatch-second-page dispatch-overflow dispatch-incomplete dispatch-unstable dispatch-outside-window dispatch-invalid-date; do
+for fixture in dispatch-success dispatch-earlier-attempt dispatch-legacy callback-earlier-attempt dispatch-wrong-source dispatch-wrong-event dispatch-malformed-title dispatch-failure callback-wrong-tuple dispatch-second-page dispatch-overflow dispatch-incomplete dispatch-unstable dispatch-outside-window dispatch-invalid-date; do
   if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/$fixture.json" \
     PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
@@ -3134,6 +3249,39 @@ for fixture in dispatch-success dispatch-wrong-source dispatch-wrong-event dispa
       require_contains "$contract_fixture_dir/$fixture.error" 'No trusted PR image publisher appeared'
     fi
   fi
+done
+if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+  CONTRACT_CURRENT_SOURCE_ATTEMPT=3 \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/stale-current-attempt.output" 2>"$contract_fixture_dir/stale-current-attempt.error"; then
+  echo "A superseded producer must not pass even after exact publisher job success" >&2
+  exit 1
+fi
+require_contains "$contract_fixture_dir/stale-current-attempt.error" 'Runtime-image producer 101 advanced from attempt 2 to 3; selecting fresh proof.'
+
+for job_proof in skipped missing-step wrong-attempt incomplete; do
+  case "$job_proof" in
+    skipped) job_filter='.jobs[0].conclusion = "skipped"' ;;
+    missing-step) job_filter='.jobs[0].steps |= .[:2]' ;;
+    wrong-attempt) job_filter='.jobs[0].run_attempt = 2' ;;
+    incomplete) job_filter='.total_count = 2' ;;
+  esac
+  PATH="$contract_fixture_dir:$PATH" gh api 'repos/example/FireMUD/actions/runs/202/attempts/1/jobs?per_page=100&page=1' |
+    jq "$job_filter" >"$contract_fixture_dir/publisher-jobs-$job_proof.json"
+  if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+    CONTRACT_JOB_PAYLOAD="$contract_fixture_dir/publisher-jobs-$job_proof.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/$job_proof.output" 2>"$contract_fixture_dir/$job_proof.error"; then
+    echo "Publisher job proof $job_proof unexpectedly admitted workflow success" >&2
+    exit 1
+  fi
+  require_contains "$contract_fixture_dir/$job_proof.error" 'Exact PR image publication and artifact proof is unavailable'
 done
 
 assert_job_excludes runtime-images.yml smoke-full 'pull-requests: write'

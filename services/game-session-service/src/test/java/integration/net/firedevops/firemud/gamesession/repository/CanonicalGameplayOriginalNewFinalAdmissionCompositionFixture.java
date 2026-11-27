@@ -751,7 +751,29 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         originalLoginJwt,
         deadline,
         capacityClient,
-        capacityRequest);
+        capacityRequest,
+        CLOCK);
+  }
+
+  public Receipt completeWithCoordinatorClock(
+      AccountGameplayAdmissionLeaseClient account,
+      AccountPublicJwksCache jwks,
+      String originalLoginJwt,
+      long deadline,
+      net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient,
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
+          capacityRequest,
+      Clock coordinatorClock) {
+    return complete(
+        decision,
+        regionInstallation,
+        account,
+        jwks,
+        originalLoginJwt,
+        deadline,
+        capacityClient,
+        capacityRequest,
+        coordinatorClock);
   }
 
   public Receipt complete(
@@ -771,7 +793,8 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         originalLoginJwt,
         deadline,
         capacityClient,
-        capacityRequest);
+        capacityRequest,
+        CLOCK);
   }
 
   public Receipt completeAfterInitialOpenWindow(
@@ -976,6 +999,26 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
 
   public byte[] physicalSession() {
     return administration.sync().get(ascii(candidateInstallation.sessionKey()));
+  }
+
+  /** Claims the exact creating send before controlled delay of the original Account request. */
+  public void claimCapacitySendForControlledRecovery(
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request,
+      Clock prechargeClock) {
+    var source =
+        new CanonicalGameplayBindingInventoryRepository(binding.dsl())
+            .readOriginalNewFinalAdmissionSource(decision);
+    var owner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            binding.dsl(), coordination, scripts, prechargeClock, tags);
+    long deadline = prechargeClock.millis() + 5_000L;
+    var selectedOwner = owner.requireRequestBinding(source, request, deadline);
+    if (owner.precharge(source, request, selectedOwner, deadline) != null
+        || owner.authorizeAccountSend(source, request, selectedOwner, deadline)
+            != net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.SendDisposition
+                .AUTHORIZE_NEW) {
+      throw new IllegalStateException("Expected a newly claimed exact Account send");
+    }
   }
 
   /** Actual Account commit followed by a controlled selected-owner movement before GS binding. */

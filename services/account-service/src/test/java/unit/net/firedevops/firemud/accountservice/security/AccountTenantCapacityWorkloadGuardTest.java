@@ -90,12 +90,13 @@ class AccountTenantCapacityWorkloadGuardTest {
   }
 
   @Test
-  void quotaDenialReadRequiresExactGameSessionTlsWithoutAmbientAuthority() throws Exception {
-    var method = AccountServiceGrpc.getReadTenantCapacityQuotaDenialMethod();
+  void admissionDenialReadRequiresExactGameSessionTlsWithoutAmbientAuthority() throws Exception {
+    var method = AccountServiceGrpc.getReadTenantCapacityAdmissionDenialMethod();
     var gameSession = tls("firemud", "game-session-service");
     assertThat(invoke(method, gameSession, "spiffe://firemud/ns/firemud/sa/game-session-service"))
         .isNull();
-    assertThatThrownBy(guard::requireQuotaDenialReader).isInstanceOf(StatusRuntimeException.class);
+    assertThatThrownBy(guard::requireAdmissionDenialReader)
+        .isInstanceOf(StatusRuntimeException.class);
     assertThat(invoke(method, null).getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
     assertThat(invoke(method, tls("firemud", "world-management-service")).getCode())
         .isEqualTo(Status.Code.PERMISSION_DENIED);
@@ -106,12 +107,13 @@ class AccountTenantCapacityWorkloadGuardTest {
   }
 
   @Test
-  void admissionOutcomeReadRequiresExactGameSessionTlsWithoutAmbientAuthority() throws Exception {
-    var method = AccountServiceGrpc.getReadTenantCapacityAdmissionOutcomeMethod();
+  void admissionReservationReadRequiresExactGameSessionTlsWithoutAmbientAuthority()
+      throws Exception {
+    var method = AccountServiceGrpc.getReadTenantCapacityAdmissionReservationMethod();
     var gameSession = tls("firemud", "game-session-service");
     assertThat(invoke(method, gameSession, "spiffe://firemud/ns/firemud/sa/game-session-service"))
         .isNull();
-    assertThatThrownBy(guard::requireAdmissionOutcomeReader)
+    assertThatThrownBy(guard::requireAdmissionReservationReader)
         .isInstanceOf(StatusRuntimeException.class);
     assertThat(invoke(method, null).getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
     assertThat(invoke(method, tls("firemud", "world-management-service")).getCode())
@@ -138,19 +140,27 @@ class AccountTenantCapacityWorkloadGuardTest {
     AtomicInteger starts = new AtomicInteger();
     ServerCallHandler next =
         (ignored, headers) -> {
-          if (AccountServiceGrpc.getReadTenantCapacityQuotaDenialMethod()
-                  .getFullMethodName()
-                  .equals(method.getFullMethodName())
-              || AccountServiceGrpc.getReadTenantCapacityAdmissionOutcomeMethod()
-                  .getFullMethodName()
-                  .equals(method.getFullMethodName())) {
-            assertThat(guard.requireQuotaDenialReader()).isEqualTo(expectedCallerUri);
-            assertThat(guard.requireAdmissionOutcomeReader()).isEqualTo(expectedCallerUri);
+          if (AccountServiceGrpc.getReadTenantCapacityAdmissionDenialMethod()
+              .getFullMethodName()
+              .equals(method.getFullMethodName())) {
+            assertThat(guard.requireAdmissionDenialReader()).isEqualTo(expectedCallerUri);
+            assertThatThrownBy(guard::requireAdmissionReservationReader)
+                .isInstanceOf(StatusRuntimeException.class);
+            assertThatThrownBy(guard::requireAuthenticatedCaller)
+                .isInstanceOf(StatusRuntimeException.class);
+          } else if (AccountServiceGrpc.getReadTenantCapacityAdmissionReservationMethod()
+              .getFullMethodName()
+              .equals(method.getFullMethodName())) {
+            assertThat(guard.requireAdmissionReservationReader()).isEqualTo(expectedCallerUri);
+            assertThatThrownBy(guard::requireAdmissionDenialReader)
+                .isInstanceOf(StatusRuntimeException.class);
             assertThatThrownBy(guard::requireAuthenticatedCaller)
                 .isInstanceOf(StatusRuntimeException.class);
           } else {
             assertThat(guard.requireAuthenticatedCaller()).isEqualTo(expectedCallerUri);
-            assertThatThrownBy(guard::requireQuotaDenialReader)
+            assertThatThrownBy(guard::requireAdmissionReservationReader)
+                .isInstanceOf(StatusRuntimeException.class);
+            assertThatThrownBy(guard::requireAdmissionDenialReader)
                 .isInstanceOf(StatusRuntimeException.class);
           }
           starts.incrementAndGet();

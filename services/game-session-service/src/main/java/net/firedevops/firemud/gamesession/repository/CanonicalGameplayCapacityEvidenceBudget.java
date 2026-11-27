@@ -7,14 +7,17 @@ import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.SendDisposition;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.jooq.exception.DataAccessException;
 
 final class CanonicalGameplayCapacityEvidenceBudget {
   private CanonicalGameplayCapacityEvidenceBudget() {}
 
-  static UUID precharge(
+  static Refusal precharge(
       DSLContext tx,
       Request request,
       String candidateDigest,
@@ -24,7 +27,7 @@ final class CanonicalGameplayCapacityEvidenceBudget {
     var identity = request.identity();
     lockBudget(tx, request, tag);
     var prior = exactCharge(tx, request, candidateDigest, selected, tag);
-    if (prior != null) return prior.get("account_denial_id", UUID.class);
+    if (prior != null) return retainedDenial(prior);
     // The tenant budget lock serializes precharges. Retained and active charges both bind
     // the original Account origin and rearm fence; a new attempt cannot reserve that slot.
     if (tx.fetchOne(
@@ -81,6 +84,8 @@ final class CanonicalGameplayCapacityEvidenceBudget {
     }
   }
 
+  record RetainedCharge(Refusal accountDenial, boolean possibleSend) {}
+
   static SendDisposition authorizeAccountSend(
       DSLContext tx,
       Request request,
@@ -122,20 +127,24 @@ final class CanonicalGameplayCapacityEvidenceBudget {
     }
   }
 
-  static boolean hasUnsettledPossibleSend(
+  static RetainedCharge requireExistingCharge(
       DSLContext tx,
       Request request,
       String candidateDigest,
       CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selected,
       String tag) {
     var charge = exactCharge(tx, request, candidateDigest, selected, tag);
-    if (charge == null || charge.get("account_denial_id", UUID.class) != null) return false;
+    if (charge == null) throw unavailable();
+    Refusal denial = retainedDenial(charge);
     String state = charge.get("account_send_state", String.class);
-    return (state == null || "MAY_HAVE_SENT".equals(state))
-        && tx.fetchOne(
-                "SELECT 1 FROM game_session_original_new_capacity_execution WHERE admission_attempt_id=?",
-                request.admissionAttemptId())
-            == null;
+    boolean possibleSend =
+        denial == null
+            && (state == null || "MAY_HAVE_SENT".equals(state))
+            && tx.fetchOne(
+                    "SELECT 1 FROM game_session_original_new_capacity_execution WHERE admission_attempt_id=?",
+                    request.admissionAttemptId())
+                == null;
+    return new RetainedCharge(denial, possibleSend);
   }
 
   static void settleDenied(
@@ -144,21 +153,25 @@ final class CanonicalGameplayCapacityEvidenceBudget {
       String candidateDigest,
       CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selected,
       String tag,
-      UUID accountDenialId) {
-    if (accountDenialId == null) throw unavailable();
+      Refusal denial) {
+    if (denial == null
+        || !denial.code().supportsDurableDenial()
+        || denial.durableDenialId() == null) throw unavailable();
     lockBudget(tx, request, tag);
     var charge = exactCharge(tx, request, candidateDigest, selected, tag);
     if (charge == null) throw unavailable();
-    var retained = charge.get("account_denial_id", UUID.class);
+    var retained = retainedDenial(charge);
     if (retained != null) {
-      if (!retained.equals(accountDenialId)) throw unavailable();
+      if (!retained.equals(denial)) throw unavailable();
       return;
     }
     int settled =
         tx.execute(
-            "UPDATE game_session_capacity_evidence_charge SET account_denial_id=?"
+            "UPDATE game_session_capacity_evidence_charge"
+                + " SET account_denial_id=?, account_denial_kind=?"
                 + " WHERE admission_attempt_id=? AND account_denial_id IS NULL",
-            accountDenialId,
+            denial.durableDenialId(),
+            denial.code().name(),
             request.admissionAttemptId());
     if (settled != 1) throw unavailable();
   }
@@ -175,6 +188,15 @@ final class CanonicalGameplayCapacityEvidenceBudget {
     if (charge == null || charge.get("account_denial_id", UUID.class) != null) throw unavailable();
   }
 
+  private static Refusal retainedDenial(Record charge) {
+    UUID denialId = charge.get("account_denial_id", UUID.class);
+    if (denialId == null) return null;
+    String kind = charge.get("account_denial_kind", String.class);
+    // Only quota denials existed before the typed settlement migration.
+    var code = kind == null ? Failure.CAPACITY_QUOTA_EXCEEDED : Failure.valueOf(kind);
+    return new Refusal(code, denialId);
+  }
+
   private static void lockBudget(DSLContext tx, Request request, String tag) {
     if (tx.fetchOne(
             "SELECT 1 FROM game_session_capacity_evidence_budget b"
@@ -185,7 +207,7 @@ final class CanonicalGameplayCapacityEvidenceBudget {
         == null) throw unavailable();
   }
 
-  private static org.jooq.Record exactCharge(
+  private static Record exactCharge(
       DSLContext tx,
       Request request,
       String candidateDigest,
@@ -196,7 +218,7 @@ final class CanonicalGameplayCapacityEvidenceBudget {
         tx.fetchOne(
             "SELECT c.tenant_id,c.request_id,c.admission_id,c.capacity_rearm_fence,c.mutation_digest,"
                 + " c.candidate_digest,c.selected_owner_id,c.selected_owner_fence,t.tenant_gameplay_tag,"
-                + " c.account_denial_id,c.account_send_state,c.account_send_evidence_expires_at"
+                + " c.account_denial_id,c.account_denial_kind,c.account_send_state,c.account_send_evidence_expires_at"
                 + " FROM game_session_capacity_evidence_charge c"
                 + " JOIN game_session_canonical_tenant_gameplay_tag t USING (tenant_id)"
                 + " WHERE c.admission_attempt_id=?",

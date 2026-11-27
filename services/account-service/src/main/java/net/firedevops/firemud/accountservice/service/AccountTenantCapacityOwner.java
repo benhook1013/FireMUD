@@ -3,7 +3,6 @@ package net.firedevops.firemud.accountservice.service;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.at;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.conflict;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.number;
-import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.requireCurrentLifetime;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.unavailable;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -34,6 +33,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Pl
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -70,7 +70,7 @@ public final class AccountTenantCapacityOwner {
   private final AccountTenantCapacityRepository capacity;
   private final AccountCapacityOriginDecisionRepository originDecisions;
   private final TransactionTemplate transaction;
-  private final TransactionTemplate retainedOutcomeReadTransaction;
+  private final TransactionTemplate retainedAdmissionReadTransaction;
   private final Clock clock;
   private final String namespace;
 
@@ -98,17 +98,17 @@ public final class AccountTenantCapacityOwner {
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     transaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
-    retainedOutcomeReadTransaction = new TransactionTemplate(transactions);
-    retainedOutcomeReadTransaction.setPropagationBehavior(
+    retainedAdmissionReadTransaction = new TransactionTemplate(transactions);
+    retainedAdmissionReadTransaction.setPropagationBehavior(
         TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-    retainedOutcomeReadTransaction.setIsolationLevel(
+    retainedAdmissionReadTransaction.setIsolationLevel(
         TransactionDefinition.ISOLATION_READ_COMMITTED);
-    retainedOutcomeReadTransaction.setReadOnly(true);
-    retainedOutcomeReadTransaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
+    retainedAdmissionReadTransaction.setReadOnly(true);
+    retainedAdmissionReadTransaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
   }
 
-  /** Reads only an exact historical quota refusal; absence does not resolve an unknown commit. */
-  public UUID readRetainedQuotaDenial(Request request, String authenticatedCaller) {
+  /** Reads an exact historical admission refusal without mutating the original attempt. */
+  public Refusal readRetainedAdmissionDenial(Request request, String authenticatedCaller) {
     requireCaller(request, authenticatedCaller);
     if (!TenantCapacityAdmission.expectedWorkload(namespace, Owner.GAME_SESSION)
         .equals(authenticatedCaller)) throw new CapacityException(Failure.PERMISSION_DENIED);
@@ -120,16 +120,16 @@ public final class AccountTenantCapacityOwner {
         || TransactionSynchronizationManager.isSynchronizationActive()
         || Context.current().isCancelled()) throw unavailable();
     try {
-      UUID denialId =
-          retainedOutcomeReadTransaction.execute(status -> {
+      Refusal denial =
+          retainedAdmissionReadTransaction.execute(status -> {
             if (Context.current().isCancelled()) throw unavailable();
             dsl.connection(connection -> {
               if (connection.getAutoCommit() || !connection.isReadOnly()) throw unavailable();
             });
-            return originDecisions.readRetainedQuotaDenial(request);
+            return originDecisions.readRetainedAdmissionDenial(request);
           });
-      if (denialId == null) throw unavailable();
-      return TenantCapacityAdmission.uuid(denialId);
+      if (denial == null) throw unavailable();
+      return denial;
     } catch (CapacityException failure) {
       // A different original or decision is not settlement evidence on this read.
       if (failure.code() == Failure.IDEMPOTENCY_CONFLICT) throw unavailable();
@@ -140,10 +140,10 @@ public final class AccountTenantCapacityOwner {
   }
 
   /**
-   * Reads only an exact retained positive reservation or exact retained quota denial. It neither
-   * refreshes current source evidence nor authorizes a new commit.
+   * Reads only an exact retained reservation without refreshing source evidence or authorizing a
+   * new commitment.
    */
-  public Result readRetainedAdmissionOutcome(Request request, String authenticatedCaller) {
+  public Result readRetainedAdmissionReservation(Request request, String authenticatedCaller) {
     requireCaller(request, authenticatedCaller);
     if (!TenantCapacityAdmission.expectedWorkload(namespace, Owner.GAME_SESSION)
         .equals(authenticatedCaller)) throw new CapacityException(Failure.PERMISSION_DENIED);
@@ -156,21 +156,19 @@ public final class AccountTenantCapacityOwner {
         || Context.current().isCancelled()) throw unavailable();
     try {
       Result result =
-          retainedOutcomeReadTransaction.execute(status -> {
+          retainedAdmissionReadTransaction.execute(status -> {
             if (Context.current().isCancelled()) throw unavailable();
             dsl.connection(connection -> {
               if (connection.getAutoCommit() || !connection.isReadOnly()) throw unavailable();
             });
             Record reservation = capacity.findForReplayReadOnly(request.identity());
-            if (reservation != null) return capacity.exactReadOnly(request, reservation);
-            UUID denialId = originDecisions.readRetainedQuotaDenial(request);
-            if (denialId == null) throw unavailable();
-            throw new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED, denialId);
+            if (reservation == null) throw unavailable();
+            return capacity.exactReadOnly(request, reservation);
           });
       if (result == null) throw unavailable();
       return result;
     } catch (CapacityException failure) {
-      // A mismatch or any non-quota refusal is not evidence that this attempt did not commit.
+      // A mismatch is not exact reservation evidence.
       if (failure.code() == Failure.IDEMPOTENCY_CONFLICT) throw unavailable();
       throw failure;
     } catch (IllegalArgumentException invalidEvidence) {
@@ -191,38 +189,60 @@ public final class AccountTenantCapacityOwner {
             return new CommitDecision(capacity.exact(request, existing), null);
           }
           if (request.capacityRearmFence() != 1) throw conflict();
-          UUID retainedDenial = originDecisions.retainedQuotaDenial(request);
+          Refusal retainedDenial = originDecisions.retainedAdmissionDenial(request);
           if (retainedDenial != null) return new CommitDecision(null, retainedDenial);
           originDecisions.requireFreshAttemptBinding(request);
           lockPlayerAccount(request);
-          capacity.requireRetained(request.evidence());
-          // Acquire the usage lock before qualifying the remaining lifetime.
-          Record usage = capacity.usage(request);
-          var authority = current(request);
+          var evidence = request.evidence();
+          Instant retainedExpiry = capacity.requireRetained(evidence);
+          var parsed = currentMembership(request);
           requireSupportedShape(request);
-          if (!request.evidence().permitsCreation())
+          boolean expired = capacity.retainedEvaluationExpired(retainedExpiry);
+          if (expired) {
+            return expiredOriginal(request, retainedExpiry);
+          }
+
+          capacity.requireFresh(evidence);
+          var authority = currentDelegationAndScope(request, parsed);
+          if (capacity.retainedEvaluationExpired(retainedExpiry)) {
+            return expiredOriginal(request, retainedExpiry);
+          }
+          if (!evidence.permitsCreation()) {
+            authority.requireCurrent(clock.instant());
             throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
-          var reservation =
-              capacity.createIfQuotaAvailable(request, usage, request.evidence().expiresAt());
+          }
+
+          // A wait on usage can consume the remaining lifetime. Recheck under the lock.
+          Record usage = capacity.usage(request);
+          authority.requireCurrent(clock.instant());
+          var reservation = capacity.createIfQuotaAvailable(request, usage, evidence.expiresAt());
           if (reservation.isPresent()) {
             authority.requireCurrent(clock.instant());
             requireFreshAtCommit(request, authority);
             return new CommitDecision(reservation.orElseThrow(), null);
           }
           authority.requireCurrent(clock.instant());
-          UUID denialId = originDecisions.refuseQuota(request);
-          capacity.requireFresh(request.evidence());
+          Refusal denial = originDecisions.refuse(request, Failure.CAPACITY_QUOTA_EXCEEDED);
+          capacity.requireFresh(evidence);
           authority.requireCurrent(clock.instant());
           requireFreshAtCommit(request, authority);
-          return new CommitDecision(null, denialId);
+          return new CommitDecision(null, denial);
         });
     // Throw only after the transaction has committed the exact denial.
-    if (decision.denialId() != null)
-      throw new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED, decision.denialId());
+    if (decision.denial() != null)
+      throw new CapacityException(decision.denial().code(), decision.denial().durableDenialId());
     return decision.reservation();
   }
 
-  private record CommitDecision(Result reservation, UUID denialId) {}
+  private CommitDecision expiredOriginal(Request request, Instant retainedExpiry) {
+    if (!request.evidence().permitsCreation() || clock.instant().isBefore(retainedExpiry)) {
+      throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+    }
+    return new CommitDecision(
+        null, originDecisions.refuse(request, Failure.CAPACITY_EVALUATION_EXPIRED));
+  }
+
+  private record CommitDecision(Result reservation, Refusal denial) {}
 
   /** Only the Account-owned recovery worker calls this after storing terminal no-commit proof. */
   Result rearm(Request prior, Request next, UUID recoveryOwner, long claimFence) {
@@ -317,19 +337,21 @@ public final class AccountTenantCapacityOwner {
   }
 
   private AppAuthorityWindow current(Request request) {
+    capacity.requireFresh(request.evidence());
+    var authority = currentDelegationAndScope(request, currentMembership(request));
+    capacity.requireFresh(request.evidence());
+    authority.requireCurrent(clock.instant());
+    return authority;
+  }
+
+  private RuntimePlayerAdmissionEntitlementEvidence currentMembership(Request request) {
     var evidence = request.evidence();
-    Instant paidCutoff = capacity.requireRetainedOriginalPaidCutoff(evidence);
-    Instant now = clock.instant();
-    requireCurrentLifetime(evidence, AccountTenantCapacityRepository.databaseNow(dsl));
     if (!(request.context() instanceof PlayerContext player)) throw unavailable();
     var parsed =
         RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(
             request.evidence().canonicalBytes());
     var current =
         qualifiedSource(() -> memberships.readCurrent(player.accountId(), player.tenantId()));
-    if (!current.membershipExists()
-        || !current.gameplayAdmissionAllowed()
-        || !"ACTIVE".equals(current.membershipLifecycleState())) throw unavailable();
     var fields = evidence.fields();
     if (!current.equals(parsed.membershipSource())) {
       var billing =
@@ -343,6 +365,18 @@ public final class AccountTenantCapacityOwner {
         throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
       throw unavailable();
     }
+    if (!current.membershipExists()
+        || !current.gameplayAdmissionAllowed()
+        || !"ACTIVE".equals(current.membershipLifecycleState())) throw unavailable();
+    return parsed;
+  }
+
+  private AppAuthorityWindow currentDelegationAndScope(
+      Request request, RuntimePlayerAdmissionEntitlementEvidence parsed) {
+    Instant paidCutoff = capacity.requireRetainedOriginalPaidCutoff(request.evidence());
+    Instant now = clock.instant();
+    if (!(request.context() instanceof PlayerContext player)) throw unavailable();
+    var fields = request.evidence().fields();
     if (!(fields.get("sourceReferences") instanceof Map<?, ?> source)) throw unavailable();
     var issuance =
         qualifiedSource(() ->
@@ -374,15 +408,11 @@ public final class AccountTenantCapacityOwner {
         || !now.isBefore(Instant.parse(scope.connectScopeExpiresAt()))) throw unavailable();
     // PostgreSQL owns evaluation freshness. The caller, scope and paid receipt
     // retain their independent application-clock cutoffs.
-    capacity.requireFresh(evidence);
-    var authority =
-        new AppAuthorityWindow(
-            issuance.identity().notBeforeEpochSecond(),
-            issuance.identity().expiresAtEpochSecond(),
-            Instant.parse(scope.connectScopeExpiresAt()),
-            paidCutoff);
-    authority.requireCurrent(clock.instant());
-    return authority;
+    return new AppAuthorityWindow(
+        issuance.identity().notBeforeEpochSecond(),
+        issuance.identity().expiresAtEpochSecond(),
+        Instant.parse(scope.connectScopeExpiresAt()),
+        paidCutoff);
   }
 
   private record AppAuthorityWindow(

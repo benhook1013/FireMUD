@@ -64,8 +64,8 @@ public final class AccountTenantCapacityRepository {
     if (!Objects.equals(toInstant(cutoff), toInstant(retained))) throw unavailable();
   }
 
-  public void requireRetained(Evidence evidence) {
-    retainedEvaluation(evidence);
+  public Instant requireRetained(Evidence evidence) {
+    return time(retainedEvaluation(evidence), "expires_at");
   }
 
   /** Returns the original application-clock cutoff for an exact fresh paid evaluation. */
@@ -106,6 +106,17 @@ public final class AccountTenantCapacityRepository {
             .truncatedTo(java.time.temporal.ChronoUnit.MICROS)
             .equals(time(row, "expires_at"))) throw unavailable();
     return row;
+  }
+
+  /** Compare the exact retained deadline to the database clock after locking its evaluation. */
+  public boolean retainedEvaluationExpired(Instant retainedExpiry) {
+    transaction();
+    Record observation =
+        dsl.fetchOne("SELECT clock_timestamp() >= ?::timestamptz AS expired", at(retainedExpiry));
+    if (observation == null) throw unavailable();
+    Boolean expired = observation.get("expired", Boolean.class);
+    if (expired == null) throw unavailable();
+    return expired;
   }
 
   public Record find(Identity id) {
@@ -333,16 +344,16 @@ public final class AccountTenantCapacityRepository {
 
     public CapacityException(Failure code) {
       super(code.name());
-      if (code == Failure.CAPACITY_QUOTA_EXCEEDED)
-        throw new IllegalArgumentException("A quota refusal requires a durable denial");
+      if (code.supportsDurableDenial())
+        throw new IllegalArgumentException("This refusal requires a durable denial");
       this.code = code;
       this.durableDenialId = null;
     }
 
     public CapacityException(Failure code, UUID durableDenialId) {
       super(code.name());
-      if (code != Failure.CAPACITY_QUOTA_EXCEEDED)
-        throw new IllegalArgumentException("Only a quota refusal can carry a durable denial");
+      if (!code.supportsDurableDenial())
+        throw new IllegalArgumentException("This refusal cannot carry a durable denial");
       this.code = code;
       this.durableDenialId = TenantCapacityAdmission.uuid(durableDenialId);
     }

@@ -322,10 +322,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
           ascii(Long.toString(ttlMillis)),
           ascii("0")
         };
-    if (deadlineBound) {
-      arguments = Arrays.copyOf(arguments, arguments.length + 1);
-      arguments[arguments.length - 1] = ascii(Long.toString(handoffDeadlineMillis));
-    }
+    if (deadlineBound) arguments = Arrays.copyOf(arguments, arguments.length + 1);
     if (arguments.length
         != (deadlineBound ? TIMELINE_DEADLINE_ARGUMENTS : TIMELINE_ARGUMENTS).size()) {
       throw unavailable();
@@ -343,9 +340,15 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       String loadedSha = await(() -> commands.scriptLoad(script), budget);
       if (!digest("SHA-1", script).equals(loadedSha)) throw unavailable();
       if (budget != null) {
+        long redisNowMillis = redisTimeMillis(await(commands::time, budget));
+        // Sampling first charges reply latency to the local budget. Keep the resulting Redis
+        // cutoff across the probe, source rechecks, SQL claim and sole prepared dispatch.
+        long remainingMillis = TimeUnit.NANOSECONDS.toMillis(budget.remainingNanos());
+        if (remainingMillis <= 0) throw unavailable();
+        arguments[arguments.length - 1] =
+            ascii(Long.toString(Math.addExact(redisNowMillis, remainingMillis)));
         byte[][] probe = arguments.clone();
         probe[1] = ascii("PROBE");
-        probe[probe.length - 1] = ascii(Long.toString(budget.absoluteDeadlineMillis()));
         Long result =
             await(() -> commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, probe), budget);
         if (result == null || (result != 0L && result != 1L)) throw unavailable();
@@ -514,6 +517,10 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
 
     long claimOrdinal() {
       return permit.claimOrdinal();
+    }
+
+    UUID generation() {
+      return permit.generation();
     }
 
     void restoreAfterConfirmedRollback() {
@@ -787,8 +794,6 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       boolean dispatchInvoked = false;
       try {
         long timeout = Math.min(COMMAND_TIMEOUT_MILLIS, budget.remainingMillis());
-        evalArguments[evalArguments.length - 1] =
-            ascii(Long.toString(budget.absoluteDeadlineMillis()));
         // Set before invocation: a thrown dispatch can still have unknown remote effects.
         dispatchInvoked = true;
         RedisFuture<Long> future =
@@ -1303,6 +1308,16 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
 
   private static void requirePrincipal(String principal) {
     if (!PRINCIPAL.equals(principal)) throw unavailable();
+  }
+
+  private static long redisTimeMillis(List<byte[]> reply) {
+    if (reply == null || reply.size() != 2 || reply.get(0) == null || reply.get(1) == null) {
+      throw unavailable();
+    }
+    long seconds = Long.parseLong(new String(reply.get(0), StandardCharsets.US_ASCII));
+    long microseconds = Long.parseLong(new String(reply.get(1), StandardCharsets.US_ASCII));
+    if (seconds <= 0 || microseconds < 0 || microseconds >= 1_000_000L) throw unavailable();
+    return Math.addExact(Math.multiplyExact(seconds, 1_000L), microseconds / 1_000L);
   }
 
   private static <T> T await(RedisFuture<T> future) {

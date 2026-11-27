@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+check_permissions=false
+if [[ "${1:-}" == --check-permissions ]]; then
+  check_permissions=true
+  shift
+fi
+
 if [[ $# -ne 5 ]]; then
-  echo "usage: $0 <namespace> <namespace-uid> <deployed-sha> <target-sha> <applied-origin-migrations:0..3>" >&2
+  echo "usage: $0 [--check-permissions] <namespace> <namespace-uid> <deployed-sha> <target-sha> <applied-origin-migrations:0..3>" >&2
   exit 2
 fi
 
@@ -42,7 +48,11 @@ verify_held_source() {
   bash "$helper_dir/quiesce-v2-schema-migrations.sh" --verify-only "$namespace"
 }
 
-verify_held_source
+if [[ "$check_permissions" == true ]]; then
+  verify_namespace || fail "the namespace identity or deployed head changed"
+else
+  verify_held_source
+fi
 image="$(kubectl --request-timeout=10s -n "$namespace" get deployment postgres -o json |
   jq -er --arg namespace "$namespace" '
     select(.kind == "Deployment" and .metadata.name == "postgres" and .metadata.namespace == $namespace)
@@ -68,12 +78,33 @@ read_owned_job_uid() {
 }
 
 remove_probe_job() {
-  local uid="$job_uid"
-  job_uid=""
-  jq -n --arg uid "$uid" \
+  local delete_accepted=false observed observed_uid deadline
+  if jq -n --arg uid "$job_uid" \
     '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid},propagationPolicy:"Foreground"}' |
-    kubectl --request-timeout=10s delete --raw "/apis/batch/v1/namespaces/$namespace/jobs/$job_name" -f - >/dev/null &&
-    kubectl --request-timeout=10s -n "$namespace" wait --for=delete --timeout=30s "job/$job_name" >/dev/null
+    kubectl --request-timeout=10s delete --raw "/apis/batch/v1/namespaces/$namespace/jobs/$job_name" -f - >/dev/null; then
+    delete_accepted=true
+  fi
+
+  deadline=$((SECONDS + 30))
+  while :; do
+    # A lost DELETE response may still have removed the Job. A different UID
+    # proves only that the original is gone and must never be given to DELETE.
+    if observed="$(kubectl --request-timeout=10s -n "$namespace" get job "$job_name" --ignore-not-found -o json)"; then
+      if [[ -z "$observed" ]]; then
+        job_uid=""
+        return 0
+      fi
+      if observed_uid="$(jq -er --arg name "$job_name" --arg namespace "$namespace" '
+        select(.kind == "Job" and .metadata.name == $name and .metadata.namespace == $namespace)
+        | .metadata.uid | select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"))
+      ' <<<"$observed")" && [[ "$observed_uid" != "$job_uid" ]]; then
+        job_uid=""
+        return 0
+      fi
+    fi
+    [[ "$delete_accepted" == true ]] && (( SECONDS < deadline )) || return 1
+    sleep 2
+  done
 }
 
 cleanup() {
@@ -87,7 +118,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! created_job="$(jq -n \
+if ! job_manifest="$(jq -n \
   --arg name "$job_name" \
   --arg namespace "$namespace" --arg uid "$namespace_uid" --arg deployed "$deployed_sha" \
   --arg target "$target_sha" --arg prefix "$origin_prefix" --arg image "$image" --arg probe "$probe_source" '
@@ -114,7 +145,24 @@ if ! created_job="$(jq -n \
         }}
       }
     }
-  ' | kubectl --request-timeout=10s -n "$namespace" create -f - -o json)"; then
+  ')"; then
+  fail "the protected probe Job manifest could not be prepared"
+fi
+
+if [[ "$check_permissions" == true ]]; then
+  for required in 'get jobs.batch' 'list jobs.batch' 'watch jobs.batch' 'delete jobs.batch' \
+    'list pods' 'get pods --subresource=log'; do
+    read -ra permission <<<"$required"
+    if ! kubectl --request-timeout=10s -n "$namespace" auth can-i "${permission[@]}" >/dev/null; then
+      fail "the runtime credential cannot $required before writer quiescence"
+    fi
+  done
+  kubectl --request-timeout=10s -n "$namespace" create --dry-run=server -f - -o name \
+    <<<"$job_manifest" >/dev/null || fail "the probe Job failed server dry-run before writer quiescence"
+  exit 0
+fi
+
+if ! created_job="$(kubectl --request-timeout=10s -n "$namespace" create -f - -o json <<<"$job_manifest")"; then
   # An ambiguous create is never sufficient for Helm. Clean up only if a
   # fresh read identifies the owned Job; its deadline and TTL are the fallback.
   if verify_namespace; then

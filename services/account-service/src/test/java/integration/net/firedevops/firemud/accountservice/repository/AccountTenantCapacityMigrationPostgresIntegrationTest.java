@@ -163,13 +163,13 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
               }))
           .isInstanceOf(AccountTenantCapacityRepository.CapacityException.class);
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_refusal_budget"))).isZero();
-      transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 4));
+      transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 5));
       assertThat(
               transaction.<Long>execute(
-                  status -> budgets.requireReady(tenant.canonicalTenantId(), 4, 1)))
-          .isEqualTo(1);
+                  status -> budgets.requireReady(tenant.canonicalTenantId(), 5, 2)))
+          .isEqualTo(2);
       assertThatThrownBy(() ->
-              transaction.execute(status -> budgets.requireReady(tenant.canonicalTenantId(), 4, 2)))
+              transaction.execute(status -> budgets.requireReady(tenant.canonicalTenantId(), 5, 3)))
           .isInstanceOfSatisfying(
               AccountTenantCapacityRepository.CapacityException.class,
               failure ->
@@ -183,7 +183,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                       "SELECT *, xmin::text AS row_version FROM"
                           + " account_capacity_origin_refusal_budget"))
               .intoMap();
-      transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 4));
+      transaction.executeWithoutResult(status -> budgets.provision(tenant.canonicalTenantId(), 5));
       assertThatThrownBy(() ->
               transaction.executeWithoutResult(
                   status -> budgets.provision(tenant.canonicalTenantId(), 2)))
@@ -1273,6 +1273,101 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                   assertThat(failure)
                       .hasMessageContaining("Account capacity origin decisions are immutable"));
       assertThat(refusalSlots(dsl)).containsExactlyInAnyOrderElementsOf(expectedSlots);
+    } finally {
+      new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
+    }
+  }
+
+  @Test
+  void v1040_7PreservesQuotaDecisionsAndChargesExpiredDecisionsAgainstTheSameBudget() {
+    String schema = "capacity_expiry_" + UUID.randomUUID().toString().replace("-", "");
+    new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
+    var data = POSTGRES.dataSource(schema);
+    try {
+      capacityMigrations(data, schema).target("1040.6").load().migrate();
+      var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
+      var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
+      var tenant = source();
+      var tenantId = tenant.canonicalTenantId();
+      transaction.executeWithoutResult(status -> {
+        new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant);
+        new AccountCapacityRefusalBudgetRepository(dsl).provision(tenantId, 2);
+      });
+
+      String insert =
+          """
+          INSERT INTO account_capacity_origin_decisions
+          (tenant_uuid, request_id, admission_id, capacity_rearm_fence, admission_attempt_id,
+           mutation_digest, canonical_payload, decision, decision_id, refusal_code)
+          VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?, ?)
+          ON CONFLICT DO NOTHING
+          """;
+      UUID quotaDecision = UUID.randomUUID();
+      assertThat(
+              dsl.execute(
+                  insert,
+                  tenantId,
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  "a".repeat(64),
+                  new byte[] {1},
+                  quotaDecision,
+                  "CAPACITY_QUOTA_EXCEEDED"))
+          .isOne();
+      String retainedRow =
+          "SELECT *, xmin::text AS row_version FROM account_capacity_origin_decisions WHERE decision_id = ?";
+      var quotaBefore = dsl.fetchSingle(retainedRow, quotaDecision).intoMap();
+
+      var flyway = capacityMigrations(data, schema).target("1040.7").load();
+      flyway.migrate();
+      assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("1040.7");
+      assertThat(dsl.fetchSingle(retainedRow, quotaDecision).intoMap())
+          .usingRecursiveComparison()
+          .isEqualTo(quotaBefore);
+      assertThat(refusalSlots(dsl)).containsExactly(new RefusalSlot(tenantId, 1, quotaDecision));
+
+      UUID expiredDecision = UUID.randomUUID();
+      Object[] expired = {
+        tenantId,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "b".repeat(64),
+        new byte[] {2},
+        expiredDecision,
+        "CAPACITY_EVALUATION_EXPIRED"
+      };
+      assertThat(dsl.execute(insert, expired)).isOne();
+      Object[] retry = expired.clone();
+      retry[6] = UUID.randomUUID();
+      assertThat(dsl.execute(insert, retry)).isZero();
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  insert,
+                  tenantId,
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  "c".repeat(64),
+                  new byte[] {3},
+                  UUID.randomUUID(),
+                  "CAPACITY_QUOTA_EXCEEDED"))
+          .isInstanceOfSatisfying(
+              org.jooq.exception.DataAccessException.class,
+              failure -> {
+                assertThat(failure.sqlState()).isEqualTo("23514");
+                assertThat(failure).hasMessageContaining("Capacity refusal budget is exhausted");
+              });
+
+      assertThat(refusalSlots(dsl))
+          .containsExactly(
+              new RefusalSlot(tenantId, 1, quotaDecision),
+              new RefusalSlot(tenantId, 2, expiredDecision));
+      assertThat(dsl.fetchSingle(retainedRow, expiredDecision).get("refusal_code", String.class))
+          .isEqualTo("CAPACITY_EVALUATION_EXPIRED");
+      assertThat(reservationRows(dsl, tenantId)).isEmpty();
+      assertThat(usageRows(dsl, tenantId)).isEmpty();
     } finally {
       new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
     }

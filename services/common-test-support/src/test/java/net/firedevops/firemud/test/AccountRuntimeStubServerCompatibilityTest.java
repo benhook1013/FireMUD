@@ -52,8 +52,8 @@ class AccountRuntimeStubServerCompatibilityTest {
   private static final Set<String> UNIMPLEMENTED_RUNTIME_METHODS =
       Set.of(
           "CommitTenantCapacityAdmission",
-          "ReadTenantCapacityQuotaDenial",
-          "ReadTenantCapacityAdmissionOutcome");
+          "ReadTenantCapacityAdmissionDenial",
+          "ReadTenantCapacityAdmissionReservation");
 
   @Test
   void accountServiceMethodSetIsFullyCategorized() {
@@ -92,14 +92,15 @@ class AccountRuntimeStubServerCompatibilityTest {
                 failure ->
                     assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
         assertThatThrownBy(() ->
-                stub.withDeadlineAfter(2, TimeUnit.SECONDS).readTenantCapacityQuotaDenial(request))
+                stub.withDeadlineAfter(2, TimeUnit.SECONDS)
+                    .readTenantCapacityAdmissionDenial(request))
             .isInstanceOfSatisfying(
                 StatusRuntimeException.class,
                 failure ->
                     assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
         assertThatThrownBy(() ->
                 stub.withDeadlineAfter(2, TimeUnit.SECONDS)
-                    .readTenantCapacityAdmissionOutcome(request))
+                    .readTenantCapacityAdmissionReservation(request))
             .isInstanceOfSatisfying(
                 StatusRuntimeException.class,
                 failure ->

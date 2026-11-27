@@ -49,7 +49,8 @@ public final class TenantCapacityAdmissionGrpcCodec {
     CAPACITY_ADMISSION_STALE(Status.Code.UNAVAILABLE),
     ENTITLEMENT_UNAVAILABLE(Status.Code.UNAVAILABLE),
     TENANT_BILLING_BLOCKED(Status.Code.RESOURCE_EXHAUSTED),
-    CAPACITY_QUOTA_EXCEEDED(Status.Code.RESOURCE_EXHAUSTED);
+    CAPACITY_QUOTA_EXCEEDED(Status.Code.RESOURCE_EXHAUSTED),
+    CAPACITY_EVALUATION_EXPIRED(Status.Code.FAILED_PRECONDITION);
 
     private final Status.Code code;
 
@@ -58,7 +59,11 @@ public final class TenantCapacityAdmissionGrpcCodec {
     }
 
     public boolean isDomainRefusal() {
-      return this == TENANT_BILLING_BLOCKED || this == CAPACITY_QUOTA_EXCEEDED;
+      return this == TENANT_BILLING_BLOCKED || supportsDurableDenial();
+    }
+
+    public boolean supportsDurableDenial() {
+      return this == CAPACITY_QUOTA_EXCEEDED || this == CAPACITY_EVALUATION_EXPIRED;
     }
 
     public StatusRuntimeException toStatusException() {
@@ -90,8 +95,9 @@ public final class TenantCapacityAdmissionGrpcCodec {
   public record Refusal(Failure code, UUID durableDenialId) {
     public Refusal {
       if (code == null || !code.isDomainRefusal()) throw invalid();
+      if (code == Failure.CAPACITY_EVALUATION_EXPIRED && durableDenialId == null) throw invalid();
       if (durableDenialId != null) {
-        if (code != Failure.CAPACITY_QUOTA_EXCEEDED) throw invalid();
+        if (!code.supportsDurableDenial()) throw invalid();
         TenantCapacityAdmission.uuid(durableDenialId);
       }
     }
@@ -288,6 +294,7 @@ public final class TenantCapacityAdmissionGrpcCodec {
         switch (one(refusal.getCodeList())) {
           case TENANT_BILLING_BLOCKED -> Failure.TENANT_BILLING_BLOCKED;
           case CAPACITY_QUOTA_EXCEEDED -> Failure.CAPACITY_QUOTA_EXCEEDED;
+          case CAPACITY_EVALUATION_EXPIRED -> Failure.CAPACITY_EVALUATION_EXPIRED;
           default -> throw invalid();
         };
     UUID durableDenialId =
@@ -302,7 +309,7 @@ public final class TenantCapacityAdmissionGrpcCodec {
     if (refusal.code() == Failure.TENANT_BILLING_BLOCKED
         && (request.evidence().permitsCreation()
             || request.operation() != Operation.CAPACITY_CREATING)) throw invalid();
-    if (refusal.code() == Failure.CAPACITY_QUOTA_EXCEEDED
+    if (refusal.code().supportsDurableDenial()
         && (!request.evidence().permitsCreation()
             || request.operation() != Operation.CAPACITY_CREATING)) throw invalid();
   }

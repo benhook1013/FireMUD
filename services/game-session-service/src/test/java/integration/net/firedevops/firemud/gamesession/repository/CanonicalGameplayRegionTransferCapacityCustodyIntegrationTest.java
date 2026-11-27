@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
 import io.lettuce.core.codec.ByteArrayCodec;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -16,6 +18,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException;
@@ -1023,7 +1026,10 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
 
   @Test
   void installationDoesNotReturnServingCapabilityWhenAnyCompletedMarkerIsLost() throws Exception {
-    try (var proof = new TransferSqlProof()) {
+    try (var proof = new TransferSqlProof();
+        var administrator =
+            RedisClient.create(RedisURI.create(REDIS.getHost(), REDIS.getMappedPort(6379)));
+        var inspection = administrator.connect(ByteArrayCodec.INSTANCE)) {
       proof.seedUndeliveredDispatch(proof.execution);
       var secondExecution = proof.newIndependentControlledOriginExecution();
       proof.seedUndeliveredDispatch(secondExecution);
@@ -1035,20 +1041,30 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
               transferDeadline(), ignored -> proof.transfers.finishVerification(id));
       assertThat(verificationComplete).isTrue();
 
+      var connectionDuringInstall = new AtomicReference<String>();
+      var checkedAfterCommit = new AtomicBoolean();
       var lostAfterInstall = new AtomicBoolean();
       var listener =
           new DefaultExecuteListener() {
             @Override
             public void executeEnd(ExecuteContext context) {
               String sql = context.sql();
-              if (sql != null
-                  && sql.stripLeading()
+              if (sql == null) return;
+              if (sql.stripLeading()
                       .toLowerCase(Locale.ROOT)
                       .startsWith("update game_session_region_runtime_status")
                   && lostAfterInstall.compareAndSet(false, true)) {
-                // Model a retained marker disappearing after SQL installs the successor but
-                // before the coordinator can return its serving capability.
+                connectionDuringInstall.set(
+                    transferReadbackClientId(inspection.sync().clientList()));
+                // Lose one marker after the successor update, before its SQL commit.
                 proof.losePhysicalExecution(secondExecution);
+              } else if (connectionDuringInstall.get() != null
+                  && sql.contains("t.state='COMPLETED'")
+                  && checkedAfterCommit.compareAndSet(false, true)) {
+                // The independent SQL read verifies commit before inspecting the same connection.
+                assertThat(proof.currentOwner().ownerInstanceId()).isEqualTo("sql-proof-successor");
+                assertThat(transferReadbackClientId(inspection.sync().clientList()))
+                    .isEqualTo(connectionDuringInstall.get());
               }
             }
           };
@@ -1073,6 +1089,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
           .isInstanceOf(IllegalStateException.class);
 
       assertThat(lostAfterInstall).isTrue();
+      assertThat(checkedAfterCommit).isTrue();
       assertThat(proof.currentOwner().ownerInstanceId()).isEqualTo("sql-proof-successor");
       assertThat(proof.transfers.readCurrent(id, 0).controlState()).isEqualTo("COMPLETED");
       assertThat(proof.physicalExecutionExists(proof.execution)).isTrue();
@@ -1082,6 +1099,13 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                   id, "sql-proof-successor", "e".repeat(64), transferDeadline()))
           .isInstanceOf(IllegalStateException.class);
     }
+  }
+
+  private static String transferReadbackClientId(String clientList) {
+    var clients =
+        clientList.lines().filter(line -> line.contains(" user=gamesession_coord_app ")).toList();
+    assertThat(clients).hasSize(1);
+    return clients.getFirst().split(" ", 2)[0];
   }
 
   @org.junit.jupiter.params.ParameterizedTest

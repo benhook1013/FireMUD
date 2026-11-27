@@ -50,6 +50,7 @@ import org.jooq.Record;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.ServerErrorMessage;
@@ -201,8 +202,11 @@ class AccountTenantCapacityOwnerTest {
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
 
-  @Test
-  void durableQuotaDenialReplaysWithoutConsultingMutableCapacity() throws Exception {
+  @ParameterizedTest
+  @EnumSource(
+      value = Failure.class,
+      names = {"CAPACITY_QUOTA_EXCEEDED", "CAPACITY_EVALUATION_EXPIRED"})
+  void durableDenialReplaysWithoutConsultingMutableCapacity(Failure cause) throws Exception {
     var f = new Fixture(false, qualifiedRequest(true));
     f.existing = false;
     Record genericRefusal = mock(Record.class);
@@ -241,7 +245,7 @@ class AccountTenantCapacityOwnerTest {
         .thenReturn(CapacityAdmissionDigest.preimage(f.request));
     when(genericRefusal.get("decision", String.class)).thenReturn("NO_ACCEPT");
     when(genericRefusal.get("decision_id", UUID.class)).thenReturn(decisionId);
-    when(genericRefusal.get("refusal_code", String.class)).thenReturn("CAPACITY_QUOTA_EXCEEDED");
+    when(genericRefusal.get("refusal_code", String.class)).thenReturn(cause.name());
     Record usage = mock(Record.class);
     when(usage.get("held_units", Long.class)).thenReturn(f.request.evidence().quota());
     when(usage.get("used_units", Long.class)).thenReturn(0L);
@@ -264,7 +268,7 @@ class AccountTenantCapacityOwnerTest {
                   .isTrue();
               assertThat(arguments[7]).isEqualTo("NO_ACCEPT");
               assertThat(arguments[8]).isInstanceOf(UUID.class);
-              assertThat(arguments[9]).isEqualTo("CAPACITY_QUOTA_EXCEEDED");
+              assertThat(arguments[9]).isEqualTo(cause.name());
               when(genericRefusal.get("decision_id", UUID.class)).thenReturn((UUID) arguments[8]);
               f.pendingOriginDecision = genericRefusal;
               return 1;
@@ -272,19 +276,33 @@ class AccountTenantCapacityOwnerTest {
         .when(f.dsl)
         .execute(eq(originInsertSql), any(Object[].class));
     f.retained = true;
-    qualifySources(f);
+    var scope = qualifySources(f);
+    if (cause == Failure.CAPACITY_EVALUATION_EXPIRED) {
+      when(f.scopes.findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request)))
+          .thenAnswer(ignored -> {
+            when(f.clock.instant()).thenReturn(f.request.evidence().expiresAt());
+            f.databaseNow.set(f.request.evidence().expiresAt());
+            return Optional.of(scope);
+          });
+    }
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
         .isInstanceOfSatisfying(
             AccountTenantCapacityRepository.CapacityException.class,
             failure -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(failure.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+              assertThat(failure.code()).isEqualTo(cause);
               assertThat(failure.durableDenialId())
                   .isEqualTo(genericRefusal.get("decision_id", UUID.class));
             });
     assertThat(f.originDecision).isSameAs(genericRefusal);
     assertThat(f.pendingOriginDecision).isNull();
     UUID committedId = genericRefusal.get("decision_id", UUID.class);
+    if (cause == Failure.CAPACITY_EVALUATION_EXPIRED) {
+      verify(f.scopes).findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request));
+      verify(f.dsl, never())
+          .fetchOne(
+              startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
+    }
     verify(f.dsl, times(1)).execute(eq(originInsertSql), any(Object[].class));
     verify(f.dsl, times(3)).fetchOne(eq(originLookupSql), aryEq(originKey));
     when(usage.get("held_units", Long.class)).thenReturn(0L);
@@ -297,7 +315,7 @@ class AccountTenantCapacityOwnerTest {
           .isInstanceOfSatisfying(
               AccountTenantCapacityRepository.CapacityException.class,
               failure -> {
-                assertThat(failure.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+                assertThat(failure.code()).isEqualTo(cause);
                 assertThat(failure.durableDenialId()).isEqualTo(committedId);
               });
     }
@@ -306,6 +324,41 @@ class AccountTenantCapacityOwnerTest {
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
     verify(f.dsl, never())
         .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
+  }
+
+  @Test
+  void applicationTimePastEvaluationExpiryDoesNotOverrideFreshPostgresEvaluation()
+      throws Exception {
+    var f = new Fixture(false, qualifiedRequest(false));
+    f.existing = false;
+    f.retained = true;
+    qualifySources(f);
+    when(f.clock.instant()).thenReturn(f.request.evidence().expiresAt());
+
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> {
+              assertThat(failure.code()).isEqualTo(Failure.TENANT_BILLING_BLOCKED);
+              assertThat(failure.durableDenialId()).isNull();
+            });
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+    verify(f.scopes).findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request));
+  }
+
+  @Test
+  void notYetValidExactEvaluationDoesNotRetainDenial() throws Exception {
+    var f = new Fixture(false, qualifiedRequest(true));
+    f.existing = false;
+    f.retained = true;
+    qualifySources(f);
+    f.databaseNow.set(f.request.evidence().evaluatedAt().minusMillis(1));
+
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .hasMessage("CAPACITY_ADMISSION_STALE");
+    verify(f.dsl).fetchSingle("SELECT clock_timestamp() AS observed_at");
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+    verifyNoInteractions(f.issuances, f.scopes);
   }
 
   @Test
@@ -792,17 +845,24 @@ class AccountTenantCapacityOwnerTest {
     var f = new Fixture(true, CapacityAdmissionTestFixture.playerRequest(false));
     f.existing = false;
     f.retained = true;
+    qualifySources(f);
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
         .hasMessage("CAPACITY_ADMISSION_STALE");
-    verifyNoInteractions(f.memberships, f.issuances, f.scopes);
+    verifyNoInteractions(f.issuances, f.scopes);
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
 
-  @Test
-  void qualifiedNewerBillingCutoffMakesExactRetainedEvaluationStale() throws Exception {
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void qualifiedNewerBillingCutoffMakesExactRetainedEvaluationStale(boolean expired)
+      throws Exception {
     var f = new Fixture(false);
     f.existing = false;
     f.retained = true;
+    if (expired) {
+      when(f.clock.instant()).thenReturn(f.request.evidence().expiresAt());
+      f.databaseNow.set(f.request.evidence().expiresAt());
+    }
     var current = mock(Snapshot.class);
     var tuple = mock(AuthorityTuple.class);
     var tenant = f.request.identity().tenantId().toString();
@@ -1023,6 +1083,7 @@ class AccountTenantCapacityOwnerTest {
     var f = new Fixture(false, qualifiedRequest(true, explicitDatabaseCutoff));
     f.retained = true;
     f.existing = false;
+    qualifySources(f);
 
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
         .isInstanceOfSatisfying(
@@ -1030,6 +1091,7 @@ class AccountTenantCapacityOwnerTest {
             failure -> assertThat(failure.code()).isEqualTo(Failure.ENTITLEMENT_UNAVAILABLE));
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
 
+    org.mockito.Mockito.clearInvocations(f.memberships, f.issuances, f.scopes);
     f.existing = true;
     assertThat(f.owner.commit(f.request, f.request.evidence().callerWorkload()).reservationId())
         .isEqualTo(f.reservation);
@@ -1241,6 +1303,7 @@ class AccountTenantCapacityOwnerTest {
               originalPaidCutoff == null
                   ? null
                   : AccountTenantCapacityRepository.at(originalPaidCutoff));
+      Record databaseObservation = mock(Record.class);
       when(dsl.fetchOne(anyString(), any(Object[].class)))
           .thenAnswer(invocation -> {
             String sql = invocation.getArgument(0, String.class);
@@ -1256,6 +1319,13 @@ class AccountTenantCapacityOwnerTest {
               return retained ? evaluation : null;
             if (sql.startsWith("SELECT * FROM account_tenant_capacity_usage "))
               return mock(Record.class);
+            if (sql.equals("SELECT clock_timestamp() >= ?::timestamptz AS expired")) {
+              var bindValues = (Object[]) invocation.getRawArguments()[1];
+              var deadline = (java.time.OffsetDateTime) bindValues[0];
+              when(databaseObservation.get("expired", Boolean.class))
+                  .thenReturn(!databaseNow.get().isBefore(deadline.toInstant()));
+              return databaseObservation;
+            }
             throw new AssertionError(sql);
           });
       Record databaseTime = mock(Record.class);

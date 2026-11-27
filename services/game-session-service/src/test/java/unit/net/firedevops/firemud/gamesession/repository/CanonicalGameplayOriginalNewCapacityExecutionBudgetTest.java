@@ -30,6 +30,7 @@ import io.lettuce.core.codec.ByteArrayCodec;
 import io.micrometer.core.instrument.Metrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -69,6 +70,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 /** Controlled acquisition/driver behavior, not database or owner-evidence qualification. */
 class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
   private static final Clock CLOCK = Clock.systemUTC();
+  private static final long REDIS_TIME_MILLIS = 1_700_000_000_123L;
 
   @AfterEach
   void awaitResourceAndCancellationWorkerCleanup() throws InterruptedException {
@@ -522,6 +524,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     }
     String loadedSha = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(script));
     when(scriptLoad.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(loadedSha);
+    stubTimelineRedisTime(commands);
     when(connection.closeAsync()).thenReturn(close);
     RedisFuture<Long> probed = mock();
     when(commands.<Long>evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
@@ -605,7 +608,6 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     RedisFuture<String> scriptLoad = mock();
     RedisFuture<Long> initialized = mock();
     CompletableFuture<Void> close = new CompletableFuture<>();
-    AtomicReference<byte[][]> submittedArguments = new AtomicReference<>();
     UUID tenantId = UUID.randomUUID();
     UUID gameInstanceId = UUID.randomUUID();
     UUID regionId = UUID.randomUUID();
@@ -644,16 +646,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     }
     String loadedSha = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(script));
     when(scriptLoad.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(loadedSha);
+    stubTimelineRedisTime(commands);
     when(connection.closeAsync()).thenReturn(close);
-    when(commands.evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
-        .thenAnswer(invocation -> {
-          byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
-          if ("INITIALIZE"
-              .equals(new String(arguments[1], java.nio.charset.StandardCharsets.US_ASCII))) {
-            submittedArguments.set(arguments);
-          }
-          return initialized;
-        });
+    when(commands.<Long>evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
+        .thenReturn(initialized);
     when(initialized.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1L);
     RuntimeIdentity identity =
         new RuntimeIdentity(
@@ -732,15 +728,23 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
           initialization =
               CompletableFuture.supplyAsync(() -> session.initialize(permit), executor);
         }
+        ArgumentCaptor<byte[][]> arguments = ArgumentCaptor.forClass(byte[][].class);
         verify(commands, timeout(1000).times(2))
-            .evalsha(any(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class));
+            .evalsha(any(), eq(ScriptOutputType.INTEGER), any(byte[][].class), arguments.capture());
         verify(connection, timeout(1000)).closeAsync();
-        byte[][] arguments = submittedArguments.get();
-        assertThat(arguments).isNotNull();
-        assertThat(new String(arguments[7], java.nio.charset.StandardCharsets.US_ASCII))
-            .isEqualTo("1");
-        assertThat(new String(arguments[8], java.nio.charset.StandardCharsets.US_ASCII))
-            .isEqualTo(Long.toString(handoffDeadline));
+        verify(commands).time();
+        byte[][] probeArguments = arguments.getAllValues().get(0);
+        byte[][] initializeArguments = arguments.getAllValues().get(1);
+        assertThat(new String(probeArguments[1], StandardCharsets.US_ASCII)).isEqualTo("PROBE");
+        assertThat(new String(initializeArguments[1], StandardCharsets.US_ASCII))
+            .isEqualTo("INITIALIZE");
+        assertThat(new String(initializeArguments[7], StandardCharsets.US_ASCII)).isEqualTo("1");
+        assertThat(initializeArguments[8]).isEqualTo(probeArguments[8]);
+        long redisDeadline =
+            Long.parseLong(new String(initializeArguments[8], StandardCharsets.US_ASCII));
+        assertThat(redisDeadline)
+            .isGreaterThan(REDIS_TIME_MILLIS)
+            .isLessThanOrEqualTo(REDIS_TIME_MILLIS + 4000);
         assertThat(initialization.isDone()).isFalse();
         assertThat(background.availablePermits()).isZero();
         assertThat(operations.availablePermits()).isEqualTo(operationMaximum - 2);
@@ -760,6 +764,17 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         close.complete(null);
       }
     }
+  }
+
+  private static void stubTimelineRedisTime(RedisAsyncCommands<byte[], byte[]> commands)
+      throws Exception {
+    RedisFuture<List<byte[]>> time = mock();
+    when(commands.time()).thenReturn(time);
+    when(time.get(anyLong(), eq(TimeUnit.MILLISECONDS)))
+        .thenReturn(
+            List.of(
+                "1700000000".getBytes(StandardCharsets.US_ASCII),
+                "123000".getBytes(StandardCharsets.US_ASCII)));
   }
 
   @Test

@@ -112,13 +112,13 @@ public final class AccountTenantCapacityGrpcService
   }
 
   @Override
-  public void readTenantCapacityQuotaDenial(
+  public void readTenantCapacityAdmissionDenial(
       CommitTenantCapacityAdmissionRequest wire,
       StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
     Objects.requireNonNull(observer);
     final String peer;
     try {
-      peer = guard.requireQuotaDenialReader();
+      peer = guard.requireAdmissionDenialReader();
     } catch (StatusRuntimeException denied) {
       observer.onError(Failure.AUTH_UNAVAILABLE.toStatusException());
       return;
@@ -141,14 +141,14 @@ public final class AccountTenantCapacityGrpcService
     }
     final CommitTenantCapacityAdmissionResponse result;
     try {
-      var denialId = owner.readRetainedQuotaDenial(request, peer);
-      if (denialId == null) {
+      var denial = owner.readRetainedAdmissionDenial(request, peer);
+      if (denial == null || denial.durableDenialId() == null) {
         observer.onError(Failure.ENTITLEMENT_UNAVAILABLE.toStatusException());
         return;
       }
       result =
           TenantCapacityAdmissionGrpcCodec.toRefusal(
-              request, Failure.CAPACITY_QUOTA_EXCEEDED, denialId);
+              request, denial.code(), denial.durableDenialId());
     } catch (CapacityException denied) {
       Failure code =
           switch (denied.code()) {
@@ -175,13 +175,13 @@ public final class AccountTenantCapacityGrpcService
   }
 
   @Override
-  public void readTenantCapacityAdmissionOutcome(
+  public void readTenantCapacityAdmissionReservation(
       CommitTenantCapacityAdmissionRequest wire,
       StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
     Objects.requireNonNull(observer);
     final String peer;
     try {
-      peer = guard.requireAdmissionOutcomeReader();
+      peer = guard.requireAdmissionReservationReader();
     } catch (StatusRuntimeException denied) {
       observer.onError(Failure.AUTH_UNAVAILABLE.toStatusException());
       return;
@@ -202,18 +202,11 @@ public final class AccountTenantCapacityGrpcService
       observer.onError(Failure.PERMISSION_DENIED.toStatusException());
       return;
     }
-    CommitTenantCapacityAdmissionResponse result;
+    final CommitTenantCapacityAdmissionResponse result;
     try {
-      try {
-        result =
-            TenantCapacityAdmissionGrpcCodec.toResponse(
-                request, owner.readRetainedAdmissionOutcome(request, peer));
-      } catch (CapacityException denied) {
-        if (denied.code() != Failure.CAPACITY_QUOTA_EXCEEDED) throw denied;
-        result =
-            TenantCapacityAdmissionGrpcCodec.toRefusal(
-                request, denied.code(), denied.durableDenialId());
-      }
+      result =
+          TenantCapacityAdmissionGrpcCodec.toResponse(
+              request, owner.readRetainedAdmissionReservation(request, peer));
     } catch (CapacityException denied) {
       Failure code =
           switch (denied.code()) {

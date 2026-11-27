@@ -20,17 +20,45 @@ import org.junit.jupiter.api.Test;
 
 class TenantCapacityAdmissionGrpcCodecTest {
   @Test
+  void expiredEvaluationCarriesTheExactDurableDenial() {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    var decisionId = UUID.randomUUID();
+    var code = Failure.CAPACITY_EVALUATION_EXPIRED;
+    var response = TenantCapacityAdmissionGrpcCodec.toRefusal(request, code, decisionId);
+
+    assertThat(TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response))
+        .contains(new Refusal(code, decisionId));
+    assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.toRefusal(request, code))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    var missingReceipt =
+        response.toBuilder()
+            .setRefusal(0, response.getRefusal(0).toBuilder().clearDurableDenialId())
+            .build();
+    assertThatThrownBy(
+            () -> TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, missingReceipt))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void onlyCanonicalFailureDetailsSurviveWithoutChangingTransportStatus() {
     var domainCodes =
-        java.util.Set.of(Failure.TENANT_BILLING_BLOCKED, Failure.CAPACITY_QUOTA_EXCEEDED);
+        java.util.Set.of(
+            Failure.TENANT_BILLING_BLOCKED,
+            Failure.CAPACITY_QUOTA_EXCEEDED,
+            Failure.CAPACITY_EVALUATION_EXPIRED);
     for (var failure : Failure.values()) {
       assertThat(failure.isDomainRefusal()).isEqualTo(domainCodes.contains(failure));
       if (domainCodes.contains(failure)) {
         assertThatThrownBy(failure::toStatusException).isInstanceOf(IllegalArgumentException.class);
+        var status =
+            failure == Failure.CAPACITY_EVALUATION_EXPIRED
+                ? Status.Code.FAILED_PRECONDITION
+                : Status.Code.RESOURCE_EXHAUSTED;
         var oldTransport =
             StatusProto.toStatusRuntimeException(
                 com.google.rpc.Status.newBuilder()
-                    .setCode(Status.Code.RESOURCE_EXHAUSTED.value())
+                    .setCode(status.value())
                     .setMessage("Tenant capacity commitment did not complete")
                     .addDetails(
                         Any.pack(
@@ -40,7 +68,7 @@ class TenantCapacityAdmissionGrpcCodecTest {
                                 .build()))
                     .build());
         var verified = TenantCapacityAdmissionGrpcCodec.validateFailure(oldTransport);
-        assertThat(verified.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+        assertThat(verified.getStatus().getCode()).isEqualTo(status);
         assertThat(StatusProto.fromThrowable(verified).getDetailsList()).isEmpty();
       } else {
         var canonical = failure.toStatusException();
