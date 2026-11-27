@@ -1,5 +1,57 @@
 -- Recheck the committed fixed preset before accepting a fresh fixture activation receipt.
 -- [jooq ignore start]
+-- The preparation entry point keeps its PREPARING requirement. The readback path may
+-- also verify an ACTIVE row with the exact original activation receipt.
+DO $migration$
+DECLARE
+    original TEXT;
+    signature TEXT := $signature$p_private_game_instance_key bigint)$signature$;
+    lifecycle TEXT := $lifecycle$OR instance.status IS DISTINCT FROM 'PREPARING'
+        OR instance.lifecycle_epoch IS DISTINCT FROM association.preparing_lifecycle_epoch$lifecycle$;
+    invocation TEXT := $invocation$p, p_expected_content_digest, p_world_instance_id, p_private_game_instance_key);$invocation$;
+BEGIN
+    SELECT pg_get_functiondef('"${serviceSchema}".world_verify_run_owned_fixed_preset_plan(jsonb,text,bigint,bigint)'::REGPROCEDURE)
+        INTO STRICT original;
+    IF (length(original)-length(replace(original,signature,'')))/length(signature)<>1
+        OR (length(original)-length(replace(original,lifecycle,'')))/length(lifecycle)<>1 THEN
+        RAISE EXCEPTION 'Expected exact fixed-preset verifier signature and PREPARING guard';
+    END IF;
+    original := replace(original,signature,$replacement$p_private_game_instance_key bigint, p_allow_activated_read boolean)$replacement$);
+    EXECUTE replace(original,lifecycle,$replacement$OR NOT (
+            (instance.status IS NOT DISTINCT FROM 'PREPARING'
+                AND instance.lifecycle_epoch IS NOT DISTINCT FROM association.preparing_lifecycle_epoch)
+            OR (p_allow_activated_read IS TRUE AND instance.status IS NOT DISTINCT FROM 'ACTIVE'
+                AND EXISTS (
+                    SELECT 1 FROM "${serviceSchema}".world_run_owned_fixture_activation activation
+                    WHERE activation.world_instance_id = instance.id
+                        AND activation.canonical_game_instance_id = association.canonical_game_instance_id
+                        AND activation.fixture_binding_sha256 = instance.run_owned_fixture_binding_sha256
+                        AND activation.expected_lifecycle_epoch = association.preparing_lifecycle_epoch
+                        AND activation.result_lifecycle_epoch = instance.lifecycle_epoch
+                        AND activation.result_row_version = instance.row_version)))$replacement$);
+
+    SELECT pg_get_functiondef('"${serviceSchema}".world_read_run_owned_fixed_preset(text,text,bigint,bigint)'::REGPROCEDURE)
+        INTO STRICT original;
+    IF (length(original)-length(replace(original,invocation,'')))/length(invocation)<>1 THEN
+        RAISE EXCEPTION 'Expected exact fixed-preset readback verifier call';
+    END IF;
+    EXECUTE replace(original,invocation,$replacement$p, p_expected_content_digest,
+        p_world_instance_id, p_private_game_instance_key, true);$replacement$);
+END;
+$migration$;
+REVOKE ALL ON FUNCTION world_verify_run_owned_fixed_preset_plan(JSONB, TEXT, BIGINT, BIGINT, BOOLEAN)
+    FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION world_verify_run_owned_fixed_preset_plan(
+    p JSONB, p_expected_content_digest TEXT, p_world_instance_id BIGINT,
+    p_private_game_instance_key BIGINT
+) RETURNS VOID
+LANGUAGE SQL SECURITY DEFINER SET search_path = pg_catalog, "${serviceSchema}"
+AS $$
+    SELECT "${serviceSchema}".world_verify_run_owned_fixed_preset_plan(
+        p, p_expected_content_digest, p_world_instance_id, p_private_game_instance_key, false);
+$$;
+
 CREATE FUNCTION world_require_run_owned_fixture_activation_preset(
     p_world_instance_id BIGINT, p_canonical_game_instance_id UUID, p_fixture_binding_sha256 TEXT
 )
