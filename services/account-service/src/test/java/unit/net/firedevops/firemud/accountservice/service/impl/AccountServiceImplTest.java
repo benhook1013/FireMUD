@@ -1122,6 +1122,8 @@ class AccountServiceImplTest {
       String outcome) {
     var f = canonicalJoinFixture();
     when(f.pending.status()).thenReturn("FAILED");
+    when(accountJoinOperationRepository.findCanonicalEvidenceByRequestId(f.requestId))
+        .thenReturn(Optional.of(f.pending));
     when(f.pending.outcome()).thenReturn(outcome);
     when(accountJoinOperationRepository.finishCanonicalFailure(
             f.requestId, f.scope, f.binding, outcome))
@@ -1134,6 +1136,8 @@ class AccountServiceImplTest {
     assertTrue(result.replayed());
     assertEquals(outcome, result.outcomeCode());
     verifyNoInteractions(f.targets, f.sources, f.demos, f.hosting, f.observer, f.terminal);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .lockCanonicalJoinAccounts(f.scope.tenantId(), f.scope.accountId());
     org.mockito.Mockito.verify(accountJoinOperationRepository)
         .finishCanonicalFailure(f.requestId, f.scope, f.binding, outcome);
     org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.times(2))
@@ -1144,6 +1148,8 @@ class AccountServiceImplTest {
   void canonicalFailedRetryStillChecksLockedRequestIdentity() {
     var f = canonicalJoinFixture();
     when(f.pending.status()).thenReturn("FAILED");
+    when(accountJoinOperationRepository.findCanonicalEvidenceByRequestId(f.requestId))
+        .thenReturn(Optional.of(f.pending));
     when(f.pending.outcome()).thenReturn("PUBLIC_PRODUCTION_ADMISSION_DENIED");
     when(accountJoinOperationRepository.finishCanonicalFailure(
             f.requestId, f.scope, f.binding, "PUBLIC_PRODUCTION_ADMISSION_DENIED"))
@@ -1153,7 +1159,7 @@ class AccountServiceImplTest {
     assertEquals(
         "IDEMPOTENCY_CONFLICT",
         assertThrows(AuthenticationException.class, f::browserJoin).getCode());
-    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.times(2))
+    org.mockito.Mockito.verify(accountJoinOperationRepository)
         .findCanonicalEvidenceForUpdateByRequestId(f.requestId);
     verifyNoInteractions(f.targets, f.sources, f.demos, f.hosting, f.observer, f.terminal);
   }
@@ -1162,6 +1168,8 @@ class AccountServiceImplTest {
   void canonicalFailedRetryStillRechecksCallerBeforeLockedReplay() {
     var f = canonicalJoinFixture();
     when(f.pending.status()).thenReturn("FAILED");
+    when(accountJoinOperationRepository.findCanonicalEvidenceByRequestId(f.requestId))
+        .thenReturn(Optional.of(f.pending));
     when(sessionService.isAccountSessionActive(f.account.getId(), f.bootstrap))
         .thenReturn(true, false);
     assertEquals(
