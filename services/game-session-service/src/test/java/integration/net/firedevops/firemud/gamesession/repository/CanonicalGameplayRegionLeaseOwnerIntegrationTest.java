@@ -1195,9 +1195,9 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
 
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(ints = {0, 1, 2})
-  void committedClaimCompletionFailureRecoversOnlyAcknowledgedUndispatchedPermit(int mode)
+  void committedClaimCompletionFailureRecoversExactUndispatchedGeneration(int mode)
       throws Exception {
-    boolean uncertainCommit = mode == 1;
+    boolean lostCommitAcknowledgement = mode == 1;
     boolean lateWorker = mode == 2;
     var cleanupEntered = new java.util.concurrent.CountDownLatch(1);
     var releaseCleanup = new java.util.concurrent.CountDownLatch(1);
@@ -1243,11 +1243,11 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                               Object result = method.invoke(raw, args);
                               if (method.getName().equals("commit")) {
                                 committed.set(true);
-                                if (uncertainCommit && fault.compareAndSet(true, false))
+                                if (lostCommitAcknowledgement && fault.compareAndSet(true, false))
                                   throw new java.sql.SQLException(
                                       "controlled lost commit acknowledgement");
                               }
-                              if (!uncertainCommit
+                              if (!lostCommitAcknowledgement
                                   && committed.get()
                                   && method.getName().equals("setAutoCommit")
                                   && Boolean.TRUE.equals(args[0])
@@ -1318,71 +1318,80 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
           .isEqualTo(
               CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INITIALIZING);
-      if (uncertainCommit) {
-        assertThat(proof.get()).isNull();
-        assertThat(repository.beginInitialTimeline(preparation, NOW)).isEmpty();
-      } else {
-        assertThat(proof.get()).isNotNull();
-        var aborted = org.mockito.Mockito.mock(CanonicalGameplayBindingTransitionSnapshot.class);
-        org.mockito.Mockito.when(aborted.status())
-            .thenReturn(CanonicalGameplayBindingTransitionSnapshot.Status.ABORTED);
-        var rejectedEvidence =
-            org.mockito.Mockito.mock(CanonicalGameplayBindingProvisionalCasEvidence.class);
-        org.mockito.Mockito.when(rejectedEvidence.transition()).thenReturn(aborted);
-        var inventory = org.mockito.Mockito.mock(CanonicalGameplayBindingInventoryRepository.class);
-        org.mockito.Mockito.when(inventory.readProvisionalCasEvidence(preparation.transitionId()))
-            .thenReturn(rejectedEvidence);
-        var cleanupIdentity =
-            new RuntimeIdentity(
-                "game-session-service",
-                "aborted-claim-cleanup",
-                "localhost",
-                NOW,
-                "controlled-test",
-                "controlled-sha",
-                "controlled-image");
-        var owner =
-            new CanonicalGameplayRegionLeaseOwner(
-                inventory,
-                repository,
-                redisOwner,
-                incarnationSource,
-                world.resolver(),
-                cleanupIdentity,
-                Duration.ofSeconds(30),
-                Clock.systemUTC());
-        var slot = owner.reserveNoWriteRecovery(preparation.operationId());
-        owner.retainNoWriteProof(preparation, slot, proof.get());
-        owner.releaseNoWriteRecovery(preparation.operationId(), slot);
-        // Retained cleanup runs before the unchanged PROVISIONAL admission gate.
-        assertThatThrownBy(
-                () -> owner.installForTransition(preparation.transitionId(), world.request()))
-            .isInstanceOf(IllegalStateException.class);
-        org.mockito.Mockito.verify(inventory)
-            .readProvisionalCasEvidence(preparation.transitionId());
-        assertThat(slot.proof).isNull();
-        var replacement = owner.reserveNoWriteRecovery(preparation.operationId());
-        assertThat(replacement).isNotSameAs(slot);
-        owner.releaseNoWriteRecovery(preparation.operationId(), replacement);
-        assertPreparedTimelineUnchanged(schema.dsl(), repository, redis, source, preparation);
-        var retryPermit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
-        assertThatThrownBy(
-                () -> repository.releaseInitialTimelineNoWrite(preparation, proof.get(), NOW))
-            .isInstanceOf(IllegalStateException.class);
-        var identity =
-            new RuntimeIdentity(
-                "game-session-service",
-                "claim-completion-retry",
-                "localhost",
-                NOW,
-                "controlled-test",
-                "controlled-sha",
-                "controlled-image");
-        try (var session =
-            redisOwner.prepareTimelineInitialization(
-                preparation, Duration.ofSeconds(30), identity)) {
-          redisOwner.verifyInitializedTimeline(session.initialize(retryPermit), preparation);
-        }
+      String selectGeneration =
+          "SELECT initialization_claim_generation FROM game_session_region_timeline_preparation"
+              + " WHERE initialization_operation_id = ?";
+      UUID committedGeneration =
+          schema.dsl().fetchSingle(selectGeneration, preparation.operationId()).get(0, UUID.class);
+      assertThat(committedGeneration).isNotNull();
+      assertThat(proof.get()).isNotNull();
+      assertThat(proof.get().generation()).isEqualTo(committedGeneration);
+      assertThat(repository.find(source)).isEmpty();
+      assertThat(repository.beginInitialTimeline(preparation, NOW)).isEmpty();
+      var aborted = org.mockito.Mockito.mock(CanonicalGameplayBindingTransitionSnapshot.class);
+      org.mockito.Mockito.when(aborted.status())
+          .thenReturn(CanonicalGameplayBindingTransitionSnapshot.Status.ABORTED);
+      var rejectedEvidence =
+          org.mockito.Mockito.mock(CanonicalGameplayBindingProvisionalCasEvidence.class);
+      org.mockito.Mockito.when(rejectedEvidence.transition()).thenReturn(aborted);
+      var inventory = org.mockito.Mockito.mock(CanonicalGameplayBindingInventoryRepository.class);
+      org.mockito.Mockito.when(inventory.readProvisionalCasEvidence(preparation.transitionId()))
+          .thenReturn(rejectedEvidence);
+      var cleanupIdentity =
+          new RuntimeIdentity(
+              "game-session-service",
+              "aborted-claim-cleanup",
+              "localhost",
+              NOW,
+              "controlled-test",
+              "controlled-sha",
+              "controlled-image");
+      var owner =
+          new CanonicalGameplayRegionLeaseOwner(
+              inventory,
+              repository,
+              redisOwner,
+              incarnationSource,
+              world.resolver(),
+              cleanupIdentity,
+              Duration.ofSeconds(30),
+              Clock.systemUTC());
+      var slot = owner.reserveNoWriteRecovery(preparation.operationId());
+      owner.retainNoWriteProof(preparation, slot, proof.get());
+      owner.releaseNoWriteRecovery(preparation.operationId(), slot);
+      // Retained cleanup runs before the unchanged PROVISIONAL admission gate.
+      assertThatThrownBy(
+              () -> owner.installForTransition(preparation.transitionId(), world.request()))
+          .isInstanceOf(IllegalStateException.class);
+      org.mockito.Mockito.verify(inventory).readProvisionalCasEvidence(preparation.transitionId());
+      assertThat(slot.proof).isNull();
+      var replacement = owner.reserveNoWriteRecovery(preparation.operationId());
+      assertThat(replacement).isNotSameAs(slot);
+      owner.releaseNoWriteRecovery(preparation.operationId(), replacement);
+      assertPreparedTimelineUnchanged(schema.dsl(), repository, redis, source, preparation);
+      var retryPermit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
+      assertThat(retryPermit.generation()).isNotEqualTo(committedGeneration);
+      assertThatThrownBy(
+              () -> repository.releaseInitialTimelineNoWrite(preparation, proof.get(), NOW))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(
+              schema
+                  .dsl()
+                  .fetchSingle(selectGeneration, preparation.operationId())
+                  .get(0, UUID.class))
+          .isEqualTo(retryPermit.generation());
+      var identity =
+          new RuntimeIdentity(
+              "game-session-service",
+              "claim-completion-retry",
+              "localhost",
+              NOW,
+              "controlled-test",
+              "controlled-sha",
+              "controlled-image");
+      try (var session =
+          redisOwner.prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity)) {
+        redisOwner.verifyInitializedTimeline(session.initialize(retryPermit), preparation);
       }
     } finally {
       dropSchema(schema.schema());
@@ -2983,13 +2992,14 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     assertThat(observed.phase())
         .isEqualTo(
             CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.PREPARED);
-    assertThat(
-            dsl.fetchSingle(
-                    "SELECT phase FROM game_session_region_timeline_preparation"
-                        + " WHERE initialization_operation_id = ?",
-                    preparation.operationId())
-                .get("phase", String.class))
-        .isEqualTo("PREPARED");
+    var row =
+        dsl.fetchSingle(
+            "SELECT phase, initialization_claim_generation"
+                + " FROM game_session_region_timeline_preparation"
+                + " WHERE initialization_operation_id = ?",
+            preparation.operationId());
+    assertThat(row.get("phase", String.class)).isEqualTo("PREPARED");
+    assertThat(row.get("initialization_claim_generation", UUID.class)).isNull();
     assertThat(
             redis
                 .admin()

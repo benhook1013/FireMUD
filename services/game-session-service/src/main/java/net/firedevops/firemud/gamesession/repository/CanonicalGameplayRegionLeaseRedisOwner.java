@@ -511,6 +511,10 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       this.permit = permit;
     }
 
+    UUID generation() {
+      return permit.generation();
+    }
+
     void restoreAfterConfirmedRollback() {
       consumed.set(false);
     }
