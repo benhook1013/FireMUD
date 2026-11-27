@@ -186,11 +186,9 @@ The registered version-scoped `GetDraftDesignDigest` response emits `digestSchem
 
 The selected-empty service additionally compares the incoming publication request, derived workflow and request digest with the original retained World freeze, its exact selected commit and acknowledgement. A later read correlation or latest owner state cannot substitute for that publication operation. Its schema-3 digest participates only in the [selected-full publication profile](../game-design-service/version-control.md#selected-full-publication-profile), where Game Design independently validates retained recipient evidence. Controlled receipt fixtures, local content integrity and a successful standalone read do not establish genuine Account authority, an authored producer, continuous currentness or permission to publish.
 
-Implementation Notes:
+The registered digest hashes items, NPCs, crafting recipes and their ingredients, equipment-slot definitions, and body-layout slot definitions for `(tenantId, versionId)`. The item projection includes the normalized optional `equipmentSlotGroupKey` checked by runtime equipment admission. Later version-scoped template families must join the same digest contract.
 
-- The current implementation hashes the version-scoped entity-definition rows for the requested `(tenantId, versionId)` and returns synthetic `appliedCommitId = "version:<versionId>"` until the later applied-revision ledger lands.
-- Current version-scoped digest inputs include `items`, `npcs`, and `crafting_recipes`; later entity-template families must join this same `(tenantId, versionId)` digest contract when introduced.
-- The current item projection omits `equipmentSlotGroupKey`, although runtime equipment admission consumes that authored value when checking an item against an equipment slot definition. A change to the slot-group constraint can therefore leave the Entity participant digest unchanged. The target manifest includes the normalized optional field and bumps `digestSchemaVersion` (from `1` to `2`); proof must show cross-version slot-group changes alter the digest and are caught by the publish gate.
+The following rules define the target manifest.
 
 - Included objects:
   - version-scoped entity-template tables such as item, NPC, equipment, loot-table, and balance-curve definitions keyed by `(tenantId, versionId)`;
