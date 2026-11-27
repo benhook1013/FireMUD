@@ -2120,9 +2120,36 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             accountContext.call(
                 () -> service.read(lease.canonicalJson(), lease.sha256(), epoch, version)))
         .isEmpty();
-    var held =
-        accountContext.call(
-            () -> service.acquire(lease.canonicalJson(), lease.sha256(), epoch, version));
+    WorldCanonicalPlayerAdmissionHoldEvidence held;
+    try (var repeatableRead = world.pool().getConnection();
+        var serializable = world.pool().getConnection()) {
+      repeatableRead.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+      serializable.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
+      for (Connection stale : List.of(repeatableRead, serializable)) {
+        stale.setAutoCommit(false);
+        DSLContext snapshot = DSL.using(stale, SQLDialect.POSTGRES);
+        assertThat(
+                snapshot
+                    .fetchSingle(lifecycleImage, association.worldInstanceId())
+                    .get(1, String.class))
+            .isEqualTo(lifecycleBefore.get(1, String.class));
+        assertThat(snapshot.fetchCount(DSL.table("world_canonical_player_admission_hold")))
+            .isZero();
+      }
+      held =
+          accountContext.call(
+              () -> service.acquire(lease.canonicalJson(), lease.sha256(), epoch, version));
+      for (Connection stale : List.of(repeatableRead, serializable)) {
+        DSLContext snapshot = DSL.using(stale, SQLDialect.POSTGRES);
+        assertThatThrownBy(
+                () ->
+                    snapshot.execute(
+                        "UPDATE world_instance SET row_version = row_version + 1 WHERE id = ?",
+                        association.worldInstanceId()))
+            .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("40001"));
+        stale.rollback();
+      }
+    }
     assertThat(held.request().sameBinding(request)).isTrue();
     assertThat(held.worldEvidence().canonicalBytes())
         .containsExactly(
