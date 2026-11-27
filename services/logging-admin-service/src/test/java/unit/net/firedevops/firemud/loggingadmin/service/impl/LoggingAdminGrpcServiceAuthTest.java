@@ -169,6 +169,8 @@ class LoggingAdminGrpcServiceAuthTest {
     AccountAuditReceiptDto receipt =
         new AccountAuditReceiptDto(
             AccountAuditScope.PLATFORM,
+            1,
+            null,
             null,
             "d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3",
             "receipt-1",
@@ -299,6 +301,8 @@ class LoggingAdminGrpcServiceAuthTest {
         .thenReturn(
             new AccountAuditReceiptDto(
                 AccountAuditScope.PLATFORM,
+                1,
+                null,
                 null,
                 "d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3",
                 "receipt-1",
@@ -330,14 +334,24 @@ class LoggingAdminGrpcServiceAuthTest {
   @Test
   void accountMtlsPeerCanReadMinimizedReceiptThroughActualService() {
     AccountAuditReceiptRepository repository = Mockito.mock(AccountAuditReceiptRepository.class);
-    ReadLogEventReceiptRequest wireRequest = validReadRequest().toBuilder().clearPayload().build();
+    UUID tenantUuid = UUID.fromString("50000000-0000-4000-8000-000000000031");
+    ReadLogEventReceiptRequest wireRequest =
+        validReadRequest().toBuilder()
+            .setScope(
+                net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT)
+            .setTenantIdentityVersion(2)
+            .setTenantUuid(tenantUuid.toString())
+            .clearPayload()
+            .build();
     Instant occurredAt =
         Instant.ofEpochSecond(
             wireRequest.getOccurredAt().getSeconds(), wireRequest.getOccurredAt().getNanos());
     net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest serviceRequest =
         new net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest(
-            AccountAuditScope.PLATFORM,
+            AccountAuditScope.TENANT,
+            2,
             null,
+            tenantUuid,
             wireRequest.getAuditEventId(),
             wireRequest.getProducerService(),
             wireRequest.getEventType(),
@@ -352,8 +366,10 @@ class LoggingAdminGrpcServiceAuthTest {
             91L,
             77L,
             receiptId,
-            "platform",
+            "tenant",
+            2,
             null,
+            tenantUuid,
             serviceRequest.auditEventId(),
             serviceRequest.producerService(),
             serviceRequest.eventType(),
@@ -365,7 +381,7 @@ class LoggingAdminGrpcServiceAuthTest {
             null,
             "MINIMIZED",
             "NON_REPLAYABLE");
-    when(repository.findByIdentity(serviceRequest, 0L)).thenReturn(Optional.of(receipt));
+    when(repository.findByIdentity(serviceRequest)).thenReturn(Optional.of(receipt));
     LoggingAdminGrpcService service = newService(new LogEventServiceImpl(repository));
     AtomicReference<ReadLogEventReceiptResponse> response = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
@@ -378,6 +394,9 @@ class LoggingAdminGrpcServiceAuthTest {
     assertNotNull(response.get());
     assertEquals(receiptId.toString(), response.get().getReceiptId());
     assertEquals("77", response.get().getLogEventId());
+    assertEquals(2, response.get().getTenantIdentityVersion());
+    assertEquals("", response.get().getTenantId());
+    assertEquals(tenantUuid.toString(), response.get().getTenantUuid());
     assertEquals(
         net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptStatus
             .ACCOUNT_AUDIT_RECEIPT_STATUS_MINIMIZED,
@@ -386,7 +405,7 @@ class LoggingAdminGrpcServiceAuthTest {
         net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptOutcome
             .ACCOUNT_AUDIT_RECEIPT_OUTCOME_NON_REPLAYABLE,
         response.get().getOutcome());
-    verify(repository).findByIdentity(serviceRequest, 0L);
+    verify(repository).findByIdentity(serviceRequest);
   }
 
   @Test
