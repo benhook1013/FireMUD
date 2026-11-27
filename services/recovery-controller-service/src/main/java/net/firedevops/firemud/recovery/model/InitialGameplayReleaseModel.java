@@ -717,6 +717,13 @@ public final class InitialGameplayReleaseModel {
             "No-effect proof requires durable closure of the exact owner attempt");
       }
       readbackIdentity = requiredText(readbackIdentity, "readbackIdentity");
+      if (readbackIdentity
+          .codePoints()
+          .anyMatch(codePoint ->
+              (codePoint >= 0xfdd0 && codePoint <= 0xfdef) || (codePoint & 0xffff) >= 0xfffe)) {
+        throw new IllegalArgumentException(
+            "readbackIdentity must not contain Unicode noncharacters");
+      }
       Objects.requireNonNull(observedAt, "observedAt must not be null");
     }
   }

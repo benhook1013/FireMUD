@@ -119,10 +119,11 @@ public final class InitialGameplayReleaseController {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw unavailable("INITIAL_GAMEPLAY_RELEASE_RECONCILIATION_REQUIRES_NO_CALLER_TRANSACTION");
     }
+    Optional<OutboxEntry> next =
+        journal.findNextEffect(Objects.requireNonNull(operationId, "operationId must not be null"));
     Operation operation = requireOperation(operationId);
-    Optional<OutboxEntry> next = journal.findNextEffect(operationId);
     if (next.isEmpty()) {
-      return requireOperation(operationId);
+      return operation;
     }
     OutboxEntry outbox = next.orElseThrow();
     if (outbox.state() == EffectOutboxState.PENDING

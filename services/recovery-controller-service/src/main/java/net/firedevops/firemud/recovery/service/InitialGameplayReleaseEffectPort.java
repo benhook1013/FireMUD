@@ -22,7 +22,8 @@ public interface InitialGameplayReleaseEffectPort {
   /**
    * Returns evidence bound to this exact attempt and dispatch ordinal. The owner must return the
    * requested ordinal in the typed receipt so an earlier observation for a reused attempt ID cannot
-   * satisfy a later dispatch. PROVEN_NO_EFFECT requires the owner to have durably closed the
+   * satisfy a later dispatch. The receipt identity must be valid I-JSON and retain the exact owner
+   * value without normalization. PROVEN_NO_EFFECT requires the owner to have durably closed the
    * attempt so a delayed claimant can no longer apply it; absence alone is not proof.
    *
    * <p>AVAILABLE carries the owner's original observation timestamp. The adapter must establish
