@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidence;
 import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidenceTestFixture;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
@@ -30,8 +31,10 @@ import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalInstanc
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
+import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.repository.RunOwnedFixtureRuntimeCompletionRepository;
 import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService;
+import net.firedevops.firemud.gamesession.service.impl.DatabaseGameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
@@ -216,10 +219,31 @@ class GameSessionRunOwnedFixtureFirstOpenPostgresIntegrationTest {
     assertThat(runtimeStatus(f, association.gameSessionTenantId(), launch.gameInstanceId()))
         .isEqualTo("RUNNING");
 
+    var numericPointers = new GameplayAdmissionPointerRepository(f.dsl);
+    var discovery =
+        new GameplayWorldCatalog(
+            new DatabaseGameplayAdmissionPointerAuthorityService(
+                numericPointers, new GameplayAdmissionPointerEventRepository(f.dsl)));
+    assertThat(discovery.publicWorldsFromAuthoritySnapshot()).isEmpty();
+
     assertThat(flag(f, () -> f.admissions.commitFixture(request, worldProof))).isTrue();
     assertThat(flag(f, () -> f.admissions.commitFixture(request, worldProof))).isFalse();
     assertThat(flag(f, () -> f.admissions.reserveFixtureStarting(request))).isFalse();
     assertThat(replayCompletion(f, request, worldProof)).isEqualTo(completion);
+    assertThat(numericPointers.count()).isZero();
+    assertThat(discovery.publicWorldsFromAuthoritySnapshot())
+        .singleElement()
+        .satisfies(
+            world -> {
+              assertThat(world.slug()).isEqualTo(catalog.worldSlug());
+              assertThat(world.realms())
+                  .singleElement()
+                  .satisfies(
+                      realm -> {
+                        assertThat(realm.realmId()).isEqualTo(catalog.realmId());
+                        assertThat(realm.gameInstanceId()).isEqualTo(launch.gameInstanceId());
+                      });
+            });
 
     CanonicalInitialAdmissionOwnerProof proof =
         f.admissions.read(NAMESPACE, requestId).orElseThrow();

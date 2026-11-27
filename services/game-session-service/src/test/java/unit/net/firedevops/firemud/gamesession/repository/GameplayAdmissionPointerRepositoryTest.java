@@ -30,7 +30,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 class GameplayAdmissionPointerRepositoryTest {
   @Test
-  void numericInventoryExcludesCanonicalRepresentationBeforeMapping() throws Exception {
+  void numericInventoryExcludesCanonicalClosedRowsBeforeMapping() throws Exception {
     try (Connection connection =
         DriverManager.getConnection(
             "jdbc:h2:mem:gameplay-pointer-representation-inventory;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {

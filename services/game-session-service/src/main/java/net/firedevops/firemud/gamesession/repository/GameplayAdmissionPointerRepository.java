@@ -89,11 +89,12 @@ public class GameplayAdmissionPointerRepository {
   }
 
   public List<GameplayAdmissionPointer> findAllByOrderByWorldSlugAscRealmSlugAsc() {
+    // Legacy and canonical OPEN rows carry a numeric routing projection.
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
         .where(
             DSL.field(
                     DSL.name("gameplay_admission_pointer", "representation_version"), Integer.class)
-                .eq(1))
+                .in(1, 3))
         .orderBy(
             GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
             GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc(),
