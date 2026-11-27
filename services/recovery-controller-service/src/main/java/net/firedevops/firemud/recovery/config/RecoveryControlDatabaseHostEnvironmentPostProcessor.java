@@ -1,12 +1,16 @@
 package net.firedevops.firemud.recovery.config;
 
 import java.net.URI;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import org.springframework.boot.EnvironmentPostProcessor;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
 import org.springframework.core.Ordered;
 import org.springframework.core.env.ConfigurableEnvironment;
 
@@ -36,6 +40,25 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
     // Validate rather than silently overriding an endpoint that would escape journal isolation.
     try {
       Binder binder = Binder.get(environment);
+      boolean flywayEnabled =
+          !Boolean.FALSE.equals(binder.bind("spring.flyway.enabled", Boolean.class).orElse(null));
+      var configuredExclusions = binder.bind("spring.autoconfigure.exclude", String[].class);
+      List<String> exclusions =
+          configuredExclusions.isBound() ? Arrays.asList(configuredExclusions.get()) : List.of();
+      if (exclusions.contains(DataSourceAutoConfiguration.class.getName())
+          || (flywayEnabled && exclusions.contains(FlywayAutoConfiguration.class.getName()))) {
+        throw new SafeOverrideException(
+            "spring.autoconfigure.exclude must retain the recovery datasource and enabled Flyway");
+      }
+      if (flywayEnabled
+          && Boolean.FALSE.equals(
+              binder.bind("spring.flyway.create-schemas", Boolean.class).orElse(null))) {
+        throw new SafeOverrideException(
+            "spring.flyway.create-schemas must be enabled to bootstrap the recovery schema");
+      }
+      if (flywayEnabled) {
+        requireAbsent(binder, "spring.flyway.dry-run-output");
+      }
       String url = "jdbc:postgresql://" + host + ":" + port + "/firemud_recovery_control";
       var primaryUrl = binder.bind("spring.datasource.url", String.class);
       if (!primaryUrl.isBound() || !Objects.equals(primaryUrl.get(), url)) {
@@ -68,7 +91,8 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
       requireAbsent(binder, "spring.flyway.url");
       requireAbsent(binder, "spring.flyway.user");
       requireAbsent(binder, "spring.flyway.password");
-      if (binder.bind("spring.flyway.baseline-on-migrate", Boolean.class).orElse(false)) {
+      if (Boolean.TRUE.equals(
+          binder.bind("spring.flyway.baseline-on-migrate", Boolean.class).orElse(null))) {
         throw new SafeOverrideException(
             "spring.flyway.baseline-on-migrate must be disabled for the recovery datasource");
       }

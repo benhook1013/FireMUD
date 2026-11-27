@@ -77,6 +77,14 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
         AND EXISTS (
           SELECT 1 FROM pg_catalog.pg_attribute
           WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+            AND attname = 'last_outcome_code' AND NOT attisdropped AND NOT attnotnull
+            AND (atttypid = 'pg_catalog.text'::regtype
+              OR (atttypid = 'pg_catalog.varchar'::regtype
+                -- varchar typmod includes the four-byte header. Outcome codes allow 64 characters.
+                AND (atttypmod = -1 OR atttypmod - 4 >= 64))))
+        AND EXISTS (
+          SELECT 1 FROM pg_catalog.pg_attribute
+          WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
             AND attname = 'retry_provenance' AND NOT attisdropped AND NOT attnotnull
             AND atttypid = 'pg_catalog.text'::regtype)
         AND EXISTS (

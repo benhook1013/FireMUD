@@ -265,9 +265,10 @@ class InitialGameplayReleaseControllerTest {
     var selected = mock(OutboxEntry.class);
     when(selected.effect()).thenReturn(effect);
     when(selected.state()).thenReturn(priorState);
-    int ordinal = priorState == EffectOutboxState.PENDING ? 1 : 2;
-    UUID previousAttempt = priorState == EffectOutboxState.PENDING ? null : UUID.randomUUID();
-    when(selected.attemptCount()).thenReturn(ordinal - 1);
+    boolean pending = priorState == EffectOutboxState.PENDING;
+    int claimedOrdinal = pending ? 1 : 3;
+    UUID previousAttempt = pending ? null : UUID.randomUUID();
+    when(selected.attemptCount()).thenReturn(pending ? 0 : 1);
     when(selected.lastAttemptId()).thenReturn(previousAttempt);
     when(journal.find(operationId))
         .thenReturn(java.util.Optional.of(operation), java.util.Optional.of(after));
@@ -296,7 +297,7 @@ class InitialGameplayReleaseControllerTest {
                           requested.getLeastSignificantBits()));
           if (ownsClaim) {
             when(claimed.effect()).thenReturn(effect);
-            when(claimed.attemptCount()).thenReturn(ordinal);
+            when(claimed.attemptCount()).thenReturn(claimedOrdinal);
           }
           return claimed;
         });
@@ -330,7 +331,7 @@ class InitialGameplayReleaseControllerTest {
     if (!ownsClaim) {
       verifyNoInteractions(port);
     } else {
-      verify(port).apply(effect, claimedAttempt.get(), ordinal);
+      verify(port).apply(effect, claimedAttempt.get(), claimedOrdinal);
       verify(port, never()).readback(any(), any(), anyInt());
     }
     if (ownsClaim && expectedRetrySource == null) {
@@ -464,7 +465,7 @@ class InitialGameplayReleaseControllerTest {
         mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
     var after =
         mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
-    var snapshot = new AtomicReference<>(before);
+    var snapshot = new AtomicReference<Operation>(before);
     when(journal.find(operationId)).thenAnswer(invocation -> java.util.Optional.of(snapshot.get()));
     when(journal.findNextEffect(operationId))
         .thenAnswer(invocation -> {
@@ -538,18 +539,29 @@ class InitialGameplayReleaseControllerTest {
             attempt,
             null,
             null);
+    var snapshot = new AtomicReference<>(before);
     when(journal.find(scope.operationId()))
-        .thenReturn(java.util.Optional.of(before), java.util.Optional.of(after));
+        .thenAnswer(invocation -> java.util.Optional.of(snapshot.get()));
     when(journal.findNextEffect(scope.operationId())).thenReturn(java.util.Optional.of(outbox));
     switch (failure) {
       case THROWN ->
           when(effectPort.readback(effect, attempt, outbox.attemptCount()))
-              .thenThrow(new IllegalStateException("owner readback failed"));
+              .thenAnswer(invocation -> {
+                snapshot.set(after);
+                throw new IllegalStateException("owner readback failed");
+              });
       case UNAVAILABLE ->
           when(effectPort.readback(effect, attempt, outbox.attemptCount()))
-              .thenReturn(InitialGameplayReleaseEffectPort.EffectReadbackResolution.unavailable());
+              .thenAnswer(invocation -> {
+                snapshot.set(after);
+                return InitialGameplayReleaseEffectPort.EffectReadbackResolution.unavailable();
+              });
       case MISSING ->
-          when(effectPort.readback(effect, attempt, outbox.attemptCount())).thenReturn(null);
+          when(effectPort.readback(effect, attempt, outbox.attemptCount()))
+              .thenAnswer(invocation -> {
+                snapshot.set(after);
+                return null;
+              });
     }
     var controller =
         new InitialGameplayReleaseController(
@@ -681,7 +693,11 @@ class InitialGameplayReleaseControllerTest {
             attempt,
             null,
             null);
-    var now = java.time.Instant.parse("2026-11-18T12:00:00Z");
+    var t0 = java.time.Instant.parse("2026-11-18T12:00:00Z");
+    var t1 = t0.plusSeconds(1);
+    var t2 = t0.plusSeconds(2);
+    var t3 = t0.plusSeconds(3);
+    var clock = new MutableClock(t0);
     var readback =
         new net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback(
             scope.operationId(),
@@ -696,7 +712,7 @@ class InitialGameplayReleaseControllerTest {
             net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel
                 .EffectReadbackAuthority.GAME_SESSION_DURABLE_CURRENT_STATE,
             "readback",
-            future ? now.plusSeconds(1) : now);
+            future ? t3 : t1);
     var before = mock(Operation.class);
     when(before.scope()).thenReturn(scope);
     var snapshot = new AtomicReference<>(before);
@@ -708,23 +724,52 @@ class InitialGameplayReleaseControllerTest {
           return java.util.Optional.of(outbox);
         });
     when(effectPort.readback(effect, attempt, outbox.attemptCount()))
-        .thenReturn(InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(readback));
+        .thenAnswer(invocation -> {
+          clock.setInstant(t2);
+          return InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(readback);
+        });
     var controller =
         new InitialGameplayReleaseController(
-            journal,
-            codec,
-            mock(InitialGameplayReleaseEvidenceProvider.class),
-            effectPort,
-            java.time.Clock.fixed(now, java.time.ZoneOffset.UTC));
+            journal, codec, mock(InitialGameplayReleaseEvidenceProvider.class), effectPort, clock);
     if (future) {
       assertThatThrownBy(() -> controller.reconcileNextEffect(scope.operationId()))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("observation time changed");
       verify(journal, never()).recordEffectReadback(any(), any(), any());
     } else {
-      when(journal.recordEffectReadback(outbox, readback, now)).thenReturn(operation);
+      when(journal.recordEffectReadback(outbox, readback, t2)).thenReturn(operation);
       assertThat(controller.reconcileNextEffect(scope.operationId())).isSameAs(operation);
-      verify(journal).recordEffectReadback(outbox, readback, now);
+      verify(journal).recordEffectReadback(outbox, readback, t2);
+    }
+  }
+
+  private static final class MutableClock extends java.time.Clock {
+    private final AtomicReference<java.time.Instant> instant;
+
+    private MutableClock(java.time.Instant instant) {
+      this.instant = new AtomicReference<>(instant);
+    }
+
+    private void setInstant(java.time.Instant value) {
+      instant.set(value);
+    }
+
+    @Override
+    public java.time.ZoneId getZone() {
+      return java.time.ZoneOffset.UTC;
+    }
+
+    @Override
+    public java.time.Clock withZone(java.time.ZoneId zone) {
+      if (!java.time.ZoneOffset.UTC.equals(zone)) {
+        throw new UnsupportedOperationException("UTC only");
+      }
+      return this;
+    }
+
+    @Override
+    public java.time.Instant instant() {
+      return instant.get();
     }
   }
 }

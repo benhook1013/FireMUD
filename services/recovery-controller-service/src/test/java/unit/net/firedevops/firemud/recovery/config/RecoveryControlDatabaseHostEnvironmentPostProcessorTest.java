@@ -9,12 +9,17 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
+import org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 import org.springframework.mock.env.MockEnvironment;
 
 class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
+  private static final String REDIS_AUTO_CONFIGURATION =
+      "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration";
+
   private final RecoveryControlDatabaseHostEnvironmentPostProcessor postProcessor =
       new RecoveryControlDatabaseHostEnvironmentPostProcessor();
 
@@ -289,6 +294,91 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   void acceptsExplicitlyDisabledAutomaticBaselining() {
     var environment =
         fixtureEnvironment().withProperty("spring.flyway.baseline-on-migrate", "false");
+    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .doesNotThrowAnyException();
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void rejectsDatasourceAutoConfigurationExclusionEvenWithMigrationsDisabled(
+      boolean flywayEnabled) {
+    var environment =
+        fixtureEnvironment()
+            .withProperty("spring.flyway.enabled", Boolean.toString(flywayEnabled))
+            .withProperty("spring.autoconfigure.exclude[0]", REDIS_AUTO_CONFIGURATION)
+            .withProperty(
+                "spring.autoconfigure.exclude[1]", DataSourceAutoConfiguration.class.getName());
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.autoconfigure.exclude must retain the recovery datasource")
+        .hasNoCause();
+  }
+
+  @Test
+  void rejectsAutoConfigurationExclusionForEnabledFlyway() {
+    var environment =
+        fixtureEnvironment()
+            .withProperty(
+                "spring.autoconfigure.exclude",
+                REDIS_AUTO_CONFIGURATION + "," + FlywayAutoConfiguration.class.getName());
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.autoconfigure.exclude must retain the recovery datasource")
+        .hasNoCause();
+  }
+
+  @Test
+  void rejectsDisabledSchemaCreationFromRelaxedEnvironmentOverride() {
+    var environment = fixtureEnvironment().withProperty("spring.flyway.create-schemas", "true");
+    environment
+        .getPropertySources()
+        .addFirst(
+            new SystemEnvironmentPropertySource(
+                "test-systemEnvironment", Map.of("SPRING_FLYWAY_CREATESCHEMAS", "false")));
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.flyway.create-schemas must be enabled")
+        .hasNoCause();
+  }
+
+  @Test
+  void rejectsDryRunOutputFromRelaxedEnvironmentOverride() {
+    var environment = fixtureEnvironment();
+    environment
+        .getPropertySources()
+        .addFirst(
+            new SystemEnvironmentPropertySource(
+                "test-systemEnvironment",
+                Map.of("SPRING_FLYWAY_DRYRUNOUTPUT", "fixture-dry-run.sql")));
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.flyway.dry-run-output is unsupported")
+        .hasMessageNotContaining("fixture-dry-run.sql")
+        .hasNoCause();
+  }
+
+  @Test
+  void ignoresDryRunOutputForDisabledFlywayFixture() {
+    var environment =
+        fixtureEnvironment()
+            .withProperty("spring.flyway.enabled", "false")
+            .withProperty("spring.flyway.dry-run-output", "fixture-dry-run.sql");
+    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .doesNotThrowAnyException();
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void acceptsRedisExclusionAndSchemaCreationForEnabledFlyway(boolean flywayEnabled) {
+    var environment =
+        fixtureEnvironment()
+            .withProperty("spring.autoconfigure.exclude", REDIS_AUTO_CONFIGURATION)
+            .withProperty("spring.flyway.enabled", Boolean.toString(flywayEnabled))
+            .withProperty("spring.flyway.create-schemas", Boolean.toString(flywayEnabled));
     assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
         .doesNotThrowAnyException();
   }

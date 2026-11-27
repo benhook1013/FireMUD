@@ -87,7 +87,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           throw conflict("maintenance-lock identity is already bound");
         }
         requireSameScope(operation.scope(), scope, scopeDigest);
-        return operation;
+        return requireFinalizedHandoff(tx, operation);
       });
     } catch (DuplicateKeyException failure) {
       // Auto-configured jOOQ may translate the same violation at the Spring boundary.
@@ -133,7 +133,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       if (current.evidence() != null) {
         if (evidenceDigest.equals(tupleCodec.digest(current.evidence()))
             && evidence.evidenceIdentity().equals(current.evidence().evidenceIdentity())) {
-          return current;
+          return requireFinalizedHandoff(tx, current);
         }
         throw conflict("owner evidence changed after it was bound");
       }
@@ -167,6 +167,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   public Operation transition(PublicTransitionTuple tuple, Instant now) {
     Objects.requireNonNull(tuple, "tuple must not be null");
     Objects.requireNonNull(now, "now must not be null");
+    requireIndependentTransaction("public transition");
     String tupleDigest = tupleCodec.digest(tuple);
     JSONB tuplePayload = JSONB.valueOf(tupleCodec.toJson(tuple));
     return dsl.transactionResult(configuration -> {
@@ -284,11 +285,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   public OutboxEntry claimEffect(UUID operationId, UUID effectId, UUID attemptId, Instant now) {
     Objects.requireNonNull(attemptId, "attemptId must not be null");
     Objects.requireNonNull(now, "now must not be null");
-    // A journal bound to a caller's jOOQ or JDBC transaction can only release a savepoint.
-    // The owner call must wait for the claim's own commit.
-    if (!dsl.connectionResult(connection -> connection.getAutoCommit())) {
-      throw conflict("effect dispatch claim requires its own transaction");
-    }
+    requireIndependentTransaction("effect dispatch claim");
     return dsl.transactionResult(configuration -> {
       DSLContext tx = DSL.using(configuration);
       Operation operation = selectOperation(tx, operationId, true);
@@ -526,7 +523,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     UUID effectId = dispatch.effect().effectId();
     return dsl.transactionResult(configuration -> {
       DSLContext tx = DSL.using(configuration);
-      Operation operation = selectOperation(tx, operationId, true);
+      Operation operation = requireFinalizedHandoff(tx, selectOperation(tx, operationId, true));
       OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
       tupleCodec.requireEffectMatchesOperation(current.effect(), operation);
       if (!sameEffect(dispatch, current)
@@ -574,18 +571,18 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             requireValidExactStoredReadback(readback, stored, storedDigest, current);
             requireRetainedReadbackRecordingTime(readback, stored, "acknowledged_at");
             requireTerminalReplayWithinAttempt(readback, stored, now);
-            return requireFinalizedHandoff(tx, operation);
+            return operation;
           }
           if (stored != null
               && sameRetainedOutcome(readback, stored, storedDigest, "acknowledged_at")) {
             requireSuccessfulReadbackState(readback, current.effect().kind());
             requireTerminalReplayWithinAttempt(readback, stored, now);
-            return requireFinalizedHandoff(tx, operation);
+            return operation;
           }
           if (operation.phase() == Phase.RELEASING
               && current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
               && readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL) {
-            requireUnclaimedHandoff(tx, operation);
+            requireHandoffSafeForPreparationReadback(tx, operation);
             requireTerminalReplayWithinAttempt(readback, stored, now);
             EffectReadback previous = requireNonRegressingReadback(readback, stored, current);
             if (previous == null || !readback.observedAt().isAfter(previous.observedAt())) {
@@ -696,7 +693,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       }
       EffectReadback previous = requireNonRegressingReadback(readback, timestamps, current);
       if (isPreparationHeldBeforeHandoff(operation, current)) {
-        requireUnclaimedHandoff(tx, operation);
+        requireHandoffSafeForPreparationReadback(tx, operation);
         if (previous == null || previous.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
           throw conflict("held preparation has no retained partial readback");
         }
@@ -792,13 +789,26 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   }
 
   // Callers hold the operation lock, which also serializes handoff claims.
-  private void requireUnclaimedHandoff(DSLContext tx, Operation operation) {
+  private void requireHandoffSafeForPreparationReadback(DSLContext tx, Operation operation) {
     OutboxEntry handoff =
         findEffect(tx, operation.scope().operationId(), EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF)
             .orElseThrow(() -> conflict("retained handoff is missing"));
     tupleCodec.requireEffectMatchesOperation(handoff.effect(), operation);
-    if (handoff.state() != EffectOutboxState.PENDING || handoff.attemptCount() != 0) {
-      throw conflict("preparation readback changed after the handoff was claimed");
+    if (handoff.state() == EffectOutboxState.PENDING && handoff.attemptCount() == 0) {
+      return;
+    }
+    if (handoff.state() == EffectOutboxState.RETRYABLE) {
+      requireExactClosureBeforeRetry(tx, handoff);
+      return;
+    }
+    throw conflict("preparation readback changed after the handoff was claimed");
+  }
+
+  private void requireIndependentTransaction(String operation) {
+    // A journal bound to a caller's transaction can release only a savepoint.
+    // These entry points report authorization or dispatch custody after commit.
+    if (!dsl.connectionResult(connection -> connection.getAutoCommit())) {
+      throw conflict(operation + " requires its own transaction");
     }
   }
 
@@ -965,7 +975,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             """
             SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
                    payload_digest, state,
-                   attempt_count, last_attempt_id, last_outcome_code, acknowledged_at, last_dispatched_at
+                   attempt_count, last_attempt_id, last_outcome_code, acknowledged_at, last_dispatched_at,
+                   (readback_identity IS NOT NULL OR readback_payload IS NOT NULL
+                     OR readback_digest IS NOT NULL) AS has_readback
             FROM recovery_control.initial_gameplay_release_outbox
             WHERE operation_id = ? AND effect_id = ?
             """
@@ -975,7 +987,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     if (record == null) {
       throw new IllegalArgumentException("INITIAL_GAMEPLAY_RELEASE_EFFECT_NOT_FOUND");
     }
-    return toOutboxEntry(record);
+    OutboxEntry entry = toOutboxEntry(record);
+    if (entry.state() == EffectOutboxState.PENDING && record.get("has_readback", boolean.class)) {
+      throw conflict("retained pending effect has readback evidence");
+    }
+    return entry;
   }
 
   private OutboxEntry toOutboxEntry(Record record) {

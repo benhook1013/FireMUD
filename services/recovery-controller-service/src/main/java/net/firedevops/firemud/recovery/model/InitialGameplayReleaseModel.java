@@ -1,5 +1,6 @@
 package net.firedevops.firemud.recovery.model;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -339,8 +340,11 @@ public final class InitialGameplayReleaseModel {
       return List.copyOf(acknowledgements);
     }
 
+    @SuppressFBWarnings(
+        value = "EI_EXPOSE_REP",
+        justification = "The constructor stores a private, sorted, unmodifiable copy.")
     public Map<Integer, Integer> capacityVector() {
-      return Collections.unmodifiableMap(new TreeMap<>(capacityVector));
+      return capacityVector;
     }
   }
 
