@@ -164,6 +164,7 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     assert.equal(diverged.postgres_runtime_proof_changed, "false");
     for (const changes of [
       {compareError: true},
+      {eventHead: null, eventBase: base, expectCompare: false},
       {eventHead: undefined, eventBase: "invalid", expectCompare: false},
       {count: 300, expectCompare: false},
       {count: 2},

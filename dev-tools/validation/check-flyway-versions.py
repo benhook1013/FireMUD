@@ -29,7 +29,7 @@ RECOVERY_LOCATION = "classpath:db/recovery-control-migration"
 RECOVERY_SQL_ROOT = f"services/{RECOVERY_PROJECT}/src/main/resources/db/recovery-control-migration/"
 RECOVERY_HISTORY_TABLE = "flyway_schema_history_recovery_control"
 RECOVERY_SCHEMA = "recovery_control"
-PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties)$")
+PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties|xml)$")
 RUNTIME_DEPENDENCY_RE = re.compile(
     r'(?:implementation|api|runtimeOnly)\s*\(\s*project\(\s*":([^\"]+)"'
     r'|dependencies\.add\(\s*"(?:implementation|api|runtimeOnly)"\s*,\s*project\.project\(\s*":([^\"]+)"'
@@ -112,6 +112,8 @@ def current_snapshot(repo_root: Path) -> Snapshot:
              *repo_root.glob("services/*/src/main/resources/config/application*.y*ml"),
              *repo_root.glob("services/*/src/main/resources/application*.properties"),
              *repo_root.glob("services/*/src/main/resources/config/application*.properties"),
+             *repo_root.glob("services/*/src/main/resources/application*.xml"),
+             *repo_root.glob("services/*/src/main/resources/config/application*.xml"),
              *repo_root.glob("services/*/src/main/resources/db/migration/**/*"),
              *repo_root.glob("services/*/src/main/java/db/migration/**/*"),
              *repo_root.glob(f"{RECOVERY_SQL_ROOT}**/*"),
@@ -138,7 +140,9 @@ def parent_snapshot(repo_root: Path, base_ref: str) -> Snapshot:
     if commit.lower() != base_ref.lower():
         raise ValueError("--base-ref must identify a commit directly")
     paths = git(repo_root, "ls-tree", "-r", "-z", "--name-only", commit, "services", "buildSrc")
-    paths = [path.decode("utf-8") for path in paths.split(b"\0") if path]
+    # Git paths are arbitrary bytes. Keep them round-trippable until the scoped
+    # policy filter has established whether the path is a supported input.
+    paths = [path.decode("utf-8", errors="surrogateescape") for path in paths.split(b"\0") if path]
     return {path: git(repo_root, "show", f"{commit}:{path}") for path in paths if relevant_path(path)}
 
 
@@ -151,17 +155,20 @@ def recovery_input_issues(snapshot: Snapshot) -> list[str]:
     for path in sorted(snapshot):
         if path.startswith(recovery_java_root):
             issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
-        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".sql"):
-            if not path.endswith(".sql"):
-                issues.append(f"{path}: recovery migration SQL must use the canonical lowercase .sql suffix")
-            if "/" in path.removeprefix(RECOVERY_SQL_ROOT):
-                issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
-            elif not VERSION_RE.fullmatch(Path(path).name):
-                issues.append(f"{path}: recovery SQL must use Flyway's canonical versioned V* migration filename")
-        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".java"):
-            issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
-        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".sql.conf"):
+        if not path.startswith(RECOVERY_SQL_ROOT):
+            continue
+        relative = path.removeprefix(RECOVERY_SQL_ROOT)
+        if relative.lower().endswith(".sql.conf"):
             issues.append(f"{path}: Recovery migration sidecars are unsupported because jOOQ reads only the SQL")
+        elif relative.lower().endswith(".sql"):
+            if not relative.endswith(".sql"):
+                issues.append(f"{path}: recovery migration SQL must use the canonical lowercase .sql suffix")
+            if "/" in relative:
+                issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
+            elif not VERSION_RE.fullmatch(relative):
+                issues.append(f"{path}: recovery SQL must use Flyway's canonical versioned V* migration filename")
+        else:
+            issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
     return issues
 
 
@@ -291,8 +298,10 @@ def recovery_flyway_locations(
                 continue
             parts = tuple(re.sub(r"[-_]", "", part).lower() for part in key.split("."))
             path = ".".join((*prefix, *parts))
-            if path in properties and properties[path] != child:
-                ambiguous.add(path)
+            if path in properties:
+                previous = properties[path]
+                if type(previous) is not type(child) or previous != child:
+                    ambiguous.add(path)
             properties[path] = child
             flatten_properties(child, (*prefix, *parts), properties, ambiguous)
 
@@ -315,6 +324,9 @@ def recovery_flyway_locations(
     # check qualifies only the configuration sources it can evaluate completely.
     properties_pattern = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application(?:-[^/]+)?\.properties")
     if any(properties_pattern.fullmatch(path) for path in snapshot):
+        return None
+    xml_pattern = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application(?:-[^/]+)?\.xml")
+    if any(xml_pattern.fullmatch(path) for path in snapshot):
         return None
     # Config in the packaged config/ directory takes precedence over the root.
     # Within a location Spring Boot gives .yml precedence over .yaml.
@@ -682,6 +694,15 @@ def run_self_test() -> None:
     recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    invalid_recovery_root = {**recovery_history, recovery + "Vdraft__notes.txt": b"keep notes elsewhere"}
+    check("a non-SQL Recovery input can break jOOQ sort before filtering", invalid_recovery_root,
+          recovery_history, "Recovery migration sources must be SQL-only")
+    check("non-SQL entries in the receiving parent remain invalid", recovery_history,
+          invalid_recovery_root, "Recovery migration sources must be SQL-only")
+    check("conflicting YAML scalar types at the same normalized path are ambiguous", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    enabled: 1\n    ENABLED: true\n",
+    }, recovery_history, "historical effective migration no longer applied")
     check("explicitly disabled Flyway encoding detection preserves fixed UTF-8 migrations", {
         **recovery_history, recovery_config: recovery_settings + b"    detect-encoding: false\n",
     }, recovery_history, None)
@@ -850,6 +871,15 @@ def run_self_test() -> None:
         **recovery_history,
         recovery_config.removesuffix(".yml") + ".properties": b"spring.flyway.enabled=false\n",
     }, recovery_history, "historical effective migration no longer applied")
+    for xml_path in (
+        recovery_config.removesuffix(".yml") + ".xml",
+        recovery_config.replace("/application.yml", "/config/application.xml"),
+        recovery_config.replace("/application.yml", "/application-dev.xml"),
+        recovery_config.replace("/application.yml", "/config/application-dev.xml"),
+    ):
+        check("unqualified packaged XML cannot qualify Recovery migration inputs", {
+            **recovery_history, xml_path: b"<beans/>\n",
+        }, recovery_history, "historical effective migration no longer applied")
     check("unchecked packaged import cannot qualify recovery history", {
         **recovery_history,
         recovery_config: recovery_settings + b"spring.config.import: classpath:recovery-overrides.yml\n",
@@ -1270,16 +1300,23 @@ def run_self_test() -> None:
                 b"// outside Recovery",
         }
         unicode_migration = "services/unicode-service/src/main/resources/db/migration/V1__café.sql"
+        unrelated_non_utf8 = os.fsdecode(b"services/example-service/src/main/resources/unrelated-\xff.txt")
         combined_fixture = {**history, **recovery_history, unicode_migration: "-- café\n".encode()}
         for path, data in {**combined_fixture, **outside_recovery}.items():
             target = root / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
+        unrelated_target = root / unrelated_non_utf8
+        unrelated_target.parent.mkdir(parents=True, exist_ok=True)
+        unrelated_target.write_bytes(b"not a migration input\n")
         git(root, "init", "-q")
         git(root, "add", ".")
         git(root, "-c", "user.name=Flyway fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "history")
         base = git(root, "rev-parse", "HEAD").decode().strip()
-        if current_snapshot(root) != combined_fixture or parent_snapshot(root, base) != combined_fixture:
+        parent = parent_snapshot(root, base)
+        if current_snapshot(root) != combined_fixture:
+            raise AssertionError("current snapshot must remain scoped to migration and configuration inputs")
+        if parent != combined_fixture or unicode_migration not in parent or unrelated_non_utf8 in parent:
             raise AssertionError("snapshot migration discovery must scope the Recovery location to its owning service")
         sidecar_path = root / (recovery + "V1__journal.sql.conf")
         sidecar_path.write_text("shouldExecute=false", encoding="utf-8")

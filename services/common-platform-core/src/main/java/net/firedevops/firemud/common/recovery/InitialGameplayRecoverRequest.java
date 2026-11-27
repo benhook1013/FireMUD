@@ -49,6 +49,13 @@ public record InitialGameplayRecoverRequest(
       Objects.requireNonNull(launchAssociation, "launchAssociation");
       Objects.requireNonNull(peerStorageBinding, "peerStorageBinding");
       evidenceRef = text(evidenceRef, 512);
+      if (evidenceRef
+          .codePoints()
+          .anyMatch(codePoint ->
+              (codePoint >= 0xfdd0 && codePoint <= 0xfdef) || (codePoint & 0xffff) >= 0xfffe)) {
+        throw new IllegalArgumentException(
+            "Evidence reference must not contain Unicode noncharacters");
+      }
       evidenceDigest = digest(evidenceDigest);
     }
   }

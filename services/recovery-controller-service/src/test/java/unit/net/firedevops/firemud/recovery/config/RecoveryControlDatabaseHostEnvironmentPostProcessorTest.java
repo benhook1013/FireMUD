@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
@@ -77,7 +78,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   void acceptsExplicitLocalhostForAnIsolatedFixture() {
     assertThatCode(() ->
             postProcessor.postProcessEnvironment(
-                new MockEnvironment()
+                fixtureEnvironment()
                     .withProperty(
                         RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY,
                         "localhost")
@@ -103,7 +104,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   void acceptsAnExplicitSingleRecoveryDatabaseHostname() {
     assertThatCode(() ->
             postProcessor.postProcessEnvironment(
-                new MockEnvironment()
+                fixtureEnvironment()
                     .withProperty(
                         RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY,
                         "recovery-control.invalid")
@@ -131,7 +132,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   @ValueSource(strings = {"1", "5544", "65535"})
   void acceptsAnExplicitRecoveryDatabasePort(String port) {
     var environment =
-        new MockEnvironment()
+        fixtureEnvironment()
             .withProperty(
                 RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY, "localhost")
             .withProperty(RecoveryControlDatabaseHostEnvironmentPostProcessor.PORT_PROPERTY, port)
@@ -153,7 +154,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
       })
   void acceptsOnlySupportedSingleHostForms(String host) {
     var environment =
-        new MockEnvironment()
+        fixtureEnvironment()
             .withProperty(RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY, host)
             .withProperty("spring.datasource.url", recoveryUrl(host, "5432"));
     assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
@@ -192,6 +193,35 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
             () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("exactly one host")
+        .hasNoCause();
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY,
+        RecoveryControlDatabaseHostEnvironmentPostProcessor.PORT_PROPERTY
+      })
+  void sanitizesDatabaseEndpointPropertyResolutionFailures(String property) {
+    var environment = fixtureEnvironment().withProperty(property, "${fixture-sensitive-key}");
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("Recovery database overrides must retain")
+        .hasMessageNotContaining("fixture-sensitive-key")
+        .hasNoCause();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"spring.datasource.url", "spring.datasource.hikari.jdbc-url"})
+  void requiresExtendedQueryModeOnTheRecoveryDatasource(String property) {
+    var environment =
+        fixtureEnvironment()
+            .withProperty(property, recoveryUrl("localhost", "5432").replace("extended", "simple"));
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith(property + " must match the dedicated recovery datasource")
         .hasNoCause();
   }
 
@@ -329,6 +359,89 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         .hasNoCause();
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"", "no", "off", "0", "TRUE", "FALSE", " false ", "fixture-secret"})
+  void rejectsNoncanonicalFlywayActivationValues(String activation) {
+    var environment = fixtureEnvironment().withProperty("spring.flyway.enabled", activation);
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("spring.flyway.enabled must be true or false")
+        .hasNoCause();
+  }
+
+  @Test
+  void rejectsNoncanonicalFlywayActivationFromHighestPrecedenceEnvironment() {
+    var environment = fixtureEnvironment().withProperty("spring.flyway.enabled", "true");
+    environment
+        .getPropertySources()
+        .addFirst(
+            new SystemEnvironmentPropertySource(
+                "test-systemEnvironment", Map.of("SPRING_FLYWAY_ENABLED", "off")));
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("spring.flyway.enabled must be true or false")
+        .hasNoCause();
+  }
+
+  @Test
+  void acceptsDisabledFlywayWithoutMigrationSettings() {
+    var environment = endpointFixture().withProperty("spring.flyway.enabled", "false");
+    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void requiresCanonicalMigrationHistoryWhenFlywayActivationIsUnset() {
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(endpointFixture(), new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.flyway.table must name the dedicated recovery")
+        .hasNoCause();
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "spring.flyway.table, fixture_other_history",
+    "spring.flyway.default-schema, fixture_other_schema",
+    "spring.flyway.schemas, fixture_other_schema",
+    "spring.flyway.schemas, 'recovery_control,fixture_other_schema'"
+  })
+  void rejectsDivergentFlywayMigrationIdentity(String property, String value) {
+    var environment = fixtureEnvironment().withProperty(property, value);
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith(property + " ")
+        .hasMessageNotContaining("fixture_other")
+        .hasNoCause();
+  }
+
+  @Test
+  void rejectsSkipExecutionFromRelaxedEnvironmentOverride() {
+    var environment =
+        fixtureEnvironment().withProperty("spring.flyway.skip-executing-migrations", "false");
+    environment
+        .getPropertySources()
+        .addFirst(
+            new SystemEnvironmentPropertySource(
+                "test-systemEnvironment", Map.of("SPRING_FLYWAY_SKIPEXECUTINGMIGRATIONS", "true")));
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.flyway.skip-executing-migrations must be disabled")
+        .hasNoCause();
+  }
+
+  @Test
+  void acceptsExplicitMigrationExecution() {
+    var environment =
+        fixtureEnvironment().withProperty("spring.flyway.skip-executing-migrations", "false");
+    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .doesNotThrowAnyException();
+  }
+
   @Test
   void rejectsDisabledSchemaCreationFromRelaxedEnvironmentOverride() {
     var environment = fixtureEnvironment().withProperty("spring.flyway.create-schemas", "true");
@@ -431,8 +544,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
 
   @Test
   void acceptsMatchingDatasourceOverridesAndKeepsLocalFixtureSettings() {
-    String url =
-        "jdbc:postgresql://localhost:5544/firemud_recovery_control?logServerErrorDetail=false";
+    String url = recoveryUrl("localhost", "5544");
     var environment =
         fixtureEnvironment()
             .withProperty("FIREMUD_RECOVERY_CONTROL_DB_PORT", "5544")
@@ -443,9 +555,6 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
             .withProperty("spring.datasource.hikari.username", "fixture-user")
             .withProperty("spring.datasource.hikari.password", "fixture-password")
             .withProperty("spring.datasource.type", "com.zaxxer.hikari.HikariDataSource")
-            .withProperty("spring.flyway.schemas", "recovery_control")
-            .withProperty("spring.flyway.default-schema", "recovery_control")
-            .withProperty("spring.flyway.table", "flyway_schema_history_recovery_control")
             .withProperty("spring.flyway.locations", "classpath:db/recovery-control-migration");
     assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
         .doesNotThrowAnyException();
@@ -454,10 +563,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   @Test
   void refusesEvenAnIdenticalExplicitFlywayEndpoint() {
     var environment =
-        fixtureEnvironment()
-            .withProperty(
-                "spring.flyway.url",
-                "jdbc:postgresql://localhost:5432/firemud_recovery_control?logServerErrorDetail=false");
+        fixtureEnvironment().withProperty("spring.flyway.url", recoveryUrl("localhost", "5432"));
     assertThatThrownBy(
             () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
         .isInstanceOf(IllegalStateException.class)
@@ -471,6 +577,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         new MockEnvironment()
             .withProperty(
                 RecoveryControlDatabaseHostEnvironmentPostProcessor.HOST_PROPERTY, "localhost")
+            .withProperty("spring.flyway.enabled", "false")
             .withProperty("spring.datasource.hikari.jdbc-url", recoveryUrl("localhost", "5432"));
     assertThatThrownBy(
             () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
@@ -484,10 +591,17 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         + host
         + ":"
         + port
-        + "/firemud_recovery_control?logServerErrorDetail=false";
+        + "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended";
   }
 
   private static MockEnvironment fixtureEnvironment() {
+    return endpointFixture()
+        .withProperty("spring.flyway.schemas", "recovery_control")
+        .withProperty("spring.flyway.default-schema", "recovery_control")
+        .withProperty("spring.flyway.table", "flyway_schema_history_recovery_control");
+  }
+
+  private static MockEnvironment endpointFixture() {
     return new MockEnvironment()
         .withProperty("spring.datasource.url", recoveryUrl("localhost", "5432"))
         .withProperty(

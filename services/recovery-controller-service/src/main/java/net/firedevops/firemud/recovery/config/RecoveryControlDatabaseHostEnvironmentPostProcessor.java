@@ -25,23 +25,27 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
   @Override
   public void postProcessEnvironment(
       ConfigurableEnvironment environment, SpringApplication application) {
-    String host = environment.getProperty(HOST_PROPERTY);
-    if (!isSingleHost(host)) {
-      throw new IllegalStateException(
-          HOST_PROPERTY + " must name the isolated recovery database using exactly one host");
-    }
-    String port = environment.getProperty(PORT_PROPERTY, "5432");
-    int portNumber = port.matches("[0-9]{1,5}") ? Integer.parseInt(port) : 0;
-    if (portNumber < 1 || portNumber > 65535) {
-      throw new IllegalStateException(
-          PORT_PROPERTY + " must be a decimal port from 1 through 65535");
-    }
-    // Use Boot's relaxed binding, including environment-variable and command-line overrides.
-    // Validate rather than silently overriding an endpoint that would escape journal isolation.
     try {
+      String host = environment.getProperty(HOST_PROPERTY);
+      if (!isSingleHost(host)) {
+        throw new SafeOverrideException(
+            HOST_PROPERTY + " must name the isolated recovery database using exactly one host");
+      }
+      String port = environment.getProperty(PORT_PROPERTY, "5432");
+      int portNumber = port.matches("[0-9]{1,5}") ? Integer.parseInt(port) : 0;
+      if (portNumber < 1 || portNumber > 65535) {
+        throw new SafeOverrideException(
+            PORT_PROPERTY + " must be a decimal port from 1 through 65535");
+      }
+      // Use the same effective property that Boot reads for Flyway's activation condition.
+      String flywayActivation = environment.getProperty("spring.flyway.enabled", "true");
+      if (!"true".equals(flywayActivation) && !"false".equals(flywayActivation)) {
+        throw new SafeOverrideException("spring.flyway.enabled must be true or false");
+      }
+      boolean flywayEnabled = "true".equals(flywayActivation);
+      // Use Boot's relaxed binding for configuration properties, including environment-variable
+      // and command-line overrides.
       Binder binder = Binder.get(environment);
-      boolean flywayEnabled =
-          !Boolean.FALSE.equals(binder.bind("spring.flyway.enabled", Boolean.class).orElse(null));
       var configuredExclusions = binder.bind("spring.autoconfigure.exclude", String[].class);
       List<String> exclusions =
           configuredExclusions.isBound() ? Arrays.asList(configuredExclusions.get()) : List.of();
@@ -50,32 +54,15 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
         throw new SafeOverrideException(
             "spring.autoconfigure.exclude must retain the recovery datasource and enabled Flyway");
       }
-      if (flywayEnabled
-          && Boolean.FALSE.equals(
-              binder.bind("spring.flyway.create-schemas", Boolean.class).orElse(null))) {
-        throw new SafeOverrideException(
-            "spring.flyway.create-schemas must be enabled to bootstrap the recovery schema");
-      }
       if (flywayEnabled) {
-        requireAbsent(binder, "spring.flyway.dry-run-output");
-        String encoding = binder.bind("spring.flyway.encoding", String.class).orElse(null);
-        if (encoding != null && !"UTF-8".equalsIgnoreCase(encoding.trim())) {
-          throw new SafeOverrideException(
-              "spring.flyway.encoding must be UTF-8 for the recovery migrations");
-        }
-        if (binder
-            .bind("spring.flyway.callback-locations", Bindable.listOf(String.class))
-            .isBound()) {
-          throw new SafeOverrideException(
-              "spring.flyway.callback-locations is unsupported for the recovery migrations");
-        }
+        requireMigrationExecution(binder);
       }
       String url =
           "jdbc:postgresql://"
               + host
               + ":"
               + port
-              + "/firemud_recovery_control?logServerErrorDetail=false";
+              + "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended";
       var primaryUrl = binder.bind("spring.datasource.url", String.class);
       if (!primaryUrl.isBound() || !Objects.equals(primaryUrl.get(), url)) {
         throw new SafeOverrideException(
@@ -119,6 +106,43 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
       throw new IllegalStateException(
           "Recovery database overrides must retain the dedicated datasource and shared Flyway"
               + " connection");
+    }
+  }
+
+  private static void requireMigrationExecution(Binder binder) {
+    if (Boolean.FALSE.equals(
+        binder.bind("spring.flyway.create-schemas", Boolean.class).orElse(null))) {
+      throw new SafeOverrideException(
+          "spring.flyway.create-schemas must be enabled to bootstrap the recovery schema");
+    }
+    if (Boolean.TRUE.equals(
+        binder.bind("spring.flyway.skip-executing-migrations", Boolean.class).orElse(null))) {
+      throw new SafeOverrideException(
+          "spring.flyway.skip-executing-migrations must be disabled for the recovery migrations");
+    }
+    requireAbsent(binder, "spring.flyway.dry-run-output");
+    String encoding = binder.bind("spring.flyway.encoding", String.class).orElse(null);
+    if (encoding != null && !"UTF-8".equalsIgnoreCase(encoding.trim())) {
+      throw new SafeOverrideException(
+          "spring.flyway.encoding must be UTF-8 for the recovery migrations");
+    }
+    if (binder.bind("spring.flyway.callback-locations", Bindable.listOf(String.class)).isBound()) {
+      throw new SafeOverrideException(
+          "spring.flyway.callback-locations is unsupported for the recovery migrations");
+    }
+    if (!"flyway_schema_history_recovery_control"
+        .equals(binder.bind("spring.flyway.table", String.class).orElse(null))) {
+      throw new SafeOverrideException(
+          "spring.flyway.table must name the dedicated recovery migration history");
+    }
+    String defaultSchema = binder.bind("spring.flyway.default-schema", String.class).orElse(null);
+    if (!"recovery_control".equals(defaultSchema)) {
+      throw new SafeOverrideException("spring.flyway.default-schema must be recovery_control");
+    }
+    List<String> schemas =
+        binder.bind("spring.flyway.schemas", Bindable.listOf(String.class)).orElse(List.of());
+    if (!List.of("recovery_control").equals(schemas)) {
+      throw new SafeOverrideException("spring.flyway.schemas must contain only recovery_control");
     }
   }
 
