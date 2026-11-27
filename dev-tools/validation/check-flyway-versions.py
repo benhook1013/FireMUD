@@ -142,6 +142,29 @@ def parent_snapshot(repo_root: Path, base_ref: str) -> Snapshot:
     return {path: git(repo_root, "show", f"{commit}:{path}") for path in paths if relevant_path(path)}
 
 
+def recovery_input_issues(snapshot: Snapshot) -> list[str]:
+    """Apply the SQL-only Recovery input policy to either side of a comparison."""
+    issues = []
+    recovery_java_root = (
+        "services/recovery-controller-service/src/main/java/db/recovery-control-migration/"
+    )
+    for path in sorted(snapshot):
+        if path.startswith(recovery_java_root):
+            issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
+        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".sql"):
+            if not path.endswith(".sql"):
+                issues.append(f"{path}: recovery migration SQL must use the canonical lowercase .sql suffix")
+            if "/" in path.removeprefix(RECOVERY_SQL_ROOT):
+                issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
+            elif not VERSION_RE.fullmatch(Path(path).name):
+                issues.append(f"{path}: recovery SQL must use Flyway's canonical versioned V* migration filename")
+        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".java"):
+            issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
+        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".sql.conf"):
+            issues.append(f"{path}: Recovery migration sidecars are unsupported because jOOQ reads only the SQL")
+    return issues
+
+
 def discover_migration_files(snapshot: Snapshot) -> list[MigrationFile]:
     discovered = []
     for path in sorted(snapshot):
@@ -299,11 +322,31 @@ def recovery_flyway_locations(
         except yaml.YAMLError as error:
             raise ValueError(f"{config_path}: invalid packaged Spring configuration: {error}") from error
 
+        def reject_recursive_aliases(value: object, active: set[int]) -> None:
+            if not isinstance(value, (dict, list)):
+                return
+            identity = id(value)
+            if identity in active:
+                raise ValueError(f"{config_path}: recursive YAML aliases are unsupported")
+            active.add(identity)
+            try:
+                children = value.values() if isinstance(value, dict) else value
+                for child in children:
+                    if isinstance(value, dict) and isinstance(child, dict):
+                        reject_recursive_aliases(child, active)
+                    elif isinstance(value, dict) and isinstance(child, list):
+                        reject_recursive_aliases(child, active)
+                    elif isinstance(value, list):
+                        reject_recursive_aliases(child, active)
+            finally:
+                active.remove(identity)
+
         for document in documents:
             if document is None:
                 continue
             if not isinstance(document, dict):
                 return None
+            reject_recursive_aliases(document, set())
             properties: dict[str, object] = {}
             ambiguous: set[str] = set()
             flatten_properties(document, (), properties, ambiguous)
@@ -486,6 +529,7 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
     parent_migrations = discover_migration_files(parent) if parent is not None else []
     parent_grouped = {}
     if parent is not None:
+        issues.extend(recovery_input_issues(parent))
         recovery_parent_migrations = [item for item in parent_migrations if item.project == RECOVERY_PROJECT]
         parent_locations = recovery_flyway_locations(
             parent, RECOVERY_PROJECT, require_placeholder_replacement_disabled=False,
@@ -515,24 +559,7 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
                           "init SQL or callback locations, automatic baselining, or dry-run output")
         if not any(is_recovery_sql_migration(item) for item in migrations):
             issues.append(f"{project_root}: requires at least one versioned migration in the recovery-control location")
-    recovery_java_root = (
-        "services/recovery-controller-service/src/main/java/db/recovery-control-migration/"
-    )
-    for path in sorted(current):
-        if path.startswith(recovery_java_root):
-            issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
-    for path in sorted(current):
-        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".sql"):
-            if not path.endswith(".sql"):
-                issues.append(f"{path}: recovery migration SQL must use the canonical lowercase .sql suffix")
-            if "/" in path.removeprefix(RECOVERY_SQL_ROOT):
-                issues.append(f"{path}: recovery migration SQL must be flat so Flyway and jOOQ see the same files")
-            elif not VERSION_RE.fullmatch(Path(path).name):
-                issues.append(f"{path}: recovery SQL must use Flyway's canonical versioned V* migration filename")
-        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".java"):
-            issues.append(f"{path}: Recovery migration sources must be SQL-only to match packaged Flyway and jOOQ inputs")
-        if path.startswith(RECOVERY_SQL_ROOT) and path.lower().endswith(".sql.conf"):
-            issues.append(f"{path}: Recovery migration sidecars are unsupported because jOOQ reads only the SQL")
+    issues.extend(recovery_input_issues(current))
     for project, items in sorted(grouped.items()):
         seen: dict[tuple[int, ...], MigrationFile] = {}
         for item in items:
@@ -1037,6 +1064,10 @@ def run_self_test() -> None:
         **recovery_history,
         recovery + "V1__journal.sql.conf": b"shouldExecute=false",
     }, recovery_history, "Recovery migration sidecars are unsupported")
+    recovery_sidecar = recovery + "V1__journal.sql.conf"
+    check("receiving-parent Recovery sidecars are rejected even when removed", recovery_history,
+          {**recovery_history, recovery_sidecar: b"shouldExecute=false"},
+          "Recovery migration sidecars are unsupported")
     ordinary_without_locations = {
         **recovery_history,
         recovery_config: b"spring:\n  flyway:\n    enabled: true\n    placeholder-replacement: false\n",
@@ -1120,6 +1151,25 @@ def run_self_test() -> None:
             b"    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
         ),
     }, complete_recovery_history, None)
+    reused_alias = {
+        **complete_recovery_history,
+        recovery_config: (
+            b"shared: &shared {setting: value}\n"
+            b"first: *shared\nsecond: *shared\n" + recovery_settings
+        ),
+    }
+    check("acyclic YAML aliases may be reused by separate branches", reused_alias,
+          complete_recovery_history, None)
+    try:
+        collect_issues({
+            **complete_recovery_history,
+            recovery_config: b"recursive: &recursive {child: *recursive}\n" + recovery_settings,
+        }, complete_recovery_history)
+    except ValueError as error:
+        if "recursive YAML aliases" not in str(error) or recovery_config not in str(error):
+            raise
+    else:
+        raise AssertionError("recursive YAML alias did not fail closed")
     harmless_second_document = recovery_settings + b"---\ncustom:\n  setting: value\n"
     check("unrelated second YAML document",
           {**recovery_history, recovery_config: harmless_second_document}, recovery_history, None)
@@ -1236,6 +1286,15 @@ def run_self_test() -> None:
         base = git(root, "rev-parse", "HEAD").decode().strip()
         if current_snapshot(root) != combined_fixture or parent_snapshot(root, base) != combined_fixture:
             raise AssertionError("snapshot migration discovery must scope the Recovery location to its owning service")
+        sidecar_path = root / (recovery + "V1__journal.sql.conf")
+        sidecar_path.write_text("shouldExecute=false", encoding="utf-8")
+        git(root, "add", ".")
+        git(root, "-c", "user.name=Flyway fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "sidecar")
+        sidecar_base = git(root, "rev-parse", "HEAD").decode().strip()
+        sidecar_parent = parent_snapshot(root, sidecar_base)
+        sidecar_issues, _, _ = collect_issues(combined_fixture, sidecar_parent)
+        if not any("Recovery migration sidecars are unsupported" in issue for issue in sidecar_issues):
+            raise AssertionError("receiving-parent Recovery sidecar was not rejected after removal")
         make_fixture(root, [local + "V2__new.sql"])
         check("immutable git parent and worktree addition", current_snapshot(root), parent_snapshot(root, base), "frontier V1002")
         try:

@@ -158,6 +158,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       if (current.phase() != Phase.COLLECTING) {
         throw conflict("operation is not collecting owner evidence");
       }
+      requireRedactedDatabaseLogging(tx);
       int changed =
           tx.execute(
               """
@@ -206,6 +207,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       if (current.phase() != tuple.expectedPhase()) {
         throw conflict("public transition expected phase is stale");
       }
+      requireRedactedDatabaseLogging(tx);
       tx.execute(
           """
           INSERT INTO recovery_control.initial_gameplay_release_transition (
@@ -352,6 +354,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         requireAcknowledgedEffect(
             tx, operation, EffectKind.PREPARE_PLAYABLE_STATE_FENCED, now, true);
       }
+      requireRedactedDatabaseLogging(tx);
       int changed =
           tx.execute(
               """
@@ -438,6 +441,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       }
       if (current.state() == resultState) {
         if (resultState == EffectOutboxState.AMBIGUOUS) {
+          requireRedactedDatabaseLogging(tx);
           tx.execute(
               "UPDATE " + OUTBOX_TABLE + " SET send_outcome_uncertain = true WHERE outbox_id = ?",
               current.outboxId());
@@ -460,6 +464,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         }
         return true;
       }
+      requireRedactedDatabaseLogging(tx);
       OffsetDateTime recordedAt = toOffsetDateTime(now);
       if (retrySource == RetrySource.NOT_DISPATCHED) {
         Record stored =
@@ -677,6 +682,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           }
           requireNonRegressingReadback(readback, stored, current);
           if (!readbackDigest.equals(storedDigest)) {
+            requireRedactedDatabaseLogging(tx);
             // Keep the observation floor without changing the original retry provenance or hold.
             tx.execute(
                 """
@@ -739,6 +745,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         throw conflict("effect readback is stale");
       }
       EffectReadback previous = requireNonRegressingReadback(readback, timestamps, current);
+      requireRedactedDatabaseLogging(tx);
       if (isPreparationHeldBeforeHandoff(operation, current)) {
         if (previous == null || previous.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
           throw conflict("held preparation has no retained partial readback");
@@ -799,6 +806,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   }
 
   private void recoverOwnerClosureProvenance(DSLContext tx, OutboxEntry current) {
+    requireRedactedDatabaseLogging(tx);
     tx.execute(
         "UPDATE "
             + OUTBOX_TABLE
@@ -847,6 +855,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       throw conflict(
           "preparation readback must be newer than the retained same-attempt observation");
     }
+    requireRedactedDatabaseLogging(tx);
     if (readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
       requireSuccessfulReadbackState(readback, preparation.effect().kind());
       if (acknowledgement.readbackIdentity().equals(readback.readbackIdentity())
@@ -958,6 +967,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     }
   }
 
+  // The transition or readback has already qualified this transaction's PostgreSQL session.
   private void enqueueEffect(DSLContext tx, TypedEffect effect, Instant now) {
     String payload = tupleCodec.toJson(effect);
     String payloadDigest = tupleCodec.digest(effect);

@@ -271,7 +271,7 @@ class InitialGameplayReleaseControllerTest {
     order.verify(port).apply(effect, attempt.get(), 1);
     order.verify(port).readback(effect, attempt.get(), 1);
     order.verify(journal).recordEffectReadback(dispatched, readback, now);
-    order.verifyNoMoreInteractions();
+    org.mockito.Mockito.verifyNoMoreInteractions(port);
   }
 
   @Test
