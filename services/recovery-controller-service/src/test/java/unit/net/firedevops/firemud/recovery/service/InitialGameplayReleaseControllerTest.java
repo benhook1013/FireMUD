@@ -26,8 +26,10 @@ import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal.RetrySource;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseTupleCodec;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.Resume;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.InitialGameplayReleaseEvidence;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PeerStorageBinding;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Phase;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PreparePlayableStateFencedEffect;
@@ -488,14 +490,19 @@ class InitialGameplayReleaseControllerTest {
             new PeerStorageBinding(
                 "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
             "evidence");
-    var before =
-        mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
+    var before = operationForReadback(scope);
     var after =
         mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
-    when(before.scope()).thenReturn(scope);
+    var codec =
+        new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
     var effect =
         new PreparePlayableStateFencedEffect(
-            scope.operationId(), UUID.randomUUID(), UUID.randomUUID(), scope, DIGEST, "proof");
+            scope.operationId(),
+            UUID.randomUUID(),
+            before.maintenanceLockIdentity(),
+            scope,
+            codec.operationTupleDigest(before),
+            before.evidence().evidenceIdentity());
     var attempt = UUID.randomUUID();
     var outbox =
         new net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry(
@@ -523,14 +530,76 @@ class InitialGameplayReleaseControllerTest {
     }
     var controller =
         new InitialGameplayReleaseController(
-            journal,
-            new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build()),
-            mock(InitialGameplayReleaseEvidenceProvider.class),
-            effectPort);
+            journal, codec, mock(InitialGameplayReleaseEvidenceProvider.class), effectPort);
 
     assertThat(controller.reconcileNextEffect(scope.operationId())).isSameAs(after);
     verify(effectPort).readback(effect, attempt, outbox.attemptCount());
     verify(journal, never()).recordEffectReadback(any(), any(), any());
+  }
+
+  @Test
+  void retainedEffectForDifferentPlayableNamespaceDoesNotReachOwnerReadback() {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var scope =
+        new Scope(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "release-target",
+            UUID.randomUUID(),
+            new PeerStorageBinding(
+                "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
+            "evidence");
+    var operation = operationForReadback(scope);
+    var otherNamespace =
+        new Scope(
+            scope.operationId(),
+            scope.canonicalTenantId(),
+            scope.targetNamespace(),
+            UUID.randomUUID(),
+            scope.peerStorageBinding(),
+            scope.evidenceRef());
+    var codec =
+        new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
+    var effect =
+        new PreparePlayableStateFencedEffect(
+            scope.operationId(),
+            UUID.randomUUID(),
+            operation.maintenanceLockIdentity(),
+            otherNamespace,
+            codec.operationTupleDigest(
+                otherNamespace, operation.maintenanceLockIdentity(), operation.evidence()),
+            operation.evidence().evidenceIdentity());
+    var outbox =
+        new OutboxEntry(
+            UUID.randomUUID(),
+            effect,
+            codec.digest(effect),
+            EffectOutboxState.DISPATCHED,
+            1,
+            UUID.randomUUID(),
+            null,
+            null);
+    when(journal.find(scope.operationId())).thenReturn(java.util.Optional.of(operation));
+    when(journal.findNextEffect(scope.operationId())).thenReturn(java.util.Optional.of(outbox));
+    var controller =
+        new InitialGameplayReleaseController(
+            journal, codec, mock(InitialGameplayReleaseEvidenceProvider.class), port);
+
+    assertThatThrownBy(() -> controller.reconcileNextEffect(scope.operationId()))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("operation-owned tuple");
+    verifyNoInteractions(port);
+  }
+
+  private static Operation operationForReadback(Scope scope) {
+    var operation = mock(Operation.class);
+    var evidence = mock(InitialGameplayReleaseEvidence.class);
+    when(evidence.evidenceIdentity()).thenReturn("proof");
+    when(operation.scope()).thenReturn(scope);
+    when(operation.maintenanceLockIdentity()).thenReturn(UUID.randomUUID());
+    when(operation.evidence()).thenReturn(evidence);
+    return operation;
   }
 
   @Test
@@ -565,12 +634,17 @@ class InitialGameplayReleaseControllerTest {
             new PeerStorageBinding(
                 "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
             "evidence");
-    var operation =
-        mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
-    when(operation.scope()).thenReturn(scope);
+    var operation = operationForReadback(scope);
+    var codec =
+        new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build());
     var effect =
         new PreparePlayableStateFencedEffect(
-            scope.operationId(), UUID.randomUUID(), UUID.randomUUID(), scope, DIGEST, "proof");
+            scope.operationId(),
+            UUID.randomUUID(),
+            operation.maintenanceLockIdentity(),
+            scope,
+            codec.operationTupleDigest(operation),
+            operation.evidence().evidenceIdentity());
     var attempt = UUID.randomUUID();
     var outbox =
         new net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry(
@@ -606,13 +680,14 @@ class InitialGameplayReleaseControllerTest {
     var controller =
         new InitialGameplayReleaseController(
             journal,
-            new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build()),
+            codec,
             mock(InitialGameplayReleaseEvidenceProvider.class),
             effectPort,
             java.time.Clock.fixed(now, java.time.ZoneOffset.UTC));
     assertThatThrownBy(() -> controller.reconcileNextEffect(scope.operationId()))
         .isInstanceOf(
-            net.firedevops.firemud.recovery.journal.InitialGameplayReleaseConflictException.class);
+            net.firedevops.firemud.recovery.journal.InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("observation time changed");
     verify(journal, never()).recordEffectReadback(any(), any(), any());
   }
 }

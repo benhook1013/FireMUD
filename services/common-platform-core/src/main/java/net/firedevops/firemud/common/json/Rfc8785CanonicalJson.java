@@ -34,10 +34,10 @@ public final class Rfc8785CanonicalJson {
   }
 
   /**
-   * Canonicalizes JSON with unique object names and rejects lossy UTF-8 encoding. The streaming
-   * validation pass bounds nesting depth to 1,000, number length to 1,000 characters, string length
-   * to 20,000,000 characters, and property-name length to 50,000 characters. These are input
-   * resource limits, not RFC 8785 restrictions.
+   * Canonicalizes a JSON object or array with unique member names and rejects lossy UTF-8 encoding.
+   * The streaming validation pass bounds nesting depth to 1,000, number length to 1,000 characters,
+   * string length to 20,000,000 characters, and property-name length to 50,000 characters. These are
+   * input resource limits, not RFC 8785 restrictions.
    */
   public static byte[] canonicalizeStrictUtf8(String json) throws IOException {
     Objects.requireNonNull(json, "json must not be null");

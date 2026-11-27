@@ -7,7 +7,9 @@ import java.util.HexFormat;
 import java.util.Objects;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TypedEffect;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.json.JsonWriteFeature;
@@ -73,6 +75,22 @@ public final class InitialGameplayReleaseTupleCodec {
   }
 
   private record DigestTuple(String schema, Object value) {}
+
+  public void requireEffectMatchesOperation(TypedEffect effect, Operation operation) {
+    if (!effect.scope().equals(operation.scope())
+        || !effect.maintenanceLockIdentity().equals(operation.maintenanceLockIdentity())
+        || operation.evidence() == null
+        || !effect.evidenceIdentity().equals(operation.evidence().evidenceIdentity())
+        || !effect.operationTupleDigest().equals(operationTupleDigest(operation))) {
+      throw new InitialGameplayReleaseConflictException(
+          "IDEMPOTENCY_CONFLICT: retained effect does not match the operation-owned tuple");
+    }
+  }
+
+  public String operationTupleDigest(Operation operation) {
+    return operationTupleDigest(
+        operation.scope(), operation.maintenanceLockIdentity(), operation.evidence());
+  }
 
   public String operationTupleDigest(
       Scope scope,

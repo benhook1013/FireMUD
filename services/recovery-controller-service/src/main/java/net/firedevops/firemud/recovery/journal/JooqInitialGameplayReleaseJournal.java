@@ -284,7 +284,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       DSLContext tx = DSL.using(configuration);
       Operation operation = selectOperation(tx, operationId, true);
       OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
-      requireEffectMatchesOperation(current.effect(), operation);
+      tupleCodec.requireEffectMatchesOperation(current.effect(), operation);
       if (hasRetainedClosure(tx, current, attemptId, null)
           || hasRetainedOwnerRejection(tx, current, attemptId, null)) {
         throw conflict("a retry must use a new effect attempt identity");
@@ -360,7 +360,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       DSLContext tx = DSL.using(configuration);
       Operation operation = selectOperation(tx, operationId, true);
       OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
-      requireEffectMatchesOperation(current.effect(), operation);
+      tupleCodec.requireEffectMatchesOperation(current.effect(), operation);
       if (dispatch.state() != EffectOutboxState.DISPATCHED
           || attemptId == null
           || !sameEffect(dispatch, current)) {
@@ -517,7 +517,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       DSLContext tx = DSL.using(configuration);
       Operation operation = selectOperation(tx, operationId, true);
       OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
-      requireEffectMatchesOperation(current.effect(), operation);
+      tupleCodec.requireEffectMatchesOperation(current.effect(), operation);
       if (!sameEffect(dispatch, current)
           || (dispatch.state() != EffectOutboxState.DISPATCHED
               && dispatch.state() != EffectOutboxState.AMBIGUOUS)) {
@@ -586,14 +586,25 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           return operation;
         }
         String provenance = stored == null ? null : stored.get("retry_provenance", String.class);
-        if (readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL
-            && "local_no_send".equals(provenance)) {
+        boolean heldUntyped = stored != null && provenance == null;
+        boolean partial = readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL;
+        boolean partialAfterLocalNoSend = partial && "local_no_send".equals(provenance);
+        boolean partialAfterHeldRejection =
+            partial
+                && heldUntyped
+                && hasRetainedOwnerRejection(
+                    tx, current, readback.attemptId(), current.attemptCount());
+        if (partialAfterLocalNoSend || partialAfterHeldRejection) {
           requireTerminalReplayWithinAttempt(readback, stored, now);
-          requireExactClosureBeforeRetry(tx, current);
+          if (partialAfterLocalNoSend) {
+            requireExactClosureBeforeRetry(tx, current);
+          } else if (hasRetainedClosure(
+              tx, current, readback.attemptId(), current.attemptCount())) {
+            throw conflict("effect readback changed after definitive no effect");
+          }
           requireNonRegressingReadback(readback, stored, current);
           if (!readbackDigest.equals(storedDigest)) {
-            // Keep the partial observation as the floor for owner closure while the exact
-            // local no-send receipt still authorizes a retry of this dispatch identity.
+            // Keep the observation floor without changing the original retry provenance or hold.
             tx.execute(
                 """
                 UPDATE recovery_control.initial_gameplay_release_outbox
@@ -609,7 +620,6 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           }
           return operation;
         }
-        boolean heldUntyped = stored != null && provenance == null;
         boolean hasStoredReadback =
             stored != null
                 && (storedDigest != null
@@ -805,7 +815,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         UUID.randomUUID(),
         operation.maintenanceLockIdentity(),
         operation.scope(),
-        operationTupleDigest(operation),
+        tupleCodec.operationTupleDigest(operation),
         operation.evidence().evidenceIdentity());
   }
 
@@ -816,13 +826,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         UUID.randomUUID(),
         operation.maintenanceLockIdentity(),
         operation.scope(),
-        operationTupleDigest(operation),
+        tupleCodec.operationTupleDigest(operation),
         operation.evidence().evidenceIdentity());
-  }
-
-  private String operationTupleDigest(Operation operation) {
-    return tupleCodec.operationTupleDigest(
-        operation.scope(), operation.maintenanceLockIdentity(), operation.evidence());
   }
 
   private Operation selectOperation(DSLContext context, UUID operationId, boolean forUpdate) {
@@ -914,7 +919,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Instant acknowledgedAt = toInstant(record.get("acknowledged_at", OffsetDateTime.class));
     EffectOutboxState state =
         EffectOutboxState.fromDatabaseValue(record.get("state", String.class));
-    if (state != EffectOutboxState.PENDING && record.get("last_dispatched_at") == null) {
+    boolean hasDispatchTimestamp = record.get("last_dispatched_at") != null;
+    if (state == EffectOutboxState.PENDING && hasDispatchTimestamp) {
+      throw conflict("retained pending effect has a dispatch timestamp");
+    }
+    if (state != EffectOutboxState.PENDING && !hasDispatchTimestamp) {
       throw conflict("retained effect has no dispatch timestamp");
     }
     TypedEffect effect = tupleCodec.readEffect(effectKind, payload.data());
@@ -966,16 +975,6 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     }
   }
 
-  private void requireEffectMatchesOperation(TypedEffect effect, Operation operation) {
-    if (!effect.scope().equals(operation.scope())
-        || !effect.maintenanceLockIdentity().equals(operation.maintenanceLockIdentity())
-        || operation.evidence() == null
-        || !effect.evidenceIdentity().equals(operation.evidence().evidenceIdentity())
-        || !effect.operationTupleDigest().equals(operationTupleDigest(operation))) {
-      throw conflict("retained effect does not match the operation-owned tuple");
-    }
-  }
-
   private void requireAcknowledgedPreparation(DSLContext tx, Operation operation, Instant now) {
     UUID operationId = operation.scope().operationId();
     Record stored =
@@ -992,7 +991,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             EffectKind.PREPARE_PLAYABLE_STATE_FENCED.databaseValue());
     if (stored == null) throw conflict("retained preparation is missing");
     OutboxEntry preparation = toOutboxEntry(stored);
-    requireEffectMatchesOperation(preparation.effect(), operation);
+    tupleCodec.requireEffectMatchesOperation(preparation.effect(), operation);
     if (preparation.state() != EffectOutboxState.ACKNOWLEDGED
         || preparation.acknowledgedAt().isAfter(now)) {
       throw conflict("retained preparation acknowledgement is unavailable");
