@@ -115,6 +115,8 @@ class WorldDraftExistingRegionCommitRepositoryIntegrationTest {
     retainedV1Input = stage(retained, retained.region(), "Retained v1", 1, 1);
     retainedV1 = storeV1(retainedV1Input);
     retainedV1History = history(retainedV1Input);
+    migration(source, SCHEMA, "1074").migrate();
+    assertCatalogSeal(dsl, 10);
     migration(source, SCHEMA, null).migrate();
     repository = new WorldDraftExistingRegionCommitRepository(dsl, fence, JSON);
   }
@@ -127,12 +129,12 @@ class WorldDraftExistingRegionCommitRepositoryIntegrationTest {
     assertThat(function("world_guard_graph_application()")).isEqualTo(freshGuardBeforeUpgrade);
     assertThat(catalogFacts())
         .startsWith(catalogBeforeUpgrade.substring(0, catalogBeforeUpgrade.length() - 1));
-    assertCatalogSeal(dsl, 10);
+    assertCatalogSeal(dsl, 13);
     String freshSchema =
         "world_existing_region_fresh_" + UUID.randomUUID().toString().replace("-", "");
     var fresh = source(freshSchema);
     migration(fresh, freshSchema, null).migrate();
-    assertCatalogSeal(DSL.using(fresh, SQLDialect.POSTGRES), 10);
+    assertCatalogSeal(DSL.using(fresh, SQLDialect.POSTGRES), 13);
   }
 
   @Test
