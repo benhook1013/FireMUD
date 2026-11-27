@@ -596,12 +596,17 @@ groups = {
     "build-and-test-game-session": ("game_session_module_check_matrix", "game-session-service"),
     "build-and-test-world": ("world_module_check_matrix", "world-management-service"),
 }
+timeouts = {
+    None: "${{ matrix.module == 'game-design-service' && 30 || 20 }}",
+    "account-service": "${{ matrix.partition == '4' && 75 || 60 }}",
+    "game-session-service": "90",
+    "world-management-service": "60",
+}
 for job_id, (output, module) in groups.items():
     job = ci["jobs"][job_id]
     name_module = module or "${{ matrix.module }}"
     require_equal(job, ("name",), "Build and Test (" + name_module + " / ${{ matrix.partition }})", job_id)
-    timeout = "60" if module in ("account-service", "world-management-service") else "90" if module == "game-session-service" else "${{ matrix.module == 'game-design-service' && 30 || 20 }}"
-    require_equal(job, ("timeout-minutes",), timeout, job_id)
+    require_equal(job, ("timeout-minutes",), timeouts[module], job_id)
     require_equal(job, ("needs",), ["changes"], job_id)
     require_equal(job, ("strategy", "fail-fast"), "false", job_id)
     require_equal(job, ("strategy", "matrix"), {"include": "${{ fromJSON(needs.changes.outputs." + output + ") }}"}, job_id)
