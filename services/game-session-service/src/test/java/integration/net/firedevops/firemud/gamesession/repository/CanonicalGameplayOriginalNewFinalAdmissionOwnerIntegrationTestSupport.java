@@ -20,10 +20,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayCapacityOriginCustodyRedisScriptContribution;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.io.TempDir;
@@ -112,6 +114,9 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
                     .CanonicalGameplayOriginalNewCandidateRedisScriptContribution(),
                 new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution(),
+                new net.firedevops.firemud.gamesession.service
+                    .CanonicalGameplayOriginalNewOriginFinalAdmissionRedisScriptContribution(),
+                new CanonicalGameplayCapacityOriginCustodyRedisScriptContribution(),
                 new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
                 new net.firedevops.firemud.gamesession.service
@@ -289,6 +294,10 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
    * Controlled upstream OPEN record and physical hash, without INITIAL owner/currentness claims.
    */
   CanonicalGameplayAccountInitialOpenProof.CurrentOpen controlledAccountOpen() {
+    return controlledAccountOpen(CLOCK);
+  }
+
+  CanonicalGameplayAccountInitialOpenProof.CurrentOpen controlledAccountOpen(Clock clock) {
     var binding = decision.candidate();
     var assignment = tags.assignmentForTransition(fixture.transitionId());
     UUID initializer = UUID.randomUUID();
@@ -321,7 +330,7 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
             "incarnationDigest",
             incarnation);
     fields.forEach((field, value) -> admin.hset(ascii(key), ascii(field), ascii(value)));
-    long now = CLOCK.millis();
+    long now = clock.millis();
     return new CanonicalGameplayAccountInitialOpenProof.CurrentOpen(
         initializer,
         UUID.randomUUID(),
@@ -592,5 +601,43 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
 
   static byte[] ascii(String value) {
     return value.getBytes(StandardCharsets.US_ASCII);
+  }
+
+  CanonicalGameplayCapacityOrigin prepareControlledOrigin(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source)
+      throws java.io.IOException {
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    var origin =
+        new CanonicalGameplayCapacityOrigin(
+            controlledCapacity.request(),
+            source.candidate(),
+            assignment.tenantGameplayTag(),
+            controlledCapacity.selectedOwnerId(),
+            controlledCapacity.selectedOwnerFence());
+    assertThat(
+            new CanonicalGameplayCapacityOriginRepository(fixture.dsl())
+                .prepare(origin)
+                .insertedByThisCall())
+        .isTrue();
+    var descriptor =
+        catalog.require(CanonicalGameplayCapacityOriginCustodyRedisScriptContribution.SCRIPT_ID);
+    try (var input = getClass().getClassLoader().getResourceAsStream(descriptor.resourcePath())) {
+      if (input == null) throw new IllegalStateException("Origin custody script is unavailable");
+      new CanonicalGameplayCapacityOriginRedisOwner(
+              () -> ownerClient.connect(ByteArrayCodec.INSTANCE),
+              () -> TimeUnit.SECONDS.toMillis(5),
+              input.readAllBytes(),
+              descriptor.sha256())
+          .apply(
+              origin,
+              CanonicalGameplayCapacityOriginRedisOwner.Action.INIT,
+              origin.selectedOwnerId(),
+              origin.selectedOwnerFence(),
+              origin.selectedOwnerId(),
+              origin.selectedOwnerFence(),
+              CanonicalGameplayCapacityOrigin.State.OPEN,
+              deadline());
+    }
+    return origin;
   }
 }

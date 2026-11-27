@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -196,7 +197,6 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
     var transfer =
         new CanonicalGameplayRegionOwnerTransferCoordinator(
             fixture.dsl(), CLOCK, repository, capacityOwner(), receiver);
-    UUID transferId = transfer.advance(original.source, original.status, deadline());
     assertThatThrownBy(() -> replaceRegionOwner("unproved-successor"))
         .isInstanceOf(IllegalStateException.class);
     admin.pexpire(ascii(original.grant.key()), 0);
@@ -210,6 +210,11 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
             sources.resolver,
             transfer,
             deadline());
+    UUID transferId =
+        fixture
+            .dsl()
+            .fetchSingle("SELECT transfer_id FROM game_session_region_owner_transfer")
+            .get(0, UUID.class);
     var completed = receiver.observeForRegionOwnerTransfer(transferId, 0, deadline());
     assertThat(completed.regionOwnerTransferContext().controlState()).isEqualTo("COMPLETED");
     assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(candidate);
@@ -297,6 +302,24 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
                 successor.installForTransition(
                     null, original.transitionId, original.worldRequest, transfer, deadline()))
         .isInstanceOf(IllegalStateException.class);
+    String beforeWorldTimeout = sqlImage();
+    Map<String, String> beforeWorldTimeoutRedis = physicalImage();
+    sources.withholdWorldRead =
+        CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources.WorldRead
+            .PLACEMENT;
+    long started = System.nanoTime();
+    assertThatThrownBy(() -> successor.resumeCompletedTransfer(failure, CLOCK.millis() + 1500))
+        .isInstanceOfSatisfying(
+            io.grpc.StatusRuntimeException.class,
+            timeout ->
+                assertThat(timeout.getStatus().getCode())
+                    .isEqualTo(io.grpc.Status.Code.DEADLINE_EXCEEDED));
+    assertThat(sources.withheldReadEntered.getCount()).isZero();
+    assertThat(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started))
+        .isLessThan(3500);
+    assertThat(sqlImage()).isEqualTo(beforeWorldTimeout);
+    assertThat(physicalImage()).isEqualTo(beforeWorldTimeoutRedis);
+    sources.withholdWorldRead = null;
     var recovered = successor.resumeCompletedTransfer(failure, deadline());
     assertThat(recovered.status).isEqualTo(durable);
     assertThat(recovered.grant.tokenCorrelation()).isEqualTo(durable.leaseTokenCorrelation());
@@ -467,8 +490,15 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
     var recovered = successor.resumeCompletedTransfer(interrupted, deadline());
     assertThat(recovered.status).isEqualTo(durable);
     assertThat(recovered.grant.tokenCorrelation()).isEqualTo(durable.leaseTokenCorrelation());
-    assertThat(inventory.readRegionTransferAbortedCandidate(original.transitionId, pinnedCandidate))
-        .contains(pinnedCandidate);
+    assertThat(inventory.readRegionTransferTerminalSource(original.transitionId, pinnedCandidate))
+        .hasValueSatisfying(
+            terminal -> {
+              assertThat(terminal)
+                  .isInstanceOf(
+                      CanonicalGameplayBindingInventoryRepository.AbortedRegionTransferSource
+                          .class);
+              assertThat(terminal.candidate()).isEqualTo(pinnedCandidate);
+            });
     assertThatThrownBy(() -> inventory.readProvisionalCasEvidence(original.transitionId))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not a retryable provisional operation");
@@ -907,19 +937,38 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
     var transfer =
         new CanonicalGameplayRegionOwnerTransferCoordinator(
             observedSql, CLOCK, repository, capacityOwner(), receiver);
+    var identity =
+        new net.firedevops.firemud.common.runtime.RuntimeIdentity(
+            "game-session-service",
+            "final-owner-handoff",
+            "localhost",
+            CLOCK.instant(),
+            "test",
+            "test",
+            "controlled-test-image");
+    CanonicalGameplayRegionIncarnationSource incarnation =
+        scope -> {
+          assertThat(scope).isEqualTo(original.incarnation.scope());
+          return original.incarnation;
+        };
+    var successor =
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            fixture.dsl(),
+            ownerClient,
+            ownerUri,
+            catalog,
+            incarnation,
+            sources.resolver,
+            identity,
+            Duration.ofSeconds(30),
+            CLOCK);
     admin.pexpire(ascii(original.grant.key()), 0);
-    assertThatThrownBy(
+    var frozenFailure =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            CanonicalGameplayRegionLeaseOwner.FrozenTransferUnconfirmed.class,
             () ->
-                CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
-                    fixture.dsl(),
-                    ownerClient,
-                    ownerUri,
-                    catalog,
-                    original,
-                    sources.resolver,
-                    transfer,
-                    deadline()))
-        .isInstanceOf(RuntimeException.class);
+                successor.installForTransition(
+                    null, original.transitionId, original.worldRequest, transfer, deadline()));
     assertThat(failed).isTrue();
     var frozen = fixture.dsl().fetchSingle("SELECT * FROM game_session_region_owner_transfer");
     UUID transferId = frozen.get("transfer_id", UUID.class);
@@ -946,19 +995,8 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
             .fetchSingle("SELECT last_value FROM game_session_region_executor_fence_seq")
             .get(0, Long.class);
     failRetention.set(false);
-    // Controlled expiry of the failed contender's grant, not a bypass of a live incumbent.
-    admin.pexpire(ascii(original.grant.key()), 0);
-    var successor =
-        CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
-            fixture.dsl(),
-            ownerClient,
-            ownerUri,
-            catalog,
-            original,
-            sources.resolver,
-            transfer,
-            deadline());
-    assertThat(successor.status.ownerInstanceId()).isEqualTo("final-owner-handoff");
+    var recovered = successor.resumeFrozenTransfer(frozenFailure, deadline());
+    assertThat(recovered.status.ownerInstanceId()).isEqualTo("final-owner-handoff");
     var completed = fixture.dsl().fetchSingle("SELECT * FROM game_session_region_owner_transfer");
     assertThat(completed.get("transfer_id", UUID.class)).isEqualTo(transferId);
     assertThat(completed.get("intent_digest", String.class)).isEqualTo(intent);
@@ -984,7 +1022,7 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
                 .get(0, String.class))
         .isEqualTo(executionImage);
     assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(committed);
-    assertThat(successor.evidence)
+    assertThat(recovered.evidence)
         .as("committed continuation grants no provisional bridge authority")
         .isNull();
     // The old epoch cannot reacquire the lease after the successor advances the timeline.
@@ -1003,7 +1041,7 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
         .hasMessage("Canonical Game Session region lease is unavailable");
     assertThat(
             new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
-        .contains(successor.status);
+        .contains(recovered.status);
     assertThat(
             fixture
                 .dsl()

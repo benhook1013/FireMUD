@@ -1,0 +1,75 @@
+{
+  "scriptId": "game-session.original-new-capacity-origin-custody.v2",
+  "resourcePath": "redis/lua/game-session-original-new-capacity-origin-custody.lua",
+  "sha256": "78675508d9848e303d023850bbe08973d7c4173c87de1982bee22ff14e8d1b6a",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "capacityOrigin",
+      "ownedPrefix": "session:game:capacity-origin:",
+      "hashTagDeclaration": "REQUIRED"
+    }
+  ],
+  "arguments": [
+    {
+      "name": "action"
+    },
+    {
+      "name": "originDigest"
+    },
+    {
+      "name": "oldOwner"
+    },
+    {
+      "name": "oldFence"
+    },
+    {
+      "name": "newOwner"
+    },
+    {
+      "name": "newFence"
+    },
+    {
+      "name": "capturedState"
+    },
+    {
+      "name": "absoluteDeadlineMillis"
+    }
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {
+      "code": "ORIGIN_CUSTODY_CHANGED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "ORIGIN_CUSTODY_REPLAY",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "CURRENT_PHYSICAL_STATE_REFUSED",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "INVALID_ARGUMENTS",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    }
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "tailLossBehavior": "This key records exact pre-Account origin custody. Only the caller that observed its origin INSERT succeed may send the first INIT, which establishes OPEN under the original owner fence. An existing OPEN retry reads the exact persistent marker and never recreates missing or expired custody. During an authenticated normal handoff, TRANSFER may advance only an existing exact marker under the reserved successor fence; a missing or ambiguous marker refuses installation, including when initial submission has yet to arrive. DISPATCH, CLOSE_CUSTODY and DENY also require an existing exact persistent marker and advance only the original custody state. First mutations use the absolute Redis TIME deadline and exact completed replays are read-only. Missing custody after installation requires the owning loss/reset recovery and cannot establish prior non-execution, a reservation outcome, or permission to admit, release, or rearm. Current receiving remains unregistered pending qualification of the missing-key distinction.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {
+      "callerVersion": "v2",
+      "payloadVersion": "none"
+    }
+  ],
+  "legacyPayloadShape": null
+}

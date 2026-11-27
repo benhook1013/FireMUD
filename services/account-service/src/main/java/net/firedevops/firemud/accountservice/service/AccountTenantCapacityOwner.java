@@ -27,6 +27,9 @@ import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
+import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginContinuation;
+import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginResolution;
+import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginResolution.Status;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
@@ -136,6 +139,48 @@ public final class AccountTenantCapacityOwner {
 
   private record CommitDecision(Result reservation, UUID denialId) {}
 
+  /**
+   * Bounded private recovery entrypoint, not registered as an RPC. A lookup does not mutate.
+   * Explicit retirement is a durable Account refusal, not an inference from a missing reply. The
+   * caller must independently own an OPEN Game Session origin; this result never grants dispatch
+   * permission, capacity release, rearm, or negative execution evidence.
+   */
+  public AccountCapacityOriginResolution resolveOrigin(
+      Request request, String authenticatedCaller, boolean retireIfUnaccepted) {
+    requireCaller(request, authenticatedCaller);
+    request.requireStructurallyValid();
+    requireSupportedShape(request);
+    return inTransaction(
+        () -> {
+          lockPlayerAccount(request);
+          Record reservation = capacity.find(request.identity());
+          if (reservation != null) {
+            Result exact = capacity.exact(request, reservation);
+            return new AccountCapacityOriginResolution(
+                request,
+                Status.RESERVATION_RETAINED,
+                exact,
+                null,
+                AccountCapacityOriginContinuation.retained(
+                    request,
+                    exact,
+                    AccountTenantCapacityRepository.time(reservation, "reconcile_deadline")));
+          }
+          Record decision = originDecisions.find(request);
+          if (decision != null) {
+            if (!"NO_ACCEPT".equals(decision.get("decision", String.class))) throw unavailable();
+            return new AccountCapacityOriginResolution(
+                request, Status.NO_ACCEPT_RETAINED, null, decision.get("decision_id", UUID.class));
+          }
+          if (!retireIfUnaccepted)
+            return new AccountCapacityOriginResolution(request, Status.UNKNOWN, null, null);
+          // A missing initial reservation cannot authorize a made-up later rearm attempt.
+          if (request.capacityRearmFence() != 1) throw conflict();
+          return new AccountCapacityOriginResolution(
+              request, Status.NO_ACCEPT_RETAINED, null, originDecisions.refuse(request));
+        });
+  }
+
   /** Only the Account-owned recovery worker calls this after storing terminal no-commit proof. */
   Result rearm(Request prior, Request next, UUID recoveryOwner, long claimFence) {
     prior.requireCommittable();
@@ -194,7 +239,9 @@ public final class AccountTenantCapacityOwner {
                   CapacityAdmissionDigest.preimage(next),
                   next.evidence().evaluationIdentity(),
                   at(next.evidence().expiresAt()),
-                  at(next.evidence().expiresAt().plusSeconds(60)),
+                  at(
+                      AccountCapacityOriginContinuation.reconcileDeadline(
+                          next.evidence().expiresAt())),
                   prior.identity().tenantId(),
                   prior.identity().requestId(),
                   prior.identity().admissionId(),

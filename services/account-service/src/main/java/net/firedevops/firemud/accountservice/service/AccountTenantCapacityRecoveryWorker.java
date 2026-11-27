@@ -18,6 +18,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
+import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginContinuation;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Identity;
@@ -158,10 +159,10 @@ public final class AccountTenantCapacityRecoveryWorker {
     }
     Observation candidate = null;
     byte[] candidateProof = null;
-    if (claim.attempts() < 12) {
+    if (claim.attempts() < AccountCapacityOriginContinuation.MAX_OBSERVATIONS) {
       Instant started = clock.instant();
       boolean positiveOnly = !started.isBefore(claim.reconcileDeadline());
-      Instant deadline = started.plusSeconds(5);
+      Instant deadline = started.plusSeconds(AccountCapacityOriginContinuation.OBSERVATION_SECONDS);
       if (!positiveOnly && claim.reconcileDeadline().isBefore(deadline))
         deadline = claim.reconcileDeadline();
       try {
@@ -188,12 +189,14 @@ public final class AccountTenantCapacityRecoveryWorker {
           AccountTenantCapacityOwner.requireClaim(row, workerId, claim.fence(), clock.instant());
           if (!current.equals(claim.reservation())) throw conflict();
           int attempt = Math.incrementExact(Math.toIntExact(number(row, "recovery_attempt_count")));
-          if (attempt > 12) throw unavailable();
+          if (attempt > AccountCapacityOriginContinuation.MAX_OBSERVATIONS) throw unavailable();
           Instant now = clock.instant();
           boolean indeterminate =
               observed == null || observed.disposition() == Disposition.INDETERMINATE;
           boolean quarantine =
-              indeterminate && (attempt == 12 || !now.isBefore(claim.reconcileDeadline()));
+              indeterminate
+                  && (attempt == AccountCapacityOriginContinuation.MAX_OBSERVATIONS
+                      || !now.isBefore(claim.reconcileDeadline()));
           String outcome =
               quarantine
                   ? State.QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION.name()

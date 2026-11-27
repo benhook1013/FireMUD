@@ -2,11 +2,11 @@
 
 Player-facing controller binding and takeover are owned by [Session Behavior](../../system-architecture-session-behavior.md#namespace-scoped-controller-transfer-session-02), fresh-edge reconstruction is owned by [Reconnection](../../system-architecture-reconnection.md#client-reconnection-behaviour), and versioned output/late rendering are owned by [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#output-model). The APIs below record only Game Session's local control-plane and forwarding consequences; they do not duplicate those player-facing contracts.
 
-## Original NEW capacity final admission
+## Original NEW capacity execution read
 
 The manually composed original-NEW final coordinator requires the exact retained `PLAYER_ADMISSION` bundle and obtains the real Account capacity commitment immediately before its final owner CAS. Its supported boundary remains public `SHARED` / `PRESEEDED_ONLY`, one newly created player session. Issuer-partition reservation is a separate obligation and does not satisfy tenant `maxActiveSessions` capacity.
 
-The separately qualified, manually composed controlled region-owner handoff can consume current deny-only transfer evidence through its protected acquire/install/revalidate path. This receiving slice does not establish deployed registration or default availability. `FENCED_INDETERMINATE` remains denying and grants no capacity transition or player admission. The [normal-handoff contract](./runtime-and-data.md#normal-handoff-future-execution-fencing) owns its storage currentness, complete inventory, positive-retention and failure requirements. No default receiver or scheduler is registered.
+The separate manually composed region-owner handoff can consume current deny-only transfer evidence through the protected acquire/install/revalidate path. The controlled receiving proof covers the manual composition. Deployment and default availability remain gated. This path is outside the terminal-only `OriginalNewCapacityExecutionReadService` RPC. `FENCED_INDETERMINATE` remains unavailable to that Account reader and grants no capacity transition or player admission. The [normal-handoff contract](./runtime-and-data.md#normal-handoff-future-execution-fencing) owns its storage currentness, complete inventory, positive-retention and failure requirements. No default receiver or scheduler is registered.
 
 ## Steady-State Account Public-JWKS Provenance
 

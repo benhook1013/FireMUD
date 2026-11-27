@@ -518,7 +518,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
               installingSql, clock, transfers, proof.capacity(installingSql), observations);
       UUID id = coordinator.advance(proof.scope, proof.prior, wall.get() + 5_000);
       assertThat(id).isNotNull();
-      String before = proof.transferImage(id);
+      String retained = proof.itemImage(id);
       expireAfterLock.set(true);
       long deadline = wall.get() + 5_000;
       assertThatThrownBy(
@@ -535,7 +535,8 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       assertThat(expireAfterLock).isFalse();
       assertThat(wall.get()).isLessThan(deadline);
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
-      assertThat(proof.transferImage(id)).isEqualTo(before);
+      assertThat(proof.transfers.readCurrent(id, 0).controlState()).isEqualTo("FROZEN");
+      assertThat(proof.itemImage(id)).isEqualTo(retained);
     }
   }
 
