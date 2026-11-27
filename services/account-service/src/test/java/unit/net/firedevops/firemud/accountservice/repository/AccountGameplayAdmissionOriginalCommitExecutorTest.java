@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -288,11 +287,7 @@ class AccountGameplayAdmissionOriginalCommitExecutorTest {
           .hasMessageContaining("Fresh owned Account original COMMIT required");
       verify(fixture.connection, never()).commit();
       verify(fixture.connection).rollback();
-      try (var verificationResult =
-          verify(fixture.clockStatement, never()).executeQuery(anyString())) {
-        // Mockito verification does not execute a query and returns no ResultSet.
-        assertThat(verificationResult).isNull();
-      }
+      verifyNoInteractions(fixture.clockStatement);
       assertThat(repositories.constructed()).hasSize(1);
     }
   }
