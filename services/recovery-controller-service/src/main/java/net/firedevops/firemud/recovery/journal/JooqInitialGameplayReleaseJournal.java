@@ -97,7 +97,10 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         // PostgreSQL's unique-key detail contains the credential. Never retain its cause.
         throw conflict("maintenance-lock identity is already bound");
       }
-      throw failure;
+      // Other database failures can include the rejected row as well.
+      throw new IllegalStateException("Unable to create the recovery journal operation");
+    } catch (org.springframework.dao.DataAccessException failure) {
+      throw new IllegalStateException("Unable to create the recovery journal operation");
     }
   }
 
@@ -824,11 +827,24 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     }
     if (readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
       requireSuccessfulReadbackState(readback, preparation.effect().kind());
+      String identityDigest = tupleCodec.digest(readback.readbackIdentity());
       if (previous.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL
-          && sameRetainedOutcome(acknowledgement, readback)) {
+          && (acknowledgement.readbackIdentity().equals(readback.readbackIdentity())
+              || Boolean.TRUE.equals(
+                  tx.fetchSingle(
+                          "SELECT EXISTS (SELECT 1 FROM recovery_control.initial_gameplay_release_preparation_receipt"
+                              + " WHERE outbox_id = ? AND identity_digest = ?)",
+                          preparation.outboxId(),
+                          identityDigest)
+                      .get(0, Boolean.class)))) {
         throw conflict(
             "preparation readback must prove a fresh observation after partial evidence");
       }
+      tx.execute(
+          "INSERT INTO recovery_control.initial_gameplay_release_preparation_receipt"
+              + " (outbox_id, identity_digest) VALUES (?, ?) ON CONFLICT DO NOTHING",
+          preparation.outboxId(),
+          identityDigest);
     }
     tx.execute(
         """

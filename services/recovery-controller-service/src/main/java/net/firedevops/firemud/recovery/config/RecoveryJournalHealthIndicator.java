@@ -12,7 +12,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       """
       SELECT
         current_setting('transaction_read_only') = 'off'
-        AND (SELECT count(DISTINCT version) = 6
+        AND (SELECT count(DISTINCT version) = 7
          FROM recovery_control.flyway_schema_history_recovery_control
          WHERE success AND (
            (version = '1' AND script = 'V1__initial_gameplay_release_journal.sql')
@@ -24,7 +24,9 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
            OR (version = '5'
                AND script = 'V5__retain_local_dispatch_uncertainty.sql')
            OR (version = '6'
-               AND script = 'V6__retain_latest_preparation_observation.sql')))
+               AND script = 'V6__retain_latest_preparation_observation.sql')
+           OR (version = '7'
+               AND script = 'V7__retain_preparation_receipt_identities.sql')))
         AND has_table_privilege(
           'recovery_control.initial_gameplay_release_attempt_local_no_send', 'INSERT')
         AND has_table_privilege(
@@ -41,6 +43,23 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
           'recovery_control.initial_gameplay_release_attempt_closure', 'INSERT')
         AND has_table_privilege(
           'recovery_control.initial_gameplay_release_attempt_rejection', 'INSERT')
+        AND has_table_privilege(
+          'recovery_control.initial_gameplay_release_preparation_receipt', 'INSERT')
+        AND EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_constraint c
+          JOIN pg_catalog.pg_index i ON i.indexrelid = c.conindid
+          WHERE c.conrelid = 'recovery_control.initial_gameplay_release_preparation_receipt'::regclass
+            AND c.contype = 'p' AND c.convalidated AND NOT c.condeferrable
+            AND i.indisvalid AND i.indimmediate
+            AND c.conkey = ARRAY(
+              SELECT a.attnum
+              FROM pg_catalog.pg_attribute a
+              WHERE a.attrelid = c.conrelid AND NOT a.attisdropped
+                AND ((a.attname = 'outbox_id' AND a.atttypid = 'pg_catalog.uuid'::regtype)
+                  OR (a.attname = 'identity_digest'
+                    AND a.atttypid = 'pg_catalog.bpchar'::regtype AND a.atttypmod = 68))
+              ORDER BY CASE a.attname WHEN 'outbox_id' THEN 0 ELSE 1 END))
         AND EXISTS (
           SELECT 1
           FROM pg_catalog.pg_constraint c
@@ -105,10 +124,15 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               || ' AND (last_attempt_id IS NOT NULL)'
               || ' AND (last_attempt_id <> ''00000000-0000-0000-0000-000000000000''::uuid)'
               || ' AND (last_dispatched_at IS NOT NULL)))')
+        AND EXISTS (
+          SELECT 1 FROM pg_catalog.pg_attribute
+          WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+            AND attname = 'acknowledged_at' AND NOT attisdropped AND NOT attnotnull
+            AND atttypid = 'pg_catalog.timestamptz'::regtype AND atttypmod = -1)
         AND (SELECT count(*) = 2
           FROM pg_catalog.pg_attribute
           WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
-            AND NOT attisdropped AND NOT attnotnull
+            AND NOT attisdropped AND NOT attnotnull AND NOT atthasdef
             AND ((attname = 'preparation_observation_payload'
                   AND atttypid = 'pg_catalog.jsonb'::regtype)
               OR (attname = 'preparation_observation_digest'
@@ -165,6 +189,9 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
         AND NOT EXISTS (
           SELECT outbox_id, attempt_id, attempt_ordinal, dispatched_at, recorded_at
           FROM recovery_control.initial_gameplay_release_attempt_local_no_send WHERE FALSE)
+        AND NOT EXISTS (
+          SELECT outbox_id, identity_digest
+          FROM recovery_control.initial_gameplay_release_preparation_receipt WHERE FALSE)
       """;
 
   private final DataSource dataSource;

@@ -2,7 +2,7 @@
 
 ## Initial Gameplay Recovery Foundation Status
 
-The activation adapter must first verify the exact authoritative peer/storage owner binding, then convert the validated wire `sha256:` digest to the journal model’s bare lowercase hexadecimal digest and prove the same exact binding in a round-trip test. Preserve the existing V1/V2 journal bytes; do not rewrite persisted digest values. The current source-only boundary refuses live recovery before mapping.
+The [peer/storage activation adapter](../../architecture/system-architecture-backup-recovery.md#source-only-initial-gameplay-release-foundation) and its exact binding round-trip proof remain open. The source-only boundary refuses live recovery.
 
 The source-only recovery-controller journal and typed request foundation are retained under PlatformOperations donor consolidation. Focused proof covers immutable scope conflicts, exact continuation/resume tuples, ambiguous-effect refusal, owner-readback-gated journal transitions, and fail-closed recover entry. This is not a runtime recovery capability: Account redemption, genuine exclusive-fence/lock acquisition, independent owner evidence, authenticated ingress/dispatch, and isolated deployment/restore topology remain unimplemented activation dependencies. See the [canonical recovery boundary](../../architecture/system-architecture-backup-recovery.md#source-only-initial-gameplay-release-foundation). No donor/source-note closure follows from this partial foundation.
 

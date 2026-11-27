@@ -33,8 +33,9 @@ public interface InitialGameplayReleaseEffectPort {
    * with an adapter or controller receipt timestamp.
    *
    * <p>If a newer partial observation supersedes an older definitive receipt, advancing the
-   * transition requires a fresh exact observation from the owner. Returning the older receipt with
-   * a new timestamp is insufficient.
+   * transition requires a fresh exact observation with a distinct authenticated readback identity.
+   * The owner may repeat the same outcome in a new observation. Reusing a prior definitive identity
+   * with a new timestamp is insufficient.
    */
   EffectReadbackResolution readback(TypedEffect effect, UUID attemptId, int attemptOrdinal);
 

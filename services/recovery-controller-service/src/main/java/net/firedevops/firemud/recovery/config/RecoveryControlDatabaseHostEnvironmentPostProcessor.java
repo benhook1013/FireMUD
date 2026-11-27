@@ -70,7 +70,12 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
               "spring.flyway.callback-locations is unsupported for the recovery migrations");
         }
       }
-      String url = "jdbc:postgresql://" + host + ":" + port + "/firemud_recovery_control";
+      String url =
+          "jdbc:postgresql://"
+              + host
+              + ":"
+              + port
+              + "/firemud_recovery_control?logServerErrorDetail=false";
       var primaryUrl = binder.bind("spring.datasource.url", String.class);
       if (!primaryUrl.isBound() || !Objects.equals(primaryUrl.get(), url)) {
         throw new SafeOverrideException(
