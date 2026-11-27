@@ -896,6 +896,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(session.gs.dsl().fetchOne(chargeLookup, request.admissionAttemptId())).isNull();
 
       int blocker = lockGameSessionUsage(lock, request.identity().tenantId());
+      // Start the worker thread before narrowing the window for reaching the actual SQL lock.
+      worker.submit(() -> {}).get(5, TimeUnit.SECONDS);
       waitForDatabaseTime(session.dsl, request.evidence().expiresAt().minusSeconds(3));
       var result = worker.submit(() -> session.complete(request));
       try {
@@ -1238,8 +1240,13 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   void capacityOwnerAcceptsFreshEvidenceWhenItsApplicationClockTrailsPostgres() throws Exception {
     try (Session session = session()) {
       var evidence = session.capacityRequest.evidence();
-      Clock behindEvidence = Clock.fixed(evidence.evaluatedAt().minusSeconds(1), ZoneOffset.UTC);
-      assertThat(behindEvidence.instant()).isBefore(evidence.evaluatedAt());
+      Instant callerNotBefore =
+          Instant.ofEpochSecond(
+              session.account.committedCandidate.identity().notBeforeEpochSecond());
+      Clock behindEvidence = Clock.fixed(evidence.evaluatedAt().minusNanos(1), ZoneOffset.UTC);
+      assertThat(behindEvidence.instant())
+          .isAfterOrEqualTo(callerNotBefore)
+          .isBefore(evidence.evaluatedAt());
       assertThat(AccountTenantCapacityRepository.databaseNow(session.dsl))
           .isAfterOrEqualTo(evidence.evaluatedAt());
 
@@ -1263,10 +1270,12 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     try (Session session = session()) {
       var request = session.retainControlledEvaluation(true, null);
       var evidence = request.evidence();
-      Instant stillCurrent = evidence.evaluatedAt().minusSeconds(1);
-      Instant callerCutoff =
-          Instant.ofEpochSecond(
-              session.account.committedCandidate.identity().expiresAtEpochSecond());
+      var caller = session.account.committedCandidate.identity();
+      Instant stillCurrent = evidence.evaluatedAt().minusNanos(1);
+      assertThat(stillCurrent)
+          .isAfterOrEqualTo(Instant.ofEpochSecond(caller.notBeforeEpochSecond()))
+          .isBefore(evidence.evaluatedAt());
+      Instant callerCutoff = Instant.ofEpochSecond(caller.expiresAtEpochSecond());
       var parsed =
           RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(evidence.canonicalBytes());
       Instant scopeCutoff =
@@ -1325,7 +1334,10 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
           session.account.capacityOwner(
               Clock.fixed(request.evidence().evaluatedAt(), ZoneOffset.UTC));
       // Complete the fixture setup before charging any of the remaining worker window.
-      waitForDatabaseTime(session.dsl, request.evidence().expiresAt().minusSeconds(3));
+      // Start the worker thread before narrowing the window for reaching the actual SQL lock.
+      worker.submit(() -> {}).get(5, TimeUnit.SECONDS);
+      // Leave the owner transaction time to recheck after the physical lock is released.
+      waitForDatabaseTime(session.dsl, request.evidence().expiresAt().minusSeconds(2));
       var result = worker.submit(() -> owner.commit(request, GS));
       try {
         requireUsageWaitBeforeExpiry(session.dsl, blocker, request.evidence().expiresAt());

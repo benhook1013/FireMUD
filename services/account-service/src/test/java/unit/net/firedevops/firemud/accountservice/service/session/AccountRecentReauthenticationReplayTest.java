@@ -37,6 +37,53 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /** Controlled replay orchestration; real MAC/custody and physical storage have separate proofs. */
 class AccountRecentReauthenticationReplayTest {
   @Test
+  void freshPrimaryAuthenticationReadsBackItsExactMacWithoutEnteringReplayBudget() {
+    var f = new Fixture();
+    Account account = new Account();
+    account.setId(1L);
+    account.setAccountUuid(f.account);
+    account.setAccountUuidSourceNumericId(account.getId());
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    account.setEmail("person@example.test");
+    when(f.accounts.findByAccountUuidForUpdate(f.account)).thenReturn(Optional.of(account));
+    var authenticated = mock(AccountServiceImpl.ControlUiPrimaryIdentity.class);
+    when(authenticated.accountId()).thenReturn(f.account);
+    when(f.primary.authenticateControlUiPrimaryIdentity("person@example.test", "test-only-secret"))
+        .thenReturn(authenticated);
+    var policy =
+        AccountRecentReauthenticationPolicy.resolve(
+            new AccountRecentReauthenticationPolicy.PlatformValue(1L, 300L, 30L),
+            new AccountRecentReauthenticationPolicy.DeploymentValue(1L, 300L, 30L));
+    when(f.policies.resolveCurrentForGameCreation()).thenReturn(policy);
+    var scope = AuthorityScope.account(f.account);
+    var authority = mock(ScopeState.class);
+    when(authority.scope()).thenReturn(scope);
+    when(authority.generation()).thenReturn(1L);
+    when(authority.sourceVersion()).thenReturn(1L);
+    when(authority.issuanceFence()).thenReturn(new IssuanceFence(f.account, 1L, 1L));
+    when(f.generations.read(scope)).thenReturn(authority);
+    when(f.repository.findByRequest(f.requestId))
+        .thenReturn(Optional.empty())
+        .thenReturn(Optional.of(f.evidence));
+    when(f.repository.countReplayFailures(f.evidence)).thenReturn(5);
+    when(f.crypto.currentKeyId()).thenReturn("prior-key");
+    when(f.crypto.recentReauthenticationRequestMac(eq("prior-key"), any()))
+        .thenReturn("a".repeat(64));
+
+    assertThat(f.service.reauthenticate(f.request(f.operation))).isSameAs(f.evidence);
+
+    var order = inOrder(f.accounts, f.repository);
+    order.verify(f.accounts).findByAccountUuidForUpdate(f.account);
+    order.verify(f.repository).lockRequest(f.requestId);
+    order.verify(f.repository).lockCreationOperation(f.operation);
+    order.verify(f.repository).insert(any(), any(), any());
+    verify(f.repository).readExactOriginal(f.evidence);
+    verify(f.crypto, times(2)).recentReauthenticationRequestMac(eq("prior-key"), any());
+    verify(f.repository, never()).countReplayFailures(any());
+    verify(f.repository, never()).recordReplayFailure(any());
+  }
+
+  @Test
   void exactReplayUsesRetainedKeyWithoutPrimaryAuthenticationAndClearsTransientBytes() {
     var f = new Fixture();
     AtomicReference<byte[]> transientRequest = new AtomicReference<>();
@@ -49,7 +96,8 @@ class AccountRecentReauthenticationReplayTest {
     verify(f.crypto, times(2)).recentReauthenticationRequestMac(eq("prior-key"), any());
     verify(f.crypto, never()).currentKeyId();
     verify(f.repository).readExactOriginal(f.evidence);
-    verifyNoInteractions(f.primary, f.accounts, f.generations, f.policies);
+    verify(f.repository).countReplayFailures(f.evidence);
+    verifyNoInteractions(f.primary, f.generations, f.policies);
     assertThat(transientRequest.get()).containsOnly((byte) 0);
     assertThat(f.proof.toString()).doesNotContain("prior-key", "a".repeat(64));
   }
@@ -129,7 +177,7 @@ class AccountRecentReauthenticationReplayTest {
     order.verify(f.transactions).commit(any());
     verify(f.transactions, never()).rollback(any());
     verify(f.repository, never()).readExactOriginal(any());
-    verifyNoInteractions(f.primary, f.accounts, f.generations, f.policies);
+    verifyNoInteractions(f.primary, f.generations, f.policies);
   }
 
   @Test
@@ -141,24 +189,24 @@ class AccountRecentReauthenticationReplayTest {
     verify(f.repository, never()).findReplayProof(any());
     verify(f.repository, never()).recordReplayFailure(any());
     verify(f.transactions).commit(any());
-    verifyNoInteractions(f.crypto, f.primary, f.accounts, f.generations, f.policies);
+    verifyNoInteractions(f.crypto, f.primary, f.generations, f.policies);
   }
 
   @Test
-  void independentReadbackMismatchCommitsExactlyOneFailureBeforeDenial() {
+  void independentReadbackMismatchDeniesAsUnavailableWithoutChargingReplayBudget() {
     var f = new Fixture();
     when(f.crypto.recentReauthenticationRequestMac(eq("prior-key"), any()))
         .thenReturn("a".repeat(64), "b".repeat(64));
     assertThatThrownBy(() -> f.service.reauthenticate(f.request(f.operation)))
-        .isInstanceOf(AuthenticationException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("authority is unavailable");
     verify(f.repository, times(2)).lockRequest(f.requestId);
-    verify(f.repository).recordReplayFailure(f.evidence);
-    verify(f.transactions, times(2)).commit(any());
-    verify(f.transactions, never()).rollback(any());
+    verify(f.repository).countReplayFailures(f.evidence);
+    verify(f.repository, never()).recordReplayFailure(any());
     var order = inOrder(f.repository, f.transactions);
-    order.verify(f.repository).readExactOriginal(f.evidence);
-    order.verify(f.repository).recordReplayFailure(f.evidence);
     order.verify(f.transactions).commit(any());
+    order.verify(f.repository).readExactOriginal(f.evidence);
+    order.verify(f.transactions).rollback(any());
   }
 
   @Test
@@ -173,14 +221,14 @@ class AccountRecentReauthenticationReplayTest {
   }
 
   @Test
-  void independentReadbackExhaustionSkipsSecondCredentialCheck() {
+  void alreadyAcceptedReplayReadsBackTheMacEvenIfTheBudgetWouldNowBeExhausted() {
     var f = new Fixture();
     when(f.repository.countReplayFailures(f.evidence)).thenReturn(4, 5);
     when(f.crypto.recentReauthenticationRequestMac(eq("prior-key"), any()))
         .thenReturn("a".repeat(64));
-    assertThatThrownBy(() -> f.service.reauthenticate(f.request(f.operation)))
-        .isInstanceOf(AuthenticationException.class);
-    verify(f.crypto).recentReauthenticationRequestMac(eq("prior-key"), any());
+    assertThat(f.service.reauthenticate(f.request(f.operation))).isSameAs(f.evidence);
+    verify(f.repository).countReplayFailures(f.evidence);
+    verify(f.crypto, times(2)).recentReauthenticationRequestMac(eq("prior-key"), any());
     verify(f.repository, never()).recordReplayFailure(any());
     verify(f.transactions, times(2)).commit(any());
   }

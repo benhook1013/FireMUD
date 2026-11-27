@@ -2,7 +2,6 @@ package net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 
 import com.stripe.exception.StripeException;
@@ -24,6 +23,7 @@ import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
@@ -457,6 +457,103 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void commandClaimUsesTheDatabaseAuthorizationDeadline() {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var databaseNow = one(c, "SELECT clock_timestamp()").get(0, OffsetDateTime.class).toInstant();
+    f.clock().advance(Duration.between(f.clock().instant(), databaseNow.minusSeconds(300)));
+    var dispatch =
+        checkout.prepareConfirmationDispatch(
+            CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    assertThat(f.clock().instant()).isBefore(dispatch.validUntil());
+    assertThat(dispatch.validUntil()).isBefore(databaseNow);
+    assertSqlState(
+        "23514",
+        "First-invoice command authorization expired before database claim",
+        () ->
+            in(
+                c,
+                () ->
+                    checkout
+                        .payments()
+                        .claimCommand(dispatch, checkout.invoice().ownerAccountId())));
+    assertThat(count(c, "subscription_first_invoice_command_claims")).isZero();
+    assertThat(checkout.confirmations()).isZero();
+  }
+
+  @Test
+  void signedSuccessJournalUsesTheExactOriginalConsentSecond() throws Exception {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var dispatch = checkout.authorize(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    var consent =
+        one(
+                c,
+                "SELECT consented_at FROM subscription_first_invoice_confirmations WHERE request_id = ?",
+                dispatch.requestId())
+            .get(0, OffsetDateTime.class);
+    var signed = checkout.signedSuccess();
+    var sameSecond = checkout.verifier().verify(signed.payload(), signed.signature());
+    assertThat(sameSecond.eventCreatedAtEpochSeconds()).isEqualTo(consent.toEpochSecond());
+    var earlier =
+        checkout.signWebhookPayload(
+            signed
+                .payload()
+                .replace("evt_", "evt_before_consent_")
+                .replace(
+                    "\"created\":" + sameSecond.eventCreatedAtEpochSeconds() + ",",
+                    "\"created\":" + (consent.toEpochSecond() - 1) + ","));
+    var verified = checkout.verifier().verify(earlier.payload(), earlier.signature());
+    in(c, () -> new StripeEventInboxRepository(c.dsl()).retainOrReplay(verified));
+    assertThat(
+            one(
+                    c,
+                    "SELECT account_first_invoice_signed_success_retained(?, false)",
+                    checkout.invoice().paymentIntentId())
+                .get(0, Boolean.class))
+        .isTrue();
+    assertSqlState(
+        "23514",
+        "First-invoice signed success requires a verified event at or after original consent",
+        () ->
+            c.setup()
+                .execute(
+                    "INSERT INTO subscription_first_invoice_success_evidence "
+                        + "(request_id, subscription_id, provider_event_id, event_payload_digest, "
+                        + "tuple_digest, observed_at) VALUES (?, ?, ?, ?, ?, clock_timestamp())",
+                    dispatch.requestId(),
+                    checkout.invoice().subscriptionId(),
+                    verified.providerEventId(),
+                    verified.payloadSha256(),
+                    checkout.invoice().digest()));
+    assertThat(count(c, "subscription_first_invoice_success_evidence")).isZero();
+    assertThat(checkout.retainSignedSuccess().requestId()).isEqualTo(dispatch.requestId());
+    assertThat(count(c, "subscription_first_invoice_success_evidence")).isOne();
+  }
+
+  @Test
   void authorizationExpiryAfterCommittedCommandClaimRetainsImmutableNoSendEvidence() {
     Context c = context("latest");
     Fixture f = fixture(c);
@@ -471,50 +568,23 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
             f.providerId(),
             f.clock(),
             f.owner());
-    var dispatch =
-        checkout.prepareConfirmationDispatch(
-            CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
     var observation =
-        assertThrows(
-            net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient
-                .ExpiredBeforePost.class,
-            () ->
-                checkout
-                    .provider()
-                    .confirm(
-                        dispatch,
-                        () -> {
-                          var claim =
-                              in(
-                                  c,
-                                  () ->
-                                      checkout
-                                          .payments()
-                                          .claimCommand(
-                                              dispatch, checkout.invoice().ownerAccountId()));
-                          assertThat(claim).isNotNull();
-                          f.clock().advanceToAtLeast(dispatch.validUntil());
-                          assertThat(f.clock().instant()).isEqualTo(dispatch.validUntil());
-                          return claim;
-                        }));
-    assertThat(observation.requestId()).isEqualTo(dispatch.requestId());
-    assertThat(observation.observedAt()).isEqualTo(dispatch.validUntil());
-    assertThat(checkout.confirmations()).isZero();
-    assertThat(count(c, "subscription_first_invoice_command_claims")).isOne();
-
-    // Mirrors the production owner's independent REQUIRES_NEW retention transaction.
-    in(
-        c,
-        () -> {
-          checkout.payments().retainExpiredBeforePost(observation);
-          return true;
-        });
-    in(
-        c,
-        () -> {
-          checkout.payments().retainExpiredBeforePost(observation);
-          return true;
-        });
+        checkout.claimExpiredBeforePost(
+            CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD,
+            noSend -> {
+              assertThat(count(c, "subscription_first_invoice_command_claims")).isOne();
+              assertSqlState(
+                  "23514",
+                  "First-invoice no-send observation is later than the database clock",
+                  () ->
+                      c.setup()
+                          .execute(
+                              "INSERT INTO subscription_first_invoice_expired_before_post "
+                                  + "(request_id, observed_at) "
+                                  + "VALUES (?, clock_timestamp() + INTERVAL '1 day')",
+                              noSend.requestId()));
+              assertThat(count(c, "subscription_first_invoice_expired_before_post")).isZero();
+            });
     var retained =
         one(
             c,
@@ -524,7 +594,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                 + "JOIN subscription_first_invoice_authorizations auth "
                 + "USING (authorization_request_id) WHERE evidence.request_id = ?",
             observation.requestId());
-    assertThat(retained.get("request_id", UUID.class)).isEqualTo(dispatch.requestId());
+    assertThat(retained.get("request_id", UUID.class)).isEqualTo(observation.requestId());
     assertThat(retained.get(1, java.time.OffsetDateTime.class).toInstant())
         .isEqualTo(observation.observedAt());
     assertThat(retained.get(2, java.time.OffsetDateTime.class).toInstant())
@@ -753,6 +823,77 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void upgradeWaitsForAnExistingWriterAndRefusesItsCommittedCompletionGap() throws Exception {
+    Context c = context("1046");
+    Fixture existing = fixture(c);
+    assertThat(
+            c.intents().findCurrentByTenant(existing.creation().tenantId()).orElseThrow().status())
+        .isEqualTo("pending");
+    String migrationName = "hosting_gate_" + UUID.randomUUID().toString().replace("-", "");
+    String migrationSql = retainedPositiveGateMigrationSql();
+    try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+      var migration =
+          in(
+              c,
+              () -> {
+                retainUnqualifiedPositive(existing, "active");
+                int writerPid =
+                    c.dsl().fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+                var result =
+                    workers.submit(() -> {
+                      try (var connection = c.source().getConnection();
+                          var sql = connection.createStatement()) {
+                        connection.setAutoCommit(false);
+                        DSL.using(connection, SQLDialect.POSTGRES)
+                            .execute(
+                                "SELECT set_config('application_name', ?, true)", migrationName);
+                        assertThatThrownBy(() -> sql.execute(migrationSql))
+                            .isInstanceOfSatisfying(
+                                SQLException.class,
+                                failure -> {
+                                  assertThat(failure.getSQLState()).isEqualTo("23514");
+                                  assertThat(failure.getMessage())
+                                      .contains(
+                                          "Retained positive hosting subscriptions require evidence-preserving resolution before upgrade");
+                                });
+                        connection.rollback();
+                      }
+                      return null;
+                    });
+                try {
+                  awaitSubscriptionWriterLock(c, migrationName);
+                } catch (InterruptedException interrupted) {
+                  Thread.currentThread().interrupt();
+                  throw new AssertionError(
+                      "Interrupted while waiting for the migration lock", interrupted);
+                }
+                assertThat(
+                        one(
+                                c,
+                                "SELECT ? = ANY(pg_blocking_pids(pid)) FROM pg_stat_activity "
+                                    + "WHERE application_name = ?",
+                                writerPid,
+                                migrationName)
+                            .get(0, Boolean.class))
+                    .isTrue();
+                return result;
+              });
+      migration.get(5, TimeUnit.SECONDS);
+    }
+    assertThat(
+            c.intents().findCurrentByTenant(existing.creation().tenantId()).orElseThrow().status())
+        .isEqualTo("active");
+    assertThat(count(c, "subscription_first_invoice_completions")).isZero();
+    assertThat(
+            one(
+                    c,
+                    "SELECT count(*) FROM pg_trigger WHERE tgrelid = 'subscription'::regclass "
+                        + "AND tgname = 'account_hosting_positive_completion_consistency'")
+                .get(0, Long.class))
+        .isZero();
+  }
+
+  @Test
   void upgradeSerializesConcurrentInsertAndUpdateThenEnforcesFinalCompletion() throws Exception {
     Context c = context("1046");
     Fixture existing = fixture(c);
@@ -760,13 +901,8 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     try (var workers = Executors.newVirtualThreadPerTaskExecutor();
         var migration = c.source().getConnection()) {
       migration.setAutoCommit(false);
-      try (var sql = migration.createStatement();
-          var resource =
-              Objects.requireNonNull(
-                  getClass()
-                      .getResourceAsStream(
-                          "/db/migration/V1046.1__hosting_retained_positive_completion_gate.sql"))) {
-        sql.execute(new String(resource.readAllBytes(), StandardCharsets.UTF_8));
+      try (var sql = migration.createStatement()) {
+        sql.execute(retainedPositiveGateMigrationSql());
       }
       var update =
           workers.submit(() -> {
@@ -812,6 +948,82 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
       // Failed UPDATE cannot leave its inserted provider mapping behind. The successful INSERT
       // is an ordinary pending subscription, not synthesized payment or migration authority.
       assertThat(c.setup().fetchCount(DSL.table("subscription_provider_history"))).isZero();
+    }
+  }
+
+  @Test
+  void signedSuccessWithIntegralDecimalAmountsWaitsForTheExactSubscriptionLock() throws Exception {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    String amounts = "\"amount\":2400,\"amount_received\":2400,";
+    String originalPayload = checkout.signedSuccess().payload();
+    assertThat(originalPayload).contains(amounts);
+    var signed =
+        checkout.signWebhookPayload(
+            originalPayload.replace(amounts, "\"amount\":2400.0,\"amount_received\":2400.00,"));
+    var verified = checkout.verifier().verify(signed.payload(), signed.signature());
+    var inbox = new StripeEventInboxRepository(c.dsl());
+    String writerName = "signed_intake_" + UUID.randomUUID().toString().replace("-", "");
+    StripeEventInboxRecord retained;
+    try (var workers = Executors.newVirtualThreadPerTaskExecutor();
+        var lock = c.source().getConnection()) {
+      lock.setAutoCommit(false);
+      var locker = DSL.using(lock, SQLDialect.POSTGRES);
+      UUID subscriptionId = checkout.invoice().subscriptionId();
+      int lockerPid =
+          locker
+              .fetchSingle(
+                  "SELECT pg_backend_pid() FROM subscription WHERE subscription_id = ? FOR UPDATE",
+                  subscriptionId)
+              .get(0, Integer.class);
+      var receipt =
+          workers.submit(() ->
+              in(
+                  c,
+                  () -> {
+                    c.dsl()
+                        .execute(
+                            "SELECT set_config('application_name', ?, true), set_config('statement_timeout', '10s', true)",
+                            writerName);
+                    return inbox.retainOrReplay(verified);
+                  }));
+      awaitSubscriptionWriterLock(c, writerName);
+      assertThat(
+              one(
+                      c,
+                      "SELECT ? = ANY(pg_blocking_pids(pid)) FROM pg_stat_activity "
+                          + "WHERE application_name = ?",
+                      lockerPid,
+                      writerName)
+                  .get(0, Boolean.class))
+          .isTrue();
+      assertThat(count(c, "stripe_event_inbox")).isZero();
+      lock.rollback();
+      retained = receipt.get(5, TimeUnit.SECONDS);
+    }
+    assertThat(retained.providerEventId()).isEqualTo(verified.providerEventId());
+    assertThat(retained.rawPayload()).isEqualTo(signed.payload());
+    assertThat(in(c, () -> inbox.retainOrReplay(verified))).isEqualTo(retained);
+    assertThat(count(c, "stripe_event_inbox")).isOne();
+  }
+
+  private static String retainedPositiveGateMigrationSql() throws java.io.IOException {
+    try (var resource =
+        Objects.requireNonNull(
+            AccountHostingSubscriptionLifecyclePostgresIntegrationTest.class.getResourceAsStream(
+                "/db/migration/V1046.1__hosting_retained_positive_completion_gate.sql"))) {
+      return new String(resource.readAllBytes(), StandardCharsets.UTF_8);
     }
   }
 
@@ -1380,8 +1592,9 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                             "UPDATE subscription_provisioning_work SET phase = 'CANCELED', row_version = row_version + 1 WHERE request_id = ?",
                             creationId)));
     configuration(c).load().migrate();
-    for (String providerState : List.of("active", "incomplete")) {
+    for (String providerState : List.of("active", "incomplete", "canceled")) {
       f.transport().json = response(f, providerState);
+      f.terminalInvoiceTransport().terminalInvoiceStatus("open");
       assertThat(
               f.service()
                   .reconcileUnpaidFirstInvoiceCancellation(
@@ -1406,7 +1619,18 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
           .isEqualTo(version);
     }
 
-    f.transport().json = response(f, "canceled");
+    f.terminalInvoiceTransport().terminalInvoiceStatus("void");
+    f.terminalInvoiceTransport().terminalIntentUnassigned(true);
+    assertThat(
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    cancellationId, creationId, version, f.providerId())
+                .outcome())
+        .isEqualTo(Outcome.RECONCILING);
+    assertThat(count(c, "subscription_lifecycle_operations")).isZero();
+    assertThat(count(c, "subscription_provider_terminal_resolutions")).isZero();
+
+    f.terminalInvoiceTransport().terminalIntentUnassigned(false);
     var committed =
         f.service()
             .reconcileUnpaidFirstInvoiceCancellation(
@@ -1446,9 +1670,14 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         .isEqualTo(committed);
     assertThat(f.transport().reads).isEqualTo(providerReads);
     assertThat(count(c, "subscription_provider_terminal_resolutions")).isOne();
-    assertThat(f.terminalInvoiceTransport().readPaths()).isEmpty();
+    String invoiceRead = "/v1/invoices/" + checkout.invoice().invoiceId();
+    assertThat(f.terminalInvoiceTransport().readPaths())
+        .containsExactly(
+            invoiceRead,
+            invoiceRead,
+            invoiceRead,
+            "/v1/payment_intents/" + checkout.invoice().paymentIntentId());
     assertThat(f.terminalInvoiceTransport().confirmations()).isZero();
-    assertThat(f.terminalInvoiceTransport().reads()).isZero();
   }
 
   @ParameterizedTest
@@ -1636,7 +1865,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
-  void expiredTerminalObservationCannotReleaseExactInvoiceReservation() {
+  void expiredCancellationCaptureKeepsExactInvoiceReservationHeld() {
     Context c = context("latest");
     Fixture f = fixture(c);
     var checkout =
@@ -1814,16 +2043,46 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     var signed = checkout.signedSuccess();
     var verified = checkout.verifier().verify(signed.payload(), signed.signature());
     f.transport().json = response(f, "canceled");
+    var providerRead = new CountDownLatch(1);
+    var continueProviderRead = new CountDownLatch(1);
     f.terminalInvoiceTransport()
-        .duringRead(
-            () -> in(c, () -> new StripeEventInboxRepository(c.dsl()).retainOrReplay(verified)));
+        .duringRead(() -> {
+          providerRead.countDown();
+          await(continueProviderRead);
+        });
 
+    UUID cancellationId = UUID.randomUUID();
+    try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+      var cancellation =
+          workers.submit(() ->
+              f.service()
+                  .reconcileUnpaidFirstInvoiceCancellation(
+                      cancellationId, f.creation().requestId(), version, f.providerId()));
+      try {
+        await(providerRead);
+        in(
+            c,
+            () -> {
+              int intakePid = c.dsl().fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+              // The inbox insert's trigger takes the matching subscription row lock.
+              var retained = new StripeEventInboxRepository(c.dsl()).retainOrReplay(verified);
+              assertThat(count(c, "stripe_event_inbox")).isZero();
+              continueProviderRead.countDown();
+              awaitCancellationBlockedByIntake(c, intakePid);
+              return retained;
+            });
+      } finally {
+        continueProviderRead.countDown();
+      }
+      assertThat(cancellation.get(5, TimeUnit.SECONDS).outcome()).isEqualTo(Outcome.RECONCILING);
+    }
     assertThat(
-            f.service()
-                .reconcileUnpaidFirstInvoiceCancellation(
-                    UUID.randomUUID(), f.creation().requestId(), version, f.providerId())
-                .outcome())
-        .isEqualTo(Outcome.RECONCILING);
+            one(
+                    c,
+                    "SELECT count(*) FROM subscription_lifecycle_receipts WHERE request_id = ?",
+                    cancellationId)
+                .get(0, Long.class))
+        .isZero();
     assertThat(count(c, "subscription_lifecycle_operations")).isZero();
     assertThat(count(c, "subscription_provider_terminal_resolutions")).isZero();
     assertThat(count(c, "subscription_first_invoice_success_evidence")).isZero();
@@ -1846,6 +2105,29 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
             "/v1/invoices/in_" + f.creation().subscriptionId().toString().replace("-", ""),
             "/v1/payment_intents/pi_" + f.creation().subscriptionId().toString().replace("-", ""));
     assertThat(f.terminalInvoiceTransport().confirmations()).isZero();
+  }
+
+  private static void awaitCancellationBlockedByIntake(Context c, int intakePid) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    do {
+      if (Boolean.TRUE.equals(
+          one(
+                  c,
+                  "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
+                      + "AND ? = ANY(pg_blocking_pids(pid)) "
+                      + "AND query ILIKE '%subscription%' AND query ILIKE '%FOR UPDATE%')",
+                  intakePid)
+              .get(0, Boolean.class))) {
+        return;
+      }
+      try {
+        Thread.sleep(10);
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new AssertionError("Interrupted while observing the cancellation wait", interrupted);
+      }
+    } while (System.nanoTime() < deadline);
+    throw new AssertionError("Cancellation did not wait on the signed intake subscription lock");
   }
 
   @Test
@@ -1960,9 +2242,31 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(f.transport().reads).isEqualTo(providerReads);
     assertThat(firstInvoiceImage(c)).isEqualTo(canceledImage);
 
-    f.clock().advanceToAtLeast(checkout.invoice().expiresAt().plusSeconds(1));
     checkout.status("succeeded");
-    var signed = checkout.signedSuccess();
+    if (!noSendWitness) {
+      var delayed = checkout.signedSuccess();
+      var delayedEvent = checkout.verifier().verify(delayed.payload(), delayed.signature());
+      in(c, () -> new StripeEventInboxRepository(c.dsl()).retainOrReplay(delayedEvent));
+      var staleObservation = checkout.provider().observe(checkout.invoice());
+      // Freeze the application read and let PostgreSQL cross its exact observation deadline.
+      // Keep the preceding cancellation and consent on their original monotonic clock.
+      var observationDeadline = staleObservation.readStartedAt().plusSeconds(20);
+      one(
+          c,
+          "SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM (?::timestamptz - clock_timestamp()))))",
+          observationDeadline.atOffset(ZoneOffset.UTC));
+      assertSqlState(
+          "23514",
+          "Late first-invoice payment observation expired before conflict insertion",
+          () ->
+              in(c, () -> checkout.payments().retainSignedOutcome(delayedEvent, staleObservation)));
+      assertThat(count(c, "subscription_first_invoice_late_paid_conflicts")).isZero();
+    }
+
+    f.clock().advanceToAtLeast(checkout.invoice().expiresAt().plusSeconds(1));
+    var delivery = checkout.signedSuccess();
+    var signed =
+        checkout.signWebhookPayload(delivery.payload().replace("evt_", "evt_late_success_"));
     var owner =
         new net.firedevops.firemud.accountservice.service.session
             .AccountHostingFirstInvoicePaymentService(
@@ -2070,6 +2374,8 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                 .replace("payment_intent.succeeded", "invoice.paid"));
     assertThat(owner.completeSigned(unrelated.payload(), unrelated.signature()).state())
         .isEqualTo("IGNORED");
+    checkout.status("succeeded");
+    int providerReadsBeforeWrongMethod = checkout.providerReads();
     var wrongMethod =
         checkout.signWebhookPayload(
             signed
@@ -2078,6 +2384,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                 .replace(checkout.invoice().providerPaymentMethodId(), "pm_other"));
     assertThatThrownBy(() -> owner.completeSigned(wrongMethod.payload(), wrongMethod.signature()))
         .isInstanceOf(IllegalStateException.class);
+    assertThat(checkout.providerReads()).isEqualTo(providerReadsBeforeWrongMethod);
     assertThat(firstInvoiceImage(c)).isEqualTo(canceledImage);
     assertThat(count(c, "subscription_first_invoice_late_paid_conflicts")).isOne();
     assertThat(count(c, "subscription_first_invoice_success_evidence")).isZero();

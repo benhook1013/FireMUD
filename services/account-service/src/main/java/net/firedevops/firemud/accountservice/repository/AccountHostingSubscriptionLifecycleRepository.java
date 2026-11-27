@@ -451,16 +451,18 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         || observed.readStartedAt().isBefore(captured.capturedAt)
         || !evaluated.isBefore(captured.capturedAt.plus(limits.lease()))
         || policy.evaluate(observed, evaluated, null).status() != Status.CANCELED
-        || (captured.confirmationId != null
-            && (unpaid == null
-                || !captured.invoice.digest().equals(unpaid.tupleDigest())
-                || unpaid.readStartedAt().isBefore(observed.observedAt())
-                || evaluated.isBefore(unpaid.observedAt().truncatedTo(ChronoUnit.MICROS))
-                || !evaluated.isBefore(
-                    unpaid
-                        .readStartedAt()
-                        .truncatedTo(ChronoUnit.MICROS)
-                        .plus(policy.maximumObservationAge()))))) {
+        || unpaid == null
+        || !captured.invoice.digest().equals(unpaid.tupleDigest())
+        || !captured.invoice.invoiceId().equals(unpaid.invoiceId())
+        || !captured.invoice.paymentIntentId().equals(unpaid.paymentIntentId())
+        || (unpaid.intentMethodUnassigned() && !captured.allowsUnassignedIntent())
+        || unpaid.readStartedAt().isBefore(observed.observedAt())
+        || evaluated.isBefore(unpaid.observedAt().truncatedTo(ChronoUnit.MICROS))
+        || !evaluated.isBefore(
+            unpaid
+                .readStartedAt()
+                .truncatedTo(ChronoUnit.MICROS)
+                .plus(policy.maximumObservationAge()))) {
       return new TransitionResult(
           captured.requestId, Outcome.RECONCILING, 0, "UNPAID_CANCELLATION_UNCONFIRMED");
     }
@@ -1604,7 +1606,11 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     }
 
     public AccountHostingFirstInvoicePayment invoiceRequiringTerminalRead() {
-      return confirmationId == null ? null : invoice;
+      return invoice;
+    }
+
+    public boolean allowsUnassignedIntent() {
+      return confirmationId != null;
     }
   }
 

@@ -1,5 +1,6 @@
 package integration.net.firedevops.firemud.accountservice.repository;
 
+import static integration.net.firedevops.firemud.accountservice.repository.AccountTenantCapacityMigrationPostgresIntegrationTest.capacityFreshnessTableImages;
 import static integration.net.firedevops.firemud.accountservice.repository.AccountTenantCapacityMigrationPostgresIntegrationTest.capacityTableImages;
 import static integration.net.firedevops.firemud.accountservice.repository.AccountTenantCapacityMigrationPostgresIntegrationTest.configureFlyway;
 import static integration.net.firedevops.firemud.accountservice.repository.AccountTenantCapacityMigrationPostgresIntegrationTest.hex;
@@ -65,14 +66,14 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
                 insertReservation(dsl, capacity, 0);
               });
         }
-        List<String> rows = capacityTableImages(dsl);
+        List<String> rows = capacityImage(dsl);
         List<String> history = historyImages(dsl);
         List<String> triggers = triggerImages(dsl);
 
         var flyway = configureFlyway(database.data(), database.schema(), "1044");
         flyway.migrate();
 
-        assertThat(capacityTableImages(dsl)).isEqualTo(rows);
+        assertThat(capacityImage(dsl)).isEqualTo(rows);
         assertThat(historyImages(dsl)).isEqualTo(history);
         assertThat(triggerImages(dsl)).containsAll(triggers);
         assertThat(flyway.validateWithResult().validationSuccessful).isTrue();
@@ -91,7 +92,7 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
     try (Database database = database("1046.9")) {
       DSLContext dsl = database.dsl();
       CapacityFixture capacity = populateCapacity(dsl, database.transaction());
-      List<String> capacityBefore = capacityTableImages(dsl);
+      List<String> capacityBefore = capacityImage(dsl);
       List<String> conservationBefore = conservationImages(dsl);
       List<String> triggersBefore = triggerImages(dsl);
       List<String> historyBefore = historyImages(dsl);
@@ -99,7 +100,7 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
       var flyway = configureFlyway(database.data(), database.schema(), "1046.9.0.1");
       assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
       assertThat(flyway.validateWithResult().validationSuccessful).isTrue();
-      assertThat(capacityTableImages(dsl)).isEqualTo(capacityBefore);
+      assertThat(capacityImage(dsl)).isEqualTo(capacityBefore);
       assertThat(conservationImages(dsl)).isEqualTo(conservationBefore);
       assertThat(historyImages(dsl)).startsWith(historyBefore.toArray(String[]::new));
       assertThat(triggerImages(dsl))
@@ -151,14 +152,14 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
               dsl.execute(
                   "ALTER TABLE account_tenant_capacity_usage ENABLE TRIGGER account_tenant_capacity_usage_complete");
             });
-        List<String> rows = capacityTableImages(dsl);
+        List<String> rows = capacityImage(dsl);
         List<String> history = historyImages(dsl);
         assertThatThrownBy(
                 () -> configureFlyway(database.data(), database.schema(), "1044").migrate())
             .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"))
             .hasStackTraceContaining(
                 "Capacity conservation upgrade refuses inconsistent durable reservation inventory");
-        assertThat(capacityTableImages(dsl)).isEqualTo(rows);
+        assertThat(capacityImage(dsl)).isEqualTo(rows);
         assertThat(historyImages(dsl)).isEqualTo(history);
         assertThat(
                 dsl.fetchSingle("SELECT to_regclass('account_tenant_capacity_conservation')")
@@ -260,7 +261,7 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
     try (Database database = database("1044")) {
       DSLContext dsl = database.dsl();
       CapacityFixture capacity = populateCapacity(dsl, database.transaction());
-      List<String> rows = capacityTableImages(dsl);
+      List<String> rows = capacityImage(dsl);
       List<String> aggregate = conservationImages(dsl);
       for (String statement :
           List.of(
@@ -312,7 +313,7 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
                   }))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("deliberate owner rollback");
-      assertThat(capacityTableImages(dsl)).isEqualTo(rows);
+      assertThat(capacityImage(dsl)).isEqualTo(rows);
       assertThat(conservationImages(dsl)).isEqualTo(aggregate);
       assertConserved(dsl);
     }
@@ -764,6 +765,13 @@ class AccountTenantCapacityIncrementalConservationPostgresIntegrationTest {
         data,
         DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES),
         new TransactionTemplate(new DataSourceTransactionManager(data)));
+  }
+
+  private static List<String> capacityImage(DSLContext dsl) {
+    return dsl.fetchSingle("SELECT to_regclass('account_capacity_origin_decisions') IS NOT NULL")
+            .get(0, Boolean.class)
+        ? capacityFreshnessTableImages(dsl)
+        : capacityTableImages(dsl);
   }
 
   private record Database(

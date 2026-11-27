@@ -375,10 +375,11 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             SQLException.class, failure -> assertThat(failure.getSQLState()).isEqualTo("57014"));
     assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(10));
     assertThat(blockedBackend.get()).isPositive();
-    assertThat(
-            f.dsl.fetchExists(
-                DSL.selectOne().from("pg_stat_activity").where("pid = ?", blockedBackend.get())))
-        .isFalse();
+    org.awaitility.Awaitility.await("PostgreSQL backend released")
+        .atMost(Duration.ofSeconds(3))
+        .until(() ->
+            !f.dsl.fetchExists(
+                DSL.selectOne().from("pg_stat_activity").where("pid = ?", blockedBackend.get())));
     assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_evaluations"))).isOne();
   }
 

@@ -308,8 +308,10 @@ public final class AccountCanonicalPublicRealmScopeOwner {
         });
     // No value escapes a failed commit or a caller/source observation that expired during commit.
     requireSameCaller(original, authenticate.get());
+    Instant databaseTime = inTransaction(scopes::canonicalIssuanceTime);
     requireFresh(entitlement);
-    if (!now().isBefore(Instant.parse(retained.scope().connectScopeExpiresAt()))) {
+    Instant expiresAt = Instant.parse(retained.scope().connectScopeExpiresAt());
+    if (!databaseTime.isBefore(expiresAt) || !now().isBefore(expiresAt)) {
       throw authUnavailable("Canonical scope expired before publication", null);
     }
     return List.of(retained);

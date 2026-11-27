@@ -386,8 +386,10 @@ class AccountTenantCapacityOwnerTest {
     assertThatThrownBy(() -> rearm.invoke(f.owner, f.request, next, claimOwner, 7L))
         .hasCauseInstanceOf(AccountTenantCapacityRepository.CapacityException.class)
         .hasRootCauseMessage("IDEMPOTENCY_CONFLICT");
-    var lockOrder = org.mockito.Mockito.inOrder(f.dsl);
+    var lockOrder = org.mockito.Mockito.inOrder(f.dsl, f.memberships);
     lockOrder.verify(f.dsl).fetchOne(startsWith(usageLock), any(Object[].class));
+    var player = (TenantCapacityAdmission.PlayerContext) next.context();
+    lockOrder.verify(f.memberships).readCurrent(player.accountId(), player.tenantId());
     lockOrder
         .verify(f.dsl)
         .execute(startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class));

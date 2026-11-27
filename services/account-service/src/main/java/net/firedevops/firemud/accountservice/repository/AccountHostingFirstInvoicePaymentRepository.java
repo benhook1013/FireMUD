@@ -13,6 +13,7 @@ import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePay
 import net.firedevops.firemud.accountservice.client.StripeHostingWebhookVerifier.VerifiedEvent;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProviderDispatch;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProvisioningClaim;
+import net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepository.FenceRejectedException;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationEvidence;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicy;
@@ -56,20 +57,20 @@ public final class AccountHostingFirstInvoicePaymentRepository {
   public AccountHostingFirstInvoicePayment retainAwaitingPayment(
       ProviderDispatch dispatch, String providerId, Observation observation) {
     transaction();
-    var creation = dispatch.claim().creation();
-    AccountHostingFirstInvoicePayment retained = find(creation.subscriptionId());
+    if (!dispatch.readyForProviderIo()) throw refused();
+    var claim = dispatch.claim();
+    var creation = claim.creation();
+    AccountHostingFirstInvoicePayment retained = findAwaitingPayment(claim);
     if (retained != null) {
       if (!retained.providerSubscriptionId().equals(providerId)
           || !retained.invoiceId().equals(observation.invoiceId())
           || !retained.paymentIntentId().equals(observation.paymentIntentId())) throw refused();
       return retained;
     }
-    var current =
-        intents.lockForLifecycle(creation.requestId(), dispatch.claim().subscriptionRowVersion());
+    var current = intents.lockForLifecycle(creation.requestId(), claim.subscriptionRowVersion());
     var policy = policies.requireCurrent(creation.planQuote());
     Instant now = now();
-    if (!dispatch.readyForProviderIo()
-        || !"provisioning".equals(current.status())
+    if (!"provisioning".equals(current.status())
         || current.providerSubscriptionId() != null
         || !now.isBefore(dispatch.claim().expiresAt())
         || !now.isBefore(observation.expiresAt())
@@ -171,7 +172,8 @@ public final class AccountHostingFirstInvoicePaymentRepository {
     var creation = claim.creation();
     var invoice = find(creation.subscriptionId());
     if (invoice == null) return null;
-    if (!creation.equals(intents.findCreation(creation.requestId()).orElse(null))) throw refused();
+    if (!creation.equals(intents.findCreation(creation.requestId()).orElse(null)))
+      throw awaitingPaymentRefused();
 
     Record attempt =
         dsl.fetchOne(
@@ -184,7 +186,8 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         || claim.subscriptionRowVersion() != attempt.get("claimed_row_version", Long.class)
         || claim.subscriptionRowVersion() - 1L != attempt.get("expected_row_version", Long.class)
         || !claim.claimedAt().equals(instant(attempt, "claimed_at"))
-        || !claim.expiresAt().equals(instant(attempt, "expires_at"))) throw refused();
+        || !claim.expiresAt().equals(instant(attempt, "expires_at")))
+      throw awaitingPaymentRefused();
 
     var current =
         intents.lockForLifecycle(
@@ -203,7 +206,8 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         || !invoice.providerCustomerId().equals(creation.providerCustomerId())
         || !invoice.quoteDigest().equals(creation.planQuote().digest())
         || !invoice.providerPriceId().equals(creation.planQuote().providerPriceId())
-        || invoice.providerQuantity() != creation.planQuote().providerQuantity()) throw refused();
+        || invoice.providerQuantity() != creation.planQuote().providerQuantity())
+      throw awaitingPaymentRefused();
 
     Record work =
         dsl.fetchOne(
@@ -214,7 +218,7 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         || !"AWAITING_PAYMENT".equals(work.get("phase", String.class))
         || !claim.attemptId().equals(work.get("last_attempt_id", UUID.class))
         || claim.subscriptionRowVersion() != work.get("subscription_row_version", Long.class))
-      throw refused();
+      throw awaitingPaymentRefused();
 
     Record dispatch =
         dsl.fetchOne(
@@ -224,7 +228,8 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         || !creation.subscriptionId().equals(dispatch.get("subscription_id", UUID.class))
         || !creation
             .subscriptionProvisioningRequestId()
-            .equals(dispatch.get("provider_operation_id", UUID.class))) throw refused();
+            .equals(dispatch.get("provider_operation_id", UUID.class)))
+      throw awaitingPaymentRefused();
 
     Record history =
         dsl.fetchOne(
@@ -238,7 +243,8 @@ public final class AccountHostingFirstInvoicePaymentRepository {
             .subscriptionProvisioningRequestId()
             .equals(history.get("provider_operation_id", UUID.class))
         || !"canonical".equals(history.get("role", String.class))
-        || !invoice.digest().equals(history.get("evidence_digest", String.class))) throw refused();
+        || !invoice.digest().equals(history.get("evidence_digest", String.class)))
+      throw awaitingPaymentRefused();
     return invoice;
   }
 
@@ -1061,6 +1067,10 @@ public final class AccountHostingFirstInvoicePaymentRepository {
 
   private static Instant earlier(Instant left, Instant right) {
     return left.isBefore(right) ? left : right;
+  }
+
+  private static FenceRejectedException awaitingPaymentRefused() {
+    return new FenceRejectedException("Exact retained awaiting-payment claim refused");
   }
 
   private static IllegalStateException refused() {

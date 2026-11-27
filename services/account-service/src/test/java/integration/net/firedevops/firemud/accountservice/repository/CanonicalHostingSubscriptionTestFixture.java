@@ -24,6 +24,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Arrays;
@@ -34,6 +35,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -587,6 +589,19 @@ public final class CanonicalHostingSubscriptionTestFixture {
     /** Produces the actual committed claim and V1046.4 no-send witness without issuing a POST. */
     public StripeHostingFirstInvoicePaymentClient.ExpiredBeforePost claimExpiredBeforePost(
         String password) {
+      return claimExpiredBeforePost(password, observation -> {});
+    }
+
+    public StripeHostingFirstInvoicePaymentClient.ExpiredBeforePost claimExpiredBeforePost(
+        String password,
+        Consumer<StripeHostingFirstInvoicePaymentClient.ExpiredBeforePost> beforeRetention) {
+      if (!(clock instanceof MutableClock mutableClock))
+        throw new IllegalStateException("Mutable test clock required");
+      Instant originalClock = clock.instant();
+      // The fixture's 300-second age less 30 seconds of skew leaves five real seconds to claim.
+      Instant databaseNow =
+          dsl.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class).toInstant();
+      mutableClock.advance(Duration.between(originalClock, databaseNow.minusSeconds(265)));
       var dispatch = prepareConfirmationDispatch(password);
       StripeHostingFirstInvoicePaymentClient.ExpiredBeforePost observation;
       try {
@@ -596,8 +611,6 @@ public final class CanonicalHostingSubscriptionTestFixture {
               var claim =
                   in(transaction, () -> payments.claimCommand(dispatch, invoice.ownerAccountId()));
               if (claim == null) throw new IllegalStateException("Exact command claim required");
-              if (!(clock instanceof MutableClock mutableClock))
-                throw new IllegalStateException("Mutable test clock required");
               mutableClock.advanceToAtLeast(dispatch.validUntil());
               return claim;
             });
@@ -608,6 +621,12 @@ public final class CanonicalHostingSubscriptionTestFixture {
         throw new IllegalStateException(
             "Controlled expiry-before-post observation failed", failure);
       }
+      beforeRetention.accept(observation);
+      // PostgreSQL must independently see expiry before it can retain the no-send witness.
+      dsl.execute(
+          "SELECT pg_sleep_until(?::timestamptz)",
+          OffsetDateTime.ofInstant(observation.observedAt(), ZoneOffset.UTC));
+      mutableClock.advanceToAtLeast(originalClock);
       in(
           transaction,
           () -> {
@@ -832,9 +851,11 @@ public final class CanonicalHostingSubscriptionTestFixture {
         throws StripeException {
       assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
       String json;
-      if (terminalReadOnly) {
+      if (method == RequestMethod.GET) {
         reads++;
         readPaths.add(path);
+      }
+      if (terminalReadOnly) {
         Runnable action = duringRead;
         duringRead = null;
         if (action != null) action.run();

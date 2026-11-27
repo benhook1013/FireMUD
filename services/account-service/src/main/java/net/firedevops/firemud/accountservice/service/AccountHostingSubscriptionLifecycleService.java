@@ -112,7 +112,7 @@ public final class AccountHostingSubscriptionLifecycleService {
         && observed instanceof ObservedSubscription subscription
         && subscription.providerStatusIsCanceled()) {
       try {
-        unpaid = firstInvoice.observeTerminalUnpaid(invoice);
+        unpaid = firstInvoice.observeTerminalUnpaid(invoice, captured.allowsUnassignedIntent());
       } catch (StripeException | IllegalStateException unproven) {
         return new TransitionResult(
             requestId, Outcome.RECONCILING, 0, "UNPAID_CANCELLATION_UNCONFIRMED");

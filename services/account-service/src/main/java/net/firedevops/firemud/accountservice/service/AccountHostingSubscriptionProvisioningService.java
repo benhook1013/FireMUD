@@ -44,10 +44,9 @@ public final class AccountHostingSubscriptionProvisioningService {
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
 
-  public Result provision(ProvisioningClaim claim, UUID dispatchId, UUID lifecycleRequestId) {
+  public Result provision(ProvisioningClaim claim, UUID dispatchId) {
     Objects.requireNonNull(claim, "Existing genuine owner provisioning claim is required");
     requireUuid(dispatchId);
-    requireUuid(lifecycleRequestId);
     requireNoAmbientTransaction();
     // retainAwaitingPayment may commit before its independent invoice readback or caller response
     // is lost. Recover that exact retained outcome before attempting to claim or contact Stripe.
@@ -67,57 +66,72 @@ public final class AccountHostingSubscriptionProvisioningService {
       if (replay != null) return new AwaitingPayment(replay);
       // Dispatch remains strictly fenced. A new local transaction may only settle the same retained
       // work; stale/current-owner/reservation mismatches still reject there before any write.
-      Disposition disposition =
-          Objects.requireNonNull(transaction.execute(status -> repository.deferUnresolved(claim)));
-      return new Pending(
-          disposition,
-          new StripeHostingSubscriptionProvisioner.Pending("DISPATCH_FENCE_REJECTED", null));
+      return deferUnresolved(
+          claim, new StripeHostingSubscriptionProvisioner.Pending("DISPATCH_FENCE_REJECTED", null));
     }
     requireNoAmbientTransaction();
     var located = provider.provision(dispatch);
     if (!(located instanceof StripeHostingSubscriptionProvisioner.Located actual)) {
-      Disposition disposition =
-          Objects.requireNonNull(
-              transaction.execute(status -> repository.deferUnresolved(dispatch.claim())));
-      return new Pending(disposition, located);
+      return deferUnresolved(dispatch.claim(), located);
     }
     // DEFAULT_INCOMPLETE only locates an existing invoice. Provisioning never confirms or grants.
+    StripeHostingFirstInvoicePaymentClient.Observation observed;
     try {
-      StripeHostingFirstInvoicePaymentClient.Observation observed;
-      try {
-        observed = firstInvoiceProvider.capture(dispatch, actual.providerSubscriptionId());
-      } catch (StripeHostingFirstInvoicePaymentClient.ProviderEvidenceRefused unresolved) {
-        return deferFirstInvoice(dispatch, null);
-      }
+      observed = firstInvoiceProvider.capture(dispatch, actual.providerSubscriptionId());
+    } catch (StripeHostingFirstInvoicePaymentClient.ProviderEvidenceRefused unresolved) {
+      return deferFirstInvoice(dispatch, null);
+    } catch (com.stripe.exception.StripeException unresolved) {
+      return deferFirstInvoice(dispatch, unresolved);
+    }
+
+    try {
       var retained =
           Objects.requireNonNull(
               transaction.execute(status ->
                   firstInvoices.retainAwaitingPayment(
                       dispatch, actual.providerSubscriptionId(), observed)));
       var readback =
-          Objects.requireNonNull(
-              transaction.execute(status -> firstInvoices.find(retained.subscriptionId())));
+          transaction.execute(status -> firstInvoices.findAwaitingPayment(dispatch.claim()));
       if (!retained.equals(readback))
         throw new IllegalStateException("Independent awaiting-payment readback mismatch");
       return new AwaitingPayment(readback);
     } catch (FenceRejectedException refused) {
-      // A concurrent capture may commit after our initial replay check. Recover only the
-      // exact retained claim in a fresh transaction; never repeat provider calls or relax fences.
-      var winner = transaction.execute(status -> firstInvoices.findAwaitingPayment(claim));
-      if (winner != null) return new AwaitingPayment(winner);
-      throw refused;
-    } catch (com.stripe.exception.StripeException unresolved) {
-      return deferFirstInvoice(dispatch, unresolved);
+      return recoverRetainedInvoice(dispatch.claim(), refused);
     }
   }
 
-  private Pending deferFirstInvoice(
+  private Result deferFirstInvoice(
       ProviderDispatch dispatch, com.stripe.exception.StripeException providerFailure) {
-    return new Pending(
-        Objects.requireNonNull(
-            transaction.execute(status -> repository.deferUnresolved(dispatch.claim()))),
+    return deferUnresolved(
+        dispatch.claim(),
         new StripeHostingSubscriptionProvisioner.Pending(
             "FIRST_INVOICE_UNRESOLVED", providerFailure));
+  }
+
+  private Result deferUnresolved(
+      ProvisioningClaim claim, StripeHostingSubscriptionProvisioner.Result providerResult) {
+    try {
+      var disposition =
+          Objects.requireNonNull(transaction.execute(status -> repository.deferUnresolved(claim)));
+      return new Pending(disposition, providerResult);
+    } catch (FenceRejectedException refused) {
+      return recoverRetainedInvoice(claim, refused);
+    }
+  }
+
+  private AwaitingPayment recoverRetainedInvoice(
+      ProvisioningClaim claim, FenceRejectedException refused) {
+    // A sibling may have retained the invoice after our previous read. Read the exact claim in a
+    // fresh transaction after the rejected transaction has ended.
+    AccountHostingFirstInvoicePayment winner;
+    try {
+      winner = transaction.execute(status -> firstInvoices.findAwaitingPayment(claim));
+    } catch (FenceRejectedException mismatch) {
+      if (refused != mismatch) refused.addSuppressed(mismatch);
+      throw refused;
+    }
+    if (winner == null) throw refused;
+    return new AwaitingPayment(winner);
   }
 
   private static void requireUuid(UUID value) {

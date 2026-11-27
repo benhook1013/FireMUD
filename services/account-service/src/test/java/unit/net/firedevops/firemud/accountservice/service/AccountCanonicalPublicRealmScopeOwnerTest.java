@@ -335,6 +335,22 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
   }
 
   @Test
+  void scopeExpiresAtDatabasePublicationSampleEvenWhenApplicationClockIsEarlier() {
+    Fixture f = new Fixture(300000L);
+    Instant databaseTime =
+        Instant.now().minusSeconds(1).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+    org.mockito.Mockito.doReturn(databaseTime)
+        .doAnswer(invocation -> Instant.parse(f.retained.get().connectScopeExpiresAt()))
+        .when(f.scopes)
+        .canonicalIssuanceTime();
+
+    assertThatThrownBy(() -> f.owner.listRealmScopes(f.token, "tenant", "world"))
+        .isInstanceOf(AuthenticationException.class)
+        .hasMessageContaining("Canonical scope expired before publication");
+    assertThat(f.retained.get()).isNotNull();
+  }
+
+  @Test
   void genuineAbsenceAndClosedEnrollmentStillProduceOnlyACanonicalPublicSelectorScope() {
     Fixture f = new Fixture(300000L);
 
@@ -365,7 +381,7 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
     assertThat(f.retainedEvidence.get().scopeDigest()).isEqualTo(AccountJoinDigest.scopeV2(scope));
     assertThat(f.retainedEvidence.get().tenantProvenance()).isEqualTo(f.provenance());
     assertThat(result.toString()).doesNotContain(scope.connectScopeId(), f.token);
-    assertThat(f.transactions.commits).isEqualTo(2);
+    assertThat(f.transactions.commits).isEqualTo(3);
     assertThat(f.registryChecks.get()).isEqualTo(3);
     verify(f.scopes).insertCanonical(PRIVATE_ACCOUNT, scope, f.provenance());
     verify(f.memberships, never()).createFreshMembershipForJoin(any(), any());

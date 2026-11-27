@@ -31,6 +31,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient.Observation;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionProvisioner;
 import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionBirthSource.Category;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Disposition;
@@ -332,7 +334,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     assertThat(first.attemptNumber()).isOne();
     var result =
         (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
-            provisioning.provision(first, UUID.randomUUID(), UUID.randomUUID());
+            provisioning.provision(first, UUID.randomUUID());
     assertThat(result.invoice().providerSubscriptionId()).isEqualTo("sub_exact");
     assertThat(result.invoice().subscriptionId()).isEqualTo(f.creation().subscriptionId());
     assertThat(f.dsl().fetchCount(DSL.table("subscription_lifecycle_receipts"))).isZero();
@@ -525,7 +527,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     var second = claim(f, first.subscriptionRowVersion());
     var result =
         (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
-            provisioning.provision(second, UUID.randomUUID(), UUID.randomUUID());
+            provisioning.provision(second, UUID.randomUUID());
     assertThat(result.invoice().providerSubscriptionId()).isEqualTo("sub_exact");
     assertThat(result.invoice().subscriptionId()).isEqualTo(f.creation().subscriptionId());
     assertThat(f.transport().creates).isEqualTo(1);
@@ -565,7 +567,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     var provisioning = service(f);
     var result =
         (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
-            provisioning.provision(claim(f, 1), UUID.randomUUID(), UUID.randomUUID());
+            provisioning.provision(claim(f, 1), UUID.randomUUID());
     assertThat(result.invoice().providerSubscriptionId()).isEqualTo("sub_exact");
     assertThat(result.invoice().subscriptionId()).isEqualTo(f.creation().subscriptionId());
     assertThat(f.transport().creates).isEqualTo(1);
@@ -587,8 +589,10 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     Fixture f = fixture("1032");
     var provisioning = service(f);
     var originalClaim = claim(f, 1);
-    // Treat the committed first result as lost and retry with the exact retained claim.
-    provisioning.provision(originalClaim, UUID.randomUUID(), UUID.randomUUID());
+    // Retain the first result as a test oracle while simulating a lost caller response.
+    var original =
+        (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
+            provisioning.provision(originalClaim, UUID.randomUUID());
     assertThat(
             Objects.requireNonNull(
                     f.dsl()
@@ -618,11 +622,9 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
 
     var replay =
         (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
-            provisioning.provision(originalClaim, UUID.randomUUID(), UUID.randomUUID());
+            provisioning.provision(originalClaim, UUID.randomUUID());
 
-    assertThat(replay.invoice().subscriptionId()).isEqualTo(f.creation().subscriptionId());
-    assertThat(replay.invoice().creationRequestId()).isEqualTo(f.creation().requestId());
-    assertThat(replay.invoice().providerSubscriptionId()).isEqualTo("sub_exact");
+    assertThat(replay).isEqualTo(original);
     assertThat(
             f.dsl()
                 .fetchSingle(
@@ -675,7 +677,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
 
     var result =
         (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
-            provisioning.provision(finalClaim, UUID.randomUUID(), UUID.randomUUID());
+            provisioning.provision(finalClaim, UUID.randomUUID());
     assertThat(result.invoice().providerSubscriptionId()).isEqualTo("sub_exact");
     assertThat(f.transport().creates).isOne();
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isEqualTo(3);
@@ -689,9 +691,11 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     var provisioning = service(f);
     f.transport().loseCreateResponse = true;
     var first = claim(f, 1);
+    var firstDispatch = new AtomicReference<ProviderDispatch>();
+    f.transport().duringCreate = () -> firstDispatch.set(prepareAndRead(f, first));
     var lost =
         (AccountHostingSubscriptionProvisioningService.Pending)
-            provisioning.provision(first, UUID.randomUUID(), UUID.randomUUID());
+            provisioning.provision(first, UUID.randomUUID());
     assertThat(lost.disposition()).isEqualTo(Disposition.WAITING);
     assertThat(((StripeHostingSubscriptionProvisioner.Pending) lost.providerResult()).reason())
         .isEqualTo("PROVIDER_OUTCOME_UNKNOWN");
@@ -701,9 +705,10 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     f.transport().emptySearchesRemaining = 1;
     awaitProvisioningTime(f, "retry_at");
     var second = claim(f, first.subscriptionRowVersion());
+    var secondDispatch = prepareAndRead(f, second);
     var result =
         (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
-            provisioning.provision(second, UUID.randomUUID(), UUID.randomUUID());
+            provisioning.provision(second, UUID.randomUUID());
     assertThat(result.invoice().providerSubscriptionId()).isEqualTo("sub_exact");
     assertThat(f.clock().instant()).isAfter(originalProviderCreation);
     assertThat(result.invoice().expiresAt())
@@ -714,10 +719,24 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isOne();
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isZero();
     int providerRequests = f.transport().requests;
-    assertThat(provisioning.provision(second, UUID.randomUUID(), UUID.randomUUID()))
-        .isEqualTo(result);
-    assertThatThrownBy(() -> provisioning.provision(first, UUID.randomUUID(), UUID.randomUUID()))
+    assertThat(provisioning.provision(second, UUID.randomUUID())).isEqualTo(result);
+    assertThatThrownBy(() -> provisioning.provision(first, UUID.randomUUID()))
         .isInstanceOf(FenceRejectedException.class);
+    var invoices = new AccountHostingFirstInvoicePaymentRepository(f.dsl(), f.intents(), f.clock());
+    var observation = mock(Observation.class);
+    when(observation.invoiceId()).thenReturn(result.invoice().invoiceId());
+    when(observation.paymentIntentId()).thenReturn(result.invoice().paymentIntentId());
+    var originalDispatch = Objects.requireNonNull(firstDispatch.get());
+    assertThatThrownBy(() ->
+            f.tx()
+                .execute(status ->
+                    invoices.retainAwaitingPayment(originalDispatch, "sub_exact", observation)))
+        .isInstanceOf(FenceRejectedException.class);
+    var retained =
+        f.tx()
+            .execute(
+                status -> invoices.retainAwaitingPayment(secondDispatch, "sub_exact", observation));
+    assertThat(retained).isEqualTo(result.invoice());
     assertThat(f.transport().requests).isEqualTo(providerRequests);
   }
 
@@ -729,7 +748,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     var first = claim(f, 1);
     var lost =
         (AccountHostingSubscriptionProvisioningService.Pending)
-            provisioning.provision(first, UUID.randomUUID(), UUID.randomUUID());
+            provisioning.provision(first, UUID.randomUUID());
     assertThat(lost.disposition()).isEqualTo(Disposition.WAITING);
     assertThat(((StripeHostingSubscriptionProvisioner.Pending) lost.providerResult()).reason())
         .isEqualTo("PROVIDER_OUTCOME_UNKNOWN");
@@ -742,7 +761,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
       previous = claim(f, previous.subscriptionRowVersion());
       var pending =
           (AccountHostingSubscriptionProvisioningService.Pending)
-              provisioning.provision(previous, UUID.randomUUID(), UUID.randomUUID());
+              provisioning.provision(previous, UUID.randomUUID());
       assertThat(pending.disposition())
           .isEqualTo(attempt == 3 ? Disposition.TERMINAL_FAILURE : Disposition.WAITING);
       assertThat(pending.providerResult())
@@ -808,7 +827,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
         .isInstanceOf(FenceRejectedException.class);
     var refused =
         (AccountHostingSubscriptionProvisioningService.Pending)
-            provisioning.provision(original, UUID.randomUUID(), UUID.randomUUID());
+            provisioning.provision(original, UUID.randomUUID());
     assertThat(refused.disposition()).isEqualTo(Disposition.WAITING);
     assertThat(refused.providerResult())
         .isEqualTo(

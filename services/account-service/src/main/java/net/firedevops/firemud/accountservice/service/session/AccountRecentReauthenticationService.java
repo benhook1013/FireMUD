@@ -122,6 +122,7 @@ public final class AccountRecentReauthenticationService {
                             actor.accountId(),
                             request.creationOperationId);
                     bind.accept(evidence);
+                    actors.requireCurrentOriginalToken(actor);
                   }
                   return attempt;
                 }),
@@ -159,6 +160,10 @@ public final class AccountRecentReauthenticationService {
     try {
       attempt =
           retainInOwnerTransaction.apply(() -> {
+            // Match billing's Account-before-request lock order. Validate the locked row only
+            // for new evidence so exact historical game-creation replay keeps its semantics.
+            Optional<Account> lockedAccount =
+                accounts.findByAccountUuidForUpdate(request.accountId);
             evidenceRepository.lockRequest(request.requestId);
             Optional<AccountRecentReauthenticationEvidence> existingRequest =
                 evidenceRepository.findByRequest(request.requestId);
@@ -188,7 +193,7 @@ public final class AccountRecentReauthenticationService {
                 AccountRecentReauthenticationPolicy.PURPOSE.equals(request.purpose)
                     ? policyRepository.resolveCurrentForGameCreation()
                     : policyRepository.resolveCurrentForPurpose(request.purpose);
-            Account account = requireCurrentAccount(request.accountId);
+            Account account = requireCurrentAccount(request.accountId, lockedAccount);
             String email = EmailCanonicalization.normalize(request.email);
             if (!email.equals(EmailCanonicalization.normalize(account.getEmail()))) {
               throw conflict();
@@ -255,24 +260,24 @@ public final class AccountRecentReauthenticationService {
         throw new AuthenticationException(attempt.denial.code, attempt.denial.message);
       }
       var expected = Objects.requireNonNull(attempt.evidence);
-      Attempt readback =
+      var readback =
           transaction.execute(ignored -> {
             evidenceRepository.lockRequest(expected.requestId());
             var retained = evidenceRepository.readExactOriginal(expected);
-            return replayAttempt(retained, credentialRequest);
+            if (!replayCredentialsMatch(retained, credentialRequest)) {
+              throw unavailable();
+            }
+            return retained;
           });
       if (readback == null) throw unavailable();
-      if (readback.denial != null) {
-        throw new AuthenticationException(readback.denial.code, readback.denial.message);
-      }
-      return Objects.requireNonNull(readback.evidence);
+      return readback;
     } finally {
       Arrays.fill(credentialRequest, (byte) 0);
     }
   }
 
-  // Both callers hold the original request lock. Denials leave the callback as values so the
-  // independent failure history commits before any exception reaches the caller.
+  // Public replay holds the original request lock. Credential denials leave the callback as
+  // values so the failed-attempt history commits before any exception reaches the caller.
   private Attempt replayAttempt(AccountRecentReauthenticationEvidence evidence, byte[] request) {
     if (evidenceRepository.countReplayFailures(evidence) >= 5) {
       return Attempt.denied("INVALID_CREDENTIALS", "Invalid credentials");
@@ -465,10 +470,11 @@ public final class AccountRecentReauthenticationService {
   }
 
   private Account requireCurrentAccount(UUID accountId) {
-    Account account =
-        accounts
-            .findByAccountUuidForUpdate(accountId)
-            .orElseThrow(AccountRecentReauthenticationService::unavailable);
+    return requireCurrentAccount(accountId, accounts.findByAccountUuidForUpdate(accountId));
+  }
+
+  private static Account requireCurrentAccount(UUID accountId, Optional<Account> lockedAccount) {
+    Account account = lockedAccount.orElseThrow(AccountRecentReauthenticationService::unavailable);
     if (account.getId() == null
         || account.getId() <= 0L
         || !accountId.equals(account.getAccountUuid())

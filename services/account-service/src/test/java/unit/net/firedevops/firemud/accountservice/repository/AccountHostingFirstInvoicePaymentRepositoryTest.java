@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -254,17 +253,9 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
     when(f.evidence.issuedAt()).thenReturn(RenewalFixture.NOW.minusSeconds(115));
     assertThatThrownBy(f::renew).isInstanceOf(IllegalStateException.class);
     when(f.evidence.issuedAt()).thenReturn(RenewalFixture.NOW);
-    assertThatThrownBy(() ->
-            f.repository.renewAuthorization(
-                f.invoice.ownerAccountId(),
-                f.originalId,
-                f.authorizationId,
-                f.invoice.subscriptionId(),
-                4,
-                1,
-                f.invoice.digest(),
-                f.evidence))
-        .isInstanceOf(IllegalStateException.class);
+    f.currentRowVersion = 4;
+    assertThatThrownBy(f::renew).isInstanceOf(IllegalStateException.class);
+    f.currentRowVersion = 3;
     f.latestVersion = 2;
     assertThatThrownBy(f::renew).isInstanceOf(IllegalStateException.class);
     assertThat(f.authorizations).isEmpty();
@@ -313,6 +304,7 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
     final AccountHostingFirstInvoicePayment invoice;
     final AccountHostingFirstInvoicePaymentRepository repository;
     long latestVersion = 1;
+    long currentRowVersion = 3;
     boolean commandClaimed;
 
     RenewalFixture() {
@@ -348,8 +340,6 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
       doReturn(invoice)
           .when(repository)
           .requireOwner(invoice.subscriptionId(), invoice.ownerAccountId());
-      doNothing().when(repository).requireAwaitingPayment(invoice, 3);
-      doNothing().when(repository).requireAwaitingPayment(invoice, 4);
       var creation = mock(AccountSubscriptionCreationRecord.class);
       var quote = mock(AccountHostingPlanQuote.class);
       when(quote.providerPriceId()).thenReturn("price_exact");
@@ -411,6 +401,18 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
           .thenAnswer(call -> {
             String sql = call.getArgument(0);
             Object[] values = (Object[]) call.getRawArguments()[1];
+            if (sql.equals(AccountHostingFirstInvoicePaymentRepository.AWAITING_PAYMENT_SQL)) {
+              return row(
+                  Map.of(
+                      "status",
+                      "provisioning",
+                      "phase",
+                      "AWAITING_PAYMENT",
+                      "row_version",
+                      currentRowVersion,
+                      "provider_subscription_id",
+                      invoice.providerSubscriptionId()));
+            }
             if (sql.contains("account_hosting_billing_policy_current")) return commercial;
             if (sql.contains("FROM subscription_first_invoice_confirmations")) return original;
             if (sql.contains("subscription_first_invoice_operation_fences")) return null;

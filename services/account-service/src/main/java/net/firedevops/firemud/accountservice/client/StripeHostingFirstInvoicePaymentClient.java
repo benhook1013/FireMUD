@@ -118,7 +118,8 @@ public final class StripeHostingFirstInvoicePaymentClient {
    * Independently observes that the retained original invoice and its existing intent are
    * terminally unpaid. This is read-only evidence; it does not establish payment or entitlement.
    */
-  public TerminalUnpaidObservation observeTerminalUnpaid(AccountHostingFirstInvoicePayment expected)
+  public TerminalUnpaidObservation observeTerminalUnpaid(
+      AccountHostingFirstInvoicePayment expected, boolean allowUnassignedIntent)
       throws StripeException {
     outsideSql();
     Objects.requireNonNull(expected);
@@ -181,10 +182,10 @@ public final class StripeHostingFirstInvoicePaymentClient {
             && "payment_intent".equals(payment.getPayment().getType())
             && expected.paymentIntentId().equals(payment.getPayment().getPaymentIntent()));
     PaymentIntent expandedIntent = payment.getPayment().getPaymentIntentObject();
-    requireTerminalIntent(expandedIntent, expected);
+    requireTerminalIntent(expandedIntent, expected, allowUnassignedIntent);
 
     PaymentIntent intent = stripe.paymentIntents().retrieve(expected.paymentIntentId(), options);
-    requireTerminalIntent(intent, expected);
+    requireTerminalIntent(intent, expected, allowUnassignedIntent);
     require(Objects.equals(expandedIntent.getPaymentMethod(), intent.getPaymentMethod()));
 
     Instant observed = clock.instant();
@@ -192,18 +193,27 @@ public final class StripeHostingFirstInvoicePaymentClient {
         !observed.isBefore(started)
             && Duration.between(started, observed).compareTo(Duration.ofSeconds(20)) < 0);
     return new TerminalUnpaidObservation(
-        expected.invoiceId(), expected.paymentIntentId(), expected.digest(), started, observed);
+        expected.invoiceId(),
+        expected.paymentIntentId(),
+        expected.digest(),
+        intent.getPaymentMethod() == null,
+        started,
+        observed);
   }
 
   private static void requireTerminalIntent(
-      PaymentIntent intent, AccountHostingFirstInvoicePayment expected) {
+      PaymentIntent intent,
+      AccountHostingFirstInvoicePayment expected,
+      boolean allowUnassignedIntent) {
     require(
         intent != null
             && "payment_intent".equals(intent.getObject())
             && expected.paymentIntentId().equals(intent.getId())
             && expected.providerCustomerId().equals(intent.getCustomer())
             && (expected.providerPaymentMethodId().equals(intent.getPaymentMethod())
-                || (intent.getPaymentMethod() == null && intent.getLatestCharge() == null))
+                || (allowUnassignedIntent
+                    && intent.getPaymentMethod() == null
+                    && intent.getLatestCharge() == null))
             && Boolean.valueOf(expected.livemode()).equals(intent.getLivemode())
             && "automatic".equals(intent.getConfirmationMethod())
             && "canceled".equals(intent.getStatus())
@@ -409,6 +419,7 @@ public final class StripeHostingFirstInvoicePaymentClient {
                     && intent.getLatestCharge() == null))
             && Boolean.valueOf(live).equals(intent.getLivemode())
             && "automatic".equals(intent.getConfirmationMethod())
+            && intent.getStatus() != null
             && java.util.Set.of(
                     "requires_confirmation",
                     "requires_payment_method",
@@ -579,6 +590,7 @@ public final class StripeHostingFirstInvoicePaymentClient {
     private final String invoiceId;
     private final String paymentIntentId;
     private final String tupleDigest;
+    private final boolean intentMethodUnassigned;
     private final Instant readStartedAt;
     private final Instant observedAt;
 
@@ -586,11 +598,13 @@ public final class StripeHostingFirstInvoicePaymentClient {
         String invoiceId,
         String paymentIntentId,
         String tupleDigest,
+        boolean intentMethodUnassigned,
         Instant readStartedAt,
         Instant observedAt) {
       this.invoiceId = invoiceId;
       this.paymentIntentId = paymentIntentId;
       this.tupleDigest = tupleDigest;
+      this.intentMethodUnassigned = intentMethodUnassigned;
       this.readStartedAt = readStartedAt;
       this.observedAt = observedAt;
     }
@@ -605,6 +619,10 @@ public final class StripeHostingFirstInvoicePaymentClient {
 
     public String tupleDigest() {
       return tupleDigest;
+    }
+
+    public boolean intentMethodUnassigned() {
+      return intentMethodUnassigned;
     }
 
     public Instant readStartedAt() {

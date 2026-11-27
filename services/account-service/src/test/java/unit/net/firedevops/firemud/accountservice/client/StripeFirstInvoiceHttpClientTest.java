@@ -13,7 +13,6 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
-import java.net.SocketException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -33,7 +32,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class StripeFirstInvoiceHttpClientTest {
   @Test
   void cancelsASlowlyStreamingStripeBodyWithoutAnotherRequest() throws Exception {
-    var streaming = new CountDownLatch(1);
+    var streaming = new CountDownLatch(5);
     try (var server = new ServerSocket();
         var serverExecutor = Executors.newSingleThreadExecutor();
         var transport = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).build()) {
@@ -61,12 +60,22 @@ class StripeFirstInvoiceHttpClientTest {
                           + "8\r\n{\"held\":\r\n")
                       .getBytes(StandardCharsets.US_ASCII));
               outbound.flush();
-              // No terminal chunk or server shutdown: only the real client can end the exchange.
-              // A socket read timeout is a test failure, not evidence of cancellation.
+              // Keep making progress with valid JSON whitespace chunks. The provider deadline,
+              // rather than an idle socket, must end this otherwise-live response body.
+              long fixtureDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4);
               try {
-                return inbound.read() == -1;
-              } catch (SocketException resetAfterFirstChunk) {
+                byte[] chunk = "1\r\n \r\n".getBytes(StandardCharsets.US_ASCII);
+                while (System.nanoTime() < fixtureDeadline) {
+                  outbound.write(chunk);
+                  outbound.flush();
+                  Thread.sleep(20);
+                }
+                return false;
+              } catch (java.io.IOException resetAfterBodyChunk) {
                 return true;
+              } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return false;
               }
             }
           });
@@ -79,7 +88,7 @@ class StripeFirstInvoiceHttpClientTest {
             HttpRequest request = invocation.getArgument(0);
             HttpResponse.BodyHandler<String> handler = invocation.getArgument(1);
             return transport.sendAsync(
-                request, response -> observeFirstBodyChunk(handler.apply(response), streaming));
+                request, response -> observeBodyChunks(handler.apply(response), streaming));
           });
       ReflectionTestUtils.setField(client, "transport", observedTransport);
       var stripe =
@@ -96,7 +105,9 @@ class StripeFirstInvoiceHttpClientTest {
                   .isInstanceOf(ApiConnectionException.class)
                   .hasMessageContaining("First-invoice provider response deadline expired")
                   .hasCauseInstanceOf(TimeoutException.class));
-      assertThat(streaming.getCount()).as("the client received a body chunk").isZero();
+      assertThat(streaming.await(1, TimeUnit.SECONDS))
+          .as("the client continued receiving small chunks without an idle gap")
+          .isTrue();
       assertThat(peerClosed.get(5, TimeUnit.SECONDS))
           .as("the real client closed the peer connection after receiving body bytes")
           .isTrue();
@@ -107,7 +118,7 @@ class StripeFirstInvoiceHttpClientTest {
     }
   }
 
-  private static <T> HttpResponse.BodySubscriber<T> observeFirstBodyChunk(
+  private static <T> HttpResponse.BodySubscriber<T> observeBodyChunks(
       HttpResponse.BodySubscriber<T> delegate, CountDownLatch observed) {
     return new HttpResponse.BodySubscriber<>() {
       @Override

@@ -248,10 +248,10 @@ public final class AccountTenantCapacityOwner {
       if (!"RESERVED".equals(row.get("state", String.class))
           || !"NOT_EXECUTED_AFTER_AUTHORIZATION".equals(row.get("execution_status", String.class))
           || row.get("owner_readback", byte[].class) == null) throw conflict();
-      var authority = current(next);
       requireSupportedShape(next);
       // Match the fresh reservation/refusal path before arbitrating the attempt UUID.
       capacity.usage(next);
+      var authority = current(next);
       capacity.requireFresh(next.evidence());
       originDecisions.accept(next);
       requireClaim(row, recoveryOwner, claimFence, clock.instant());

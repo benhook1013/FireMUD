@@ -1446,13 +1446,18 @@ public class AccountServiceImpl implements AccountService {
           accountEmailLoginChallengeRepository.findByAccountId(lockedAccount.getId()).orElse(null);
     }
     LocalDateTime now = LocalDateTime.now();
-    if (!Objects.equals(verification.challenge, challenge)
-        || verification.activeChallenge != billingOtpActive(challenge, now)) {
+    boolean challengeUnchanged =
+        Objects.equals(verification.challenge, challenge)
+            && verification.activeChallenge == billingOtpActive(challenge, now);
+    boolean passwordAccepted = verification.accepted && !verification.otpAccepted;
+    if (!challengeUnchanged && !passwordAccepted) {
       throw new IllegalStateException("Account billing email challenge changed before retention");
     }
     if (verification.otpAccepted) {
       accountEmailLoginChallengeRepository.delete(challenge);
-    } else if (challenge != null && (!verification.activeChallenge || !verification.accepted)) {
+    } else if (challengeUnchanged
+        && challenge != null
+        && (!verification.activeChallenge || !verification.accepted)) {
       recordFailedEmailLoginAttempt(challenge, now);
     }
     if (!verification.accepted) throw invalidCredentials();

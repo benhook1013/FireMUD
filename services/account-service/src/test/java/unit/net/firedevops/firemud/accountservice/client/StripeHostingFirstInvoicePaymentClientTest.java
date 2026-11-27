@@ -88,6 +88,7 @@ class StripeHostingFirstInvoicePaymentClientTest {
             "/v1/payment_intents/pi_exact/confirm");
     assertThat(transport.methods)
         .containsExactly(RequestMethod.GET, RequestMethod.GET, RequestMethod.POST);
+    assertThat(transport.methods.stream().filter(RequestMethod.GET::equals).count()).isEqualTo(2);
     assertThat(transport.params.get(2))
         .containsEntry("payment_method", "pm_exact")
         .containsEntry("use_stripe_sdk", true);
@@ -97,8 +98,28 @@ class StripeHostingFirstInvoicePaymentClientTest {
   }
 
   @Test
-  void checkoutCaptureAcceptsUnassignedIntentOnlyWithExactReservedSubscriptionDefault()
-      throws Exception {
+  void actionResponseArrivingAtConsentExpiryDoesNotReturnHandoff() {
+    var clock = mock(Clock.class);
+    when(clock.instant()).thenReturn(NOW);
+    var transport =
+        new Transport(
+            invoice("requires_confirmation"),
+            intent("requires_confirmation"),
+            intent("requires_action"));
+    transport.afterProviderResponse = () -> when(clock.instant()).thenReturn(NOW.plusSeconds(120));
+
+    assertThatThrownBy(() ->
+            client(transport, clock)
+                .confirm(dispatch(), StripeHostingFirstInvoicePaymentClientTest::claim))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Exact existing first-invoice provider binding refused");
+    assertThat(transport.methods)
+        .containsExactly(RequestMethod.GET, RequestMethod.GET, RequestMethod.POST);
+    assertThat(transport.methods.stream().filter(RequestMethod.POST::equals).count()).isOne();
+  }
+
+  @Test
+  void checkoutCaptureQualifiesUnassignedIntentAndRefusesMissingStatus() throws Exception {
     var dispatch = mock(ProviderDispatch.class);
     when(dispatch.readyForProviderIo()).thenReturn(true);
     when(dispatch.expectedBinding("sub_exact"))
@@ -128,11 +149,19 @@ class StripeHostingFirstInvoicePaymentClientTest {
     assertThat(observation.paymentIntentId()).isEqualTo("pi_exact");
     assertThat(observation.providerPaymentMethodId()).isEqualTo("pm_exact");
     assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+    assertThat(transport.methods.stream().filter(RequestMethod.GET::equals).count()).isEqualTo(2);
 
     var wrongDefault = new Transport(subscription.replace("pm_exact", "pm_other"));
     assertThatThrownBy(() -> client(wrongDefault).capture(dispatch, "sub_exact"))
         .isInstanceOf(IllegalStateException.class);
     assertThat(wrongDefault.methods).containsExactly(RequestMethod.GET);
+
+    String incompleteIntent =
+        invoice("requires_confirmation").replace(",\"status\":\"requires_confirmation\"", "");
+    var missingStatus = new Transport(subscription, incompleteIntent);
+    assertThatThrownBy(() -> client(missingStatus).capture(dispatch, "sub_exact"))
+        .isExactlyInstanceOf(StripeHostingFirstInvoicePaymentClient.ProviderEvidenceRefused.class);
+    assertThat(missingStatus.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
   }
 
   @Test
@@ -161,6 +190,7 @@ class StripeHostingFirstInvoicePaymentClientTest {
     assertThat(client(transport).confirm(dispatch(), () -> null).status())
         .isEqualTo("AUTHORIZED_NOT_CONFIRMED");
     assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+    assertThat(transport.methods.stream().filter(RequestMethod.GET::equals).count()).isEqualTo(2);
   }
 
   @ParameterizedTest
@@ -176,6 +206,7 @@ class StripeHostingFirstInvoicePaymentClientTest {
                     }))
         .isInstanceOf(IllegalStateException.class);
     assertThat(transport.methods).containsExactly(RequestMethod.GET);
+    assertThat(transport.methods.stream().filter(RequestMethod.GET::equals).count()).isOne();
   }
 
   @Test
@@ -257,6 +288,7 @@ class StripeHostingFirstInvoicePaymentClientTest {
                   throw new AssertionError("Post-claim recovery cannot claim a command");
                 });
     assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+    assertThat(transport.methods.stream().filter(RequestMethod.GET::equals).count()).isEqualTo(2);
     assertThat(handoff.status()).isEqualTo(status);
     assertThat(handoff.clientSecret())
         .isEqualTo("requires_action".equals(status) ? "pi_exact_secret_controlled" : null);
@@ -317,7 +349,13 @@ class StripeHostingFirstInvoicePaymentClientTest {
             () -> provider.confirm(original, StripeHostingFirstInvoicePaymentClientTest::claim))
         .isInstanceOf(com.stripe.exception.ApiConnectionException.class);
     assertThat(
-            provider.confirm(original, StripeHostingFirstInvoicePaymentClientTest::claim).status())
+            provider
+                .confirm(
+                    original,
+                    () -> {
+                      throw new AssertionError("Retry of lost response cannot claim again");
+                    })
+                .status())
         .isEqualTo("requires_action");
     assertThat(transport.methods.stream().filter(RequestMethod.POST::equals).count()).isOne();
     assertThat(transport.paths)
@@ -481,7 +519,7 @@ class StripeHostingFirstInvoicePaymentClientTest {
   void terminalUnpaidObservationRequiresVoidedOriginalAndSeparatelyRetrievedCanceledIntent()
       throws Exception {
     var transport = new Transport(terminalInvoice(), intent("canceled"));
-    var evidence = client(transport).observeTerminalUnpaid(INVOICE);
+    var evidence = client(transport).observeTerminalUnpaid(INVOICE, false);
 
     assertThat(evidence.invoiceId()).isEqualTo("in_exact");
     assertThat(evidence.paymentIntentId()).isEqualTo("pi_exact");
@@ -502,8 +540,9 @@ class StripeHostingFirstInvoicePaymentClientTest {
       throws Exception {
     var transport = new Transport(unassigned(terminalInvoice()), unassigned(intent("canceled")));
 
-    var evidence = client(transport).observeTerminalUnpaid(INVOICE);
+    var evidence = client(transport).observeTerminalUnpaid(INVOICE, true);
 
+    assertThat(evidence.intentMethodUnassigned()).isTrue();
     assertThat(evidence.tupleDigest()).isEqualTo(INVOICE.digest());
     assertThat(transport.paths)
         .containsExactly("/v1/invoices/in_exact", "/v1/payment_intents/pi_exact");
@@ -525,7 +564,7 @@ class StripeHostingFirstInvoicePaymentClientTest {
             new Transport(
                 unassignedInvoice.replace(unassignedIntent, chargedIntent), unassignedIntent));
     for (var transport : transports) {
-      assertThatThrownBy(() -> client(transport).observeTerminalUnpaid(INVOICE))
+      assertThatThrownBy(() -> client(transport).observeTerminalUnpaid(INVOICE, true))
           .isInstanceOf(IllegalStateException.class);
       assertThat(transport.methods).allMatch(method -> method == RequestMethod.GET);
     }
@@ -558,7 +597,7 @@ class StripeHostingFirstInvoicePaymentClientTest {
             NOW.minusSeconds(100));
     var transport = new Transport(terminalInvoice(), intent("canceled"));
 
-    assertThat(client(transport).observeTerminalUnpaid(expired).observedAt()).isEqualTo(NOW);
+    assertThat(client(transport).observeTerminalUnpaid(expired, false).observedAt()).isEqualTo(NOW);
     assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
   }
 
@@ -578,7 +617,7 @@ class StripeHostingFirstInvoicePaymentClientTest {
             terminalInvoice().replace("\"price\":\"price_exact\"", "\"price\":\"price_other\""),
             terminalInvoice().replace("\"id\":\"pi_exact\"", "\"id\":\"pi_other\""))) {
       var transport = new Transport(response, intent("canceled"));
-      assertThatThrownBy(() -> client(transport).observeTerminalUnpaid(INVOICE))
+      assertThatThrownBy(() -> client(transport).observeTerminalUnpaid(INVOICE, false))
           .isInstanceOf(IllegalStateException.class);
       assertThat(transport.methods).containsExactly(RequestMethod.GET);
     }
@@ -592,7 +631,7 @@ class StripeHostingFirstInvoicePaymentClientTest {
             intent("canceled").replace("\"amount_received\":0", "\"amount_received\":1"),
             intent("canceled").replace("\"status\":\"canceled\"", "\"status\":\"succeeded\""))) {
       var transport = new Transport(terminalInvoice(), response);
-      assertThatThrownBy(() -> client(transport).observeTerminalUnpaid(INVOICE))
+      assertThatThrownBy(() -> client(transport).observeTerminalUnpaid(INVOICE, false))
           .isInstanceOf(IllegalStateException.class);
       assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
     }
@@ -726,6 +765,7 @@ class StripeHostingFirstInvoicePaymentClientTest {
   private static final class Transport implements StripeResponseGetter {
     private final List<String> responses;
     private boolean loseConfirmationResponse;
+    private Runnable afterProviderResponse = () -> {};
     private final List<String> paths = new ArrayList<>();
     private final List<RequestMethod> methods = new ArrayList<>();
     private final List<Map<String, Object>> params = new ArrayList<>();
@@ -757,7 +797,9 @@ class StripeHostingFirstInvoicePaymentClientTest {
         throw new com.stripe.exception.ApiConnectionException(
             "Controlled lost confirmation response");
       }
-      return (T) com.stripe.net.ApiResource.GSON.fromJson(responses.get(index), type);
+      T response = (T) com.stripe.net.ApiResource.GSON.fromJson(responses.get(index), type);
+      if (method == RequestMethod.POST) afterProviderResponse.run();
+      return response;
     }
 
     @Override

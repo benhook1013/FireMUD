@@ -98,12 +98,24 @@ class AccountHostingFirstInvoicePaymentServiceTest {
     UUID subscriptionId = invoice.subscriptionId();
     when(current.subscriptionId()).thenReturn(subscriptionId);
     when(receipt.current()).thenReturn(current);
-    when(receipt.receiptRequestId()).thenReturn(lifecycleRequestId);
+    when(receipt.receiptRequestId()).thenReturn(UUID.randomUUID());
     when(lifecycle.readCurrent(invoice.tenantId())).thenReturn(receipt);
 
-    assertThat(service.completeSigned("signed", "header").state()).isEqualTo("COMMITTED");
-    assertThat(service.completeSigned("signed", "header").state()).isEqualTo("COMMITTED");
+    assertThatThrownBy(() -> service.completeSigned("signed", "header"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Independent first-invoice authority readback refused");
+    assertThat(service.completeSigned("signed", "header"))
+        .isEqualTo(
+            new AccountHostingFirstInvoicePaymentService.Completion(
+                "COMMITTED", candidate.requestId()));
     verify(lifecycle, times(1)).readCurrent(invoice.tenantId());
+    verify(lifecycle, times(1))
+        .reconcile(
+            lifecycleRequestId,
+            invoice.creationRequestId(),
+            expectedVersion,
+            invoice.providerSubscriptionId(),
+            null);
     verify(provider, times(1)).observe(invoice);
     verify(provider, times(0)).confirm(any(), any());
     verify(payments, times(1)).retainSignedOutcome(event, observed);

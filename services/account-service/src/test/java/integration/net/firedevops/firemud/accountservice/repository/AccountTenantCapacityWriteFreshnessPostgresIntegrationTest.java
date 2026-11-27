@@ -57,13 +57,13 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
                 incrementUsage(database.dsl(), capacity);
               });
         }
-        var rows = capacityTableImages(database.dsl());
+        var rows = capacityImage(database.dsl());
         var history = history(database.dsl());
         var guards = guards(database.dsl());
 
         configureFlyway(database.data(), database.schema(), "1046.5").migrate();
 
-        assertThat(capacityTableImages(database.dsl())).isEqualTo(rows);
+        assertThat(capacityImage(database.dsl())).isEqualTo(rows);
         List<String> upgradedHistory = history(database.dsl());
         assertThat(upgradedHistory.subList(0, history.size())).containsExactlyElementsOf(history);
         assertThat(upgradedHistory).hasSizeGreaterThan(history.size());
@@ -174,6 +174,100 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
   }
 
   @Test
+  void originalAndRearmRequireBothEvaluationAndReservationToBeLive() {
+    for (boolean expiredEval : List.of(true, false)) {
+      for (boolean expiredReservation : List.of(true, false)) {
+        if (expiredEval == expiredReservation) continue;
+        try (var database = database()) {
+          var capacity = populateCapacity(database.dsl(), database.write());
+          addExpiredEvaluation(database, capacity);
+          configureFlyway(database.data(), database.schema(), "1046.5").migrate();
+          String evaluationIdentity =
+              expiredEval ? expiredEvaluation() : capacity.evaluationIdentity();
+          var before = capacityFreshnessTableImages(database.dsl());
+          assertThatThrownBy(() ->
+                  database
+                      .write()
+                      .executeWithoutResult(ignored -> {
+                        incrementUsage(database.dsl(), capacity);
+                        insertReservationAttempt(
+                            database.dsl(), capacity, evaluationIdentity, expiredReservation);
+                      }))
+              .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"))
+              .hasStackTraceContaining("stale at the reservation write boundary");
+          assertThat(capacityFreshnessTableImages(database.dsl())).isEqualTo(before);
+
+          database
+              .write()
+              .executeWithoutResult(ignored -> {
+                database
+                    .dsl()
+                    .execute(
+                        "UPDATE account_tenant_capacity_reservations SET recovery_owner = ?, recovery_claim_fence = 1, "
+                            + "recovery_claim_expires_at = clock_timestamp() + INTERVAL '1 minute', "
+                            + "execution_status = 'NOT_EXECUTED_AFTER_AUTHORIZATION', owner_readback = ?, owner_readback_digest = ? "
+                            + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                        UUID.randomUUID(),
+                        new byte[] {1},
+                        hex('5'),
+                        capacity.tenantUuid(),
+                        capacity.requestId(),
+                        capacity.admissionId());
+                database
+                    .dsl()
+                    .execute(
+                        "INSERT INTO account_tenant_capacity_attempt_history "
+                            + "(tenant_uuid, request_id, admission_id, admission_attempt_id, capacity_rearm_fence, mutation_digest, canonical_payload, owner_readback) "
+                            + "SELECT tenant_uuid, request_id, admission_id, admission_attempt_id, capacity_rearm_fence, mutation_digest, canonical_payload, owner_readback "
+                            + "FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                        capacity.tenantUuid(),
+                        capacity.requestId(),
+                        capacity.admissionId());
+              });
+          var terminal = capacityFreshnessTableImages(database.dsl());
+          assertThatThrownBy(() ->
+                  database
+                      .write()
+                      .executeWithoutResult(ignored -> {
+                        UUID nextAttemptId = UUID.randomUUID();
+                        String nextMutationDigest = hex('6');
+                        byte[] nextCanonicalPayload = new byte[] {2};
+                        insertOriginDecision(
+                            database.dsl(),
+                            capacity.tenantUuid(),
+                            capacity.requestId(),
+                            capacity.admissionId(),
+                            2,
+                            nextAttemptId,
+                            nextMutationDigest,
+                            nextCanonicalPayload);
+                        database
+                            .dsl()
+                            .execute(
+                                "UPDATE account_tenant_capacity_reservations SET admission_attempt_id = ?, "
+                                    + "capacity_rearm_fence = capacity_rearm_fence + 1, reservation_fence = reservation_fence + 1, "
+                                    + "mutation_digest = ?, canonical_payload = ?, evaluation_identity = ?, expires_at = "
+                                    + "CASE WHEN ? THEN clock_timestamp() - INTERVAL '1 minute' ELSE clock_timestamp() + INTERVAL '1 minute' END, "
+                                    + "execution_status = 'OWNER_EXECUTION_PENDING', owner_readback = NULL, owner_readback_digest = NULL "
+                                    + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                                nextAttemptId,
+                                nextMutationDigest,
+                                nextCanonicalPayload,
+                                evaluationIdentity,
+                                expiredReservation,
+                                capacity.tenantUuid(),
+                                capacity.requestId(),
+                                capacity.admissionId());
+                      }))
+              .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"))
+              .hasStackTraceContaining("stale at the reservation write boundary");
+          assertThat(capacityFreshnessTableImages(database.dsl())).isEqualTo(terminal);
+        }
+      }
+    }
+  }
+
+  @Test
   void deferredFreshnessConstraintHasStructuredIdentityAndRollsBackTheWholeWrite() {
     try (var database = database()) {
       var capacity = populateCapacity(database.dsl(), database.write());
@@ -208,16 +302,6 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
               database
                   .write()
                   .executeWithoutResult(ignored -> {
-                    database
-                        .dsl()
-                        .execute(
-                            "INSERT INTO account_tenant_capacity_evaluations "
-                                + "(evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at) "
-                                + "SELECT ?, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, "
-                                + "clock_timestamp(), clock_timestamp() + INTERVAL '3 seconds' "
-                                + "FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
-                            expiredEvaluation(),
-                            capacity.evaluationIdentity());
                     UUID requestId = UUID.randomUUID();
                     UUID admissionId = UUID.randomUUID();
                     UUID reservationId = UUID.randomUUID();
@@ -228,8 +312,18 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
                             .dsl()
                             .fetchSingle(
                                 "SELECT canonical_evidence FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
-                                expiredEvaluation())
+                                capacity.evaluationIdentity())
                             .get("canonical_evidence", byte[].class);
+                    database
+                        .dsl()
+                        .execute(
+                            "INSERT INTO account_tenant_capacity_evaluations "
+                                + "(evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at) "
+                                + "SELECT ?, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, "
+                                + "clock_timestamp(), clock_timestamp() + INTERVAL '5 seconds' "
+                                + "FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
+                            expiredEvaluation(),
+                            capacity.evaluationIdentity());
                     insertOriginDecision(
                         database.dsl(),
                         capacity.tenantUuid(),
@@ -296,6 +390,14 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
   }
 
   private static void insertExpiredReservation(DSLContext dsl, CapacityFixture capacity) {
+    insertReservationAttempt(dsl, capacity, expiredEvaluation(), true);
+  }
+
+  private static void insertReservationAttempt(
+      DSLContext dsl,
+      CapacityFixture capacity,
+      String evaluationIdentity,
+      boolean expiredReservation) {
     var source =
         dsl.fetchSingle(
             "SELECT mutation_digest, canonical_payload FROM account_tenant_capacity_reservations "
@@ -323,7 +425,8 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
             + "capacity_rearm_fence, reservation_fence, mutation_digest, canonical_payload, evaluation_identity, capacity_delta, "
             + "expires_at, reconcile_deadline, state, execution_status) "
             + "SELECT tenant_uuid, ?, ?, ?, owner_service, caller_workload, ?, 1, 1, ?, ?, ?, 1, "
-            + "clock_timestamp() - INTERVAL '1 minute', reconcile_deadline, 'RESERVED', 'OWNER_EXECUTION_PENDING' "
+            + "CASE WHEN ? THEN clock_timestamp() - INTERVAL '1 minute' ELSE clock_timestamp() + INTERVAL '1 minute' END, "
+            + "reconcile_deadline, 'RESERVED', 'OWNER_EXECUTION_PENDING' "
             + "FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
         requestId,
         admissionId,
@@ -331,10 +434,18 @@ class AccountTenantCapacityWriteFreshnessPostgresIntegrationTest {
         attemptId,
         mutationDigest,
         canonicalPayload,
-        expiredEvaluation(),
+        evaluationIdentity,
+        expiredReservation,
         capacity.tenantUuid(),
         capacity.requestId(),
         capacity.admissionId());
+  }
+
+  private static List<String> capacityImage(DSLContext dsl) {
+    return dsl.fetchSingle("SELECT to_regclass('account_capacity_origin_decisions') IS NOT NULL")
+            .get(0, Boolean.class)
+        ? capacityFreshnessTableImages(dsl)
+        : capacityTableImages(dsl);
   }
 
   private static void insertOriginDecision(
