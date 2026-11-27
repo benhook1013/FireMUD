@@ -11,11 +11,21 @@ import sys
 import tempfile
 from pathlib import Path
 
-import yaml
+try:
+    import yaml
+except ModuleNotFoundError as error:
+    if error.name != "yaml":
+        raise
+    raise SystemExit(
+        "Flyway migration sanity check requires PyYAML. From the repository root, install the pinned "
+        "YAML profile in the active Python environment with: "
+        "python3 -m pip install --require-hashes -r config/python/yaml-requirements.txt"
+    ) from None
 
 VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:[._][0-9]+)*)__.+\.(?:java|sql)$")
 MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/(?:migration|recovery-control-migration)/")
 RECOVERY_MIGRATION_DIR = "/db/recovery-control-migration/"
+RECOVERY_HISTORY_TABLE = "flyway_schema_history_recovery_control"
 PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties)$")
 RUNTIME_DEPENDENCY_RE = re.compile(
     r'(?:implementation|api|runtimeOnly)\s*\(\s*project\(\s*":([^\"]+)"'
@@ -293,6 +303,7 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
                 return None
             exact_guard_paths = {auto_configuration_switch,
                                  "spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
+                                 "spring.flyway.table",
                                  "spring.flyway.sqlmigrationsuffixes", "spring.flyway.sqlmigrationprefix",
                                  "spring.flyway.sqlmigrationseparator",
                                  "spring.flyway.repeatablesqlmigrationprefix",
@@ -348,6 +359,10 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
         locations = locations.split(",")
     if not isinstance(locations, list) or not all(isinstance(location, str) for location in locations):
         return None
+    normalized_locations = {location.strip() for location in locations}
+    # Recovery readiness reads this exact table, which differs from Flyway's default.
+    if "classpath:db/recovery-control-migration" in normalized_locations and flyway.get("table") != RECOVERY_HISTORY_TABLE:
+        return None
     suffixes = flyway.get("sqlmigrationsuffixes", [".sql"])
     if isinstance(suffixes, str):
         suffixes = [suffixes]
@@ -365,7 +380,7 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
     if skip_executing_migrations is not False and not (
             isinstance(skip_executing_migrations, str) and skip_executing_migrations.lower() == "false"):
         return None
-    return {location.strip() for location in locations}
+    return normalized_locations
 
 
 def recovery_location_configured(snapshot: Snapshot, project: str) -> bool:
@@ -379,7 +394,8 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
     issues = []
     for project in sorted({item.project for item in migrations if RECOVERY_MIGRATION_DIR in item.path}):
         if not recovery_location_configured(current, project):
-            issues.append(f"services/{project}: packaged Spring configuration must enable Flyway with target latest and select the recovery-control location")
+            issues.append(f"services/{project}: packaged Spring configuration must enable Flyway with target latest, "
+                          f"select the recovery-control location, and use history table {RECOVERY_HISTORY_TABLE}")
     recovery_sql_root = (
         "services/recovery-controller-service/src/main/resources" + RECOVERY_MIGRATION_DIR
     )
@@ -513,9 +529,18 @@ def run_self_test() -> None:
 
     recovery = "services/recovery-controller-service/src/main/resources/db/recovery-control-migration/"
     recovery_config = "services/recovery-controller-service/src/main/resources/application.yml"
-    recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+    recovery_table_setting = b"    table: flyway_schema_history_recovery_control\n"
+    recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    check("absent history table falls back to a table Recovery readiness does not read", {
+        **recovery_history, recovery_config: recovery_settings.removesuffix(recovery_table_setting),
+    }, recovery_history, f"use history table {RECOVERY_HISTORY_TABLE}")
+    check("higher-priority history table override does not qualify recovery history", {
+        **recovery_history,
+        recovery_config.replace("/application.yml", "/config/application.yml"):
+            b"spring.flyway.table: other_history\n",
+    }, recovery_history, f"use history table {RECOVERY_HISTORY_TABLE}")
     for setting, override in (("sql-migration-prefix", "M"),
                               ("sql-migration-separator", "_"),
                               ("repeatable-sql-migration-prefix", "Q")):
@@ -539,7 +564,7 @@ def run_self_test() -> None:
     }, recovery_history, "historical effective migration no longer applied")
     recovery_list_settings = (
         b"spring:\n  flyway:\n    enabled: true\n    locations:\n"
-        b"      - classpath:db/recovery-control-migration\n"
+        b"      - classpath:db/recovery-control-migration\n" + recovery_table_setting
     )
     yml_locations_override = b"spring:\n  flyway:\n    locations:\n      - classpath:db/migration\n"
     check("application.yml replaces application.yaml locations list", {
@@ -554,7 +579,7 @@ def run_self_test() -> None:
         recovery_config: (
             b"spring:\n  flyway:\n    locations:\n"
             b"      - classpath:db/recovery-control-migration\n"
-            b"      - path: classpath:db/migration\n"
+            b"      - path: classpath:db/migration\n" + recovery_table_setting
         ),
     }, recovery_history, "historical effective migration no longer applied")
     check("mixed comma-separated locations cannot qualify the isolated recovery journal", {
@@ -567,7 +592,7 @@ def run_self_test() -> None:
     redis_exclusion_settings = (
         b"spring:\n  autoconfigure:\n    exclude:\n"
         b"      - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration\n"
-        b"  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+        b"  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
     )
     check("Redis-only autoconfiguration exclusion preserves recovery Flyway", {
         **recovery_history, recovery_config: redis_exclusion_settings,
@@ -577,7 +602,7 @@ def run_self_test() -> None:
         recovery_config: (
             b"spring:\n  autoconfigure:\n    exclude:\n"
             b"      - org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration\n"
-            b"  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+            b"  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
         ),
         recovery_config.replace("/application.yml", "/config/application.yml"): (
             b"spring:\n  autoconfigure:\n    exclude:\n"
@@ -608,7 +633,7 @@ def run_self_test() -> None:
         ("nested Redis-only", (
             b"spring:\n  autoconfigure:\n    exclude:\n"
             b"      0: org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration\n"
-            b"  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+            b"  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
         )),
     ):
         check(f"{exclusion_form} autoconfiguration exclusion preserves recovery Flyway", {
@@ -619,7 +644,7 @@ def run_self_test() -> None:
         recovery_config: (
             b"spring:\n  autoconfigure:\n    exclude:\n"
             b"      - org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration\n"
-            b"  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+            b"  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
         ),
     }, recovery_history, "packaged Spring configuration must enable Flyway")
     for exclusion_form, exclusion_yaml in (
@@ -630,7 +655,7 @@ def run_self_test() -> None:
         ("nested numeric", (
             b"spring:\n  autoconfigure:\n    exclude:\n"
             b"      0: org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration\n"
-            b"  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+            b"  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
         )),
     ):
         check(f"{exclusion_form} Flyway autoconfiguration exclusion cannot qualify recovery history", {
@@ -717,6 +742,7 @@ def run_self_test() -> None:
     dotted_recovery_settings = (
         b"spring.flyway.enabled: true\n"
         b"spring.flyway.locations: classpath:db/recovery-control-migration\n"
+        b"spring.flyway.table: flyway_schema_history_recovery_control\n"
     )
     check("dotted Spring Flyway recovery properties",
           {**recovery_history, recovery_config: dotted_recovery_settings}, recovery_history, None)
@@ -770,7 +796,7 @@ def run_self_test() -> None:
             b"defaults: &fallback {enabled: false}\n"
             b"qualified: &qualified {<<: *fallback, enabled: true}\n"
             b"spring:\n  flyway:\n    <<: *qualified\n"
-            b"    locations: classpath:db/recovery-control-migration\n"
+            b"    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
         ),
     }, complete_recovery_history, None)
     harmless_second_document = recovery_settings + b"---\ncustom:\n  setting: value\n"
@@ -791,7 +817,7 @@ def run_self_test() -> None:
           "historical effective migration no longer applied")
     profile_only_recovery = (
         b"---\nspring:\n  config:\n    activate:\n      on-profile: recovery\n"
-        b"  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+        b"  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
     )
     check("recovery location requiring active profile fails closed",
           {**recovery_history, recovery_config: profile_only_recovery}, recovery_history,

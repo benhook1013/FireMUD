@@ -117,7 +117,7 @@ jobs:
               let lightweightFallback = false;
               let fallbackPython = false;
               let fallbackDesignDocs = false;
-              if (!moduleScopeAvailable && scope.lightweightOnly === true &&
+              if (!moduleScopeAvailable && scope.lightweightOnly === true && scope.runAll !== true &&
                   context.eventName === "pull_request") {
                 try {
                   const eventPr = context.payload.pull_request;
@@ -164,11 +164,16 @@ jobs:
               }
               const unqualifiedLegacyLightweight =
                 !moduleScopeAvailable && scope.lightweightOnly === true && !lightweightFallback;
+              const runAll = scope.runAll || (!moduleScopeAvailable && !lightweightFallback);
+              const affectedModules =
+                lightweightFallback ? [] : (moduleScopeAvailable ? scope.affectedModules : completeModules);
+              const bootableModules =
+                lightweightFallback ? [] : (moduleScopeAvailable ? scope.bootableModules : completeBootableModules);
               outputs = {
-                run_all: scope.runAll || (!moduleScopeAvailable && !lightweightFallback),
+                run_all: runAll,
                 affected_services: scope.affectedServices,
-                affected_modules: lightweightFallback ? [] : (moduleScopeAvailable ? scope.affectedModules : completeModules),
-                bootable_modules: lightweightFallback ? [] : (moduleScopeAvailable ? scope.bootableModules : completeBootableModules),
+                affected_modules: affectedModules,
+                bootable_modules: bootableModules,
                 docs_changed: scope.docsChanged,
                 frontend_changed: scope.frontendChanged,
                 python_changed: scope.pythonChanged || fallbackPython,
@@ -178,7 +183,8 @@ jobs:
                   scope.postgresRuntimeProofChanged === undefined
                     ? (!lightweightFallback || fallbackPython)
                     : (unqualifiedLegacyLightweight || fallbackPython ? true : scope.postgresRuntimeProofChanged),
-                lightweight_only: (moduleScopeAvailable || lightweightFallback) && scope.lightweightOnly,
+                lightweight_only: scope.lightweightOnly === true && !runAll &&
+                  affectedModules.length === 0 && bootableModules.length === 0,
               };
             } else {
               core.warning("Base revision predates the change classifier; using complete validation scope.");

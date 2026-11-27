@@ -515,6 +515,7 @@ test("GitHub shared paths force the complete path", async () => {
 test("GitHub unknown service paths force the complete path", async () => {
   for (const path of [
     "services/unknown-service",
+    "services/unknown-service/README.md",
     "services/unknown-service/src/main.java",
   ]) {
     const result = await classifyGithubFiles([path], 1);

@@ -18,18 +18,20 @@ const workflow = JSON.parse(execFileSync("python3", ["-c",
   "import json,sys,yaml; print(json.dumps(yaml.safe_load(open(sys.argv[1]))))",
   process.argv[2]], {encoding: "utf8"}));
 const compute = workflow.jobs.changes.steps.find(step => step.id === "compute").with.script;
-const {ALL_MODULES, BOOTABLE_MODULES, classifyChangeScope} = require(process.argv[3]);
+const classifier = require(process.argv[3]);
+const {ALL_MODULES, BOOTABLE_MODULES, classifyChangeScope} = classifier;
 const expectedClassifierPath = `${process.env.GITHUB_WORKSPACE}/.github/scripts/classify-change-scope.cjs`;
 assert.equal(process.argv[3], expectedClassifierPath, "test classifier must be the exact required workflow import");
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const execute = new AsyncFunction("require", "github", "context", "core", compute);
 (async () => {
-  for (const [available, modules, compatible] of [
+  for (const [available, modules, compatible, classifierRunsAll = false] of [
     [false, undefined, false],
     [true, undefined, false],
     [true, ALL_MODULES.filter(module => module !== "recovery-controller-service"), false],
     [true, ALL_MODULES.filter(module => module !== "common-redis-contracts"), false],
     [true, ALL_MODULES, true],
+    [true, ALL_MODULES, true, true],
   ]) {
     const outputs = {};
     const githubClient = {};
@@ -42,25 +44,51 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
         classifyGithubChangeScope: async (githubArgument, contextArgument) => {
         assert.equal(githubArgument, githubClient);
         assert.equal(contextArgument, eventContext);
-        return ({
-          runAll: false, affectedModules: ["account-service"], bootableModules: ["account-service"],
-          affectedServices: ["account-service"], lightweightOnly: true,
-        });
+          return {
+            runAll: classifierRunsAll,
+            affectedModules: classifierRunsAll ? ALL_MODULES : [],
+            bootableModules: classifierRunsAll ? [...BOOTABLE_MODULES] : [],
+            affectedServices: [], lightweightOnly: true,
+          };
       },
       };
     }, githubClient, eventContext, {setOutput: (name, value) => outputs[name] = value, warning() {}});
-    assert.equal(outputs.run_all, String(!compatible));
-    assert.equal(outputs.lightweight_only, String(compatible));
-    assert.deepEqual(JSON.parse(outputs.affected_modules), compatible ? ["account-service"] : ALL_MODULES);
+    const fullValidation = !compatible || classifierRunsAll;
+    assert.equal(outputs.run_all, String(fullValidation));
+    assert.equal(outputs.lightweight_only, String(!fullValidation));
+    assert.deepEqual(JSON.parse(outputs.affected_modules), fullValidation ? ALL_MODULES : []);
     assert.deepEqual(JSON.parse(outputs.bootable_modules),
-      compatible ? ["account-service"] : [...BOOTABLE_MODULES]);
-    if (!compatible) {
+      fullValidation ? [...BOOTABLE_MODULES] : []);
+    if (fullValidation) {
       const otherModuleRows = JSON.parse(outputs.other_module_check_matrix);
       for (const module of ["recovery-controller-service", "common-redis-contracts"]) {
         assert.equal(otherModuleRows.filter(row => row.module === module && row.partition === "full").length, 1,
           `fallback matrix must schedule exactly one full check for ${module}`);
       }
     }
+  }
+  for (const [filename, runAll, lightweightOnly, expectedModules, expectedBootableModules] of [
+    ["services/account-service/README.md", false, true, [], []],
+    ["services/account-service/src/main/java/Example.java", false, false, ["account-service"], ["account-service"]],
+    ["services/new-service/README.md", true, false, ALL_MODULES, [...BOOTABLE_MODULES]],
+  ]) {
+    const outputs = {};
+    const githubClient = {
+      rest: {pulls: {listFiles() {}}},
+      async paginate() { return [{filename, status: "modified"}]; },
+    };
+    const eventContext = {eventName: "pull_request", repo: {owner: "example", repo: "FireMUD"},
+      payload: {pull_request: {number: 42, changed_files: 1}}};
+    await execute(name => {
+      if (name === "node:fs") return {existsSync: () => true};
+      assert.equal(name, expectedClassifierPath);
+      return classifier;
+    }, githubClient, eventContext,
+    {setOutput: (name, value) => outputs[name] = value, warning() {}});
+    assert.equal(outputs.run_all, String(runAll), filename);
+    assert.equal(outputs.lightweight_only, String(lightweightOnly), filename);
+    assert.deepEqual(JSON.parse(outputs.affected_modules), expectedModules, filename);
+    assert.deepEqual(JSON.parse(outputs.bootable_modules), expectedBootableModules, filename);
   }
   for (const [entries, count, expected, drift, expectsPython = false, expectsDesignDocs = false,
     expectsPostgresProof = !expected] of [
@@ -77,6 +105,7 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     [[{filename: "design/README.md"}], 1, false, "head-before"],
     [[{filename: "design/README.md"}], 1, false, "head-after"],
     [[{filename: "design/README.md"}], 1, false, "base-after"],
+    [[{filename: "design/README.md"}], 1, false, "pagination-error"],
     [[{filename: "design/README.md"}], 2, false],
     [[{filename: "design/README.md", status: "renamed"}], 1, false],
     [[{filename: "services/new-service/README.md"}], 1, false],
@@ -101,6 +130,7 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
       }},
       async paginate(endpoint, options) {
         calls.push({method: "paginate", endpoint, options});
+        if (drift === "pagination-error") throw new Error("file list temporarily unavailable");
         if (drift === "head-after") serverPullRequest.head.sha = "c".repeat(40);
         if (drift === "base-after") serverPullRequest.base.sha = "c".repeat(40);
         return entries.map(entry => ({status: "modified", ...entry}));
@@ -125,11 +155,12 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     }, githubClient, eventContext,
     {setOutput: (name, value) => outputs[name] = value, warning() {}});
     const expectedPull = {owner: "example", repo: "FireMUD", pull_number: 42};
-    assert.deepEqual(calls, [
+    const expectedCalls = [
       {method: "get", options: expectedPull},
       {method: "paginate", endpoint: listFiles, options: {...expectedPull, per_page: 100}},
-      {method: "get", options: expectedPull},
-    ], "fallback must verify the same PR tuple before and after complete pagination");
+    ];
+    if (drift !== "pagination-error") expectedCalls.push({method: "get", options: expectedPull});
+    assert.deepEqual(calls, expectedCalls, "fallback must verify the same PR tuple before and after complete pagination");
     assert.equal(outputs.lightweight_only, String(expected));
     assert.equal(outputs.validation_python_changed, String(expectsPython));
     assert.equal(outputs.python_changed, String(expectsPython));

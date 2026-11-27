@@ -232,7 +232,7 @@ function classifyChangeScope(inputFiles, options = {}) {
     validationPythonChanged,
     postgresRuntimeProofChanged: files.some(isPostgresRuntimeProofRelevant),
     lightweightOnly:
-      !forceAll &&
+      !runAll &&
       files.length > 0 &&
       files.every(isLightweightEligible),
   };

@@ -176,6 +176,7 @@ public final class InitialGameplayReleaseController {
   }
 
   private Operation readBackEffect(Operation operation, OutboxEntry outbox) {
+    tupleCodec.requireEffectMatchesOperation(outbox.effect(), operation);
     UUID attemptId = outbox.lastAttemptId();
     if (attemptId == null) {
       throw new InitialGameplayReleaseConflictException(
