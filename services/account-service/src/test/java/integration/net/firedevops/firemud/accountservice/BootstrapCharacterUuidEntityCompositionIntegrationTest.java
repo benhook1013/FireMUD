@@ -453,10 +453,19 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
       String token = issuePlayerBootstrap(caller);
       // HTTP issuance uses the wall clock; keep the retained paid and scope fixtures on one clock.
       hosting.clock().advanceToAtLeast(Clock.systemUTC().instant());
+      hosting
+          .clock()
+          .advanceToAtLeast(
+              hosting
+                  .clock()
+                  .instant()
+                  .truncatedTo(java.time.temporal.ChronoUnit.MICROS)
+                  .plusNanos(999));
       var bootstrapClaims = jwtUtil.parseToken(token).getPayload();
       assertThat(hosting.clock().instant())
           .isAfterOrEqualTo(bootstrapClaims.getIssuedAt().toInstant())
           .isBefore(bootstrapClaims.getExpiration().toInstant());
+      assertThat(hosting.clock().instant().getNano() % 1_000).isEqualTo(999);
       String scope = discoverConnectScope(caller, token, target);
       var request = new JoinPublicProductionRequest(scope, UUID.randomUUID().toString());
       var joined = facade.joinPublicProduction(token, request);
