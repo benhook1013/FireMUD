@@ -35,6 +35,7 @@ import io.grpc.stub.ServerCalls;
 import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -42,6 +43,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -94,7 +96,6 @@ import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdm
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionRequest;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationAcquisitionClient;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationHistoricalReadClient;
-import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationSettlementInput;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountInitialAdmissionSettlementReadClient;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionAcquisitionClient;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionSettlementClient;
@@ -1369,13 +1370,64 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 .isEqualTo(protectedAccount);
             assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
                 .isEqualTo(gsBefore);
+            UUID settlementRequestId = UUID.randomUUID();
+            var originalRecoveryIdentity = identity.get();
             var participationSettlement =
-                worldParticipationSettlement.settle(
-                    new AccountStartSessionWorldParticipationSettlementInput(
-                        NAMESPACE,
-                        UUID.randomUUID(),
-                        identity.get().accountWorldParticipationId(),
-                        identity.get().accountWorldParticipationFence()));
+                new WorldOriginalOperationSettlementRecovery(service, worldParticipationSettlement)
+                    .recover(originalRecoveryIdentity, settlementRequestId)
+                    .orElseThrow();
+            // Recreate the recovery service and every outbound recovery client, preserving only
+            // the original lookup/correlation and actual owner storage. This is component restart,
+            // not an operating-system crash or a restarted database/server deployment.
+            var worldRowsBeforeRecoveryReplay = orderedRowFingerprints(world.dsl());
+            var accountRowsBeforeRecoveryReplay = orderedRowFingerprints(issuer.sourceDsl());
+            var gameSessionRowsBeforeRecoveryReplay = orderedRowFingerprints(gs.dsl());
+            try (var restartedSettlement =
+                    new GrpcAccountStartSessionWorldParticipationSettlementClient(
+                        accountEndpoints,
+                        pki.client("world-management-service"),
+                        factory,
+                        NAMESPACE);
+                var restartedAccountHistory =
+                    new AccountStartSessionWorldParticipationHistoricalReadClient(
+                        accountEndpoints,
+                        pki.client("world-management-service"),
+                        factory,
+                        NAMESPACE);
+                var restartedGameSessionHistory =
+                    new HistoricalOriginalStartSessionOwnerEvidenceReadClient(
+                        gsEndpoints, pki.client("world-management-service"), factory, NAMESPACE)) {
+              restartedSettlement.init();
+              restartedAccountHistory.init();
+              restartedGameSessionHistory.init();
+              var restartedPreparation =
+                  new WorldCanonicalInstancePreparationService(
+                      repository,
+                      (supplied, suppliedOperation) -> {
+                        throw new AssertionError(
+                            "Historical recovery must not reacquire World participation");
+                      },
+                      new WorldCanonicalInstanceOriginalOperationRecoveryVerifier(
+                          restartedAccountHistory, restartedGameSessionHistory),
+                      world.installationRegistry());
+              var restartedRecovery =
+                  new WorldOriginalOperationSettlementRecovery(
+                      restartedPreparation, restartedSettlement);
+              var replay =
+                  restartedRecovery
+                      .recover(originalRecoveryIdentity, settlementRequestId)
+                      .orElseThrow();
+              assertThat(replay.settlementRequestId()).isEqualTo(settlementRequestId);
+              assertThat(replay.terminal().canonicalBytes())
+                  .containsExactly(participationSettlement.terminal().canonicalBytes());
+              assertThat(replay.settledAt()).isEqualTo(participationSettlement.settledAt());
+            }
+            assertThat(orderedRowFingerprints(world.dsl()))
+                .isEqualTo(worldRowsBeforeRecoveryReplay);
+            assertThat(orderedRowFingerprints(issuer.sourceDsl()))
+                .isEqualTo(accountRowsBeforeRecoveryReplay);
+            assertThat(orderedRowFingerprints(gs.dsl()))
+                .isEqualTo(gameSessionRowsBeforeRecoveryReplay);
             assertThat(participationSettlement.terminal().canonicalBytes())
                 .containsExactly(recovered.get().canonicalBytes());
             byte[] participationTerminalBytes =
@@ -4783,6 +4835,74 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         .containsExactly("PENDING");
     assertThat(world.fetchCount(DSL.table("world_canonical_instance_activation_operation")))
         .isZero();
+  }
+
+  private record TableFingerprint(long rowCount, String sha256) {}
+
+  private static Map<String, TableFingerprint> orderedRowFingerprints(DSLContext sql) {
+    return sql.connectionResult(
+        connection -> {
+          // pgJDBC needs a transaction and a positive fetch size to use a server cursor.
+          if (!connection.getAutoCommit()) {
+            throw new SQLException("Owner-pair fingerprint requires its own read-only transaction");
+          }
+          boolean originalReadOnly = connection.isReadOnly();
+          connection.setReadOnly(true);
+          try {
+            connection.setAutoCommit(false);
+            try {
+              return readOrderedRowFingerprints(connection);
+            } finally {
+              connection.rollback();
+              connection.setAutoCommit(true);
+            }
+          } finally {
+            connection.setReadOnly(originalReadOnly);
+          }
+        });
+  }
+
+  private static Map<String, TableFingerprint> readOrderedRowFingerprints(Connection connection)
+      throws SQLException {
+    var tables = new ArrayList<String>();
+    try (var statement = connection.createStatement();
+        var result =
+            statement.executeQuery(
+                "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename")) {
+      while (result.next()) {
+        tables.add(result.getString(1));
+      }
+    }
+    var fingerprints = new TreeMap<String, TableFingerprint>();
+    try (var statement =
+        connection.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
+      statement.setFetchSize(1);
+      var frame = ByteBuffer.allocate(Integer.BYTES);
+      var sha256 = MessageDigest.getInstance("SHA-256");
+      for (String table : tables) {
+        sha256.reset();
+        long count = 0;
+        String quotedTable = "\"" + table.replace("\"", "\"\"") + "\"";
+        try (var result =
+            statement.executeQuery(
+                "SELECT row_to_json(t)::text || '|xmin=' || t.xmin::text AS body FROM "
+                    + quotedTable
+                    + " t ORDER BY row_to_json(t)::text,t.xmin::text")) {
+          while (result.next()) {
+            byte[] row = result.getString(1).getBytes(StandardCharsets.UTF_8);
+            frame.putInt(0, row.length);
+            sha256.update(frame.array());
+            sha256.update(row);
+            count++;
+          }
+        }
+        fingerprints.put(
+            table, new TableFingerprint(count, HexFormat.of().formatHex(sha256.digest())));
+      }
+    } catch (NoSuchAlgorithmException e) {
+      throw new IllegalStateException("SHA-256 unavailable", e);
+    }
+    return fingerprints;
   }
 
   private static Map<String, List<String>> rows(DSLContext dsl, String... tables) {
