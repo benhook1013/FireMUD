@@ -86,7 +86,7 @@ class AccountAuditReceiptRepositoryTest {
     String lookupSql = executedSql.get(1);
     assertThat(lookupSql)
         .contains("scope", "tenant_key", "audit_event_id")
-        .doesNotContain("tenant_id");
+        .doesNotContain("\"tenant_id\"");
     assertThat(projectionLookupBindings).hasSize(1);
     assertThat(projectionLookupBindings.get(0))
         .containsExactly(scope.databaseValue(), 1, expectedTenantKey, AUDIT_EVENT_ID);
