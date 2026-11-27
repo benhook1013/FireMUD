@@ -2455,8 +2455,10 @@ class PlayCommandHandlerTest {
         .clearGameplayBinding(context, "tenant_unavailable");
   }
 
-  @Test
-  void playWhenMembershipAuthorityUnavailableFailsClosed() {
+  @ParameterizedTest
+  @ValueSource(
+      strings = {GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE, "FAILED_PRECONDITION"})
+  void playWhenMembershipAuthorityUnavailableFailsClosed(String membershipError) {
     SessionContext context =
         new SessionContext(
             1L, 22L, ACCOUNT_ID, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
@@ -2467,7 +2469,7 @@ class PlayCommandHandlerTest {
             GetTenantMembershipForRuntimeResponse.newBuilder()
                 .setError(
                     net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                        .setCode(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE)
+                        .setCode(membershipError)
                         .setMessage(GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE))
                 .build());
 
