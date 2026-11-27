@@ -2,6 +2,9 @@ package net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.AdditionalAnswers.delegatesTo;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
@@ -10,6 +13,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -19,6 +23,9 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import javax.sql.DataSource;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionOriginalAckReceipt;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.SourceKind;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.TokenIdentity;
@@ -35,6 +42,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DelegatingDataSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
@@ -845,6 +853,46 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   }
 
   @Test
+  void lostPostAcknowledgementClockResponseCannotBeRemintedFromCommittedRetry() {
+    var context = context();
+    var evidence = pending(context, 15000);
+    long originalExpiryMs = Long.parseLong((String) evidence.carrier().get("expiresAt"));
+    UUID decision = UUID.randomUUID();
+    var sourcesBefore = sourceSnapshot(context);
+    var physicalCommits = new AtomicInteger();
+    var lostClockResponses = new AtomicInteger();
+    var source =
+        losePostCommitClockResponse(
+            context.admin(), originalExpiryMs, physicalCommits, lostClockResponses);
+
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(source)
+                    .execute(evidence, decision))
+        .hasMessageContaining("post-COMMIT clock unavailable")
+        .hasRootCauseMessage("Post-COMMIT clock response lost");
+
+    assertThat(physicalCommits.get()).isOne();
+    assertThat(lostClockResponses.get()).isOne();
+    var committed = operation(context, evidence);
+    assertThat(committed.get("status")).isEqualTo("COMMITTED");
+    assertThat(committed.get("binding_decision_id")).isEqualTo(decision);
+    assertThat((String) committed.get("finalization_xid")).matches("[1-9][0-9]{0,19}");
+    assertThat(committed.get("evidence_json")).isEqualTo(evidence.canonicalJson());
+    assertThat(committed.get("expires_at_ms")).isEqualTo(originalExpiryMs);
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
+
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
+                    .execute(evidence, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, evidence)).isEqualTo(committed);
+    assertThat(sourceSnapshot(context)).isEqualTo(sourcesBefore);
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
+  }
+
+  @Test
   void lostOriginalCommitAcknowledgementCannotReconstructCapabilityOrRetryFinalization() {
     var context = context();
     var evidence = pending(context, 15000);
@@ -1455,6 +1503,66 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
             constructionFailure.addSuppressed(closeFailure);
           }
           throw constructionFailure;
+        }
+      }
+    };
+  }
+
+  private static DataSource losePostCommitClockResponse(
+      DataSource delegate,
+      long originalExpiryMs,
+      AtomicInteger physicalCommits,
+      AtomicInteger lostClockResponses) {
+    return new DelegatingDataSource(delegate) {
+      @SuppressFBWarnings(
+          value = "ODR_OPEN_DATABASE_RESOURCE",
+          justification = "The returned delegate closes the physical database connection.")
+      @Override
+      public Connection getConnection() throws SQLException {
+        Connection physical = super.getConnection();
+        try {
+          var committed = new AtomicBoolean();
+          var observed = mock(Connection.class, delegatesTo(physical));
+          doAnswer(
+                  call -> {
+                    physical.commit();
+                    physicalCommits.incrementAndGet();
+                    committed.set(true);
+                    return null;
+                  })
+              .when(observed)
+              .commit();
+          doAnswer(
+                  call -> {
+                    var statement = physical.createStatement();
+                    if (!committed.get()) return statement;
+                    var observedStatement = mock(Statement.class, delegatesTo(statement));
+                    doAnswer(
+                            query -> {
+                              try (var reply = statement.executeQuery(query.getArgument(0))) {
+                                assertThat(reply.next()).isTrue();
+                                assertThat(reply.getLong(1))
+                                    .isPositive()
+                                    .isLessThan(originalExpiryMs);
+                              }
+                              lostClockResponses.incrementAndGet();
+                              throw new SQLException("Post-COMMIT clock response lost", "08006");
+                            })
+                        .when(observedStatement)
+                        .executeQuery(
+                            "SELECT ceil(extract(epoch FROM clock_timestamp()) * 1000)::bigint");
+                    return observedStatement;
+                  })
+              .when(observed)
+              .createStatement();
+          return observed;
+        } catch (SQLException | RuntimeException | Error failure) {
+          try {
+            physical.close();
+          } catch (SQLException closeFailure) {
+            failure.addSuppressed(closeFailure);
+          }
+          throw failure;
         }
       }
     };
