@@ -313,7 +313,8 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
                                  "spring.flyway.sqlmigrationseparator",
                                  "spring.flyway.repeatablesqlmigrationprefix",
                                  "spring.flyway.skipdefaultresolvers",
-                                 "spring.flyway.skipexecutingmigrations"}
+                                 "spring.flyway.skipexecutingmigrations",
+                                 "spring.flyway.baselineonmigrate"}
             guard_paths = {
                 path for path in properties
                 if path in exact_guard_paths
@@ -391,6 +392,10 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
     if skip_executing_migrations is not False and not (
             isinstance(skip_executing_migrations, str) and skip_executing_migrations.lower() == "false"):
         return None
+    baseline_on_migrate = flyway.get("baselineonmigrate", False)
+    if baseline_on_migrate is not False and not (
+            isinstance(baseline_on_migrate, str) and baseline_on_migrate.lower() == "false"):
+        return None
     return normalized_locations
 
 
@@ -410,7 +415,7 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
         if not recovery_location_configured(current, project):
             issues.append(f"{project_root}: packaged Spring configuration must enable Flyway with target latest, "
                           f"select the recovery-control location, use history table {RECOVERY_HISTORY_TABLE} "
-                          f"in {RECOVERY_SCHEMA}, and share the journal datasource")
+                          f"in {RECOVERY_SCHEMA}, share the journal datasource, and disable automatic baselining")
         if not recovery_versioned:
             issues.append(f"{project_root}: requires at least one versioned migration in the recovery-control location")
     recovery_sql_root = (
@@ -554,6 +559,22 @@ def run_self_test() -> None:
     recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    for baseline_disabled in (b"false", b"'FaLsE'"):
+        check("explicitly disabled recovery auto-baselining", {
+            **recovery_history,
+            recovery_config: recovery_settings + b"    baseline-on-migrate: " + baseline_disabled + b"\n",
+        }, recovery_history, None)
+    for baseline_enabled in (
+        recovery_settings + b"    baseline-on-migrate: true\n    baseline-version: 5\n",
+        recovery_settings + b"    baseline-on-migrate: ${RECOVERY_BASELINE:false}\n",
+        recovery_settings + (
+            b"---\nspring.config.activate.on-profile: recovery\n"
+            b"spring.flyway.baseline-on-migrate: true\n"
+        ),
+    ):
+        check("reject unqualified recovery auto-baselining", {
+            **recovery_history, recovery_config: baseline_enabled,
+        }, recovery_history, "historical effective migration no longer applied")
     check("absent history table falls back to a table Recovery readiness does not read", {
         **recovery_history,
         recovery_config: recovery_settings.removesuffix(b"    table: flyway_schema_history_recovery_control\n"),

@@ -267,6 +267,33 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   }
 
   @Test
+  void rejectsAutomaticBaseliningFromRelaxedEnvironmentOverrides() {
+    var environment = fixtureEnvironment();
+    environment
+        .getPropertySources()
+        .addFirst(
+            new SystemEnvironmentPropertySource(
+                "test-systemEnvironment",
+                Map.of(
+                    "SPRING_FLYWAY_BASELINEONMIGRATE",
+                    "true",
+                    "SPRING_FLYWAY_BASELINEVERSION",
+                    "5")));
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.flyway.baseline-on-migrate must be disabled");
+  }
+
+  @Test
+  void acceptsExplicitlyDisabledAutomaticBaselining() {
+    var environment =
+        fixtureEnvironment().withProperty("spring.flyway.baseline-on-migrate", "false");
+    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
   void acceptsMatchingDatasourceOverridesAndKeepsLocalFixtureSettings() {
     String url = "jdbc:postgresql://localhost:5544/firemud_recovery_control";
     var environment =
