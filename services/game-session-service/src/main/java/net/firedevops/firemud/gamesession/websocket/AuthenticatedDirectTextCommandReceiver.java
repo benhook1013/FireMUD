@@ -10,7 +10,11 @@ import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionS
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.presentation.BriefRenderPolicy;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
+import net.firedevops.firemud.gamesession.presentation.ReplayPolicy;
+import net.firedevops.firemud.gamesession.presentation.TextMessageOutput;
 import net.firedevops.firemud.gamesession.repository.PreV1CanonicalPlayAdmissionOwner;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginOwner;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyOwner;
@@ -108,7 +112,17 @@ public final class AuthenticatedDirectTextCommandReceiver {
                 if (observation.status()
                         != DirectTextAuthenticatedLobbyOwner.Status.COMPLETED_CURRENT_NON_ADMITTING
                     || observation.currentReply().isEmpty()) throw new IllegalStateException();
-                return success("Joined public production realm");
+                return new TextCommandInterpretationResult(
+                    CommandEnqueueResult.success(),
+                    List.of(
+                        new PlayerOutput(
+                            PlayerOutputKind.MESSAGE,
+                            new TextMessageOutput(
+                                "Joined public production realm",
+                                "message.gameplay.received",
+                                Map.of()),
+                            ReplayPolicy.NO_REPLAY,
+                            BriefRenderPolicy.ALWAYS_SHOW)));
               });
         }
         case PLAY -> play(connection, command);

@@ -25,6 +25,9 @@ import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
+import net.firedevops.firemud.gamesession.presentation.BriefRenderPolicy;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
+import net.firedevops.firemud.gamesession.presentation.ReplayPolicy;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.PreV1CanonicalPlayAdmissionOwner;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginOwner;
@@ -104,10 +107,22 @@ class AuthenticatedDirectTextCommandReceiverTest {
                 UUID.randomUUID(),
                 DirectTextAuthenticatedLobbyOwner.Status.COMPLETED_CURRENT_NON_ADMITTING,
                 Optional.of(JoinPublicProductionMembershipResponse.getDefaultInstance())));
-    var result =
-        fixture.receiver.receive(
-            fixture.socket, new TextCommand(TextCommandType.JOIN, List.of("demo"), "JOIN demo"));
+    var command = new TextCommand(TextCommandType.JOIN, List.of("demo"), "JOIN demo");
+    var result = fixture.receiver.receive(fixture.socket, command);
     assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs())
+        .singleElement()
+        .satisfies(
+            output -> {
+              assertThat(output.kind()).isEqualTo(PlayerOutputKind.MESSAGE);
+              assertThat(output.replayPolicy()).isEqualTo(ReplayPolicy.NO_REPLAY);
+              assertThat(output.briefRenderPolicy()).isEqualTo(BriefRenderPolicy.ALWAYS_SHOW);
+              assertThat(output.screenBufferEligible()).isFalse();
+            });
+    assertThat(
+            new TextPlayerOutputRenderer(new PresentationProperties())
+                .renderAll(command, result.commandResult(), result.outputs()))
+        .isEqualTo("OK JOIN\nJoined public production realm\n\n");
     verify(fixture.selections).resolve(fixture.connection.menu, "demo");
     verify(fixture.lobby).join(null, null, fixture.connection);
   }
