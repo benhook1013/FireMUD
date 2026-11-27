@@ -195,9 +195,12 @@ public final class AccountTenantCapacityOwner {
           lockPlayerAccount(request);
           var evidence = request.evidence();
           Instant retainedExpiry = capacity.requireRetained(evidence);
+          boolean expired = capacity.retainedEvaluationExpired(retainedExpiry);
+          if (expired && !evidence.permitsCreation()) {
+            throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+          }
           var parsed = currentMembership(request);
           requireSupportedShape(request);
-          boolean expired = capacity.retainedEvaluationExpired(retainedExpiry);
           if (expired) {
             return expiredOriginal(request, retainedExpiry);
           }
