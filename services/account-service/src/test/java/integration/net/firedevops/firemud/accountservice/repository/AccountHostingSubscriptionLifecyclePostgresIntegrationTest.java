@@ -553,6 +553,62 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(count(c, "subscription_first_invoice_success_evidence")).isOne();
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void unpaidVetoUsesRetainedSuccessIdentityAcrossUpgrade(boolean quotedAmount) throws Exception {
+    Context c = context("1046.9.0.4");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            invoiceCheckoutDirectory,
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var original = checkout.signedSuccessAt(f.clock().instant().minusSeconds(60));
+    String amounts = "\"amount\":2400,\"amount_received\":2400,";
+    assertThat(original.payload()).contains(amounts);
+    var signed =
+        quotedAmount
+            ? checkout.signWebhookPayload(
+                original
+                    .payload()
+                    .replace(amounts, "\"amount\":\"2400\",\"amount_received\":2400,"))
+            : original;
+    var verified = checkout.verifier().verify(signed.payload(), signed.signature());
+    var inbox = new StripeEventInboxRepository(c.dsl());
+    in(c, () -> inbox.retainOrReplay(verified));
+    String retainedRows =
+        "SELECT provider_event_id, encode(raw_payload, 'hex'), payload_sha256, xmin::text "
+            + "FROM stripe_event_inbox ORDER BY provider_event_id";
+    var before = c.setup().fetch(retainedRows);
+
+    configuration(c).target("1046.9.0.5").load().migrate();
+
+    assertThat(c.setup().fetch(retainedRows)).isEqualTo(before);
+    var lookup =
+        c.setup()
+            .fetch(
+                "SELECT provider_event_id FROM stripe_first_invoice_success_lookup "
+                    + "WHERE livemode = false AND payment_intent_id = ?",
+                checkout.invoice().paymentIntentId());
+    assertThat(lookup.getValues(0, String.class)).containsExactly(verified.providerEventId());
+    assertThat(
+            one(
+                    c,
+                    "SELECT account_first_invoice_signed_success_retained(?, false)",
+                    checkout.invoice().paymentIntentId())
+                .get(0, Boolean.class))
+        .isEqualTo(!quotedAmount);
+    assertThat(in(c, () -> inbox.retainOrReplay(verified)).rawPayload())
+        .isEqualTo(signed.payload());
+    assertThat(count(c, "stripe_first_invoice_success_lookup")).isOne();
+  }
+
   @Test
   void authorizationExpiryAfterCommittedCommandClaimRetainsImmutableNoSendEvidence() {
     Context c = context("latest");
