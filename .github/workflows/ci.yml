@@ -28,7 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read # Classify the complete pull-request file list.
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     outputs:
       run_all: ${{ steps.compute.outputs.run_all }}
@@ -105,90 +104,101 @@ jobs:
               "recovery-controller-service",
               "hosted-environment-identity-controller",
             ];
+            // Bind the changed paths to the event commits. The PR-number file list
+            // follows the live comparison, even when its file count stays the same.
+            const readEventFiles = async () => {
+              const eventPr = context.payload?.pull_request;
+              const base = eventPr?.base?.sha;
+              const head = eventPr?.head?.sha;
+              const validSha = sha => typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha) &&
+                sha !== "0".repeat(40);
+              if (!validSha(base) || !validSha(head) || base === head ||
+                  !Number.isInteger(eventPr.changed_files) || eventPr.changed_files <= 0 ||
+                  eventPr.changed_files >= 300) {
+                return null;
+              }
+              try {
+                const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+                  ...context.repo,
+                  basehead: base + "..." + head,
+                  per_page: 100,
+                });
+                const mergeBase = comparison?.merge_base_commit?.sha;
+                const entries = comparison?.files;
+                const validPath = path => typeof path === "string" && path.length > 0;
+                if (comparison?.base_commit?.sha !== base || !validSha(mergeBase) || mergeBase === head ||
+                    !((comparison.status === "ahead" && mergeBase === base) ||
+                      (comparison.status === "diverged" && mergeBase !== base)) ||
+                    !Array.isArray(entries) || entries.length !== eventPr.changed_files ||
+                    !entries.every(entry => entry && validPath(entry.filename) &&
+                      ["added", "removed", "modified", "renamed"].includes(entry.status) &&
+                      (entry.status !== "renamed" || validPath(entry.previous_filename)) &&
+                      (entry.previous_filename === undefined || validPath(entry.previous_filename))) ||
+                    new Set(entries.map(entry => entry.filename)).size !== entries.length) {
+                  return null;
+                }
+                return entries.flatMap(entry => entry.previous_filename === undefined
+                  ? [entry.filename] : [entry.filename, entry.previous_filename]);
+              } catch {
+                return null;
+              }
+            };
             let outputs;
             if (fs.existsSync(classifierPath)) {
-              const { classifyGithubChangeScope, ALL_MODULES } = require(classifierPath);
-              const scope = await classifyGithubChangeScope(github, context);
-              const moduleScopeAvailable =
-                Array.isArray(scope.affectedModules) && Array.isArray(scope.bootableModules) &&
-                Array.isArray(ALL_MODULES) && completeModules.every(module => ALL_MODULES.includes(module));
-              // Re-read complete native paths before preserving an older classifier's
-              // lightweight lane. Unrecognized service and runtime inputs keep full proof.
-              let lightweightFallback = false;
-              let fallbackPython = false;
-              let fallbackDesignDocs = false;
-              if (!moduleScopeAvailable && scope.lightweightOnly === true && scope.runAll !== true &&
-                  context.eventName === "pull_request") {
-                try {
-                  const eventPr = context.payload.pull_request;
-                  const exactEvent = pr => pr && /^[0-9a-f]{40}$/i.test(eventPr.head?.sha || "") &&
-                    /^[0-9a-f]{40}$/i.test(eventPr.base?.sha || "") &&
-                    pr.number === eventPr.number && pr.head?.sha === eventPr.head.sha &&
-                    pr.base?.sha === eventPr.base.sha &&
-                    pr.changed_files === eventPr.changed_files;
-                  const before = (await github.rest.pulls.get({
-                    ...context.repo, pull_number: eventPr.number,
-                  })).data;
-                  const entries = await github.paginate(github.rest.pulls.listFiles, {
-                    ...context.repo, pull_number: context.payload.pull_request.number, per_page: 100,
-                  }, response => response.data);
-                  const knownDoc = path => path === "mkdocs.yml" ||
-                    (typeof path === "string" && /^[A-Za-z0-9_][A-Za-z0-9_.-]*\.md$/.test(path)) ||
-                    path === "dev-tools/README.md" || (typeof path === "string" &&
-                    /^(?:design\/|docs\/)[A-Za-z0-9_./-]+\.md$/.test(path) &&
-                    !path.split("/").includes("..")) || (typeof path === "string" &&
-                    /^services\/([a-z0-9-]+)\/README\.md$/.test(path) &&
-                    ALL_MODULES.includes(path.split("/")[1]));
-                  const knownDesignDoc = path => knownDoc(path) && path.startsWith("design/");
-                  const knownValidationPython = path => typeof path === "string" &&
-                    /^dev-tools\/validation\/[A-Za-z0-9_./-]+\.py$/.test(path) &&
-                    !path.split("/").includes("..") &&
-                    path !== "dev-tools/validation/gradle-run-supervisor.py";
-                  const knownLightweightPath = path => knownDoc(path) || knownValidationPython(path);
-                  const after = (await github.rest.pulls.get({
-                    ...context.repo, pull_number: eventPr.number,
-                  })).data;
-                  lightweightFallback = exactEvent(before) && exactEvent(after) &&
-                    Number.isInteger(context.payload.pull_request.changed_files) &&
-                    entries.length > 0 && entries.length === context.payload.pull_request.changed_files &&
-                    entries.every(entry => entry && knownLightweightPath(entry.filename) &&
-                      ["added", "removed", "modified", "renamed"].includes(entry.status) &&
-                      (entry.status !== "renamed" || knownLightweightPath(entry.previous_filename)) &&
-                      (entry.previous_filename === undefined || knownLightweightPath(entry.previous_filename)));
-                  fallbackPython = lightweightFallback && entries.some(entry =>
-                    knownValidationPython(entry.filename) || knownValidationPython(entry.previous_filename));
-                  fallbackDesignDocs = lightweightFallback && entries.some(entry =>
-                    knownDesignDoc(entry.filename) || knownDesignDoc(entry.previous_filename));
-                } catch {
-                  // Missing or incomplete native evidence keeps the full fallback.
+              const { classifyChangeScope, classifyGithubChangeScope, ALL_MODULES } = require(classifierPath);
+              const isPullRequest = context.eventName === "pull_request";
+              const eventFiles = isPullRequest ? await readEventFiles() : null;
+              const scope = isPullRequest
+                ? (eventFiles && typeof classifyChangeScope === "function" ? classifyChangeScope(eventFiles) : null)
+                : await classifyGithubChangeScope(github, context);
+              if (scope) {
+                const moduleScopeAvailable =
+                  Array.isArray(scope.affectedModules) && Array.isArray(scope.bootableModules) &&
+                  Array.isArray(ALL_MODULES) && completeModules.every(module => ALL_MODULES.includes(module));
+                // Older classifiers can retain their lightweight decision only for
+                // verified paths this workflow recognizes as lightweight.
+                const knownDoc = path => path === "mkdocs.yml" ||
+                  /^[A-Za-z0-9_][A-Za-z0-9_.-]*\.md$/.test(path) ||
+                  path === "dev-tools/README.md" ||
+                  (/^(?:design\/|docs\/)[A-Za-z0-9_./-]+\.md$/.test(path) && !path.split("/").includes("..")) ||
+                  (/^services\/([a-z0-9-]+)\/README\.md$/.test(path) &&
+                    Array.isArray(ALL_MODULES) && ALL_MODULES.includes(path.split("/")[1]));
+                const knownValidationPython = path =>
+                  /^dev-tools\/validation\/[A-Za-z0-9_./-]+\.py$/.test(path) &&
+                  !path.split("/").includes("..") &&
+                  path !== "dev-tools/validation/gradle-run-supervisor.py";
+                const lightweightFallback = !moduleScopeAvailable && scope.lightweightOnly === true &&
+                  scope.runAll !== true && eventFiles !== null &&
+                  eventFiles.every(path => knownDoc(path) || knownValidationPython(path));
+                if (moduleScopeAvailable || lightweightFallback) {
+                  const fallbackPython = lightweightFallback && eventFiles.some(knownValidationPython);
+                  const fallbackDesignDocs = lightweightFallback &&
+                    eventFiles.some(path => knownDoc(path) && path.startsWith("design/"));
+                  // This is the only PostgreSQL proof path in the legacy lightweight allowlist.
+                  const postgresRuntimeProof = lightweightFallback
+                    ? eventFiles.includes("dev-tools/validation/test_validate_preview_artifact.py")
+                    : (scope.postgresRuntimeProofChanged ?? true);
+                  const affectedModules = lightweightFallback ? [] : scope.affectedModules;
+                  const bootableModules = lightweightFallback ? [] : scope.bootableModules;
+                  outputs = {
+                    run_all: scope.runAll === true,
+                    affected_services: scope.affectedServices,
+                    affected_modules: affectedModules,
+                    bootable_modules: bootableModules,
+                    docs_changed: scope.docsChanged,
+                    frontend_changed: scope.frontendChanged,
+                    python_changed: scope.pythonChanged || fallbackPython,
+                    design_docs_changed: scope.designDocsChanged || fallbackDesignDocs,
+                    validation_python_changed: scope.validationPythonChanged || fallbackPython,
+                    postgres_runtime_proof_changed: postgresRuntimeProof,
+                    lightweight_only: scope.lightweightOnly === true && !scope.runAll &&
+                      affectedModules.length === 0 && bootableModules.length === 0,
+                  };
                 }
               }
-              const unqualifiedLegacyLightweight =
-                !moduleScopeAvailable && scope.lightweightOnly === true && !lightweightFallback;
-              const runAll = scope.runAll || (!moduleScopeAvailable && !lightweightFallback);
-              const affectedModules =
-                lightweightFallback ? [] : (moduleScopeAvailable ? scope.affectedModules : completeModules);
-              const bootableModules =
-                lightweightFallback ? [] : (moduleScopeAvailable ? scope.bootableModules : completeBootableModules);
-              outputs = {
-                run_all: runAll,
-                affected_services: scope.affectedServices,
-                affected_modules: affectedModules,
-                bootable_modules: bootableModules,
-                docs_changed: scope.docsChanged,
-                frontend_changed: scope.frontendChanged,
-                python_changed: scope.pythonChanged || fallbackPython,
-                design_docs_changed: scope.designDocsChanged || fallbackDesignDocs,
-                validation_python_changed: scope.validationPythonChanged || fallbackPython,
-                postgres_runtime_proof_changed:
-                  scope.postgresRuntimeProofChanged === undefined
-                    ? (!lightweightFallback || fallbackPython)
-                    : (unqualifiedLegacyLightweight || fallbackPython ? true : scope.postgresRuntimeProofChanged),
-                lightweight_only: scope.lightweightOnly === true && !runAll &&
-                  affectedModules.length === 0 && bootableModules.length === 0,
-              };
-            } else {
-              core.warning("Base revision predates the change classifier; using complete validation scope.");
+            }
+            if (!outputs) {
+              core.warning("Exact change scope is unavailable; using complete validation scope.");
               outputs = {
                 run_all: true,
                 affected_services: [

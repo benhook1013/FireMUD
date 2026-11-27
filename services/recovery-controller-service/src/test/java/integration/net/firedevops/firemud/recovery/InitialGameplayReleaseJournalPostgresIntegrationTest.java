@@ -414,7 +414,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
-  void createRequiresRedactedLoggingOnTheCredentialWritingSession() throws Exception {
+  void credentialWritesRequireRedactedLoggingButExactTransitionReplayStillWorks() throws Exception {
     try (Connection unqualified =
         DriverManager.getConnection(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
@@ -427,6 +427,45 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Recovery journal requires redacted PostgreSQL logs");
       assertThat(journal.find(scope.operationId())).isEmpty();
+
+      Instant now = Instant.now();
+      journal.create(scope, UUID.randomUUID());
+      InitialGameplayReleaseEvidence proof = evidence(scope);
+      Operation ready =
+          journal.bindVerifiedEvidence(
+              scope, tupleCodec.digest(scope), proof, tupleCodec.digest(proof), now);
+      PublicTransitionTuple continuation = transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY);
+      Operation awaiting = journal.transition(continuation, now);
+      assertThat(unqualifiedJournal.transition(continuation, now)).isEqualTo(awaiting);
+
+      PublicTransitionTuple resume = transitionTuple(awaiting, TransitionVerb.RESUME);
+      assertThatThrownBy(() -> unqualifiedJournal.transition(resume, now))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Recovery journal requires redacted PostgreSQL logs");
+      assertThat(journal.findTransition(resume)).isEmpty();
+      assertThat(journal.findNextEffect(scope.operationId())).isEmpty();
+
+      journal.transition(resume, now);
+      OutboxEntry pending = journal.findNextEffect(scope.operationId()).orElseThrow();
+      OutboxEntry claimed =
+          journal.claimEffect(
+              scope.operationId(), pending.effect().effectId(), UUID.randomUUID(), now);
+      EffectReadback prepared =
+          readbackFor(
+              claimed,
+              claimed.lastAttemptId(),
+              EffectReadbackState.PREPARED_FENCED,
+              "prepared",
+              now);
+      assertThatThrownBy(() -> unqualifiedJournal.recordEffectReadback(claimed, prepared, now))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Recovery journal requires redacted PostgreSQL logs");
+      assertThat(journal.findNextEffect(scope.operationId())).contains(claimed);
+      assertThat(
+              journal.findEffect(scope.operationId(), EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
+          .isEmpty();
+      assertThat(journal.recordEffectReadback(claimed, prepared, now).phase())
+          .isEqualTo(Phase.RELEASING);
     }
   }
 
@@ -490,18 +529,30 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     }
   }
 
-  @Test
+  @ParameterizedTest(name = "interrupt after owner apply: {0}")
+  @ValueSource(booleans = {false, true})
   @ResourceLock("packaged-recovery-control-fixture-database")
-  void packagedControllerAppliesOnlyAfterTheExactClaimIsCommitted() {
+  void packagedControllerAppliesOnlyAfterTheExactClaimIsCommitted(boolean interruptAfterApply) {
     String database = "firemud_recovery_control";
     dsl.execute("CREATE DATABASE " + database);
+    try {
+      qualifyPackagedClaim(interruptAfterApply);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  private void qualifyPackagedClaim(boolean interruptAfterApply) {
+    Scope scope = scope();
+    UUID operationId = scope.operationId();
+    ClaimVisibilityPort port;
+    OutboxEntry dispatched;
     try (var application = startPackagedApplication(true, ClaimVisibilityConfiguration.class)) {
       var packagedJournal = application.getBean(InitialGameplayReleaseJournal.class);
       var controller = application.getBean(InitialGameplayReleaseController.class);
-      var port = application.getBean(ClaimVisibilityPort.class);
+      port = application.getBean(ClaimVisibilityPort.class);
+      port.interruptAfterApply = interruptAfterApply;
       Instant base = Instant.now().minusSeconds(5);
-      Scope scope = scope();
-      UUID operationId = scope.operationId();
       packagedJournal.create(scope, UUID.randomUUID());
       InitialGameplayReleaseEvidence proof = evidence(scope);
       Operation ready =
@@ -540,15 +591,47 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       });
       assertThat(packagedJournal.findNextEffect(operationId)).contains(pending);
 
-      controller.reconcileNextEffect(operationId);
-
+      if (!interruptAfterApply) {
+        controller.reconcileNextEffect(operationId);
+        assertThat(port.applies).isEqualTo(1);
+        assertThat(packagedJournal.findNextEffect(operationId))
+            .get()
+            .extracting(OutboxEntry::state)
+            .isEqualTo(EffectOutboxState.RETRYABLE);
+        return;
+      }
+      assertThatThrownBy(() -> controller.reconcileNextEffect(operationId))
+          .isInstanceOf(SimulatedControllerInterruption.class);
       assertThat(port.applies).isEqualTo(1);
-      assertThat(packagedJournal.findNextEffect(operationId))
-          .get()
-          .extracting(OutboxEntry::state)
-          .isEqualTo(EffectOutboxState.RETRYABLE);
-    } finally {
-      dsl.execute("DROP DATABASE " + database);
+      assertThat(port.successfulReadbacks).isZero();
+      dispatched = packagedJournal.findNextEffect(operationId).orElseThrow();
+      assertThat(dispatched.state()).isEqualTo(EffectOutboxState.DISPATCHED);
+      assertThat(dispatched.lastAttemptId()).isEqualTo(port.applied.attemptId());
+      assertThat(dispatched.attemptCount()).isEqualTo(port.applied.attemptOrdinal());
+      assertThat(packagedJournal.find(operationId).orElseThrow().phase())
+          .isEqualTo(Phase.RESUME_AUTHORIZED);
+    }
+
+    // Only the disposable owner survives the first controller context.
+    try (var reopened = startPackagedApplication(true)) {
+      var reopenedJournal = reopened.getBean(InitialGameplayReleaseJournal.class);
+      var reopenedController =
+          new InitialGameplayReleaseController(
+              reopenedJournal,
+              reopened.getBean(InitialGameplayReleaseTupleCodec.class),
+              reopened.getBean(InitialGameplayReleaseEvidenceProvider.class),
+              port);
+      assertThat(reopenedJournal.findNextEffect(operationId)).contains(dispatched);
+      assertThat(reopenedController.reconcileNextEffect(operationId).phase())
+          .isEqualTo(Phase.RELEASING);
+      assertThat(port.applies).isEqualTo(1);
+      assertThat(port.successfulReadbacks).isEqualTo(1);
+      var acknowledged =
+          reopenedJournal.findEffect(operationId, dispatched.effect().kind()).orElseThrow();
+      assertThat(acknowledged.state()).isEqualTo(EffectOutboxState.ACKNOWLEDGED);
+      assertThat(acknowledged.lastAttemptId()).isEqualTo(dispatched.lastAttemptId());
+      assertThat(acknowledged.attemptCount()).isEqualTo(dispatched.attemptCount());
+      assertThat(acknowledged.lastOutcomeCode()).isEqualTo(port.applied.state().name());
     }
   }
 
@@ -561,7 +644,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   private static final class ClaimVisibilityPort implements InitialGameplayReleaseEffectPort {
+    private boolean interruptAfterApply;
     private int applies;
+    private int successfulReadbacks;
+    private EffectReadback applied;
 
     @Override
     public EffectApplyResult apply(TypedEffect effect, UUID attemptId, int attemptOrdinal) {
@@ -576,7 +662,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             DSL.using(observer, SQLDialect.POSTGRES)
                 .fetchSingle(
                     """
-                    SELECT state, last_attempt_id, attempt_count, payload::text
+                    SELECT state, last_attempt_id, attempt_count, payload::text, payload_digest
                     FROM recovery_control.initial_gameplay_release_outbox
                     WHERE operation_id = ? AND effect_id = ?
                     """,
@@ -589,6 +675,22 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         assertThat(
                 tupleCodec.readEffect(effect.kind().databaseValue(), visible.get(3, String.class)))
             .isEqualTo(effect);
+        if (interruptAfterApply) {
+          applied =
+              new EffectReadback(
+                  effect.operationId(),
+                  effect.effectId(),
+                  attemptId,
+                  attemptOrdinal,
+                  effect.kind(),
+                  effect.operationTupleDigest(),
+                  visible.get(4, String.class),
+                  EffectReadbackState.PREPARED_FENCED,
+                  EffectReadbackAuthority.GAME_SESSION_DURABLE_CURRENT_STATE,
+                  "packaged-fixture-preparation-applied",
+                  Instant.now());
+          return EffectApplyResult.applied();
+        }
       } catch (java.sql.SQLException exception) {
         throw new AssertionError("Could not read the packaged claim independently", exception);
       }
@@ -598,9 +700,23 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     @Override
     public EffectReadbackResolution readback(
         TypedEffect effect, UUID attemptId, int attemptOrdinal) {
-      throw new AssertionError("Fresh claim should use the test apply port");
+      assertThat(applied).isNotNull();
+      assertThat(effect.operationId()).isEqualTo(applied.operationId());
+      assertThat(effect.effectId()).isEqualTo(applied.effectId());
+      assertThat(effect.kind()).isEqualTo(applied.effectKind());
+      assertThat(effect.operationTupleDigest()).isEqualTo(applied.operationTupleDigest());
+      assertThat(attemptId).isEqualTo(applied.attemptId());
+      assertThat(attemptOrdinal).isEqualTo(applied.attemptOrdinal());
+      if (interruptAfterApply) {
+        interruptAfterApply = false;
+        throw new SimulatedControllerInterruption();
+      }
+      successfulReadbacks++;
+      return EffectReadbackResolution.available(applied);
     }
   }
+
+  private static final class SimulatedControllerInterruption extends AssertionError {}
 
   @Test
   @ResourceLock("packaged-recovery-control-fixture-database")
@@ -900,6 +1016,45 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       }
     } finally {
       dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void journalWriterWithActiveRowSecurityIsNotReady() throws Exception {
+    String database = "firemud_recovery_control";
+    String role = "recovery_fixture_writer";
+    dsl.execute("CREATE DATABASE " + database);
+    dsl.execute("CREATE ROLE " + role + " NOLOGIN");
+    try {
+      try (var migration = startPackagedApplication(true)) {
+        assertThat(journalHealth(migration).health().getStatus()).isEqualTo(Status.UP);
+      }
+      String fixtureUrl = POSTGRES.getJdbcUrl();
+      String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+      try (var connection =
+          DriverManager.getConnection(
+              packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        var owner = DSL.using(connection, SQLDialect.POSTGRES);
+        owner.execute("GRANT USAGE ON SCHEMA recovery_control TO " + role);
+        owner.execute(
+            "GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA recovery_control TO " + role);
+        try (var application =
+            startPackagedApplication(
+                false, "--spring.datasource.hikari.connection-init-sql=SET ROLE " + role)) {
+          assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+          owner.execute(
+              "ALTER TABLE recovery_control.initial_gameplay_release_outbox ENABLE ROW LEVEL SECURITY");
+          assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+          assertThat(application.getBean(HealthEndpoint.class).healthForPath("liveness"))
+              .isNotNull()
+              .extracting(health -> health.getStatus())
+              .isEqualTo(Status.UP);
+        }
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+      dsl.execute("DROP ROLE " + role);
     }
   }
 
@@ -1258,6 +1413,61 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 .claimEffect(operationId, handoff.effect().effectId(), UUID.randomUUID(), now)
                 .state())
         .isEqualTo(EffectOutboxState.DISPATCHED);
+  }
+
+  @Test
+  void dispatchedHandoffFinalizesWhileNewerPartialPreparationRemainsCurrent() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry prepare = authorizedDispatch(base);
+    UUID operationId = prepare.effect().operationId();
+    EffectReadback prepared =
+        readbackFor(
+            prepare,
+            prepare.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "prepared-before-handoff-dispatch",
+            base.plusSeconds(5));
+    assertThat(journal.recordEffectReadback(prepare, prepared, base.plusSeconds(5)).phase())
+        .isEqualTo(Phase.RELEASING);
+
+    OutboxEntry pendingHandoff = journal.findNextEffect(operationId).orElseThrow();
+    assertThat(pendingHandoff.effect().kind())
+        .isEqualTo(EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF);
+    UUID handoffId = pendingHandoff.effect().effectId();
+    OutboxEntry dispatchedHandoff =
+        journal.claimEffect(operationId, handoffId, UUID.randomUUID(), base.plusSeconds(6));
+    assertThat(dispatchedHandoff.state()).isEqualTo(EffectOutboxState.DISPATCHED);
+
+    EffectReadback partial =
+        readbackFor(
+            prepare,
+            prepare.lastAttemptId(),
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "partial-after-handoff-dispatch",
+            base.plusSeconds(7));
+    assertThat(journal.recordEffectReadback(prepare, partial, base.plusSeconds(7)).phase())
+        .isEqualTo(Phase.RELEASING);
+    String retainedPreparation = storedOutbox(operationId, prepare.effect().effectId());
+    assertThat(retainedPreparation).contains(tupleCodec.digest(partial));
+    assertThat(journal.findNextEffect(operationId)).contains(dispatchedHandoff);
+
+    EffectReadback applied =
+        readbackFor(
+            dispatchedHandoff,
+            dispatchedHandoff.lastAttemptId(),
+            EffectReadbackState.OWNER_HANDOFF_APPLIED,
+            "applied-with-partial-preparation",
+            base.plusSeconds(8));
+    Operation finalized =
+        journal.recordEffectReadback(dispatchedHandoff, applied, base.plusSeconds(9));
+
+    assertThat(finalized.phase()).isEqualTo(Phase.FINALIZED);
+    assertThat(finalized.finalizedAt()).isEqualTo(base.plusSeconds(9));
+    assertThat(journal.find(operationId)).contains(finalized);
+    assertThat(storedOutbox(operationId, handoffId)).contains(tupleCodec.digest(applied));
+    assertThat(storedOutbox(operationId, prepare.effect().effectId()))
+        .isEqualTo(retainedPreparation);
+    assertThat(journal.findNextEffect(operationId)).isEmpty();
   }
 
   @Test

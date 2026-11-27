@@ -15,6 +15,18 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
         AND current_setting('log_error_verbosity') = 'terse'
         AND current_setting('log_parameter_max_length_on_error') = '0'
         AND current_setting('log_parameter_max_length') = '0'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM (VALUES
+            ('recovery_control.initial_gameplay_release_operation'::regclass),
+            ('recovery_control.initial_gameplay_release_transition'::regclass),
+            ('recovery_control.initial_gameplay_release_outbox'::regclass),
+            ('recovery_control.initial_gameplay_release_attempt_closure'::regclass),
+            ('recovery_control.initial_gameplay_release_attempt_rejection'::regclass),
+            ('recovery_control.initial_gameplay_release_attempt_local_no_send'::regclass),
+            ('recovery_control.initial_gameplay_release_preparation_receipt'::regclass)
+          ) AS journal_relation(relation)
+          WHERE pg_catalog.row_security_active(relation))
         AND (SELECT count(DISTINCT version) = 7
          FROM recovery_control.flyway_schema_history_recovery_control
          WHERE success AND (
