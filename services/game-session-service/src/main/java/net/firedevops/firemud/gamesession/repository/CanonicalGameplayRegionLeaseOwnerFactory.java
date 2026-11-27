@@ -26,8 +26,18 @@ final class CanonicalGameplayRegionLeaseOwnerFactory {
       Clock clock) {
     Objects.requireNonNull(dsl, "dsl");
     Objects.requireNonNull(coordinationRedis, "coordinationRedis");
+    var redisOptions = coordinationRedis.getOptions();
+    if (redisOptions == null || redisOptions.isAutoReconnect()) {
+      throw new IllegalArgumentException("coordinationRedis requires autoReconnect=false");
+    }
     Objects.requireNonNull(scriptCatalog, "scriptCatalog");
     Objects.requireNonNull(incarnationSource, "incarnationSource");
+    long installationMillis =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS;
+    Objects.requireNonNull(leaseTtl, "leaseTtl");
+    if (leaseTtl.compareTo(Duration.ofMillis(installationMillis + 1)) < 0) {
+      throw new IllegalArgumentException("leaseTtl must exceed the bounded installation window");
+    }
     return new CanonicalGameplayRegionLeaseOwner(
         new CanonicalGameplayBindingInventoryRepository(dsl),
         new CanonicalGameplayRegionRuntimeStatusRepository(dsl),
@@ -36,7 +46,7 @@ final class CanonicalGameplayRegionLeaseOwnerFactory {
         incarnationSource,
         Objects.requireNonNull(worldRegionResolver, "worldRegionResolver"),
         Objects.requireNonNull(runtimeIdentity, "runtimeIdentity"),
-        Objects.requireNonNull(leaseTtl, "leaseTtl"),
+        leaseTtl,
         Objects.requireNonNull(clock, "clock"),
         true);
   }

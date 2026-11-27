@@ -263,17 +263,18 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
         .when(transfer)
         .withStatusRepository(
             org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any());
+    // Use a grant shorter than the handoff budget to exercise expiry inside the final SQL scope.
     var owner =
-        CanonicalGameplayRegionLeaseOwnerFactory.compose(
-            successorSql,
-            ownerClient,
-            ownerUri,
-            catalog,
+        new CanonicalGameplayRegionLeaseOwner(
+            new CanonicalGameplayBindingInventoryRepository(successorSql),
+            new CanonicalGameplayRegionRuntimeStatusRepository(successorSql),
+            new CanonicalGameplayRegionLeaseRedisOwner(ownerClient, ownerUri, catalog),
             scope -> original.incarnation,
             sources.resolver,
             deadlineTestIdentity("empty-advance-final-sql"),
             leaseTtl,
-            time);
+            time,
+            true);
     long originalFenceSequence =
         fixture
             .dsl()
@@ -283,7 +284,9 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
     assertThatThrownBy(() ->
             owner.installForTransition(
                 null, original.transitionId, original.worldRequest, transfer, handoffDeadline))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(CanonicalGameplayRegionLeaseOwner.TransferCompletionUnconfirmed.class)
+        .hasRootCauseInstanceOf(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
     assertThat(finalLockReached).isTrue();
     assertThat(installBudget).hasValue(renewedDeadline);
     assertThat(wall.get()).isLessThan(handoffDeadline);
@@ -338,6 +341,7 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
         new CanonicalGameplayOriginalNewCapacityExecutionOwner(
             stoppingDsl, ownerClient, catalog, CLOCK, tags);
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    authorizeKnownAccountSend(source);
     var accountOpen = controlledAccountOpen();
     var issuerOpen = issuerOpen();
     try (var credential =
@@ -1215,6 +1219,7 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
     repairAccountMember();
     bridge(!installAction);
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    if (installAction) authorizeKnownAccountSend(source);
     var repository = new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
     var receiver =
         new CanonicalGameplayControlledRegionTransferObservationFixture()

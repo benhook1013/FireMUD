@@ -68,6 +68,10 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
                 postgresContainer().getUsername(),
                 postgresContainer().getPassword())) {
       var dispatched = proof.newIndependentControlledOriginExecution();
+      if (dispatchWhileWaiting) {
+        proof.precharge(dispatched);
+        proof.authorizeAccountSend(dispatched);
+      }
       String tag =
           CanonicalGameplayRegionRedisKeys.tenantRegionTag(
               proof.scope.tenantId(), proof.scope.gameInstanceId(), proof.scope.regionId());
@@ -151,7 +155,8 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
         assertDatabaseWaitsFor(proof.sql, blockerPid);
         assertThat(installIsolation.get()).isEqualTo(Connection.TRANSACTION_READ_COMMITTED);
         assertThat(custodyReads.get()).isZero();
-        if (dispatchWhileWaiting) proof.seedUndeliveredDispatch(dispatched);
+        if (dispatchWhileWaiting)
+          proof.insertExecution(proof.sql, dispatched, "INSTALL_DISPATCHED", null);
       } finally {
         blocker.commit();
       }
@@ -189,6 +194,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
         ExecutorService executor = Executors.newFixedThreadPool(2)) {
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       Future<?> authorization =
           executor.submit(() ->
               proof
@@ -221,6 +227,45 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
           .extracting(item -> item.execution().digest())
           .containsExactly(proof.execution.digest());
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void denialSettlementRequiresTheCurrentSelectedOwner(boolean ownerReplaced) throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      var original = proof.execution;
+      proof.authorizeAccountSend(original);
+      var selected =
+          new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
+              original.selectedOwnerId(), original.selectedOwnerFence());
+      UUID denial = UUID.randomUUID();
+      Runnable settle =
+          () ->
+              proof
+                  .capacity(proof.sql)
+                  .settleDeniedCharge(
+                      proof.admission, original.request(), selected, denial, transferDeadline());
+      if (ownerReplaced) {
+        proof.rawReplaceOwner("denial-settlement-successor", "e".repeat(64));
+        assertThatThrownBy(settle::run)
+            .isExactlyInstanceOf(IllegalStateException.class)
+            .hasMessage("Original NEW capacity execution is indeterminate")
+            .hasStackTraceContaining(
+                "CanonicalGameplayOriginalNewCapacityExecutionOwner.requireSelectedOwner");
+      } else {
+        settle.run();
+        settle.run();
+      }
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT account_denial_id FROM game_session_capacity_evidence_charge"
+                          + " WHERE admission_attempt_id=?",
+                      original.request().admissionAttemptId())
+                  .get(0, UUID.class))
+          .isEqualTo(ownerReplaced ? null : denial);
     }
   }
 
@@ -263,6 +308,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
     try (var proof = new TransferSqlProof(1, 1_048_576L, 3);
         ExecutorService executor = Executors.newFixedThreadPool(2)) {
       var original = proof.execution;
+      proof.authorizeAccountSend(original);
       var dispatched = new CountDownLatch(1);
       var release = new CountDownLatch(1);
       var blockerPid = new AtomicInteger();
@@ -271,9 +317,6 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
               proof.sql.transaction(configuration -> {
                 DSLContext transaction = DSL.using(configuration);
                 transaction.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
-                transaction.fetchSingle(
-                    "SELECT 1 FROM game_session_capacity_evidence_budget WHERE tenant_id=? FOR UPDATE",
-                    original.request().identity().tenantId());
                 proof.insertExecution(transaction, original, "INSTALL_DISPATCHED", null);
                 blockerPid.set(
                     transaction.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
@@ -294,7 +337,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
                 assertThatThrownBy(() -> proof.settle(original, denial))
                     .isInstanceOf(org.jooq.exception.DataAccessException.class)
                     .hasMessageContaining(
-                        "Execution custody prevents capacity evidence settlement"));
+                        "Execution custody prevents capacity evidence charge changes"));
         assertDatabaseWaitsFor(proof.sql, blockerPid.get());
         assertThat(settlement.isDone()).isFalse();
         release.countDown();
@@ -328,6 +371,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
         ExecutorService executor = Executors.newFixedThreadPool(2)) {
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       Future<?> authorization =
           executor.submit(() ->
               proof
@@ -409,6 +453,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       proof.seedUndeliveredDispatch(seeded);
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       var freezing = proof.transfers(gate.attach(proof.sql));
       Future<UUID> freeze =
           executor.submit(() ->
@@ -444,7 +489,8 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       assertThat(proof.executionState(seeded)).isEqualTo("INSTALL_DISPATCHED");
       assertThat(proof.physicalExecutionExists(proof.execution)).isFalse();
       // The INSERT trigger independently takes the same row lock and rejects raw late dispatch.
-      assertSqlGuard(() -> proof.seedUndeliveredDispatch(proof.execution));
+      assertSqlGuard(
+          () -> proof.insertExecution(proof.sql, proof.execution, "INSTALL_DISPATCHED", null));
       List<CanonicalGameplayRegionOwnerTransferRepository.Item> captured =
           proof.transfers.within(transferDeadline(), ignored -> proof.transfers.capture(id));
       assertThat(captured)
@@ -540,6 +586,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
         ExecutorService executor = Executors.newFixedThreadPool(2)) {
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       Future<?> authorization =
           executor.submit(() ->
               proof
@@ -591,6 +638,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
   @Test
   void rawFrozenInsertAndCapacityDispatchRejectRepeatableRead() throws Exception {
     try (var proof = new TransferSqlProof()) {
+      proof.authorizeAccountSend(proof.execution);
       assertThatThrownBy(() ->
               proof.sql.transaction(configuration -> {
                 DSLContext tx = DSL.using(configuration);
@@ -765,6 +813,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
         ExecutorService executor = Executors.newFixedThreadPool(2)) {
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       Future<?> authorization =
           executor.submit(() ->
               proof

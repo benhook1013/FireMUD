@@ -15,6 +15,9 @@ service AccountService {
   // Private read-only reconciliation of an exact retained quota denial. An unavailable
   // outcome does not prove the original attempt did not commit.
   rpc ReadTenantCapacityQuotaDenial(CommitTenantCapacityAdmissionRequest) returns (CommitTenantCapacityAdmissionResponse);
+  // Private read-only reconciliation of an exact retained positive or quota-denial outcome.
+  // An unavailable outcome does not prove the original attempt did not commit.
+  rpc ReadTenantCapacityAdmissionOutcome(CommitTenantCapacityAdmissionRequest) returns (CommitTenantCapacityAdmissionResponse);
   rpc Ping(PingRequest) returns (PingResponse);
   rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
   rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);

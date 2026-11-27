@@ -50,7 +50,10 @@ class AccountRuntimeStubServerCompatibilityTest {
           "VerifyEmailLoginOtp");
   // Private capacity RPCs require their actual bounded mTLS owner.
   private static final Set<String> UNIMPLEMENTED_RUNTIME_METHODS =
-      Set.of("CommitTenantCapacityAdmission", "ReadTenantCapacityQuotaDenial");
+      Set.of(
+          "CommitTenantCapacityAdmission",
+          "ReadTenantCapacityQuotaDenial",
+          "ReadTenantCapacityAdmissionOutcome");
 
   @Test
   void accountServiceMethodSetIsFullyCategorized() {
@@ -75,7 +78,7 @@ class AccountRuntimeStubServerCompatibilityTest {
   @Test
   void privateCapacityRpcsRemainUnimplementedOnSharedFakeRuntimeServer() throws Exception {
     assertThat(AccountRuntimeStubServer.implementedRuntimeMethodNames())
-        .doesNotContain("CommitTenantCapacityAdmission", "ReadTenantCapacityQuotaDenial");
+        .doesNotContainAnyElementsOf(UNIMPLEMENTED_RUNTIME_METHODS);
     try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
       ManagedChannel channel =
           ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
@@ -90,6 +93,13 @@ class AccountRuntimeStubServerCompatibilityTest {
                     assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
         assertThatThrownBy(() ->
                 stub.withDeadlineAfter(2, TimeUnit.SECONDS).readTenantCapacityQuotaDenial(request))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
+        assertThatThrownBy(() ->
+                stub.withDeadlineAfter(2, TimeUnit.SECONDS)
+                    .readTenantCapacityAdmissionOutcome(request))
             .isInstanceOfSatisfying(
                 StatusRuntimeException.class,
                 failure ->

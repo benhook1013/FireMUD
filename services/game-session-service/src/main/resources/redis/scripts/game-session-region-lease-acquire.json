@@ -20,7 +20,7 @@
   ],
   "resetSensitivity": "REGION",
   "lossClass": "STAGED_EFFECT_OR_RETRY",
-  "tailLossBehavior": "Lease loss or expiry ends the current owner attempt. The durable region timeline remains authoritative and a successor must acquire a new lease, install a new durable fence, and revalidate that exact grant before any bridge or tick work.",
+  "tailLossBehavior": "Lease loss or expiry ends the current owner attempt and holds continuation at the initial installation boundary while the durable owner fence remains. Normal handoff requires a qualified successor grant, a new durable fence, and revalidation of the exact grant before bridge or tick work.",
   "compatibilityLevel": "COMPATIBLE",
   "supportedCoexistence": [{"callerVersion": "v2", "payloadVersion": "none"}],
   "legacyPayloadShape": null

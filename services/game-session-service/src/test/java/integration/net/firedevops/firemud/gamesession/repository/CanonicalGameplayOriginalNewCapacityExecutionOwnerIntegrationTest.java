@@ -7,13 +7,32 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.zaxxer.hikari.HikariDataSource;
+import io.grpc.Context;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.codec.ByteArrayCodec;
+import io.lettuce.core.event.command.CommandListener;
+import io.lettuce.core.event.command.CommandStartedEvent;
+import io.lettuce.core.event.command.CommandSucceededEvent;
+import io.lettuce.core.protocol.CommandType;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.Statement;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
+import org.jooq.impl.DataSourceConnectionProvider;
 import org.junit.jupiter.api.Test;
+import org.postgresql.jdbc.PgConnection;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -52,6 +71,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
   void committedCapacityWithoutExecutionCustodyRemainsIndeterminate() throws Exception {
     repairAccountMember();
     bridge(false);
+    authorizeKnownAccountSend(inventory.readOriginalNewFinalAdmissionSource(decision));
     var before = physicalImage();
     assertThat(
             fixture
@@ -75,6 +95,132 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                     org.jooq.impl.DSL.table("game_session_original_new_capacity_execution")))
         .isZero();
     assertThat(physicalImage()).isEqualTo(before);
+  }
+
+  @Test
+  void deadlineRetiresPostgresDriverAndHikariReplacesBorrowedPoolEntry() throws Exception {
+    HikariDataSource pool = new HikariDataSource();
+    pool.setPoolName("capacity-retirement-" + UUID.randomUUID());
+    pool.setDriverClassName("org.postgresql.Driver");
+    pool.setJdbcUrl(POSTGRES.getJdbcUrl());
+    pool.setUsername(POSTGRES.getUsername());
+    pool.setPassword(POSTGRES.getPassword());
+    pool.setMaximumPoolSize(1);
+    pool.setMinimumIdle(1);
+    pool.setAutoCommit(true);
+    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    try {
+      DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(pool), SQLDialect.POSTGRES);
+      assertThat(dsl.configuration().connectionProvider())
+          .isInstanceOf(DataSourceConnectionProvider.class);
+      var configuredDataSource =
+          ((DataSourceConnectionProvider) dsl.configuration().connectionProvider()).dataSource();
+      assertThat(configuredDataSource).isInstanceOf(TransactionAwareDataSourceProxy.class);
+      assertThat(((TransactionAwareDataSourceProxy) configuredDataSource).getTargetDataSource())
+          .isSameAs(pool);
+      PgConnection initiallyIdleDriver;
+      try (Connection connection = pool.getConnection()) {
+        initiallyIdleDriver = connection.unwrap(PgConnection.class);
+      }
+      org.awaitility.Awaitility.await()
+          .atMost(2, TimeUnit.SECONDS)
+          .untilAsserted(
+              () -> assertThat(pool.getHikariPoolMXBean().getIdleConnections()).isEqualTo(1));
+
+      var capturedBudget =
+          new AtomicReference<CanonicalGameplayOriginalNewCapacityExecutionBudget>();
+      var executingDriver = new AtomicReference<PgConnection>();
+      var backendPid = new java.util.concurrent.atomic.AtomicInteger();
+      Context deadline = Context.current().withDeadlineAfter(10, TimeUnit.SECONDS, scheduler);
+      try (var execution = Executors.newVirtualThreadPerTaskExecutor()) {
+        var caller =
+            execution.submit(() -> {
+              var previous = deadline.attach();
+              try {
+                assertThatThrownBy(() ->
+                        CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                            CLOCK,
+                            Long.MAX_VALUE,
+                            budget -> {
+                              capturedBudget.set(budget);
+                              return budget
+                                  .sql(dsl)
+                                  .connectionResult(connection -> {
+                                    executingDriver.set(connection.unwrap(PgConnection.class));
+                                    try (Statement pidStatement = connection.createStatement();
+                                        var rows =
+                                            pidStatement.executeQuery("SELECT pg_backend_pid()")) {
+                                      assertThat(rows.next()).isTrue();
+                                      backendPid.set(rows.getInt(1));
+                                    }
+                                    try (Statement statement = connection.createStatement()) {
+                                      statement.execute("SELECT pg_sleep(30)");
+                                      return true;
+                                    }
+                                  });
+                            }))
+                    .isInstanceOf(
+                        CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable
+                            .class);
+              } finally {
+                deadline.detach(previous);
+              }
+            });
+        try {
+          org.awaitility.Awaitility.await()
+              .atMost(3, TimeUnit.SECONDS)
+              .untilAsserted(() -> {
+                int pid = backendPid.get();
+                assertThat(pid).isPositive();
+                try (Connection observer =
+                        java.sql.DriverManager.getConnection(
+                            POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+                    var statement =
+                        observer.prepareStatement(
+                            "SELECT state, query FROM pg_stat_activity WHERE pid = ?")) {
+                  statement.setInt(1, pid);
+                  try (var rows = statement.executeQuery()) {
+                    assertThat(rows.next()).isTrue();
+                    assertThat(rows.getString("state")).isEqualTo("active");
+                    assertThat(rows.getString("query")).contains("pg_sleep(30)");
+                  }
+                }
+              });
+          caller.get(8, TimeUnit.SECONDS);
+        } finally {
+          execution.shutdownNow();
+        }
+      }
+
+      PgConnection retiredDriver = executingDriver.get();
+      assertThat(retiredDriver).isNotNull().isSameAs(initiallyIdleDriver);
+      var physicallyReleased =
+          (CompletableFuture<?>)
+              java.util.Objects.requireNonNull(
+                  ReflectionTestUtils.getField(capturedBudget.get(), "physicallyReleased"));
+      physicallyReleased.get(5, TimeUnit.SECONDS);
+      assertThat(retiredDriver.isClosed()).isTrue();
+      org.awaitility.Awaitility.await()
+          .atMost(5, TimeUnit.SECONDS)
+          .untilAsserted(() -> {
+            assertThat(pool.getHikariPoolMXBean().getActiveConnections()).isZero();
+            assertThat(pool.getHikariPoolMXBean().getIdleConnections()).isEqualTo(1);
+          });
+
+      try (Connection replacement = pool.getConnection()) {
+        PgConnection replacementDriver = replacement.unwrap(PgConnection.class);
+        assertThat(replacementDriver).isNotSameAs(retiredDriver);
+        assertThat(replacementDriver.isClosed()).isFalse();
+        try (Statement statement = replacement.createStatement();
+            var rows = statement.executeQuery("SELECT 1")) {
+          assertThat(rows.next()).isTrue();
+          assertThat(rows.getInt(1)).isEqualTo(1);
+        }
+      }
+    } finally {
+      scheduler.shutdownNow();
+      pool.close();
+    }
   }
 
   @Test
@@ -135,6 +281,23 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     assertThat(admin.type(key)).isEqualTo("none");
     String rows = sqlImage();
     var physical = physicalImage();
+    var finalResult = new AtomicReference<Object>();
+    var finalCalls = new java.util.concurrent.atomic.AtomicInteger();
+    var finalObserver =
+        new CommandListener() {
+          @Override
+          public void commandStarted(CommandStartedEvent event) {
+            if (event.getCommand().getType() == CommandType.EVALSHA) finalCalls.incrementAndGet();
+          }
+
+          @Override
+          public void commandSucceeded(CommandSucceededEvent event) {
+            if (event.getCommand().getType() == CommandType.EVALSHA) {
+              finalResult.set(event.getCommand().getOutput().get());
+            }
+          }
+        };
+    ownerClient.addListener(finalObserver);
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var raw = credential.template();
@@ -144,8 +307,13 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                       ownerClient, catalog, CLOCK, tags)
                   .finalizeOriginalNewOnce(
                       source, bound, account, issuer, controlledCapacity, deadline()))
-          .isInstanceOf(IllegalStateException.class);
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Original NEW final admission Redis readback is unavailable");
+    } finally {
+      ownerClient.removeListener(finalObserver);
     }
+    assertThat(finalCalls).as("FINAL Redis EVALSHA dispatch").hasValue(1);
+    assertThat(finalResult).as("FINAL missing-state Redis result").hasValue(-1L);
     assertThat(admin.type(key)).isEqualTo("none");
     assertThat(sqlImage()).isEqualTo(rows);
     assertThat(physicalImage()).isEqualTo(physical);
@@ -174,10 +342,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                 "INSERT INTO game_session_capacity_evidence_charge (admission_attempt_id, tenant_id,"
                     + " request_id, admission_id, capacity_rearm_fence, mutation_digest,"
                     + " candidate_digest, selected_owner_id, selected_owner_fence,"
-                    + " reserved_binding_bytes)"
+                    + " reserved_binding_bytes, account_send_state, account_send_evidence_expires_at)"
                     + " SELECT ?, tenant_id, ?, admission_id, capacity_rearm_fence, mutation_digest,"
                     + " candidate_digest, selected_owner_id, selected_owner_fence,"
-                    + " reserved_binding_bytes FROM game_session_capacity_evidence_charge"
+                    + " reserved_binding_bytes, 'UNCLAIMED', clock_timestamp() + INTERVAL '10 seconds' FROM game_session_capacity_evidence_charge"
                     + " WHERE admission_attempt_id = ?",
                 otherAttempt,
                 otherRequest,
@@ -211,6 +379,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
 
     // The initial charge happened in bridge(); the exact replay is idempotent even at capacity.
     owner.precharge(source, controlledCapacity.request(), selected, deadline());
+    authorizeKnownAccountSend(source);
     var original = controlledCapacity.request();
     var unsupported =
         new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
@@ -248,6 +417,35 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                     controlledCapacity.request().identity().tenantId())
                 .get(0, Long.class))
         .isEqualTo(1L);
+
+    UUID distinctAttempt = UUID.randomUUID();
+    UUID distinctRequest = UUID.randomUUID();
+    // The owner intentionally rejects non-original requests before SQL. Insert a distinct-origin
+    // charge directly so this case reaches the SQL byte-budget trigger itself.
+    assertThatThrownBy(() ->
+            fixture
+                .dsl()
+                .execute(
+                    "INSERT INTO game_session_capacity_evidence_charge"
+                        + " (admission_attempt_id, tenant_id, request_id, admission_id,"
+                        + " capacity_rearm_fence, mutation_digest, candidate_digest,"
+                        + " selected_owner_id, selected_owner_fence, reserved_binding_bytes,"
+                        + " account_send_state, account_send_evidence_expires_at)"
+                        + " SELECT ?, tenant_id, ?, admission_id, capacity_rearm_fence,"
+                        + " mutation_digest, candidate_digest, selected_owner_id,"
+                        + " selected_owner_fence, reserved_binding_bytes,"
+                        + " 'UNCLAIMED', clock_timestamp() + INTERVAL '5 seconds'"
+                        + " FROM game_session_capacity_evidence_charge"
+                        + " WHERE admission_attempt_id = ?",
+                    distinctAttempt,
+                    distinctRequest,
+                    original.admissionAttemptId()))
+        .isInstanceOfSatisfying(
+            org.jooq.exception.DataAccessException.class,
+            failure -> {
+              assertThat(failure.sqlState()).isEqualTo("23514");
+              assertThat(failure).hasMessageContaining("Capacity evidence budget is exhausted");
+            });
 
     var refusedRequest = anotherAttempt(controlledCapacity.request());
     assertThatThrownBy(() -> owner.precharge(source, refusedRequest, selected, deadline()))
@@ -354,6 +552,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     repairAccountMember();
     bridge(false);
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    authorizeKnownAccountSend(source);
     RedisClient failedClient = mock(RedisClient.class);
     when(failedClient.connect(ByteArrayCodec.INSTANCE))
         .thenThrow(new IllegalStateException("Controlled connection failure"));
@@ -497,20 +696,65 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
   }
 
   @Test
-  void recreatedCapacityOwnerClosesExactAttemptAndRejectsDelayedFinalCas() throws Exception {
+  void boundCapacityTemplateFinalizesWhileExecutionRemainsAuthorized() throws Exception {
     repairAccountMember();
-    bridge();
+    bridge(false);
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
-    capacityOwner()
-        .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
-    var proof =
-        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
-    assertThat(proof.disposition()).isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
-    assertThat(proof.currentOwnerFence())
-        .isGreaterThanOrEqualTo(controlledCapacity.selectedOwnerFence());
+    authorizeKnownAccountSend(source);
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
-        var template = credential.template()) {
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(controlledCapacity)) {
+      capacityOwner()
+          .authorize(
+              source,
+              template,
+              controlledAccountOpen(),
+              issuerOpen(),
+              controlledCapacity,
+              deadline());
+      assertThat(
+              finalOwner()
+                  .finalizeOriginalNewOnce(
+                      source,
+                      template,
+                      controlledAccountOpen(),
+                      issuerOpen(),
+                      controlledCapacity,
+                      deadline()))
+          .isNotNull();
+    }
+  }
+
+  @Test
+  void recreatedCapacityOwnerClosesExactAttemptAndRejectsDelayedFinalCas() throws Exception {
+    repairAccountMember();
+    bridge(false);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    authorizeKnownAccountSend(source);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(controlledCapacity)) {
+      var authorized = capacityOwner();
+      authorized.authorize(
+          source, template, controlledAccountOpen(), issuerOpen(), controlledCapacity, deadline());
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_original_new_capacity_execution"
+                          + " WHERE execution_digest = ?",
+                      controlledCapacity.digest())
+                  .get(0, String.class))
+          .isEqualTo("AUTHORIZED");
+      authorized.closeOriginalAttempt(
+          controlledCapacity.request(), controlledCapacity.reservation());
+      var proof =
+          authorized.readExact(controlledCapacity.request(), controlledCapacity.reservation());
+      assertThat(proof.disposition()).isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
+      assertThat(proof.currentOwnerFence())
+          .isGreaterThanOrEqualTo(controlledCapacity.selectedOwnerFence());
       assertThatThrownBy(() ->
               finalOwner()
                   .finalizeOriginalNewOnce(
@@ -521,6 +765,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                       controlledCapacity,
                       deadline()))
           .isInstanceOf(IllegalStateException.class);
+      assertThat(
+              authorized
+                  .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                  .canonicalReadback())
+          .containsExactly(proof.canonicalReadback());
     }
     var assignment = tags.assignmentForTransition(fixture.transitionId());
     assertThat(
@@ -529,11 +778,6 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                     CanonicalGameplaySessionRedisKeys.session(
                         assignment, source.candidate().bindingIdentity().bindingRef()))))
         .containsExactly(source.candidate().canonicalBytes());
-    assertThat(
-            capacityOwner()
-                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
-                .canonicalReadback())
-        .containsExactly(proof.canonicalReadback());
   }
 
   @Test

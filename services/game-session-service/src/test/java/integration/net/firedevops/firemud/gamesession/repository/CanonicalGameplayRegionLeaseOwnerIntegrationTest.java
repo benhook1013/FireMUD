@@ -387,6 +387,10 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           .requireCurrent(org.mockito.ArgumentMatchers.any());
       assertThatThrownBy(() -> firstOwner.installForTransition(TRANSITION_ID, world.request()))
           .isInstanceOf(IllegalStateException.class);
+      byte[] leaseTokenAfterLostCompletion = redis.admin().get(redisKey);
+      long leaseExpiryAfterLostCompletion = redis.admin().pexpiretime(redisKey);
+      assertThat(leaseTokenAfterLostCompletion).isNotNull();
+      assertThat(leaseExpiryAfterLostCompletion).isPositive();
       var retainedFirstOwner = statusRepository.find(qualifiedSource).orElseThrow();
       assertThat(statusRepository.findTimelinePreparation(qualifiedSource).orElseThrow().phase())
           .isEqualTo(
@@ -399,6 +403,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           .isEqualTo(retainedFirstOwner);
       incarnationSource.restoreStorageGeneration();
       var firstInstallation = firstOwner.installForTransition(TRANSITION_ID, world.request());
+      assertThat(redis.admin().get(redisKey)).containsExactly(leaseTokenAfterLostCompletion);
+      assertThat(redis.admin().pexpiretime(redisKey)).isEqualTo(leaseExpiryAfterLostCompletion);
       assertThat(statusRepository.find(qualifiedSource).orElseThrow())
           .isEqualTo(retainedFirstOwner);
       var firstStatus = statusRepository.find(qualifiedSource).orElseThrow();
@@ -1268,65 +1274,69 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         var originals =
             java.util.Collections.synchronizedMap(
                 new java.util.IdentityHashMap<Connection, Connection>());
-        var instrumentedProvider =
-            new org.jooq.ConnectionProvider() {
-              @Override
-              public Connection acquire() {
-                Connection raw = originalProvider.acquire();
-                Connection proxy =
-                    (Connection)
-                        java.lang.reflect.Proxy.newProxyInstance(
-                            Connection.class.getClassLoader(),
-                            new Class<?>[] {Connection.class},
-                            (ignored, method, arguments) -> {
-                              try {
-                                Object value = method.invoke(raw, arguments);
-                                if (value instanceof java.sql.PreparedStatement statement) {
-                                  return java.lang.reflect.Proxy.newProxyInstance(
-                                      java.sql.PreparedStatement.class.getClassLoader(),
-                                      new Class<?>[] {java.sql.PreparedStatement.class},
-                                      (unused, statementMethod, statementArguments) -> {
-                                        if (statementMethod.getName().startsWith("execute")
-                                            && block.compareAndSet(true, false)) {
-                                          entered.countDown();
-                                          boolean done = false;
-                                          long stop =
-                                              System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-                                          while (!done && System.nanoTime() < stop) {
-                                            try {
-                                              done = release.await(100, TimeUnit.MILLISECONDS);
-                                            } catch (InterruptedException ignoredInterrupt) {
-                                              /* blocked provider fixture */
-                                            }
-                                          }
-                                          if (!done)
-                                            throw new AssertionError(
-                                                "SQL fixture release not signalled");
-                                        }
+        class InstrumentedConnectionProvider
+            implements org.jooq.ConnectionProvider,
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.ConnectionRetirer {
+          @Override
+          public Connection acquire() {
+            Connection raw = originalProvider.acquire();
+            Connection proxy =
+                (Connection)
+                    java.lang.reflect.Proxy.newProxyInstance(
+                        Connection.class.getClassLoader(),
+                        new Class<?>[] {Connection.class},
+                        (ignored, method, arguments) -> {
+                          try {
+                            Object value = method.invoke(raw, arguments);
+                            if (value instanceof java.sql.PreparedStatement statement) {
+                              return java.lang.reflect.Proxy.newProxyInstance(
+                                  java.sql.PreparedStatement.class.getClassLoader(),
+                                  new Class<?>[] {java.sql.PreparedStatement.class},
+                                  (unused, statementMethod, statementArguments) -> {
+                                    if (statementMethod.getName().startsWith("execute")
+                                        && block.compareAndSet(true, false)) {
+                                      entered.countDown();
+                                      boolean done = false;
+                                      long stop = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                                      while (!done && System.nanoTime() < stop) {
                                         try {
-                                          return statementMethod.invoke(
-                                              statement, statementArguments);
-                                        } catch (
-                                            java.lang.reflect.InvocationTargetException error) {
-                                          throw error.getCause();
+                                          done = release.await(100, TimeUnit.MILLISECONDS);
+                                        } catch (InterruptedException ignoredInterrupt) {
+                                          /* blocked provider fixture */
                                         }
-                                      });
-                                }
-                                return value;
-                              } catch (java.lang.reflect.InvocationTargetException error) {
-                                throw error.getCause();
-                              }
-                            });
-                originals.put(proxy, raw);
-                return proxy;
-              }
+                                      }
+                                      if (!done)
+                                        throw new AssertionError(
+                                            "SQL fixture release not signalled");
+                                    }
+                                    try {
+                                      return statementMethod.invoke(statement, statementArguments);
+                                    } catch (java.lang.reflect.InvocationTargetException error) {
+                                      throw error.getCause();
+                                    }
+                                  });
+                            }
+                            return value;
+                          } catch (java.lang.reflect.InvocationTargetException error) {
+                            throw error.getCause();
+                          }
+                        });
+            originals.put(proxy, raw);
+            return proxy;
+          }
 
-              @Override
-              public void release(Connection connection) {
-                releasedConnection.countDown();
-                originalProvider.release(originals.remove(connection));
-              }
-            };
+          @Override
+          public void release(Connection connection) {
+            releasedConnection.countDown();
+            originalProvider.release(originals.remove(connection));
+          }
+
+          @Override
+          public void retire(Connection connection) throws java.sql.SQLException {
+            retireControlledPostgresConnection(originals.get(connection));
+          }
+        }
+        var instrumentedProvider = new InstrumentedConnectionProvider();
         var instrumentedDsl =
             DSL.using(testSchema.dsl().configuration().derive(instrumentedProvider));
         var inventory = new CanonicalGameplayBindingInventoryRepository(instrumentedDsl);
@@ -2026,6 +2036,77 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
+  void freshDeadlineReacquiresLeaseForExactRetainedTimelineWithoutCreationPermission()
+      throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try (RedisFixture redis = RedisFixture.open()) {
+      var repository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+      var redisOwner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+      WorldFixture world = WorldFixture.open();
+      var incarnationSource = new ControlledStableIncarnationSource();
+      var source = source(world.originalEvidence());
+      var incarnation =
+          incarnationSource.readCurrent(
+              CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+      var preparation =
+          repository.prepareInitialTimeline(
+              provisionalEvidence(world.request()),
+              world.request(),
+              world.resolver().resolve(world.request()),
+              source,
+              incarnation,
+              redisOwner.requireTimelineAbsent(source, incarnation),
+              NOW);
+      assertThat(repository.beginInitialTimeline(preparation, NOW)).isPresent();
+      assertThat(repository.beginInitialTimeline(preparation, NOW)).isEmpty();
+
+      byte[] metaKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.meta(
+                  source.tenantId(), source.gameInstanceId(), source.regionId()));
+      byte[] leaseKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.lease(
+                  source.tenantId(), source.gameInstanceId(), source.regionId()));
+      // Represent a retained epoch-one baseline after its lease is no longer present.
+      redis.admin().hset(metaKey, ascii("region_epoch"), ascii("1"));
+      redis.admin().hset(metaKey, ascii("current_tick_id"), ascii("-1"));
+      redis.admin().hset(metaKey, ascii("current_tick_state"), ascii("APPLIED"));
+      redis
+          .admin()
+          .hset(
+              metaKey,
+              ascii("first_timeline_operation_id"),
+              ascii(preparation.operationId().toString()));
+      redis
+          .admin()
+          .hset(metaKey, ascii("first_timeline_source_digest"), ascii(preparation.sourceDigest()));
+      assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
+      var initializationNow = Instant.now();
+      var initializationClock = Clock.fixed(initializationNow, ZoneOffset.UTC);
+      var deadline = initializationNow.toEpochMilli() + 10_000L;
+      var redisCutoff = initializationNow.toEpochMilli() + 5_000L;
+      initializeTimelineWithoutCreationPermission(
+          redisOwner.forHandoffDeadline(initializationClock, deadline),
+          preparation,
+          "exact-renewal");
+      assertThat(redis.admin().type(leaseKey)).isEqualTo("string");
+      assertThat(redis.admin().pexpiretime(leaseKey)).isEqualTo(redisCutoff);
+      assertThat(redis.admin().hlen(metaKey)).isEqualTo(5L);
+      assertThat(redis.admin().hget(metaKey, ascii("first_timeline_operation_id")))
+          .containsExactly(ascii(preparation.operationId().toString()));
+      assertThat(redis.admin().hget(metaKey, ascii("first_timeline_source_digest")))
+          .containsExactly(ascii(preparation.sourceDigest()));
+      assertThat(repository.beginInitialTimeline(preparation, NOW)).isEmpty();
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
   void timelinePreflightFailuresLeavePreparedPermissionAndAllowLaterFirstClaim() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();
@@ -2096,6 +2177,29 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       }
       assertPreparedTimelineUnchanged(
           testSchema.dsl(), statusRepository, redis, source, preparation);
+
+      for (CommandType write : List.of(CommandType.HSET, CommandType.SET)) {
+        redis.setOwnerWriteAllowed(write, false);
+        try {
+          assertThatThrownBy(() ->
+                  deadlineBoundRedisOwner.prepareTimelineInitialization(
+                      preparation,
+                      Duration.ofSeconds(30),
+                      new RuntimeIdentity(
+                          "game-session-service",
+                          "write-denied-during-probe",
+                          "localhost",
+                          NOW,
+                          "controlled-test",
+                          "controlled-sha",
+                          "controlled-image")))
+              .isInstanceOf(IllegalStateException.class);
+          assertPreparedTimelineUnchanged(
+              testSchema.dsl(), statusRepository, redis, source, preparation);
+        } finally {
+          redis.setOwnerWriteAllowed(write, true);
+        }
+      }
 
       var missingDescriptorOwner =
           owner(
@@ -2230,7 +2334,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
-  void ambiguousReleaseCommitNeverRestoresProofEvenAfterRollbackReturns() throws Exception {
+  void lostReleaseAcknowledgementReconcilesExactClaimAfterTheNextClaim() throws Exception {
     assertKnownNoWriteRecovery(3);
   }
 
@@ -2281,56 +2385,65 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               redisOwner.requireTimelineAbsent(source, incarnation),
               NOW);
       var provider = schema.dsl().configuration().connectionProvider();
-      var originals = new java.util.IdentityHashMap<Connection, Connection>();
+      var originals =
+          java.util.Collections.synchronizedMap(
+              new java.util.IdentityHashMap<Connection, Connection>());
       var fault = new java.util.concurrent.atomic.AtomicBoolean(true);
       var committed = new java.util.concurrent.atomic.AtomicBoolean();
-      var failing =
-          new org.jooq.ConnectionProvider() {
-            @Override
-            public Connection acquire() {
-              Connection raw = provider.acquire();
-              Connection wrapped =
-                  (Connection)
-                      java.lang.reflect.Proxy.newProxyInstance(
-                          Connection.class.getClassLoader(),
-                          new Class<?>[] {Connection.class},
-                          (ignored, method, args) -> {
-                            try {
-                              Object result = method.invoke(raw, args);
-                              if (method.getName().equals("commit")) {
-                                committed.set(true);
-                                if (uncertainCommit && fault.compareAndSet(true, false))
-                                  throw new java.sql.SQLException(
-                                      "controlled lost commit acknowledgement");
-                              }
-                              if (!uncertainCommit
-                                  && committed.get()
-                                  && method.getName().equals("setAutoCommit")
-                                  && Boolean.TRUE.equals(args[0])
-                                  && fault.compareAndSet(true, false)) {
-                                if (lateWorker) {
-                                  cleanupEntered.countDown();
-                                  if (!releaseCleanup.await(10, TimeUnit.SECONDS))
-                                    throw new IllegalStateException(
-                                        "controlled cleanup release timed out");
-                                }
-                                throw new java.sql.SQLException(
-                                    "controlled post-commit completion failure");
-                              }
-                              return result;
-                            } catch (java.lang.reflect.InvocationTargetException failure) {
-                              throw failure.getCause();
+      class FailingCompletionProvider
+          implements org.jooq.ConnectionProvider,
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.ConnectionRetirer {
+        @Override
+        public Connection acquire() {
+          Connection raw = provider.acquire();
+          Connection wrapped =
+              (Connection)
+                  java.lang.reflect.Proxy.newProxyInstance(
+                      Connection.class.getClassLoader(),
+                      new Class<?>[] {Connection.class},
+                      (ignored, method, args) -> {
+                        try {
+                          Object result = method.invoke(raw, args);
+                          if (method.getName().equals("commit")) {
+                            committed.set(true);
+                            if (uncertainCommit && fault.compareAndSet(true, false))
+                              throw new java.sql.SQLException(
+                                  "controlled lost commit acknowledgement");
+                          }
+                          if (!uncertainCommit
+                              && committed.get()
+                              && method.getName().equals("setAutoCommit")
+                              && Boolean.TRUE.equals(args[0])
+                              && fault.compareAndSet(true, false)) {
+                            if (lateWorker) {
+                              cleanupEntered.countDown();
+                              if (!releaseCleanup.await(10, TimeUnit.SECONDS))
+                                throw new IllegalStateException(
+                                    "controlled cleanup release timed out");
                             }
-                          });
-              originals.put(wrapped, raw);
-              return wrapped;
-            }
+                            throw new java.sql.SQLException(
+                                "controlled post-commit completion failure");
+                          }
+                          return result;
+                        } catch (java.lang.reflect.InvocationTargetException failure) {
+                          throw failure.getCause();
+                        }
+                      });
+          originals.put(wrapped, raw);
+          return wrapped;
+        }
 
-            @Override
-            public void release(Connection connection) {
-              provider.release(originals.remove(connection));
-            }
-          };
+        @Override
+        public void release(Connection connection) {
+          provider.release(originals.remove(connection));
+        }
+
+        @Override
+        public void retire(Connection connection) throws java.sql.SQLException {
+          retireControlledPostgresConnection(originals.get(connection));
+        }
+      }
+      var failing = new FailingCompletionProvider();
       var faultRepository =
           new CanonicalGameplayRegionRuntimeStatusRepository(
               DSL.using(schema.dsl().configuration().derive(failing)));
@@ -2422,9 +2535,20 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         owner.releaseNoWriteRecovery(preparation.operationId(), replacement);
         assertPreparedTimelineUnchanged(schema.dsl(), repository, redis, source, preparation);
         var retryPermit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
-        assertThatThrownBy(
-                () -> repository.releaseInitialTimelineNoWrite(preparation, proof.get(), NOW))
-            .isInstanceOf(IllegalStateException.class);
+        String currentClaim =
+            "SELECT to_jsonb(p)::text FROM game_session_region_timeline_preparation p"
+                + " WHERE initialization_operation_id = ?";
+        assertThat(retryPermit.claimOrdinal()).isEqualTo(proof.get().claimOrdinal() + 1);
+        String beforeReplay =
+            schema.dsl().fetchSingle(currentClaim, preparation.operationId()).get(0, String.class);
+        repository.releaseInitialTimelineNoWrite(preparation, proof.get(), NOW);
+        assertThat(proof.get().consumedFor(preparation)).isTrue();
+        assertThat(
+                schema
+                    .dsl()
+                    .fetchSingle(currentClaim, preparation.operationId())
+                    .get(0, String.class))
+            .isEqualTo(beforeReplay);
         var identity =
             new RuntimeIdentity(
                 "game-session-service",
@@ -2700,6 +2824,16 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                           assertThat(concurrentRelease.get()).isNotNull();
                           concurrentRelease.get().orTimeout(10, TimeUnit.SECONDS).join();
                           assertThat(
+                                  testSchema
+                                      .dsl()
+                                      .fetchSingle(
+                                          "SELECT no_write_released_through"
+                                              + " FROM game_session_region_timeline_preparation"
+                                              + " WHERE initialization_operation_id = ?",
+                                          preparation.operationId())
+                                      .get(0, Long.class))
+                              .isZero();
+                          assertThat(
                                   repository.findTimelinePreparation(source).orElseThrow().phase())
                               .isEqualTo(
                                   CanonicalGameplayRegionRuntimeStatusRepository
@@ -2750,18 +2884,6 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         }
       }
       assertThat(proof.get()).isNotNull();
-      if (mode == 3) {
-        // The commit reached PREPARED but its caller saw failure. The owner retains the
-        // consumed capability and reconciles durable state without restoring mutation authority.
-        assertThat(proof.get().consumedFor(preparation)).isTrue();
-        recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), recoverySlot);
-        var retry = recoveryOwner.reserveNoWriteRecovery(preparation.operationId());
-        assertThat(retry).isSameAs(recoverySlot);
-        recoveryOwner.recoverNoWrite(preparation, retry);
-        assertThat(retry.proof).isNull();
-        assertThat(proof.get().consumedFor(preparation)).isTrue();
-        recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), retry);
-      }
       if (mode == 4) {
         assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
             .isEqualTo(
@@ -2774,7 +2896,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), retry);
       }
       if (mode == 5) {
-        // The exact committed PREPARED state becomes usable only after physical cleanup completes.
+        // The blocked provider return kept the transaction call in flight. Once that call
+        // finishes, the owner can reconcile the exact committed PREPARED state.
         org.awaitility.Awaitility.await()
             .atMost(Duration.ofSeconds(3))
             .ignoreExceptions()
@@ -2790,12 +2913,33 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         assertThat(proof.get().consumedFor(preparation)).isTrue();
       }
       assertPreparedTimelineUnchanged(testSchema.dsl(), repository, redis, source, preparation);
-      var retryPermit = repository.beginInitialTimeline(preparation, NOW).orElseThrow();
-      // A stale proof cannot release the next claim, and a previously dispatched creation permit
-      // cannot be replayed through a different Redis session after PREPARED is restored.
-      assertThatThrownBy(
-              () -> repository.releaseInitialTimelineNoWrite(preparation, proof.get(), NOW))
-          .isInstanceOf(IllegalStateException.class);
+      var laterOwner = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+      var retryPermit = laterOwner.beginInitialTimeline(preparation, NOW).orElseThrow();
+      assertThat(retryPermit.claimOrdinal()).isEqualTo(permit.claimOrdinal() + 1);
+      String claimImage =
+          "SELECT to_jsonb(p)::text FROM game_session_region_timeline_preparation p"
+              + " WHERE initialization_operation_id = ?";
+      String beforeReplay =
+          testSchema.dsl().fetchSingle(claimImage, preparation.operationId()).get(0, String.class);
+      assertThat(proof.get().consumedFor(preparation)).isTrue();
+      if (mode == 3) {
+        // Reconcile the original owner's lost acknowledgement after the later owner claims.
+        recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), recoverySlot);
+        var retry = recoveryOwner.reserveNoWriteRecovery(preparation.operationId());
+        assertThat(retry).isSameAs(recoverySlot);
+        recoveryOwner.recoverNoWrite(preparation, retry);
+        assertThat(retry.proof).isNull();
+        recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), retry);
+      } else {
+        repository.releaseInitialTimelineNoWrite(preparation, proof.get(), NOW);
+      }
+      assertThat(proof.get().consumedFor(preparation)).isTrue();
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle(claimImage, preparation.operationId())
+                  .get(0, String.class))
+          .isEqualTo(beforeReplay);
       assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
           .isEqualTo(
               CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INITIALIZING);
@@ -4510,6 +4654,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       admin.aclSetuser(PRINCIPAL, ownerArguments(PASSWORD, true, allowed));
     }
 
+    void setOwnerWriteAllowed(CommandType command, boolean allowed) {
+      var args = new AclSetuserArgs();
+      if (allowed) args.addCommand(command);
+      else args.removeCommand(command);
+      admin.aclSetuser(PRINCIPAL, args);
+    }
+
     private static AclSetuserArgs ownerArguments(String password, boolean allowScriptLoad) {
       return ownerArguments(password, allowScriptLoad, true);
     }
@@ -4547,6 +4698,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       additionalClients.forEach(client -> client.shutdown(Duration.ZERO, Duration.ofSeconds(2)));
       ownerClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
       administrator.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  private static void retireControlledPostgresConnection(Connection connection)
+      throws java.sql.SQLException {
+    if (connection == null)
+      throw new java.sql.SQLException("Controlled connection is no longer owned");
+    var driver = connection.unwrap(org.postgresql.jdbc.PgConnection.class);
+    driver.abort(Runnable::run);
+    if (!driver.isClosed()) {
+      throw new java.sql.SQLException("Controlled PostgreSQL connection did not close");
     }
   }
 

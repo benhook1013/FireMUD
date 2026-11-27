@@ -436,6 +436,14 @@ final class CanonicalGameplayRegionOwnerTransferRepository
               tx,
               "SELECT 1 FROM " + ITEM + " WHERE execution_digest=? AND fence_readback IS NOT NULL",
               item.execution().digest())) return new FenceDispatch(item, null);
+          if (incarnation == null
+              && tx.execute(
+                      "UPDATE "
+                          + TRANSFER
+                          + " SET incarnation_digest=? WHERE transfer_id=? AND incarnation_digest IS NULL",
+                      before.incarnationDigest(),
+                      item.transferId())
+                  != 1) throw unavailable();
           if (clock.millis() >= before.expiresAtEpochMillis()) throw unavailable();
           UUID dispatchId = UUID.randomUUID();
           if (tx.execute(

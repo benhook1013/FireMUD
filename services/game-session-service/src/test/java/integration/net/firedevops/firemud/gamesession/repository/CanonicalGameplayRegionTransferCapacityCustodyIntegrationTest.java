@@ -10,7 +10,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
@@ -528,6 +531,179 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
   }
 
   @Test
+  void unsentChargeCanBeReleasedButPossibleSendNeedsExactAccountDenial() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      var execution = proof.execution;
+      UUID attemptId = execution.request().admissionAttemptId();
+      String retainedIdentity =
+          proof
+              .sql
+              .fetchSingle(
+                  "SELECT (to_jsonb(c) - 'account_send_state' - 'account_unsent_released_at'"
+                      + " - 'account_denial_id')::text FROM game_session_capacity_evidence_charge c"
+                      + " WHERE admission_attempt_id=?",
+                  attemptId)
+              .get(0, String.class);
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT account_send_state FROM game_session_capacity_evidence_charge"
+                          + " WHERE admission_attempt_id=?",
+                      attemptId)
+                  .get(0, String.class))
+          .isEqualTo("UNCLAIMED");
+
+      // Controlled SQL proof of the owner-recorded no-send transition; no Account RPC occurs.
+      assertThat(
+              proof.sql.execute(
+                  "UPDATE game_session_capacity_evidence_charge"
+                      + " SET account_send_state='RELEASED_UNSENT'"
+                      + " WHERE admission_attempt_id=? AND account_send_state='UNCLAIMED'",
+                  attemptId))
+          .isEqualTo(1);
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT account_send_state,account_unsent_released_at"
+                          + " FROM game_session_capacity_evidence_charge"
+                          + " WHERE admission_attempt_id=?",
+                      attemptId)
+                  .intoMap())
+          .containsEntry("account_send_state", "RELEASED_UNSENT")
+          .satisfies(row -> assertThat(row.get("account_unsent_released_at")).isNotNull());
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT (to_jsonb(c) - 'account_send_state' - 'account_unsent_released_at'"
+                          + " - 'account_denial_id')::text FROM game_session_capacity_evidence_charge c"
+                          + " WHERE admission_attempt_id=?",
+                      attemptId)
+                  .get(0, String.class))
+          .isEqualTo(retainedIdentity);
+      assertThat(proof.physicalExecutionExists(execution)).isFalse();
+
+      var selected =
+          new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
+              execution.selectedOwnerId(), execution.selectedOwnerFence());
+      assertThat(
+              proof
+                  .capacity(proof.sql)
+                  .authorizeAccountSend(
+                      proof.admission, execution.request(), selected, transferDeadline()))
+          .isEqualTo(
+              net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.SendDisposition
+                  .AUTHORIZE_NEW);
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT account_send_state FROM game_session_capacity_evidence_charge"
+                          + " WHERE admission_attempt_id=?",
+                      attemptId)
+                  .get(0, String.class))
+          .isEqualTo("MAY_HAVE_SENT");
+
+      assertThatThrownBy(() ->
+              proof.sql.execute(
+                  "UPDATE game_session_capacity_evidence_charge"
+                      + " SET account_send_state='RELEASED_UNSENT'"
+                      + " WHERE admission_attempt_id=?",
+                  attemptId))
+          .rootCause()
+          .isInstanceOfSatisfying(
+              org.postgresql.util.PSQLException.class,
+              failure -> {
+                assertThat(failure.getSQLState()).isEqualTo("23514");
+                assertThat(failure.getMessage())
+                    .contains("Invalid capacity evidence send transition");
+              });
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT (to_jsonb(c) - 'account_send_state' - 'account_unsent_released_at'"
+                          + " - 'account_denial_id')::text FROM game_session_capacity_evidence_charge c"
+                          + " WHERE admission_attempt_id=?",
+                      attemptId)
+                  .get(0, String.class))
+          .isEqualTo(retainedIdentity);
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT account_send_state,account_denial_id"
+                          + " FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                      attemptId)
+                  .intoMap())
+          .containsEntry("account_send_state", "MAY_HAVE_SENT")
+          .containsEntry("account_denial_id", null);
+
+      UUID exactDenial = UUID.randomUUID();
+      proof.settle(execution, exactDenial);
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT account_send_state,account_denial_id"
+                          + " FROM game_session_capacity_evidence_charge"
+                          + " WHERE admission_attempt_id=?",
+                      attemptId)
+                  .intoMap())
+          .containsEntry("account_send_state", "MAY_HAVE_SENT")
+          .containsEntry("account_denial_id", exactDenial);
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT (to_jsonb(c) - 'account_send_state' - 'account_unsent_released_at'"
+                          + " - 'account_denial_id')::text FROM game_session_capacity_evidence_charge c"
+                          + " WHERE admission_attempt_id=?",
+                      attemptId)
+                  .get(0, String.class))
+          .isEqualTo(retainedIdentity);
+    }
+  }
+
+  @Test
+  void freshPrechargeReclaimsOneExpiredUnclaimedSlotWithoutTouchingAccount() throws Exception {
+    try (var proof = new TransferSqlProof(1, 1_048_576L, 3)) {
+      UUID expiredAttempt = proof.execution.request().admissionAttemptId();
+      proof.sql.fetchSingle(
+          "SELECT pg_sleep(greatest(0,extract(epoch FROM account_send_evidence_expires_at"
+              + " - clock_timestamp()))) FROM game_session_capacity_evidence_charge"
+              + " WHERE admission_attempt_id=?",
+          expiredAttempt);
+      var fresh = proof.newIndependentControlledOriginExecution();
+      proof.precharge(fresh);
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT account_send_state,account_denial_id,account_unsent_released_at"
+                          + " FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                      expiredAttempt)
+                  .intoMap())
+          .containsEntry("account_send_state", "RELEASED_UNSENT")
+          .containsEntry("account_denial_id", null)
+          .satisfies(row -> assertThat(row.get("account_unsent_released_at")).isNotNull());
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT account_send_state FROM game_session_capacity_evidence_charge"
+                          + " WHERE admission_attempt_id=?",
+                      fresh.request().admissionAttemptId())
+                  .get(0, String.class))
+          .isEqualTo("UNCLAIMED");
+      assertThat(proof.physicalExecutionExists(proof.execution)).isFalse();
+      assertThat(proof.physicalExecutionExists(fresh)).isFalse();
+    }
+  }
+
+  @Test
   void retainedDenialReleasesTheLastSlotAndCannotRaceAStoredDispatch() throws Exception {
     try (var proof = new TransferSqlProof(1, 1_048_576L, 3)) {
       var original = proof.execution;
@@ -545,7 +721,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       proof.seedUndeliveredDispatch(later);
       assertThatThrownBy(() -> proof.settle(later, UUID.randomUUID()))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
-          .hasMessageContaining("Execution custody prevents capacity evidence settlement");
+          .hasMessageContaining("Execution custody prevents capacity evidence charge changes");
       assertThat(proof.executionState(later)).isEqualTo("INSTALL_DISPATCHED");
       assertThat(proof.executionState(original)).isNull();
       assertThat(proof.physicalExecutionExists(original)).isFalse();
@@ -593,55 +769,55 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         var callers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
       var first = proof.newIndependentControlledOriginExecution();
       var second = proof.newIndependentControlledOriginExecution();
-      var ready = new java.util.concurrent.CountDownLatch(2);
-      var start = new java.util.concurrent.CountDownLatch(1);
       var assignment =
           proof.tags.assignmentForTransition(proof.admission.candidate().bindingDecisionId());
       var selected =
           new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
               proof.execution.selectedOwnerId(), proof.execution.selectedOwnerFence());
-      java.util.function.Function<
-              OriginalNewCapacityExecution, java.util.concurrent.Future<Boolean>>
-          compete =
-              attempt ->
-                  callers.submit(() -> {
-                    ready.countDown();
-                    if (!start.await(2, java.util.concurrent.TimeUnit.SECONDS)) {
-                      throw new IllegalStateException("Concurrent proof start unavailable");
-                    }
-                    try {
-                      proof.sql.transaction(configuration ->
-                          CanonicalGameplayCapacityEvidenceBudget.precharge(
-                              DSL.using(configuration),
-                              attempt.request(),
-                              attempt.candidateDigest(),
-                              selected,
-                              assignment.tenantGameplayTag(),
-                              Clock.fixed(
-                                  attempt.request().evidence().evaluatedAt(),
-                                  java.time.ZoneOffset.UTC)));
-                      return true;
-                    } catch (IllegalStateException refused) {
-                      assertThat(refused)
-                          .hasMessage("Original NEW capacity evidence budget is unavailable");
-                      return false;
-                    }
-                  });
-      var firstResult = compete.apply(first);
-      var secondResult = compete.apply(second);
-      assertThat(ready.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-      start.countDown();
-      assertThat(
-              List.of(
-                  firstResult.get(5, java.util.concurrent.TimeUnit.SECONDS),
-                  secondResult.get(5, java.util.concurrent.TimeUnit.SECONDS)))
-          .containsExactlyInAnyOrder(true, false);
+      java.util.function.BiConsumer<DSLContext, OriginalNewCapacityExecution> precharge =
+          (tx, attempt) ->
+              CanonicalGameplayCapacityEvidenceBudget.precharge(
+                  tx,
+                  attempt.request(),
+                  attempt.candidateDigest(),
+                  selected,
+                  assignment.tenantGameplayTag(),
+                  Clock.fixed(
+                      attempt.request().evidence().evaluatedAt(), java.time.ZoneOffset.UTC));
+      var winnerPid = new java.util.concurrent.CompletableFuture<Integer>();
+      var allowCommit = new java.util.concurrent.CountDownLatch(1);
+      Future<?> winner =
+          callers.submit(() ->
+              proof.sql.transaction(configuration -> {
+                DSLContext tx = DSL.using(configuration);
+                precharge.accept(tx, first);
+                winnerPid.complete(tx.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                if (!allowCommit.await(10, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException("Concurrent proof commit was not released");
+                }
+              }));
+      Future<?> loser;
+      try {
+        int pid = winnerPid.get(5, TimeUnit.SECONDS);
+        loser =
+            callers.submit(() ->
+                assertThatThrownBy(() ->
+                        proof.sql.transaction(
+                            configuration -> precharge.accept(DSL.using(configuration), second)))
+                    .isExactlyInstanceOf(IllegalStateException.class)
+                    .hasMessage("Original NEW capacity evidence budget is unavailable"));
+        assertDatabaseWaitsFor(proof.sql, pid);
+        assertThat(loser.isDone()).isFalse();
+      } finally {
+        allowCommit.countDown();
+      }
+      winner.get(10, TimeUnit.SECONDS);
+      loser.get(10, TimeUnit.SECONDS);
       assertThat(
               proof
                   .sql
                   .fetchSingle(
-                      "SELECT count(*) FROM game_session_capacity_evidence_charge WHERE"
-                          + " tenant_id=?",
+                      "SELECT count(*) FROM game_session_capacity_evidence_charge WHERE tenant_id=?",
                       assignment.tenantId())
                   .get(0, Long.class))
           .isEqualTo(2L);
@@ -845,6 +1021,69 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
     }
   }
 
+  @Test
+  void installationDoesNotReturnServingCapabilityWhenAnyCompletedMarkerIsLost() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      var secondExecution = proof.newIndependentControlledOriginExecution();
+      proof.seedUndeliveredDispatch(secondExecution);
+      UUID id = proof.begin();
+      assertThat(proof.captureAndFence(id)).hasSize(2);
+      proof.verifyPage(id);
+      boolean verificationComplete =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+      assertThat(verificationComplete).isTrue();
+
+      var lostAfterInstall = new AtomicBoolean();
+      var listener =
+          new DefaultExecuteListener() {
+            @Override
+            public void executeEnd(ExecuteContext context) {
+              String sql = context.sql();
+              if (sql != null
+                  && sql.stripLeading()
+                      .toLowerCase(Locale.ROOT)
+                      .startsWith("update game_session_region_runtime_status")
+                  && lostAfterInstall.compareAndSet(false, true)) {
+                // Model a retained marker disappearing after SQL installs the successor but
+                // before the coordinator can return its serving capability.
+                proof.losePhysicalExecution(secondExecution);
+              }
+            }
+          };
+      DSLContext installingSql = DSL.using(proof.sql.configuration().deriveAppending(listener));
+      var transfers = proof.transfers(installingSql);
+      var observations =
+          new CanonicalGameplayControlledRegionTransferObservationFixture(proof.clock)
+              .receiver(transfers, proof.tags);
+      var coordinator =
+          new CanonicalGameplayRegionOwnerTransferCoordinator(
+              installingSql, proof.clock, transfers, proof.capacity(installingSql), observations);
+
+      assertThatThrownBy(() ->
+              coordinator.install(
+                  id,
+                  proof.scope,
+                  proof.prior,
+                  "e".repeat(64),
+                  "game-session-service",
+                  "sql-proof-successor",
+                  transferDeadline()))
+          .isInstanceOf(IllegalStateException.class);
+
+      assertThat(lostAfterInstall).isTrue();
+      assertThat(proof.currentOwner().ownerInstanceId()).isEqualTo("sql-proof-successor");
+      assertThat(proof.transfers.readCurrent(id, 0).controlState()).isEqualTo("COMPLETED");
+      assertThat(proof.physicalExecutionExists(proof.execution)).isTrue();
+      assertThat(proof.physicalExecutionExists(secondExecution)).isFalse();
+      assertThatThrownBy(() ->
+              coordinator.recoverCompleted(
+                  id, "sql-proof-successor", "e".repeat(64), transferDeadline()))
+          .isInstanceOf(IllegalStateException.class);
+    }
+  }
+
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
   void missingAppliedReceiptCannotQualifyCurrentTransfer(boolean installedBeforeLoss)
@@ -904,6 +1143,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         var template = raw.bindCapacityExecution(proof.execution)) {
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       proof
           .capacity(proof.sql)
           .authorize(
@@ -1201,6 +1441,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         var template = raw.bindCapacityExecution(proof.execution)) {
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       proof
           .capacity(proof.sql)
           .authorize(
@@ -1291,6 +1532,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         var template = raw.bindCapacityExecution(proof.execution)) {
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       proof
           .capacity(proof.sql)
           .authorize(
@@ -1420,20 +1662,30 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       proof.seedUndeliveredDispatch(proof.execution);
       UUID id = proof.insertRawFrozenTransfer(proof.sql);
       proof.insertRawTransferItem(proof.sql, id, 0);
+      String dispatchSql =
+          "UPDATE game_session_region_owner_transfer_item"
+              + " SET fence_dispatch_id=?,fence_dispatch_incarnation=? WHERE transfer_id=?";
+      UUID dispatch = UUID.randomUUID();
+      String observed = "sha256:" + "a".repeat(64);
+      String changed = "sha256:" + "b".repeat(64);
+      assertThatThrownBy(() -> proof.sql.execute(dispatchSql, dispatch, observed, id))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("exact bound incarnation");
       proof.sql.execute(
-          "UPDATE game_session_region_owner_transfer_item SET fence_dispatch_id=?,fence_dispatch_incarnation=? WHERE transfer_id=?",
-          UUID.randomUUID(),
-          "sha256:" + "a".repeat(64),
+          "UPDATE game_session_region_owner_transfer SET incarnation_digest=? WHERE transfer_id=?",
+          observed,
           id);
+      assertThatThrownBy(() -> proof.sql.execute(dispatchSql, dispatch, changed, id))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("exact bound incarnation");
+      assertThat(proof.sql.execute(dispatchSql, dispatch, observed, id)).isEqualTo(1);
       String dispatched = proof.itemImage(id);
       assertThatThrownBy(() ->
               proof.sql.transaction(configuration -> {
                 var transaction = DSL.using(configuration);
-                var changed = "sha256:" + "b".repeat(64);
                 var round = UUID.randomUUID();
                 transaction.execute(
-                    "UPDATE game_session_region_owner_transfer SET incarnation_digest=?,verification_round=? WHERE transfer_id=?",
-                    changed,
+                    "UPDATE game_session_region_owner_transfer SET verification_round=? WHERE transfer_id=?",
                     round,
                     id);
                 transaction.execute(
@@ -1446,7 +1698,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                     id);
               }))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
-          .hasMessageContaining("gs_region_fence_receipt_dispatch_incarnation");
+          .hasMessageContaining("Transfer receipt differs from the bound parent incarnation");
       assertThat(proof.itemImage(id)).isEqualTo(dispatched);
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
       assertThat(
@@ -1457,6 +1709,59 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                       id)
                   .get(0, String.class))
           .isEqualTo("FROZEN");
+    }
+  }
+
+  @Test
+  void terminalTransferCompletionRequiresItsExactInstalledSuccessor() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      UUID id = proof.insertRawFrozenTransfer(proof.sql);
+      String frozen = proof.transferImage(id);
+      String successor = "terminal-successor";
+      String lease = "e".repeat(64);
+      assertThatThrownBy(() ->
+              proof.sql.transaction(configuration ->
+                  CanonicalGameplayRegionOwnerTransferRepository.completeTerminalOnly(
+                      DSL.using(configuration),
+                      proof.prior,
+                      successor,
+                      proof.prior.executorFence().longValueExact() + 1,
+                      lease)))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasStackTraceContaining(
+              "Region transfer completion requires its exact installed successor");
+      assertThat(proof.transferImage(id)).isEqualTo(frozen);
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+
+      assertThatThrownBy(() ->
+              proof.sql.execute(
+                  "UPDATE game_session_region_runtime_status SET owner_service=?"
+                      + " WHERE tenant_id=? AND game_instance_id=? AND region_id=?",
+                  "other-owner-service",
+                  proof.scope.tenantId(),
+                  proof.scope.gameInstanceId(),
+                  proof.scope.regionId()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Region owner replacement requires an advancing executor fence");
+      assertThatThrownBy(() ->
+              proof.sql.execute(
+                  "UPDATE game_session_region_runtime_status"
+                      + " SET owner_service=?, executor_fence=?"
+                      + " WHERE tenant_id=? AND game_instance_id=? AND region_id=?",
+                  "other-owner-service",
+                  proof.prior.executorFence().longValueExact() + 1,
+                  proof.scope.tenantId(),
+                  proof.scope.gameInstanceId(),
+                  proof.scope.regionId()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Region transfer must complete with owner installation");
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+
+      var installed = proof.rawCompleteAndInstall(id, successor, lease);
+      assertThat(installed.ownerService()).isEqualTo("game-session-service");
+      assertThat(installed.ownerInstanceId()).isEqualTo(successor);
+      assertThat(installed.leaseTokenCorrelation()).isEqualTo(lease);
+      assertThat(proof.currentOwner()).isEqualTo(installed);
     }
   }
 
@@ -1475,6 +1780,9 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
           .hasMessage("Normal region owner transfer is held");
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
       proof.seedUndeliveredDispatch(proof.execution);
+      var lateExecution = proof.newControlledExecution();
+      proof.retainExactChargeForControlledSeed(lateExecution);
+      proof.authorizeAccountSend(lateExecution);
       String original = proof.originalImage();
       assertSqlGuard(() -> proof.rawReplaceOwner("unretained-successor", "e".repeat(64)));
       String forgedOwner = "forged-successor";
@@ -1547,9 +1855,12 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       var installed = proof.install(id);
       String completed = proof.transferImage(id);
       assertSqlGuard(() -> proof.rawReplaceOwner("different-successor", "f".repeat(64)));
-      var lateExecution = proof.newControlledExecution();
-      proof.retainExactChargeForControlledSeed(lateExecution);
-      assertThatThrownBy(() -> proof.seedUndeliveredDispatch(lateExecution))
+      var newCharge = proof.newControlledExecution();
+      assertThatThrownBy(() -> proof.retainExactChargeForControlledSeed(newCharge))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Capacity send boundary requires the exact current selected owner");
+      assertThatThrownBy(
+              () -> proof.insertExecution(proof.sql, lateExecution, "INSTALL_DISPATCHED", null))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasMessageContaining("Region dispatch requires the exact current selected owner");
       assertThat(proof.currentOwner()).isEqualTo(installed);
@@ -1606,6 +1917,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         var template = raw.bindCapacityExecution(proof.execution)) {
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       proof
           .capacity(proof.sql)
           .authorize(
@@ -1687,6 +1999,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
         var template = raw.bindCapacityExecution(proof.execution)) {
       var account = proof.controlledAccountOpen();
       var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
       proof
           .capacity(proof.sql)
           .authorize(

@@ -184,15 +184,15 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
                       ownerInstanceId,
                       clock.instant(),
                       proof);
-          // Completion grants no historical-fence exemption. The source now independently checks
-          // the immutable completed successor against the actual current region owner.
+          // Completion grants no historical-fence exemption. Recheck the exact committed
+          // successor and every retained marker before returning a serving capability.
           var completed =
-              observations.observeForRegionOwnerTransfer(
-                  transferId, first.getFirst().ordinal(), budget);
-          if (!after.incarnationDigest().equals(completed.incarnationDigest())) throw held();
-          repository.requireRetainedPhysical(
-              first.getFirst(),
-              owner.readTransferFence(first.getFirst(), budget.absoluteDeadlineMillis()));
+              repository.completedSuccessor(transferId, ownerInstanceId, leaseCorrelation);
+          if (!installed.equals(completed.status())
+              || !after.incarnationDigest().equals(completed.incarnationDigest())) throw held();
+          var completedFirst = repository.completedPage(transferId, -1);
+          if (completedFirst.isEmpty()) throw held();
+          requireCompletedInventory(transferId, completed, completedFirst, budget);
           return installed;
         });
   }
@@ -209,29 +209,41 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
             repository.requireTerminalOnlyCompletion(transferId, completed);
             return completed.status();
           }
-          var first = firstPage.getFirst();
-          var before = observe(first, budget);
-          if (!before.incarnationDigest().equals(completed.incarnationDigest())) throw held();
-          var owner = capacity.forTransferBudget(budget);
-          owner.withTransferReadback(reader -> {
-            var page = firstPage;
-            while (!page.isEmpty()) {
-              for (var item : page) {
-                budget.check();
-                repository.requireRetainedPhysical(
-                    item, reader.readTransferFence(item, budget.absoluteDeadlineMillis()));
-              }
-              page = repository.completedPage(transferId, page.getLast().ordinal());
-            }
-          });
-          var after = observe(first, budget);
-          if (!after.incarnationDigest().equals(completed.incarnationDigest())
-              || !completed.equals(
-                  repository.completedSuccessor(transferId, ownerInstance, correlation))) {
-            throw held();
-          }
+          requireCompletedInventory(transferId, completed, firstPage, budget);
           return completed.status();
         });
+  }
+
+  /** Rechecks a nonempty completed transfer without mutation or a second operation budget. */
+  private void requireCompletedInventory(
+      UUID transferId,
+      CanonicalGameplayRegionOwnerTransferRepository.CompletedTransfer completed,
+      List<CanonicalGameplayRegionOwnerTransferRepository.Item> firstPage,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    var first = firstPage.getFirst();
+    var before = observe(first, budget);
+    if (!before.incarnationDigest().equals(completed.incarnationDigest())) throw held();
+    var owner = capacity.forTransferBudget(budget);
+    owner.withTransferReadback(reader -> {
+      var page = firstPage;
+      while (!page.isEmpty()) {
+        for (var item : page) {
+          budget.check();
+          repository.requireRetainedPhysical(
+              item, reader.readTransferFence(item, budget.absoluteDeadlineMillis()));
+        }
+        page = repository.completedPage(transferId, page.getLast().ordinal());
+      }
+    });
+    var after = observe(first, budget);
+    if (!after.incarnationDigest().equals(completed.incarnationDigest())
+        || !completed.equals(
+            repository.completedSuccessor(
+                transferId,
+                completed.status().ownerInstanceId(),
+                completed.status().leaseTokenCorrelation()))) {
+      throw held();
+    }
   }
 
   private CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation observe(

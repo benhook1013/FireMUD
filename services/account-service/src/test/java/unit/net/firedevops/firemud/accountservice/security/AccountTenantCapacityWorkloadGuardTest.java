@@ -105,6 +105,23 @@ class AccountTenantCapacityWorkloadGuardTest {
     assertThat(invoke(method, gameSession).getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
   }
 
+  @Test
+  void admissionOutcomeReadRequiresExactGameSessionTlsWithoutAmbientAuthority() throws Exception {
+    var method = AccountServiceGrpc.getReadTenantCapacityAdmissionOutcomeMethod();
+    var gameSession = tls("firemud", "game-session-service");
+    assertThat(invoke(method, gameSession, "spiffe://firemud/ns/firemud/sa/game-session-service"))
+        .isNull();
+    assertThatThrownBy(guard::requireAdmissionOutcomeReader)
+        .isInstanceOf(StatusRuntimeException.class);
+    assertThat(invoke(method, null).getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
+    assertThat(invoke(method, tls("firemud", "world-management-service")).getCode())
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(invoke(method, tls("other", "game-session-service")).getCode())
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+    SessionContext.setContext("caller", List.of(), Map.of());
+    assertThat(invoke(method, gameSession).getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+  }
+
   private Status invoke(MethodDescriptor<?, ?> method, SSLSession ssl) {
     return invoke(method, ssl, null);
   }
@@ -122,9 +139,13 @@ class AccountTenantCapacityWorkloadGuardTest {
     ServerCallHandler next =
         (ignored, headers) -> {
           if (AccountServiceGrpc.getReadTenantCapacityQuotaDenialMethod()
-              .getFullMethodName()
-              .equals(method.getFullMethodName())) {
+                  .getFullMethodName()
+                  .equals(method.getFullMethodName())
+              || AccountServiceGrpc.getReadTenantCapacityAdmissionOutcomeMethod()
+                  .getFullMethodName()
+                  .equals(method.getFullMethodName())) {
             assertThat(guard.requireQuotaDenialReader()).isEqualTo(expectedCallerUri);
+            assertThat(guard.requireAdmissionOutcomeReader()).isEqualTo(expectedCallerUri);
             assertThatThrownBy(guard::requireAuthenticatedCaller)
                 .isInstanceOf(StatusRuntimeException.class);
           } else {

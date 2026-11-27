@@ -774,6 +774,28 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         capacityRequest);
   }
 
+  public Receipt completeAfterInitialOpenWindow(
+      AccountGameplayAdmissionLeaseClient account,
+      AccountPublicJwksCache jwks,
+      String originalLoginJwt,
+      net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient,
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
+          capacityRequest) {
+    // The controlled attestor can refresh its 30-second proof on each read. Advance only the
+    // admission coordinator, so it evaluates even that fresh readback beyond its OPEN window.
+    var expiredClock = Clock.offset(CLOCK, Duration.ofMinutes(2));
+    return complete(
+        decision,
+        regionInstallation,
+        account,
+        jwks,
+        originalLoginJwt,
+        Math.max(System.currentTimeMillis(), expiredClock.millis()) + 10_000L,
+        capacityClient,
+        capacityRequest,
+        expiredClock);
+  }
+
   private Receipt complete(
       CanonicalGameplayAdmissionDecision admission,
       CanonicalGameplayRegionLeaseOwner.Installation installation,
@@ -784,6 +806,29 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
       net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient,
       net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
           capacityRequest) {
+    return complete(
+        admission,
+        installation,
+        account,
+        jwks,
+        originalLoginJwt,
+        deadline,
+        capacityClient,
+        capacityRequest,
+        CLOCK);
+  }
+
+  private Receipt complete(
+      CanonicalGameplayAdmissionDecision admission,
+      CanonicalGameplayRegionLeaseOwner.Installation installation,
+      AccountGameplayAdmissionLeaseClient account,
+      AccountPublicJwksCache jwks,
+      String originalLoginJwt,
+      long deadline,
+      net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient,
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
+          capacityRequest,
+      Clock coordinatorClock) {
     // Recreate the coordinator and its SQL/INITIAL/issuer/final owners on every invocation.
     var issuerSource = binding.currentIssuerSource();
     var issuer =
@@ -803,7 +848,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             new CanonicalGameplayOriginalNewBoundCredentialVerifier(jwks, CLOCK),
             new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
                 coordination, scripts, CLOCK, tags),
-            CLOCK,
+            coordinatorClock,
             capacityClient,
             new CanonicalGameplayOriginalNewCapacityExecutionOwner(
                 binding.dsl(), coordination, scripts, CLOCK, tags));
@@ -839,7 +884,11 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             binding.dsl(), coordination, scripts, CLOCK, tags);
     var selected = executionOwner.requireRequestBinding(source, request, deadline);
     executionOwner.precharge(source, request, selected, deadline);
-    var reservation = capacityClient.commit(request, deadline);
+    var reservation =
+        capacityClient.commitWithSendBoundary(
+            request,
+            deadline,
+            () -> executionOwner.authorizeAccountSend(source, request, selected, deadline));
     var execution = executionOwner.bind(source, request, reservation, deadline, selected);
     var issuerSource = binding.currentIssuerSource();
     var issuer =
@@ -942,7 +991,11 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             binding.dsl(), coordination, scripts, CLOCK, tags);
     var selected = executionOwner.requireRequestBinding(source, request, deadline);
     executionOwner.precharge(source, request, selected, deadline);
-    var result = client.commit(request, deadline);
+    var result =
+        client.commitWithSendBoundary(
+            request,
+            deadline,
+            () -> executionOwner.authorizeAccountSend(source, request, selected, deadline));
     var identity = source.candidate().bindingIdentity();
     if (binding
             .dsl()
@@ -994,6 +1047,20 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     return java.util.Map.copyOf(result);
   }
 
+  /** Exact owner tokens for this isolated fixture's region lease keys, excluding renewal TTL. */
+  public java.util.Map<String, String> capacityLeaseOwnerImage() {
+    var result = new java.util.TreeMap<String, String>();
+    var commands = administration.sync();
+    for (byte[] key : commands.keys("tick-executor-lease:*")) {
+      byte[] token = commands.get(key);
+      if (token == null)
+        throw new IllegalStateException("Region lease disappeared during owner readback");
+      result.put(
+          new String(key, StandardCharsets.UTF_8), new String(token, StandardCharsets.US_ASCII));
+    }
+    return java.util.Map.copyOf(result);
+  }
+
   /** Controlled TTL-only fault used to prove the composition image observes absolute expiry. */
   public String setPhysicalSessionExpiryForFault() {
     var commands = administration.sync();
@@ -1018,15 +1085,15 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             .get(0, String.class);
     if (!"COMMITTED".equals(state))
       throw new IllegalStateException("Immutable actual outcome must precede this fixture fault");
-    administration
-        .sync()
-        .del(
-            new byte[][] {
-              ascii(candidateInstallation.sessionKey()),
-                  ascii(candidateInstallation.characterIndexKey()),
-              ascii(candidateInstallation.accountTenantIndexKey()),
-                  ascii(candidateInstallation.tenantIndexKey())
-            });
+    var commands = administration.sync();
+    byte[] sessionId = ascii(candidateInstallation.candidate().bindingIdentity().sessionId());
+    commands.del(
+        new byte[][] {
+          ascii(candidateInstallation.sessionKey()),
+          ascii(candidateInstallation.characterIndexKey())
+        });
+    commands.srem(ascii(candidateInstallation.accountTenantIndexKey()), sessionId);
+    commands.srem(ascii(candidateInstallation.tenantIndexKey()), sessionId);
   }
 
   public void removeInitialBarrierForFault() {

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.repository;
 
+import io.grpc.Context;
 import io.grpc.Status;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -39,7 +40,9 @@ import net.firedevops.firemud.accountservice.service.session.AccountResponseEnve
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography.EncryptedResponseEnvelope;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.CommittedCapacityRequest;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
@@ -369,6 +372,13 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
    */
   public OriginalAdmissionConfirmation confirmOriginalFinalAdmission(
       String presentedInitialGsACompactJwt, AccountGameplayAdmissionLeaseEvidence requestedLease) {
+    return confirmOriginalFinalAdmission(presentedInitialGsACompactJwt, requestedLease, null);
+  }
+
+  public OriginalAdmissionConfirmation confirmOriginalFinalAdmission(
+      String presentedInitialGsACompactJwt,
+      AccountGameplayAdmissionLeaseEvidence requestedLease,
+      CommittedCapacityRequest committedCapacityRequest) {
     if (finalAdmissionReadClient == null) throw unavailable();
     GrpcPeerIdentity peer = requireGameSessionCaller();
     requireNoAmbientSql();
@@ -432,7 +442,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       }
       AccountGameplayAdmissionCurrentSources.Observed recoveryObservation =
           prepareCurrentOriginalSource(currentCaller, requestedLease);
-      Genesis recovered =
+      ConfirmedSource recovered =
           inWritableSerializableTransaction(dsl -> {
             SourceRead current =
                 readCurrentOriginalSource(dsl, currentCaller, requestedLease, recoveryObservation);
@@ -459,16 +469,16 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
                     .equals(beforeGenesis.confirmationReadbackSha256())) throw unavailable();
             new AccountGameplayTokenIdentityFenceRepository(dsl)
                 .requireActiveReadback(originalNewIdentity(exact));
-            return exact;
+            return new ConfirmedSource(
+                exact,
+                readCommittedCapacity(dsl, current.operation(), peer, committedCapacityRequest));
           });
-      tokenRegistry.requireExactOriginalNewActiveRecord(recovered);
-      if (clock.millis() >= recovered.confirmedContinuityExpiresAtMillis()) throw unavailable();
-      return new OriginalAdmissionConfirmation(
-          recovered.lineageId(),
-          recovered.leaseId(),
-          recovered.confirmedAdmissionAtMillis(),
-          recovered.confirmedContinuityExpiresAtMillis(),
-          recovered.confirmationReadbackSha256());
+      tokenRegistry.requireExactOriginalNewActiveRecord(recovered.genesis());
+      if (clock.millis() >= recovered.genesis().confirmedContinuityExpiresAtMillis()
+          || (committedCapacityRequest != null && Context.current().isCancelled())) {
+        throw unavailable();
+      }
+      return new OriginalAdmissionConfirmation(recovered);
     }
 
     final AuthenticatedFinalAdmissionReadback finalReadback;
@@ -489,6 +499,20 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       throw unavailable();
     }
 
+    if (committedCapacityRequest != null) {
+      AccountGameplayAdmissionCurrentSources.Observed beforeActivationObservation =
+          prepareCurrentOriginalSource(beforeActivationCaller, requestedLease);
+      inWritableSerializableTransaction(dsl -> {
+        SourceRead current =
+            readCurrentOriginalSource(
+                dsl, beforeActivationCaller, requestedLease, beforeActivationObservation);
+        requireSameOriginalOperation(beforeRead.operation(), current.operation());
+        return readCommittedCapacity(dsl, current.operation(), peer, committedCapacityRequest);
+      });
+      if (Context.current().isCancelled()) throw unavailable();
+    }
+
+    requireCurrentFinalReadback(finalReadback);
     // Activation is Account-owned and happens only after the authenticated GS readback exists.
     // If its reply is lost, the Redis CAS accepts only the same immutable active projection.
     AccountGameplayDelegationRedisClient.OriginalNewActivationReadback activation =
@@ -510,7 +534,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
     String confirmationDigest = confirmationDigest(finalReadback, activation);
     AccountGameplayAdmissionCurrentSources.Observed confirmationObservation =
         prepareCurrentOriginalSource(currentCaller, requestedLease);
-    Genesis confirmed =
+    ConfirmedSource confirmed =
         inWritableSerializableTransaction(dsl -> {
           SourceRead current =
               readCurrentOriginalSource(
@@ -529,6 +553,8 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
           requireSameGenesisIdentity(beforeGenesis, exact);
           TokenIdentity tokenIdentity = originalNewIdentity(exact);
           new AccountGameplayTokenIdentityFenceRepository(dsl).requireActiveReadback(tokenIdentity);
+          var capacity =
+              readCommittedCapacity(dsl, current.operation(), peer, committedCapacityRequest);
           requireCurrentFinalReadback(finalReadback);
           Genesis written =
               issuance.confirmFinalAdmission(
@@ -537,17 +563,66 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
                   finalReadback.continuityExpiresAtMillis(),
                   confirmationDigest);
           requireCurrentFinalReadback(finalReadback);
-          return written;
+          return new ConfirmedSource(written, capacity);
         });
-    tokenRegistry.requireExactOriginalNewActiveRecord(confirmed);
+    tokenRegistry.requireExactOriginalNewActiveRecord(confirmed.genesis());
     requireCurrentFinalReadback(finalReadback);
-    if (!confirmationDigest.equals(confirmed.confirmationReadbackSha256())) throw unavailable();
-    return new OriginalAdmissionConfirmation(
-        confirmed.lineageId(),
-        confirmed.leaseId(),
-        confirmed.confirmedAdmissionAtMillis(),
-        confirmed.confirmedContinuityExpiresAtMillis(),
-        confirmed.confirmationReadbackSha256());
+    if (!confirmationDigest.equals(confirmed.genesis().confirmationReadbackSha256())
+        || (committedCapacityRequest != null && Context.current().isCancelled())) {
+      throw unavailable();
+    }
+    return new OriginalAdmissionConfirmation(confirmed);
+  }
+
+  private static TenantCapacityAdmission.Result readCommittedCapacity(
+      DSLContext dsl,
+      AccountGameplayAdmissionLeaseOperation operation,
+      GrpcPeerIdentity peer,
+      CommittedCapacityRequest selector) {
+    if (selector == null) return null;
+    if (Context.current().isCancelled()) throw unavailable();
+    var request = selector.attempt();
+    var carrier = operation.evidence().carrier();
+    var scope = object(carrier.get("bindingScope"));
+    UUID requestId = uuid(carrier.get("requestId"));
+    var player =
+        new TenantCapacityAdmission.PlayerContext(
+            UUID.fromString((String) scope.get("accountId")),
+            UUID.fromString((String) scope.get("tenantId")),
+            UUID.fromString((String) scope.get("playableStateNamespaceId")),
+            UUID.fromString((String) scope.get("gameInstanceId")),
+            UUID.fromString((String) scope.get("characterId")),
+            UUID.fromString((String) scope.get("sessionId")),
+            UUID.fromString((String) scope.get("realmId")),
+            requestId,
+            (String) scope.get("playableStateScope"));
+    var evidence = request.evidence().fields();
+    if (operation.state() != State.COMMITTED
+        || !request
+            .identity()
+            .equals(
+                new TenantCapacityAdmission.Identity(
+                    player.tenantId(), requestId, operation.bindingDecisionId()))
+        || !player.equals(request.context())
+        || !peer.namespace().equals(request.targetNamespace())
+        || !peer.uri().equals(request.evidence().callerWorkload())
+        || !Objects.equals(carrier.get("authorityTuple"), evidence.get("authorityTuple"))
+        || !(evidence.get("target") instanceof Map<?, ?> target)
+        || !Objects.equals(scope.get("catalogRevision"), target.get("catalogRevision"))
+        || !Objects.equals(scope.get("pointerVersion"), target.get("pointerVersion"))) {
+      throw unavailable();
+    }
+    var repository = new AccountTenantCapacityRepository(dsl);
+    var row = repository.findForReplay(request.identity());
+    if (row == null) throw unavailable();
+    var result = repository.exact(request, row);
+    try {
+      selector.requireExactResult(result);
+    } catch (IllegalArgumentException unqualifiedReservation) {
+      throw unavailable();
+    }
+    if (Context.current().isCancelled()) throw unavailable();
+    return result;
   }
 
   private static ExpectedOriginalAdmission expectedAdmission(
@@ -1202,6 +1277,8 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
 
   private record OpenedProtectedResult(byte[] compactJwtBytes, byte[] handleBytes) {}
 
+  private record ConfirmedSource(Genesis genesis, TenantCapacityAdmission.Result capacityResult) {}
+
   /** Actual original-admission anchors returned only by the Account-side confirmation hook. */
   public static final class OriginalAdmissionConfirmation {
     private final UUID lineageId;
@@ -1209,23 +1286,27 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
     private final long admissionAtMillis;
     private final long continuityExpiresAtMillis;
     private final String authenticatedConfirmationSha256;
+    private final TenantCapacityAdmission.Result committedCapacityResult;
 
-    private OriginalAdmissionConfirmation(
-        UUID lineageId,
-        UUID originalLeaseId,
-        long admissionAtMillis,
-        long continuityExpiresAtMillis,
-        String authenticatedConfirmationSha256) {
-      this.lineageId = Objects.requireNonNull(lineageId);
-      this.originalLeaseId = Objects.requireNonNull(originalLeaseId);
+    private OriginalAdmissionConfirmation(ConfirmedSource source) {
+      Genesis genesis = source.genesis();
+      this.lineageId = Objects.requireNonNull(genesis.lineageId());
+      this.originalLeaseId = Objects.requireNonNull(genesis.leaseId());
+      long admissionAtMillis = genesis.confirmedAdmissionAtMillis();
+      long continuityExpiresAtMillis = genesis.confirmedContinuityExpiresAtMillis();
       if (admissionAtMillis <= 0L || continuityExpiresAtMillis <= admissionAtMillis) {
         throw unavailable();
       }
       this.admissionAtMillis = admissionAtMillis;
       this.continuityExpiresAtMillis = continuityExpiresAtMillis;
       this.authenticatedConfirmationSha256 =
-          Objects.requireNonNull(authenticatedConfirmationSha256);
+          Objects.requireNonNull(genesis.confirmationReadbackSha256());
       if (!authenticatedConfirmationSha256.matches("[0-9a-f]{64}")) throw unavailable();
+      this.committedCapacityResult = source.capacityResult();
+    }
+
+    public TenantCapacityAdmission.Result committedCapacityResult() {
+      return committedCapacityResult;
     }
 
     public UUID lineageId() {

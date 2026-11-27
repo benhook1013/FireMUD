@@ -512,6 +512,10 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       this.permit = permit;
     }
 
+    long claimOrdinal() {
+      return permit.claimOrdinal();
+    }
+
     void restoreAfterConfirmedRollback() {
       consumed.set(false);
     }
@@ -808,9 +812,12 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
             initializationFailure.addSuppressed(disposalFailure);
         }
       }
-      // A local refusal before dispatch or a completed -3 proves no mutation. Once
-      // invocation begins, timeout/cancellation/transport failure remain indeterminate.
-      if ((!dispatchInvoked || Long.valueOf(-3L).equals(outcome)) && permit != null) {
+      // A local refusal before dispatch or an explicit deadline/ACL refusal before
+      // either write proves no mutation. Unknown transport outcomes remain held.
+      if ((!dispatchInvoked
+              || Long.valueOf(-3L).equals(outcome)
+              || Long.valueOf(-4L).equals(outcome))
+          && permit != null) {
         try {
           noWriteRecovery.accept(new InitializationNoWriteProof(permit));
         } catch (RuntimeException recoveryFailure) {
