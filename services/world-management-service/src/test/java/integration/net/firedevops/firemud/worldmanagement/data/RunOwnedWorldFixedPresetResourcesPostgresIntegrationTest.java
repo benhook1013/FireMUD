@@ -888,6 +888,24 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertThat(scalarLong("SELECT row_version FROM world_instance WHERE id = ?", id)).isEqualTo(1L);
     assertThatThrownBy(
             () ->
+                ownerTransaction()
+                    .executeWithoutResult(
+                        status -> {
+                          // Model a receipt mismatch without leaving damaged committed state.
+                          dsl.execute("SET LOCAL session_replication_role = replica");
+                          dsl.execute(
+                              "UPDATE world_run_owned_fixture_activation "
+                                  + "SET expected_row_version = 1, result_row_version = 2 "
+                                  + "WHERE world_instance_id = ?",
+                              id);
+                          dsl.execute("SET LOCAL session_replication_role = origin");
+                          associationRepository()
+                              .activateRunOwnedFixtureInOwnerTransaction(association, 1L, 1L);
+                        }))
+        .hasMessageStartingWith("LIFECYCLE_EPOCH_MISMATCH:");
+    assertThat(allRows(dsl).get("world_run_owned_fixture_activation")).isEqualTo(committedReceipt);
+    assertThatThrownBy(
+            () ->
                 RunOwnedWorldFixtureLifecycleTestFactory.activate(
                     service, evidence, controlledInstallation, 3L))
         .hasMessageStartingWith("LIFECYCLE_EPOCH_MISMATCH:");
@@ -902,6 +920,55 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             dsl.execute(
                 "DELETE FROM world_run_owned_fixture_activation WHERE world_instance_id = ?", id),
         "23514");
+  }
+
+  @Test
+  void fixtureActivationRefusesMissingCommittedPresetRoom() throws Exception {
+    var evidence = controlledEvidence();
+    var service = nativeService(evidence);
+    prepareWithInstallation(service, evidence);
+    var repository = associationRepository();
+    var association =
+        repository.readRunOwnedFixtureAssociation(
+            evidence, RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence));
+    assertFixtureActivationRefusesMissingPresetRoom(repository, association, 0L);
+    assertThat(
+            RunOwnedWorldFixtureLifecycleTestFactory.activate(
+                    service, evidence, controlledInstallation, 1L)
+                .status())
+        .isEqualTo("ACTIVE");
+    assertFixtureActivationRefusesMissingPresetRoom(repository, association, 1L);
+  }
+
+  private void assertFixtureActivationRefusesMissingPresetRoom(
+      WorldCanonicalInstanceAssociationRepository repository,
+      WorldCanonicalInstanceAssociation association,
+      long rowVersion) {
+    var original = allRows(dsl);
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .executeWithoutResult(
+                        status -> {
+                          // Model damaged storage without changing the committed fixture.
+                          dsl.execute("SET LOCAL session_replication_role = replica");
+                          assertThat(
+                                  dsl.execute(
+                                      """
+                                      DELETE FROM room_instance WHERE room_instance_row_id = (
+                                          SELECT min(runtime_row_id)
+                                          FROM world_canonical_instance_topology_identity
+                                          WHERE world_instance_id = ? AND family = 'ROOM')
+                                      """,
+                                      association.worldInstanceId()))
+                              .isEqualTo(1);
+                          dsl.execute("SET LOCAL session_replication_role = origin");
+                          repository.activateRunOwnedFixtureInOwnerTransaction(
+                              association, 1L, rowVersion);
+                        }))
+        .hasStackTraceContaining("RUN_OWNED_WORLD_FIXED_PRESET_TOPOLOGY_MISMATCH");
+
+    assertThat(allRows(dsl)).isEqualTo(original);
   }
 
   @Test
@@ -1735,8 +1802,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   .fetch(
                       "SELECT catalog_epoch FROM world_runtime_family_catalog_epoch ORDER BY catalog_epoch")
                   .getValues(0, Long.class))
-          .as("V1046 through V1050 and V1070 through V1074 install ten catalog epochs")
-          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L);
+          .as("V1046 through V1050 and V1070 through V1075 install eleven catalog epochs")
+          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L);
       assertThat(
               connection
                   .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_snapshot")
@@ -3529,6 +3596,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1072");
     versions.add("1073");
     versions.add("1074");
+    versions.add("1075");
     return List.copyOf(versions);
   }
 

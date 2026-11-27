@@ -214,6 +214,8 @@ The generic `PrepareWorldInstance` and `ActivatePreparedWorldInstance` RPCs disp
 
 [V1074](../../../services/world-management-service/src/main/resources/db/migration/V1074__world_fixture_activation_commit_guard.sql) requires each newly inserted fixture activation receipt to commit with its exact ACTIVE lifecycle compare-and-set in the same World transaction. The installed constraint checks the retained fixture identity, binding, lifecycle epoch and row version. The owner proof covers standalone receipt rollback and exact replay with unchanged retained receipt rows. The complete donor activation result and one-use manifests remain pending.
 
+[V1075](../../../services/world-management-service/src/main/resources/db/migration/V1075__world_fixture_activation_preset_guard.sql) verifies the retained fixture plan, materialized rooms, exits, and topology against the preparation owner during activation and replay. Replay also matches the retained result row version to the ACTIVE World row. The migration appends a World catalog epoch and preserves existing activation receipts.
+
 The lifecycle RPC boundary from `fe5289cfde` checks the exact same-namespace Game Session mTLS workload before any selector parsing or owner call. The receiving proof passes 31 World gRPC units and four loopback mTLS cases covering legitimate fixture dispatch and player-context refusal. The current fixture receives the same owner-local lifecycle checks after peer validation. Packaged proof of the combined source remains pending.
 
 ### Retained operational-region identity migration proof
