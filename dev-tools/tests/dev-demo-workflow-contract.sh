@@ -692,6 +692,7 @@ python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$target
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -1431,6 +1432,121 @@ if "steps.deploy-release.outcome == 'success'" not in deployed_head_step.get("if
 if "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" not in deployed_head_step["run"]:
     raise SystemExit("successful Helm completion does not record exact deployed-head evidence")
 bootstrap_step = deploy_by_name["Create dev-demo smoke account"]
+intent_step = deploy_by_name["Capture dev-demo bootstrap intent"]
+retain_intent = deploy_by_name["Retain dev-demo bootstrap intent before sending"]
+retain_result = deploy_by_name["Retain successful dev-demo bootstrap result"]
+if not (
+    deploy_steps.index(deployed_head_step) < deploy_steps.index(intent_step)
+    < deploy_steps.index(retain_intent) < deploy_steps.index(bootstrap_step)
+    < deploy_steps.index(retain_result)
+):
+    raise SystemExit("dev-demo bootstrap custody ordering is incorrect")
+if intent_step["if"] != "${{ success() && steps.record-deployed-head.outcome == 'success' }}":
+    raise SystemExit("dev-demo bootstrap intent must follow successful deployment recording")
+if bootstrap_step["if"] != "${{ success() && steps.retain-bootstrap-intent.outcome == 'success' }}":
+    raise SystemExit("dev-demo bootstrap must wait for durable intent retention")
+if bootstrap_step["env"]["BOOTSTRAP_REQUEST_ID"] != "${{ steps.bootstrap-intent.outputs.request_id }}":
+    raise SystemExit("dev-demo bootstrap request must consume the captured attempt identity")
+if retain_result["if"] != "${{ success() && steps.bootstrap-smoke.outcome == 'success' }}":
+    raise SystemExit("failed bootstrap must never upload result evidence")
+if "dev-demo-smoke-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" not in intent_step["run"]:
+    raise SystemExit("dev-demo bootstrap intent must use a stable native run/attempt identity")
+for key in ("workflowSha", "headSha", "deployedBaseSha", "namespaceUid", "helmRevision",
+            "renderedManifestSha256", "renderedValuesSha256", "controlPlaneRequestId"):
+    if key not in intent_step["run"]:
+        raise SystemExit(f"dev-demo bootstrap intent omitted {key}")
+for prefix, filename, step in (("intent", "intent.json", retain_intent), ("result", "result.json", retain_result)):
+    artifact = step["with"]
+    if artifact != {
+        "name": "dev-demo-bootstrap-" + prefix + "-${{ github.run_id }}-${{ github.run_attempt }}",
+        "path": "${{ steps.bootstrap-intent.outputs.evidence_dir }}/" + filename,
+        "if-no-files-found": "error",
+    }:
+        raise SystemExit("dev-demo must retain only the immutable attempt-qualified evidence file")
+if any(keyword in intent_step["run"] for keyword in ("DEMO_SMOKE_PASSWORD", "DEMO_SMOKE_EMAIL", "DEMO_SMOKE_USERNAME")):
+    raise SystemExit("dev-demo bootstrap intent must not consume smoke credentials")
+if (
+    '--from-literal=request-id="${BOOTSTRAP_REQUEST_ID}"' not in bootstrap_step["run"]
+    or '"controlPlaneRequestId": control_plane_request_id' not in bootstrap_step["run"]
+    or "write-bootstrap-result.py" not in bootstrap_step["run"]
+):
+    raise SystemExit("dev-demo bootstrap must carry the recorded identity into the request and receipt")
+bootstrap_python = bootstrap_step["run"].split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+compile(bootstrap_python, "dev-demo-bootstrap.py", "exec")
+session_function = "def bootstrap_session(" + bootstrap_python.split(
+    "def bootstrap_session(", 1
+)[1].split("\ndef ensure_demo_account(", 1)[0]
+for response_status in (200, 400, 503):
+    sends = []
+
+    def post_session(url, payload):
+        sends.append((url, payload))
+        return response_status, "response"
+
+    context = {
+        "post_json": post_session,
+        "tenant_id": 1,
+        "game_template_id": 2,
+        "control_plane_request_id": "original-attempt",
+    }
+    exec(session_function, context)
+    try:
+        result = context["bootstrap_session"]("account")
+    except SystemExit as failure:
+        if response_status == 200 or not str(failure).endswith(f"status {response_status}"):
+            raise SystemExit("dev-demo bootstrap must report the unsuccessful session status")
+    else:
+        if response_status != 200 or result != (200, "response"):
+            raise SystemExit("dev-demo bootstrap must return only a successful session response")
+    if sends != [("http://game-session-service:8080/sessions", {
+        "tenantId": 1,
+        "gameTemplateId": 2,
+        "controlPlaneRequestId": "original-attempt",
+        "ownerAccountId": "account",
+    })]:
+        raise SystemExit("dev-demo bootstrap must send the original session request exactly once")
+with tempfile.TemporaryDirectory() as directory:
+    evidence = Path(directory)
+    account_uuid = "12345678-1234-1234-1234-123456789abc"
+    request_id = "dev-demo-smoke-bootstrap-123-2"
+    intent = {
+        "schema": "dev-demo-bootstrap-intent/v1",
+        "controlPlaneRequestId": request_id,
+        "tenantId": 1,
+        "gameTemplateId": 1,
+    }
+    session = {"id": 9007199254740993, "ownerAccountId": 5, "tenantId": 1, "gameTemplateId": 1}
+    result = {"accountUuid": account_uuid, "controlPlaneRequestId": request_id, "gameSession": session}
+    (evidence / "intent.json").write_text(json.dumps(intent), encoding="utf-8")
+    account_file = evidence / "account-id"
+    account_file.write_text(account_uuid, encoding="utf-8")
+    log = evidence / "bootstrap.log"
+    receipt = evidence / "result.json"
+    marker = "DEV_DEMO_BOOTSTRAP_RESULT="
+    command = ["python3", str(repository_root / "dev-tools/hosted/dev-demo/write-bootstrap-result.py"),
+               str(evidence), str(account_file), str(log)]
+    for contents in (
+        "session response missing",
+        marker + json.dumps({**result, "controlPlaneRequestId": "different-attempt"}),
+        marker + json.dumps({**result, "accountUuid": "different-account"}),
+        marker + json.dumps({**result, "gameSession": {**session, "gameTemplateId": 2}}),
+        "\n".join([marker + json.dumps(result)] * 2),
+    ):
+        log.write_text(contents, encoding="utf-8")
+        if subprocess.run(command, capture_output=True).returncode == 0 or receipt.exists():
+            raise SystemExit("dev-demo retained a missing, foreign, or ambiguous success result")
+    log.write_text("synthetic-password\n" + marker + json.dumps({
+        **result, "token": "synthetic-token", "gameSession": {**session, "token": "nested-token"}
+    }), encoding="utf-8")
+    subprocess.run(command, check=True, capture_output=True)
+    expected = {
+        "schema": "dev-demo-bootstrap-result/v1", "intent": intent,
+        "accountUuid": account_uuid, "gameSession": session,
+    }
+    if json.loads(receipt.read_text(encoding="utf-8")) != expected:
+        raise SystemExit("dev-demo result lost exact IDs or copied unapproved response material")
+    if subprocess.run(command, capture_output=True).returncode == 0:
+        raise SystemExit("dev-demo result was allowed to overwrite its immutable receipt")
 failure_summary = deploy_by_name["Summarize dev-demo failure"]
 if failure_summary["env"] != {
     "DEPLOY_OUTCOME": "${{ steps." + deploy_by_name["Deploy dev-demo release"]["id"] + ".outcome }}",

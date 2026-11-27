@@ -2457,7 +2457,10 @@ jobs:
             await github.rest.repos.createDispatchEvent({
               ...context.repo,
               event_type: "pr-runtime-image-publication",
-              client_payload: { source_run_id: String(context.runId) },
+              client_payload: {
+                source_run_id: String(context.runId),
+                source_run_attempt: process.env.GITHUB_RUN_ATTEMPT,
+              },
             });
 
   smoke-full:

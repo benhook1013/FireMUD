@@ -2755,7 +2755,8 @@ done
 require_contains "$pr_image_publisher_path" 'workflow_run:'
 require_exact_line "$pr_image_publisher_path" 'permissions: {}'
 # shellcheck disable=SC2016 # This assertion intentionally matches a literal GitHub expression.
-require_contains "$pr_image_publisher_path" "run-name: Publish PR Runtime Images \${{ github.event.workflow_run.display_title || format('source-run-{0}', github.event.client_payload.source_run_id) }}"
+require_contains "$pr_image_publisher_path" "format('{0} source-run-{1} attempt-{2}', github.event.workflow_run.display_title, github.event.workflow_run.id, github.event.workflow_run.run_attempt)"
+require_contains "$pr_image_publisher_path" "format('source-run-{0} attempt-{1}', github.event.client_payload.source_run_id, github.event.client_payload.source_run_attempt)"
 require_contains "$pr_image_publisher_path" "github.event.workflow_run.event == 'pull_request'"
 require_contains "$pr_image_publisher_path" "github.event.workflow_run.conclusion == 'success'"
 require_contains "$pr_image_publisher_path" 'github.event.workflow_run.head_repository.full_name == github.repository'
@@ -2805,6 +2806,9 @@ with tempfile.NamedTemporaryFile(mode="r+", encoding="utf-8") as summary_file:
         "GITHUB_STEP_SUMMARY": summary_file.name,
         "SOURCE_RUN_ID": "123",
         "SOURCE_RUN_URL": "https://github.example/runs/123",
+        "SOURCE_RUN_ATTEMPT": "2",
+        "SOURCE_ARTIFACT_ID": "456",
+        "SOURCE_ARTIFACT_DIGEST": "sha256:" + "a" * 64,
         "SOURCE_RUN_TITLE": "build `title` <script>&\nnext",
         "SOURCE_HEAD_BRANCH": "feature/`branch` <b>&",
         "SOURCE_HEAD_SHA": "abc123",
@@ -2978,6 +2982,23 @@ if [[ -n "${CONTRACT_GH_STATE_FILE:-}" ]]; then
   fi
 fi
 
+if [[ "$*" == *'/actions/runs/101' ]]; then
+  printf '{"id":101,"run_attempt":%s,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}' "${CONTRACT_CURRENT_SOURCE_ATTEMPT:-2}"
+  exit 0
+fi
+if [[ "$*" == *'/attempts/1/jobs?per_page=100&page=1' ]]; then
+  if [[ -n "${CONTRACT_JOB_PAYLOAD:-}" ]]; then
+    cat "$CONTRACT_JOB_PAYLOAD"
+    exit 0
+  fi
+  case "$*" in
+    *'/actions/runs/201/'*) run=201 ;;
+    *'/actions/runs/202/'*) run=202 ;;
+    *) exit 1 ;;
+  esac
+  printf '{"total_count":1,"jobs":[{"id":1001,"run_id":%s,"run_attempt":1,"name":"Publish Fixed PR Merge Image Tags","status":"completed","conclusion":"success","steps":[{"name":"Download successful PR image artifacts","status":"completed","conclusion":"success"},{"name":"Validate exact PR source and artifact before registry login","status":"completed","conclusion":"success"},{"name":"Publish fixed PR image tags","status":"completed","conclusion":"success"}]}]}\n' "$run"
+  exit 0
+fi
 if [[ "$*" == *"publish-pr-runtime-images.yml"* ]]; then
   [[ "$*" != *"--paginate"* ]] || { echo 'publisher inventory must be bounded' >&2; exit 1; }
   if [[ -n "${CONTRACT_PUBLISHER_PAYLOAD:-}" ]]; then
@@ -3003,7 +3024,7 @@ PY_PAGE
     exit 0
   fi
   cat <<'JSON'
-{"total_count":1,"workflow_runs":[{"id":201,"event":"workflow_run","status":"completed","conclusion":"success","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:03:00Z"}]}
+{"total_count":1,"workflow_runs":[{"id":201,"run_attempt":1,"event":"workflow_run","status":"completed","conclusion":"success","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required source-run-101 attempt-2","created_at":"2026-07-24T00:03:00Z"}]}
 JSON
 else
   if [[ -n "${CONTRACT_SOURCE_PAYLOAD:-}" ]]; then
@@ -3011,7 +3032,7 @@ else
     exit 0
   fi
   cat <<'JSON'
-[{"workflow_runs":[{"id":102,"status":"completed","conclusion":"skipped","html_url":"https://example.test/runtime/102","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-metadata","created_at":"2026-07-24T00:02:00Z"}]},{"workflow_runs":[{"id":101,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}]}]
+[{"workflow_runs":[{"id":102,"status":"completed","conclusion":"skipped","html_url":"https://example.test/runtime/102","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-metadata","created_at":"2026-07-24T00:02:00Z"}]},{"workflow_runs":[{"id":101,"run_attempt":2,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}]}]
 JSON
 fi
 EOF
@@ -3052,17 +3073,17 @@ from pathlib import Path
 root = Path(sys.argv[1])
 waiter = Path(sys.argv[2]).read_text()
 source_parser = waiter.split("read_run_state() {\n  python3 -c '\n", 1)[1].split("\n' \"${wait_mode}\"", 1)[0]
-source = {"id": 101, "event": "pull_request", "status": "completed", "conclusion": "success", "head_sha": "a" * 40, "html_url": "https://example.test/runtime/101", "display_title": "Build Runtime Images secure-pr-artifact pr-1 base-" + "b" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required", "created_at": "2026-07-24T00:01:00Z"}
+source = {"id": 101, "run_attempt": 2, "event": "pull_request", "status": "completed", "conclusion": "success", "head_sha": "a" * 40, "html_url": "https://example.test/runtime/101", "display_title": "Build Runtime Images secure-pr-artifact pr-1 base-" + "b" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required", "created_at": "2026-07-24T00:01:00Z"}
 for created_at in [source["created_at"], "2026-02-31T00:01:00Z", "2026-07-24T00:01:00+00:00", "not-a-date", None]:
     result = subprocess.run([sys.executable, "-c", source_parser, "pull-request", "pr-merge-" + "c" * 40, "c" * 40, "b" * 40, "a" * 40], input=json.dumps({"workflow_runs": [{**source, "created_at": created_at}]}), capture_output=True, text=True)
     if created_at == source["created_at"]:
-        assert result.returncode == 0 and result.stdout.rstrip().endswith("\tpull_request\t" + created_at)
+        assert result.returncode == 0 and result.stdout.rstrip().endswith("\tpull_request\t" + created_at + "\t2")
     else:
         assert result.returncode != 0, "source creation time must be a real UTC timestamp"
 def parse_source(run):
     return subprocess.run([sys.executable, "-c", source_parser, "pull-request", "pr-merge-" + "c" * 40, "c" * 40, "b" * 40, "a" * 40], input=json.dumps({"workflow_runs": [run]}), capture_output=True, text=True)
 
-for field, values in {"id": [None, 0, True, "101"], "status": [None, "", "completed\t"], "html_url": [None, "", "https://example.test/\t101"], "conclusion": [None, "", "success\n"]}.items():
+for field, values in {"id": [None, 0, True, "101"], "run_attempt": [None, 0, True, "2"], "status": [None, "", "completed\t"], "html_url": [None, "", "https://example.test/\t101"], "conclusion": [None, "", "success\n"]}.items():
     for value in values:
         assert parse_source({**source, field: value}).returncode != 0, f"malformed source {field} must be rejected"
 for name, run in {"missing-url": {key: value for key, value in source.items() if key != "html_url"}, "empty-url": {**source, "html_url": ""}}.items():
@@ -3071,22 +3092,26 @@ for name, run in {"missing-url": {key: value for key, value in source.items() if
 for conclusion in [None, ""]:
     result = parse_source({**source, "status": "in_progress", "conclusion": conclusion})
     assert result.returncode == 0
-    split = subprocess.run(["bash", "-c", "IFS=$'\\t' read -r state id status conclusion url event created; printf '%s\\n' \"$state\" \"$id\" \"$status\" \"$conclusion\" \"$url\" \"$event\" \"$created\""], input=result.stdout, capture_output=True, text=True)
-    assert split.stdout.splitlines() == ["found", "101", "in_progress", "pending", source["html_url"], source["event"], source["created_at"]], "optional conclusion must preserve Bash field positions"
+    split = subprocess.run(["bash", "-c", "IFS=$'\\t' read -r state id status conclusion url event created attempt; printf '%s\\n' \"$state\" \"$id\" \"$status\" \"$conclusion\" \"$url\" \"$event\" \"$created\" \"$attempt\""], input=result.stdout, capture_output=True, text=True)
+    assert split.stdout.splitlines() == ["found", "101", "in_progress", "pending", source["html_url"], source["event"], source["created_at"], "2"], "optional conclusion must preserve Bash field positions"
 
-base = {"id": 202, "event": "repository_dispatch", "status": "completed", "conclusion": "success", "html_url": "https://example.test/publisher/202", "display_title": "Publish PR Runtime Images source-run-101", "created_at": "2026-07-24T00:04:00Z"}
+base = {"id": 202, "run_attempt": 1, "event": "repository_dispatch", "status": "completed", "conclusion": "success", "html_url": "https://example.test/publisher/202", "display_title": "Publish PR Runtime Images source-run-101 attempt-2", "created_at": "2026-07-24T00:04:00Z"}
 fixtures = {
     "dispatch-success": base,
-    "dispatch-wrong-source": {**base, "display_title": "Publish PR Runtime Images source-run-999"},
+    "dispatch-earlier-attempt": {**base, "display_title": "Publish PR Runtime Images source-run-101 attempt-1"},
+    "dispatch-legacy": {**base, "display_title": "Publish PR Runtime Images source-run-101"},
+    "callback-earlier-attempt": {**base, "event": "workflow_run",
+        "display_title": "Publish PR Runtime Images " + source["display_title"] + " source-run-101 attempt-1"},
+    "dispatch-wrong-source": {**base, "display_title": "Publish PR Runtime Images source-run-999 attempt-2"},
     "dispatch-wrong-event": {**base, "event": "push"},
     "dispatch-malformed-title": {**base, "display_title": "Publish PR Runtime Images source-run-101 extra"},
     "dispatch-failure": {**base, "conclusion": "failure"},
-    "callback-wrong-tuple": {**base, "event": "workflow_run", "display_title": "Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-" + "d" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required"},
+    "callback-wrong-tuple": {**base, "event": "workflow_run", "display_title": "Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-" + "d" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required source-run-101 attempt-2"},
 }
 for name, run in fixtures.items():
-    (root / (name + ".json")).write_text(json.dumps({"total_count": 1, "fixture_event": "workflow_run" if name == "callback-wrong-tuple" else "repository_dispatch", "workflow_runs": [run]}))
+    (root / (name + ".json")).write_text(json.dumps({"total_count": 1, "fixture_event": "workflow_run" if name.startswith("callback-") else "repository_dispatch", "workflow_runs": [run]}))
 # Matching publication remains discoverable beyond the first page.
-many = [{**base, "id": 300 + index, "display_title": f"Publish PR Runtime Images source-run-{500 + index}"} for index in range(100)] + [base]
+many = [{**base, "id": 300 + index, "display_title": f"Publish PR Runtime Images source-run-{500 + index} attempt-2"} for index in range(100)] + [base]
 (root / "dispatch-second-page.json").write_text(json.dumps([{"total_count": 101, "workflow_runs": many[:100]}, {"total_count": 101, "workflow_runs": many[100:]}]))
 (root / "dispatch-overflow.json").write_text(json.dumps({"total_count": 1001, "workflow_runs": many[:100]}))
 (root / "dispatch-incomplete.json").write_text(json.dumps([{"total_count": 101, "workflow_runs": many[:100]}, {"total_count": 101, "workflow_runs": []}]))
@@ -3110,7 +3135,7 @@ for fixture in missing-url empty-url; do
     exit 1
   fi
 done
-for fixture in dispatch-success dispatch-wrong-source dispatch-wrong-event dispatch-malformed-title dispatch-failure callback-wrong-tuple dispatch-second-page dispatch-overflow dispatch-incomplete dispatch-unstable dispatch-outside-window dispatch-invalid-date; do
+for fixture in dispatch-success dispatch-earlier-attempt dispatch-legacy callback-earlier-attempt dispatch-wrong-source dispatch-wrong-event dispatch-malformed-title dispatch-failure callback-wrong-tuple dispatch-second-page dispatch-overflow dispatch-incomplete dispatch-unstable dispatch-outside-window dispatch-invalid-date; do
   if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/$fixture.json" \
     PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
@@ -3134,6 +3159,39 @@ for fixture in dispatch-success dispatch-wrong-source dispatch-wrong-event dispa
       require_contains "$contract_fixture_dir/$fixture.error" 'No trusted PR image publisher appeared'
     fi
   fi
+done
+if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+  CONTRACT_CURRENT_SOURCE_ATTEMPT=3 \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/stale-current-attempt.output" 2>"$contract_fixture_dir/stale-current-attempt.error"; then
+  echo "A superseded producer must not pass even after exact publisher job success" >&2
+  exit 1
+fi
+require_contains "$contract_fixture_dir/stale-current-attempt.error" 'Current runtime-image producer does not match the successful run 101 attempt 2'
+
+for job_proof in skipped missing-step wrong-attempt incomplete; do
+  case "$job_proof" in
+    skipped) job_filter='.jobs[0].conclusion = "skipped"' ;;
+    missing-step) job_filter='.jobs[0].steps |= .[:2]' ;;
+    wrong-attempt) job_filter='.jobs[0].run_attempt = 2' ;;
+    incomplete) job_filter='.total_count = 2' ;;
+  esac
+  PATH="$contract_fixture_dir:$PATH" gh api 'repos/example/FireMUD/actions/runs/202/attempts/1/jobs?per_page=100&page=1' |
+    jq "$job_filter" >"$contract_fixture_dir/publisher-jobs-$job_proof.json"
+  if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+    CONTRACT_JOB_PAYLOAD="$contract_fixture_dir/publisher-jobs-$job_proof.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/$job_proof.output" 2>"$contract_fixture_dir/$job_proof.error"; then
+    echo "Publisher job proof $job_proof unexpectedly admitted workflow success" >&2
+    exit 1
+  fi
+  require_contains "$contract_fixture_dir/$job_proof.error" 'Exact PR image publisher job and step success is unavailable'
 done
 
 assert_job_excludes runtime-images.yml smoke-full 'pull-requests: write'
