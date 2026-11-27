@@ -856,11 +856,14 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   void lostPostAcknowledgementClockResponseCannotBeRemintedFromCommittedRetry() {
     var context = context();
     var evidence = pending(context, 15000);
+    long originalExpiryMs = Long.parseLong((String) evidence.carrier().get("expiresAt"));
     UUID decision = UUID.randomUUID();
     var sourcesBefore = sourceSnapshot(context);
     var physicalCommits = new AtomicInteger();
     var lostClockResponses = new AtomicInteger();
-    var source = losePostCommitClockResponse(context.admin(), physicalCommits, lostClockResponses);
+    var source =
+        losePostCommitClockResponse(
+            context.admin(), originalExpiryMs, physicalCommits, lostClockResponses);
 
     assertThatThrownBy(
             () ->
@@ -876,8 +879,7 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     assertThat(committed.get("binding_decision_id")).isEqualTo(decision);
     assertThat((String) committed.get("finalization_xid")).matches("[1-9][0-9]{0,19}");
     assertThat(committed.get("evidence_json")).isEqualTo(evidence.canonicalJson());
-    assertThat(committed.get("expires_at_ms"))
-        .isEqualTo(Long.parseLong((String) evidence.carrier().get("expiresAt")));
+    assertThat(committed.get("expires_at_ms")).isEqualTo(originalExpiryMs);
     assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
 
     assertThatThrownBy(
@@ -1507,7 +1509,10 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   }
 
   private static DataSource losePostCommitClockResponse(
-      DataSource delegate, AtomicInteger physicalCommits, AtomicInteger lostClockResponses) {
+      DataSource delegate,
+      long originalExpiryMs,
+      AtomicInteger physicalCommits,
+      AtomicInteger lostClockResponses) {
     return new DelegatingDataSource(delegate) {
       @SuppressFBWarnings(
           value = "ODR_OPEN_DATABASE_RESOURCE",
@@ -1536,7 +1541,9 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
                             query -> {
                               try (var reply = statement.executeQuery(query.getArgument(0))) {
                                 assertThat(reply.next()).isTrue();
-                                assertThat(reply.getLong(1)).isPositive();
+                                assertThat(reply.getLong(1))
+                                    .isPositive()
+                                    .isLessThan(originalExpiryMs);
                               }
                               lostClockResponses.incrementAndGet();
                               throw new SQLException("Post-COMMIT clock response lost", "08006");
