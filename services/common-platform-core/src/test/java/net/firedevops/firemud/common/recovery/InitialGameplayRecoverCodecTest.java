@@ -58,6 +58,27 @@ class InitialGameplayRecoverCodecTest {
   }
 
   @Test
+  void exactPeerStorageSelectorsMustBeRepresentableWithoutChangingIdentity() {
+    for (String field : List.of("clusterIdentity", "storageIdentity", "storageRevision")) {
+      String member = "(\"" + field + "\":\")([^\"]+)";
+      for (String value : List.of("owner-\uFDD0", "owner-\uD83F\uDFFF", "cafe\u0301")) {
+        rejects(WIRE.replaceFirst(member, "$1" + value));
+      }
+      String selector = "caf\u00e9-" + Character.toString(0x1f680);
+      var request = decode(WIRE.replaceFirst(member, "$1" + selector));
+      var binding = request.target().peerStorageBinding();
+      assertThat(
+              switch (field) {
+                case "clusterIdentity" -> binding.clusterIdentity();
+                case "storageIdentity" -> binding.storageIdentity();
+                case "storageRevision" -> binding.storageRevision();
+                default -> throw new AssertionError(field);
+              })
+          .isEqualTo(selector);
+    }
+  }
+
+  @Test
   void requestIdentityIsRetainedButExcludedFromMutationDigest() {
     var changed = decode(WIRE.replace("000000000001", "000000000009"));
     assertThat(changed.controlPlaneRequestId()).isNotEqualTo(decode(WIRE).controlPlaneRequestId());

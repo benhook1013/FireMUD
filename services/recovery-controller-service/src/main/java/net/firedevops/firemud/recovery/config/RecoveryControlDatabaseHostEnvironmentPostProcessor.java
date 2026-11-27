@@ -110,6 +110,11 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
   }
 
   private static void requireMigrationExecution(Binder binder) {
+    String target = binder.bind("spring.flyway.target", String.class).orElse("latest");
+    if (!"latest".equalsIgnoreCase(target)) {
+      throw new SafeOverrideException(
+          "spring.flyway.target must be latest for the recovery migrations");
+    }
     if (Boolean.FALSE.equals(
         binder.bind("spring.flyway.create-schemas", Boolean.class).orElse(null))) {
       throw new SafeOverrideException(

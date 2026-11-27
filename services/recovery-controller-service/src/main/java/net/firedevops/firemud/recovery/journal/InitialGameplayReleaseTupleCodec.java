@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
-import java.util.Objects;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation;
@@ -13,11 +12,13 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TypedEf
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.json.JsonWriteFeature;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.cfg.CoercionAction;
 import tools.jackson.databind.cfg.CoercionInputShape;
 import tools.jackson.databind.cfg.EnumFeature;
+import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.type.LogicalType;
 
 /** Stable JSON and digest encoding for the operation-owned immutable tuples. */
@@ -26,13 +27,13 @@ public final class InitialGameplayReleaseTupleCodec {
   private final ObjectMapper objectMapper;
   private final tools.jackson.databind.ObjectWriter digestMapper;
 
-  public InitialGameplayReleaseTupleCodec(ObjectMapper objectMapper) {
+  public InitialGameplayReleaseTupleCodec() {
+    // Retained payloads and digests use the journal schema independently of Spring JSON settings.
     this.objectMapper =
-        Objects.requireNonNull(objectMapper, "objectMapper must not be null")
-            .rebuild()
-            .enable(tools.jackson.databind.DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
+        JsonMapper.builder()
+            .enable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
             .enable(EnumFeature.FAIL_ON_NUMBERS_FOR_ENUMS)
-            .disable(tools.jackson.databind.DeserializationFeature.ACCEPT_FLOAT_AS_INT)
+            .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
             .withCoercionConfig(
                 LogicalType.Integer,
                 config -> config.setCoercion(CoercionInputShape.String, CoercionAction.Fail))

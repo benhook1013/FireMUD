@@ -673,7 +673,13 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         boolean heldUntyped = stored != null && provenance == null;
         boolean typedOwnerRejection = "owner_rejected".equals(provenance);
         boolean partial = readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL;
-        boolean partialAfterLocalNoSend = partial && "local_no_send".equals(provenance);
+        boolean typedLocalNoSend = "local_no_send".equals(provenance);
+        boolean heldLocalNoSend =
+            partial
+                && heldUntyped
+                && hasRetainedLocalNoSend(
+                    tx, current, stored.get("last_dispatched_at", OffsetDateTime.class));
+        boolean partialAfterLocalNoSend = partial && (typedLocalNoSend || heldLocalNoSend);
         boolean partialAfterOwnerRejection =
             partial
                 && (typedOwnerRejection
@@ -683,7 +689,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         if (partialAfterLocalNoSend || partialAfterOwnerRejection) {
           requireTerminalReplayWithinAttempt(readback, stored, now);
           if (typedOwnerRejection
-              || (partialAfterLocalNoSend
+              || (typedLocalNoSend
                   && Boolean.FALSE.equals(stored.get("send_outcome_uncertain", Boolean.class)))) {
             requireExactClosureBeforeRetry(tx, current);
           } else if (hasRetainedClosure(
@@ -738,7 +744,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       }
       Record timestamps =
           tx.fetchOne(
-              "SELECT last_dispatched_at, readback_payload, readback_digest, readback_identity FROM "
+              "SELECT last_dispatched_at, readback_payload, readback_digest, readback_identity FROM"
+                  + " "
                   + OUTBOX_TABLE
                   + " WHERE operation_id = ? AND effect_id = ?",
               operationId,
@@ -753,6 +760,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       Instant dispatchedAt = dispatchTime.toInstant();
       if (readback.observedAt().isBefore(dispatchedAt)) {
         throw conflict("effect readback is stale");
+      }
+      if (readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL
+          && readback.state() != EffectReadbackState.PROVEN_NO_EFFECT
+          && hasRetainedLocalNoSend(tx, current, dispatchTime)) {
+        throw conflict("effect readback changed after definitive no effect");
       }
       EffectReadback previous = requireNonRegressingReadback(readback, timestamps, current);
       requireRedactedDatabaseLogging(tx);
@@ -1356,6 +1368,29 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     return true;
   }
 
+  private static boolean hasRetainedLocalNoSend(
+      DSLContext tx, OutboxEntry current, OffsetDateTime dispatchedAt) {
+    Record receipt =
+        tx.fetchOne(
+            """
+            SELECT dispatched_at FROM recovery_control.initial_gameplay_release_attempt_local_no_send
+            WHERE outbox_id = ? AND attempt_id = ? AND attempt_ordinal = ?
+            """,
+            current.outboxId(),
+            current.lastAttemptId(),
+            current.attemptCount());
+    if (receipt == null) {
+      return false;
+    }
+    OffsetDateTime retained = receipt.get("dispatched_at", OffsetDateTime.class);
+    if (dispatchedAt == null
+        || retained == null
+        || !retained.toInstant().equals(dispatchedAt.toInstant())) {
+      throw conflict("retained local no-send proof does not match the exact dispatch");
+    }
+    return true;
+  }
+
   private void requireExactClosureBeforeRetry(DSLContext tx, OutboxEntry current) {
     Record stored =
         tx.fetchOne(
@@ -1377,18 +1412,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       OffsetDateTime dispatchedAt = stored.get("last_dispatched_at", OffsetDateTime.class);
       if (!Boolean.FALSE.equals(stored.get("send_outcome_uncertain", Boolean.class))
           || (!emptyReadback && !hasValidatedUnknownReadback(stored, digest, current))
-          || dispatchedAt == null
-          || tx.fetchOne(
-                  """
-                  SELECT 1 FROM recovery_control.initial_gameplay_release_attempt_local_no_send
-                  WHERE outbox_id = ? AND attempt_id = ? AND attempt_ordinal = ?
-                    AND dispatched_at = CAST(? AS timestamptz)
-                  """,
-                  current.outboxId(),
-                  current.lastAttemptId(),
-                  current.attemptCount(),
-                  dispatchedAt)
-              == null
+          || !hasRetainedLocalNoSend(tx, current, dispatchedAt)
           || hasRetainedClosure(tx, current, current.lastAttemptId(), current.attemptCount())
           || hasRetainedOwnerRejection(
               tx, current, current.lastAttemptId(), current.attemptCount())) {

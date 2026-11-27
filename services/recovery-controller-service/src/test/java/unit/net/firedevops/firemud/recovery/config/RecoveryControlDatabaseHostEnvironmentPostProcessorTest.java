@@ -445,6 +445,40 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         .doesNotThrowAnyException();
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"1", "6", "7", "current", "next", "", " latest "})
+  void rejectsNonLatestTargetFromRelaxedEnvironmentOverride(String target) {
+    var environment = fixtureEnvironment().withProperty("spring.flyway.target", "latest");
+    environment
+        .getPropertySources()
+        .addFirst(
+            new SystemEnvironmentPropertySource(
+                "test-systemEnvironment", Map.of("SPRING_FLYWAY_TARGET", target)));
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("spring.flyway.target must be latest for the recovery migrations")
+        .hasNoCause();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"latest", "LATEST"})
+  void acceptsExplicitLatestMigrationTarget(String target) {
+    var environment = fixtureEnvironment().withProperty("spring.flyway.target", target);
+    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void acceptsPinnedTargetWhenFlywayIsDisabled() {
+    var environment =
+        fixtureEnvironment()
+            .withProperty("spring.flyway.enabled", "false")
+            .withProperty("spring.flyway.target", "1");
+    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .doesNotThrowAnyException();
+  }
+
   @Test
   void rejectsDisabledSchemaCreationFromRelaxedEnvironmentOverride() {
     var environment = fixtureEnvironment().withProperty("spring.flyway.create-schemas", "true");

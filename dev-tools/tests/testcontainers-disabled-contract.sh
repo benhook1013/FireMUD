@@ -20,7 +20,13 @@ while IFS= read -r -d '' java_file; do
   if grep -Eq '^[[:space:]]*@Testcontainers[[:space:]]*$' "$java_file"; then
     bare_annotations+=("${java_file#"$ROOT_DIR/"}")
   fi
-done < <(find "$ROOT_DIR/services" -type d -name build -prune -o -type f -name '*.java' -print0)
+done < <(
+  for source_dir in "$ROOT_DIR"/services/*/src; do
+    if [[ -d "$source_dir" ]]; then
+      find "$source_dir" -type f -name '*.java' -print0
+    fi
+  done
+)
 expected_bare_annotations=("$IN_PROCESS_TEST" "$POSTGRES_MTLS_TEST")
 if ! diff -u \
   <(printf '%s\n' "${expected_bare_annotations[@]}" | LC_ALL=C sort) \

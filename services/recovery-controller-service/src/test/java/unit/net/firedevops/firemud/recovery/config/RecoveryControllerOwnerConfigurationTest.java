@@ -45,16 +45,13 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import tools.jackson.databind.json.JsonMapper;
 
 class RecoveryControllerOwnerConfigurationTest {
   private ApplicationContextRunner defaults() {
     return new ApplicationContextRunner()
         .withConfiguration(AutoConfigurations.of(RecoveryControllerOwnerConfiguration.class))
         .withBean(DSLContext.class, () -> DSL.using(SQLDialect.POSTGRES))
-        .withBean(
-            InitialGameplayReleaseTupleCodec.class,
-            () -> new InitialGameplayReleaseTupleCodec(JsonMapper.builder().build()));
+        .withBean(InitialGameplayReleaseTupleCodec.class, InitialGameplayReleaseTupleCodec::new);
   }
 
   @Test
@@ -153,7 +150,7 @@ class RecoveryControllerOwnerConfigurationTest {
     InitialGameplayReleaseController controller =
         new InitialGameplayReleaseController(
             journal,
-            new InitialGameplayReleaseTupleCodec(JsonMapper.builder().findAndAddModules().build()),
+            new InitialGameplayReleaseTupleCodec(),
             mock(InitialGameplayReleaseEvidenceProvider.class),
             effectPort);
 

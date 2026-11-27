@@ -795,9 +795,16 @@ public final class InitialGameplayReleaseModel {
     return value;
   }
 
+  /**
+   * Checks exact journal text against PostgreSQL encoding and the strict tuple JSON string limit of
+   * 20,000,000 UTF-16 code units.
+   */
   public static String requiredText(String value, String name) {
     if (value == null) {
       throw new IllegalArgumentException(name + " must not be null");
+    }
+    if (value.length() > 20_000_000) {
+      throw new IllegalArgumentException(name + " must not exceed 20,000,000 UTF-16 code units");
     }
     if (value
         .codePoints()
