@@ -15,6 +15,7 @@ import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.dto.AccountAuditTenantIdentity;
 import net.firedevops.firemud.accountservice.jooq.tables.records.AccountAuditOutboxRecord;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
@@ -165,7 +166,30 @@ public class AccountAuditOutboxRepository {
   }
 
   public void markDelivered(
-      UUID auditEventId, String receiptId, String logEventId, boolean minimized) {
+      AccountAuditEnvelope envelope, String receiptId, String logEventId, boolean minimized) {
+    if (envelope == null
+        || envelope.payload() == null
+        || receiptId == null
+        || receiptId.isBlank()
+        || logEventId == null
+        || logEventId.isBlank()) {
+      throw new IllegalArgumentException(
+          "Complete audit envelope and terminal receipt IDs are required");
+    }
+    Condition retainedEnvelope =
+        ACCOUNT_AUDIT_OUTBOX
+            .AUDIT_EVENT_ID
+            .eq(envelope.auditEventId())
+            .and(ACCOUNT_AUDIT_OUTBOX.SCOPE.eq(envelope.scope()))
+            .and(ACCOUNT_AUDIT_OUTBOX.TENANT_IDENTITY_VERSION.eq(envelope.tenantIdentityVersion()))
+            .and(ACCOUNT_AUDIT_OUTBOX.TENANT_ID.isNotDistinctFrom(envelope.tenantId()))
+            .and(ACCOUNT_AUDIT_OUTBOX.TENANT_UUID.isNotDistinctFrom(envelope.tenantUuid()))
+            .and(ACCOUNT_AUDIT_OUTBOX.PRODUCER_SERVICE.eq(envelope.producerService()))
+            .and(ACCOUNT_AUDIT_OUTBOX.EVENT_TYPE.eq(envelope.eventType()))
+            .and(ACCOUNT_AUDIT_OUTBOX.OCCURRED_AT.eq(toLocalDateTime(envelope.occurredAt())))
+            .and(ACCOUNT_AUDIT_OUTBOX.SCHEMA_VERSION.eq(envelope.schemaVersion()))
+            .and(ACCOUNT_AUDIT_OUTBOX.PAYLOAD_DIGEST_VERSION.eq(envelope.payloadDigestVersion()))
+            .and(ACCOUNT_AUDIT_OUTBOX.PAYLOAD_DIGEST.eq(envelope.payloadDigest()));
     var update =
         dsl.update(ACCOUNT_AUDIT_OUTBOX)
             .set(ACCOUNT_AUDIT_OUTBOX.RECEIVER_RECEIPT_ID, receiptId)
@@ -179,21 +203,30 @@ public class AccountAuditOutboxRepository {
     int changed =
         update
             .where(
-                ACCOUNT_AUDIT_OUTBOX
-                    .AUDIT_EVENT_ID
-                    .eq(auditEventId)
-                    .and(ACCOUNT_AUDIT_OUTBOX.DELIVERY_STATUS.eq("PENDING")))
+                retainedEnvelope
+                    .and(ACCOUNT_AUDIT_OUTBOX.PAYLOAD.eq(envelope.payload()))
+                    .and(ACCOUNT_AUDIT_OUTBOX.DELIVERY_STATUS.eq("PENDING"))
+                    .and(
+                        ACCOUNT_AUDIT_OUTBOX
+                            .RECEIVER_RECEIPT_ID
+                            .isNull()
+                            .or(ACCOUNT_AUDIT_OUTBOX.RECEIVER_RECEIPT_ID.eq(receiptId)))
+                    .and(
+                        ACCOUNT_AUDIT_OUTBOX
+                            .RECEIVER_LOG_EVENT_ID
+                            .isNull()
+                            .or(ACCOUNT_AUDIT_OUTBOX.RECEIVER_LOG_EVENT_ID.eq(logEventId))))
             .execute();
     if (changed == 0) {
       AccountAuditOutboxRecord durableRow =
-          dsl.selectFrom(ACCOUNT_AUDIT_OUTBOX)
-              .where(ACCOUNT_AUDIT_OUTBOX.AUDIT_EVENT_ID.eq(auditEventId))
-              .fetchOne();
+          dsl.selectFrom(ACCOUNT_AUDIT_OUTBOX).where(retainedEnvelope).fetchOne();
       String expectedStatus = minimized ? "MINIMIZED" : "COMMITTED";
       if (durableRow != null
           && expectedStatus.equals(durableRow.getDeliveryStatus())
           && Objects.equals(receiptId, durableRow.getReceiverReceiptId())
-          && Objects.equals(logEventId, durableRow.getReceiverLogEventId())) {
+          && Objects.equals(logEventId, durableRow.getReceiverLogEventId())
+          // MINIMIZED proves only retained metadata, not equality of the removed payload.
+          && (minimized || envelope.payload().equals(durableRow.getPayload()))) {
         return;
       }
     }
