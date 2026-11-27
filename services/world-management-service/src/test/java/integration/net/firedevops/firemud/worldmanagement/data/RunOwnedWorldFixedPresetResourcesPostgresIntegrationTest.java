@@ -968,7 +968,52 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                 lifecycleRequest, "R-0", "", rooms))
         .isEmpty();
 
+    var closedOrigin =
+        new WorldCanonicalInitialAdmissionHold.Request(
+            holdRequest.targetNamespace(),
+            holdRequest.canonicalTenantId(),
+            holdRequest.worldSlug(),
+            holdRequest.realmId(),
+            holdRequest.playableStateNamespaceId(),
+            holdRequest.playableStateScope(),
+            holdRequest.canonicalGameInstanceId(),
+            holdRequest.canonicalVersionId(),
+            holdRequest.activeLifecycleEpoch(),
+            "fixture-closed-origin",
+            holdRequest.initialAdmissionRequestDigest(),
+            WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.EXPECT_CLOSED,
+            holdRequest.expectedCatalogRevision(),
+            2L);
+    assertThatThrownBy(() -> holds.acquire(closedOrigin, lifecycleRequest))
+        .isInstanceOf(
+            WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldEvidenceException.class)
+        .hasMessage("Fixture first OPEN supports NO_PRIOR_POINTER only");
+
     var hold = holds.acquire(holdRequest, lifecycleRequest);
+    // Exercise the installed storage guard with otherwise matching hold bytes and columns.
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    """
+                    INSERT INTO initial_admission_bind_hold
+                    SELECT (jsonb_populate_record(NULL::initial_admission_bind_hold,
+                        to_jsonb(h) || jsonb_build_object(
+                            'hold_id', ?::uuid, 'hold_fence', ?::uuid,
+                            'initial_admission_request_id', ?::text,
+                            'initial_admission_origin', 'EXPECT_CLOSED',
+                            'expected_no_prior_pointer', false,
+                            'expected_prior_pointer_version', 2,
+                            'canonical_request_bytes', to_jsonb(?::bytea),
+                            'hold_binding_digest', ?::text))).*
+                    FROM initial_admission_bind_hold h WHERE h.hold_id = ?
+                    """,
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    closedOrigin.initialAdmissionRequestId(),
+                    closedOrigin.canonicalRequestBytes(),
+                    closedOrigin.holdBindingDigest(),
+                    hold.holdId()))
+        .hasStackTraceContaining("Fixture first OPEN supports NO_PRIOR_POINTER only");
     assertThat(holds.acquire(holdRequest, lifecycleRequest)).isEqualTo(hold);
     var state = holds.readState(hold, lifecycleRequest).orElseThrow();
 
@@ -1666,8 +1711,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   .fetch(
                       "SELECT catalog_epoch FROM world_runtime_family_catalog_epoch ORDER BY catalog_epoch")
                   .getValues(0, Long.class))
-          .as("V1046 through V1050 and V1070 through V1072 install eight catalog epochs")
-          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L);
+          .as("V1046 through V1050 and V1070 through V1073 install nine catalog epochs")
+          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L);
       assertThat(
               connection
                   .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_snapshot")
@@ -3458,6 +3503,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1070");
     versions.add("1071");
     versions.add("1072");
+    versions.add("1073");
     return List.copyOf(versions);
   }
 

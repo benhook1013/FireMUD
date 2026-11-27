@@ -98,6 +98,12 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
             }
             return identity;
           }
+          if (association.isRunOwnedFixture()
+              && request.initialAdmissionOrigin()
+                  != WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER) {
+            throw new InvalidHoldEvidenceException(
+                "Fixture first OPEN supports NO_PRIOR_POINTER only");
+          }
           if (!"ACTIVE".equals(lockedLifecycle.status())
               || lockedLifecycle.epoch() != request.activeLifecycleEpoch()) {
             throw new InvalidHoldEvidenceException(
