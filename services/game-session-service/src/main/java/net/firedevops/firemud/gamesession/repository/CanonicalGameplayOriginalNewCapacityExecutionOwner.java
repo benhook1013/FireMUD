@@ -1164,16 +1164,11 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       throw unavailable();
     if ("COMMITTED".equals(row.get("status", String.class))) {
       String finalDigest = transition.get("original_new_final_session_sha256", String.class);
-      if (!"COMMITTED".equals(transition.get("status", String.class))
-          || finalDigest == null
-          || !execution
-              .digest()
-              .equals(transition.get("original_new_capacity_execution_digest", String.class)))
-        throw unavailable();
+      var retained =
+          requireRetainedCommittedEvidence(
+              execution, row, transition, transition.get("status", String.class));
       String receipt = receiptDigest(transition, execution);
-      byte[] retained = execution.terminalEvidence("COMMITTED", "sha256:" + finalDigest, receipt);
-      if (!Arrays.equals(retained, row.get("terminal_readback", byte[].class))
-          || !observedOwner.equals(currentOwner(candidate))) throw unavailable();
+      if (!observedOwner.equals(currentOwner(candidate))) throw unavailable();
       return new Snapshot(
           execution,
           "COMMITTED",
@@ -1934,6 +1929,26 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             .request()
             .admissionAttemptId()
             .equals(row.get("admission_attempt_id", UUID.class))) throw unavailable();
+  }
+
+  static byte[] requireRetainedCommittedEvidence(
+      OriginalNewCapacityExecution execution,
+      Record row,
+      Record transition,
+      String transitionState) {
+    String finalDigest = transition.get("original_new_final_session_sha256", String.class);
+    if (!"COMMITTED".equals(row.get("status", String.class))
+        || !"COMMITTED".equals(transitionState)
+        || finalDigest == null
+        || !execution
+            .digest()
+            .equals(transition.get("original_new_capacity_execution_digest", String.class)))
+      throw unavailable();
+    byte[] retained =
+        execution.terminalEvidence(
+            "COMMITTED", "sha256:" + finalDigest, receiptDigest(transition, execution));
+    if (!Arrays.equals(retained, row.get("terminal_readback", byte[].class))) throw unavailable();
+    return retained;
   }
 
   private static String receiptDigest(Record row, OriginalNewCapacityExecution execution) {

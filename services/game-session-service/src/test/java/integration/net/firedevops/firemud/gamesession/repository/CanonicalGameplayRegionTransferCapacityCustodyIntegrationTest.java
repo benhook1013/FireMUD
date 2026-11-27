@@ -614,14 +614,58 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
             proof.transfers.within(
                 transferDeadline(), ignored -> proof.transfers.finishVerification(id));
         assertThat(verified).isTrue();
-        assertThat(
-                proof
-                    .rawCompleteAndInstall(id, "sql-proof-successor", "e".repeat(64))
-                    .ownerInstanceId())
-            .isEqualTo("sql-proof-successor");
+        var installed = proof.install(id);
+        assertThat(installed.ownerInstanceId()).isEqualTo("sql-proof-successor");
         assertThat(proof.executionState(proof.execution)).isEqualTo("COMMITTED");
-        assertThat(proof.transfers.readCurrent(id, captured.getFirst().ordinal()).controlState())
+        var item = captured.getFirst();
+        assertThat(proof.transfers.readCurrent(id, item.ordinal()).controlState())
             .isEqualTo("COMPLETED");
+        String completed = proof.transferImage(id);
+        String receipt = proof.itemImage(id);
+        String original = proof.originalImage();
+        for (String lifecycle : List.of("TERMINAL_UNRESOLVED", "TERMINAL")) {
+          // Model only the inventory state left by a future admitted teardown owner.
+          assertThat(
+                  proof.sql.execute(
+                      "UPDATE game_session_canonical_gameplay_binding_inventory"
+                          + " SET lifecycle=? WHERE transition_id=?",
+                      lifecycle,
+                      proof.execution.transitionId()))
+              .isEqualTo(1);
+          assertThatThrownBy(
+                  () -> proof.tags.assignmentForTransition(proof.execution.transitionId()))
+              .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+          assertThat(
+                  proof.coordinator.recoverCompleted(
+                      id,
+                      installed.ownerInstanceId(),
+                      installed.leaseTokenCorrelation(),
+                      transferDeadline()))
+              .isEqualTo(installed);
+        }
+        assertThatThrownBy(
+                () ->
+                    proof.coordinator.recoverCompleted(
+                        id, installed.ownerInstanceId(), "f".repeat(64), transferDeadline()))
+            .isInstanceOf(IllegalStateException.class);
+        String tag = item.assignment().tenantGameplayTag();
+        try (var connection = proof.redis.connect(ByteArrayCodec.INSTANCE)) {
+          assertThat(connection.sync().del(proof.physicalExecutionKey(proof.execution, tag)))
+              .isEqualTo(1L);
+        }
+        assertThatThrownBy(
+                () ->
+                    proof.coordinator.recoverCompleted(
+                        id,
+                        installed.ownerInstanceId(),
+                        installed.leaseTokenCorrelation(),
+                        transferDeadline()))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(proof.physicalExecutionExists(proof.execution, tag)).isFalse();
+        assertThat(proof.currentOwner()).isEqualTo(installed);
+        assertThat(proof.transferImage(id)).isEqualTo(completed);
+        assertThat(proof.itemImage(id)).isEqualTo(receipt);
+        assertThat(proof.originalImage()).isEqualTo(original);
       }
     }
   }

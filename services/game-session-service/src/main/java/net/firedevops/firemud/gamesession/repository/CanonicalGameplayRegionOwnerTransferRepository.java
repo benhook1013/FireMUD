@@ -1027,6 +1027,17 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         .readAssignmentForRetainedCapacityExecution(transitionId);
   }
 
+  @Override
+  public CanonicalGameplayTenantGameplayTagRepository.Assignment readAssignment(
+      Context context, CanonicalGameplayTenantGameplayTagRepository sourceTags, long deadline) {
+    if (admitted.get() == null)
+      return within(deadline, ignored -> readAssignment(context, sourceTags, deadline));
+    if (deadline < admitted.get().absoluteDeadlineMillis()) throw unavailable();
+    return readItem(
+            context.transferId(), context.targetOrdinal(), context.executionDigest(), sourceTags)
+        .assignment();
+  }
+
   static Record observationCurrent(DSLContext tx, UUID id) {
     Record row =
         tx.fetchOne(
@@ -1061,19 +1072,42 @@ final class CanonicalGameplayRegionOwnerTransferRepository
   }
 
   private Item readItem(UUID transferId, long ordinal, String executionDigest) {
+    return readItem(transferId, ordinal, executionDigest, tags);
+  }
+
+  private Item readItem(
+      UUID transferId,
+      long ordinal,
+      String executionDigest,
+      CanonicalGameplayTenantGameplayTagRepository sourceTags) {
     return sql()
         .transactionResult(
             configuration -> {
               DSLContext transaction = DSL.using(configuration);
               transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-              return loadItem(transaction, transferId, ordinal, executionDigest);
+              return loadItem(transaction, transferId, ordinal, executionDigest, sourceTags);
             });
   }
 
   private Item loadItem(DSLContext tx, UUID transferId, long ordinal, String executionDigest) {
+    return loadItem(tx, transferId, ordinal, executionDigest, tags);
+  }
+
+  private Item loadItem(
+      DSLContext tx,
+      UUID transferId,
+      long ordinal,
+      String executionDigest,
+      CanonicalGameplayTenantGameplayTagRepository sourceTags) {
     Record row =
         tx.fetchOne(
-            "SELECT e.*,t.original_new_candidate_bytes FROM game_session_original_new_capacity_execution e JOIN game_session_canonical_binding_transition t ON t.transition_id=e.transition_id WHERE e.execution_digest=?",
+            "SELECT e.*, t.status AS transition_status, t.original_new_candidate_bytes,"
+                + " t.original_new_capacity_execution_digest, t.original_new_final_session_sha256,"
+                + " t.original_new_admission_at_ms, t.original_new_continuity_expires_at_ms,"
+                + " t.original_new_session_duration_ms"
+                + " FROM game_session_original_new_capacity_execution e"
+                + " JOIN game_session_canonical_binding_transition t ON t.transition_id=e.transition_id"
+                + " WHERE e.execution_digest=?",
             executionDigest);
     if (row == null) throw unavailable();
     var candidate =
@@ -1090,7 +1124,15 @@ final class CanonicalGameplayRegionOwnerTransferRepository
             .request()
             .admissionAttemptId()
             .equals(row.get("admission_attempt_id", UUID.class))) throw unavailable();
-    var assignment = tags.readAssignmentForRetainedCapacityExecution(tx, execution.transitionId());
+    boolean committed = "COMMITTED".equals(row.get("status", String.class));
+    if (committed) {
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.requireRetainedCommittedEvidence(
+          execution, row, row, row.get("transition_status", String.class));
+    }
+    var assignment =
+        committed
+            ? sourceTags.readAssignmentForCommittedTransferItem(tx, execution.transitionId())
+            : sourceTags.readAssignmentForRetainedCapacityExecution(tx, execution.transitionId());
     if (!assignment.tenantGameplayTag().equals(row.get("tenant_gameplay_tag", String.class)))
       throw unavailable();
     var binding = candidate.bindingIdentity();

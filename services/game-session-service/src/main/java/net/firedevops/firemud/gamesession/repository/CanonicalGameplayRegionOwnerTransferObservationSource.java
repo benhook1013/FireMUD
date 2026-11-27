@@ -35,6 +35,11 @@ interface CanonicalGameplayRegionOwnerTransferObservationSource {
     return readAssignment(transitionId, tags);
   }
 
+  default CanonicalGameplayTenantGameplayTagRepository.Assignment readAssignment(
+      Context context, CanonicalGameplayTenantGameplayTagRepository tags, long deadline) {
+    return readAssignment(context.transitionId(), tags, deadline);
+  }
+
   /**
    * One frozen item and its original owner, with its exact current control phase. A COMPLETED
    * context requires independently current sealed successor evidence and is read-only currentness,
