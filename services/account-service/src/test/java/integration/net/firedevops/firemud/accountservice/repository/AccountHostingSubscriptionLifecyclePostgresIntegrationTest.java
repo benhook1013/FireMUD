@@ -1008,7 +1008,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
-  void signedSuccessWithIntegralDecimalAmountsWaitsForTheExactSubscriptionLock() throws Exception {
+  void signedSuccessWithIntegralDecimalAmountsWaitsForTheExactIntentLock() throws Exception {
     Context c = context("latest");
     Fixture f = fixture(c);
     var checkout =
@@ -1036,13 +1036,11 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         var lock = c.source().getConnection()) {
       lock.setAutoCommit(false);
       var locker = DSL.using(lock, SQLDialect.POSTGRES);
-      UUID subscriptionId = checkout.invoice().subscriptionId();
-      int lockerPid =
-          locker
-              .fetchSingle(
-                  "SELECT pg_backend_pid() FROM subscription WHERE subscription_id = ? FOR UPDATE",
-                  subscriptionId)
-              .get(0, Integer.class);
+      locker.fetchSingle(
+          "SELECT account_lock_first_invoice_intent(?, ?)",
+          checkout.invoice().paymentIntentId(),
+          checkout.invoice().livemode());
+      int lockerPid = locker.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
       var receipt =
           workers.submit(() ->
               in(
@@ -1054,7 +1052,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                             writerName);
                     return inbox.retainOrReplay(verified);
                   }));
-      awaitSubscriptionWriterLock(c, writerName);
+      awaitFirstInvoiceIntentBlockedBy(c, lockerPid);
       assertThat(
               one(
                       c,
@@ -2078,21 +2076,76 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void firstInvoiceCaptureWaitsForExactSignedIntakeBeforeItsMappingExists() throws Exception {
+    Context c = context("latest");
+    var signer = prepareFirstInvoice(fixture(c));
+    Fixture f = fixture(c);
+    String intentSuffix = f.creation().subscriptionId().toString().replace("-", "");
+    var signed =
+        signer.signWebhookPayload(
+            signer
+                .signedSuccess()
+                .payload()
+                .replace(signer.invoice().paymentIntentId().substring(3), intentSuffix)
+                .replace(signer.invoice().providerCustomerId(), f.creation().providerCustomerId())
+                .replace(
+                    signer.invoice().providerPaymentMethodId(),
+                    f.instrument().providerPaymentMethodId()));
+    var verified = signer.verifier().verify(signed.payload(), signed.signature());
+    try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+      var capture =
+          in(
+              c,
+              () -> {
+                assertThat(
+                        one(
+                                c,
+                                "SELECT count(*) FROM subscription_first_invoices"
+                                    + " WHERE subscription_id = ?",
+                                f.creation().subscriptionId())
+                            .get(0, Long.class))
+                    .isZero();
+                new StripeEventInboxRepository(c.dsl()).retainOrReplay(verified);
+                int intakePid =
+                    c.dsl().fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+                var pendingCapture = workers.submit(() -> prepareFirstInvoice(f));
+                awaitFirstInvoiceIntentBlockedBy(c, intakePid);
+                return pendingCapture;
+              });
+      var retained = capture.get(5, TimeUnit.SECONDS);
+      assertThat(retained.invoice().paymentIntentId()).isEqualTo("pi_" + intentSuffix);
+      assertThat(retained.confirmations()).isZero();
+    }
+
+    f.transport().json = response(f, "canceled");
+    long capturedVersion =
+        c.intents().findCurrentByTenant(f.creation().tenantId()).orElseThrow().rowVersion();
+    assertThat(
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    UUID.randomUUID(), f.creation().requestId(), capturedVersion, f.providerId())
+                .outcome())
+        .isEqualTo(Outcome.RECONCILING);
+    assertThat(count(c, "subscription_provider_terminal_resolutions")).isZero();
+    assertThat(count(c, "subscription_first_invoice_success_evidence")).isZero();
+    assertThat(count(c, "stripe_event_inbox")).isOne();
+    assertThat(
+            one(
+                    c,
+                    "SELECT released_at FROM subscription_instrument_reservations"
+                        + " WHERE request_id = ?",
+                    f.creation().requestId())
+                .get("released_at"))
+        .isNull();
+    assertThat(f.terminalInvoiceTransport().confirmations()).isZero();
+  }
+
+  @Test
   void verifiedPaidInboxEventRetainedDuringProviderReadWinsBeforeCancellationApply()
       throws Exception {
     Context c = context("latest");
     Fixture f = fixture(c);
-    var checkout =
-        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
-            invoiceCheckoutDirectory,
-            c.source(),
-            c.dsl(),
-            c.tx(),
-            f.creation(),
-            f.instrument(),
-            f.providerId(),
-            f.clock(),
-            f.owner());
+    var checkout = prepareFirstInvoice(f);
     var witness =
         checkout.claimExpiredBeforePost(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
     assertThat(witness.requestId()).isNotNull();
@@ -2128,11 +2181,11 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
             c,
             () -> {
               int intakePid = c.dsl().fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
-              // The inbox insert's trigger takes the matching subscription row lock.
+              // The inbox insert's trigger holds the matching intent lock until commit.
               var retained = new StripeEventInboxRepository(c.dsl()).retainOrReplay(verified);
               assertThat(count(c, "stripe_event_inbox")).isZero();
               continueProviderRead.countDown();
-              awaitCancellationBlockedByIntake(c, intakePid);
+              awaitFirstInvoiceIntentBlockedBy(c, intakePid);
               return retained;
             });
       } finally {
@@ -2171,15 +2224,14 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(f.terminalInvoiceTransport().confirmations()).isZero();
   }
 
-  private static void awaitCancellationBlockedByIntake(Context c, int intakePid) {
+  private static void awaitFirstInvoiceIntentBlockedBy(Context c, int intakePid) {
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
     do {
       if (Boolean.TRUE.equals(
           one(
                   c,
-                  "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
-                      + "AND ? = ANY(pg_blocking_pids(pid)) "
-                      + "AND query ILIKE '%subscription%' AND query ILIKE '%FOR UPDATE%')",
+                  "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' "
+                      + "AND NOT granted AND ? = ANY(pg_blocking_pids(pid)))",
                   intakePid)
               .get(0, Boolean.class))) {
         return;
@@ -2188,10 +2240,27 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         Thread.sleep(10);
       } catch (InterruptedException interrupted) {
         Thread.currentThread().interrupt();
-        throw new AssertionError("Interrupted while observing the cancellation wait", interrupted);
+        throw new AssertionError(
+            "Interrupted while observing the first-invoice intent wait", interrupted);
       }
     } while (System.nanoTime() < deadline);
-    throw new AssertionError("Cancellation did not wait on the signed intake subscription lock");
+    throw new AssertionError(
+        "The first-invoice operation did not wait on the signed intake intent lock");
+  }
+
+  private CanonicalHostingSubscriptionTestFixture.FirstInvoiceCheckout prepareFirstInvoice(
+      Fixture f) {
+    Context c = f.context();
+    return CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+        invoiceCheckoutDirectory,
+        c.source(),
+        c.dsl(),
+        c.tx(),
+        f.creation(),
+        f.instrument(),
+        f.providerId(),
+        f.clock(),
+        f.owner());
   }
 
   @Test
