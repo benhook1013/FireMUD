@@ -85,22 +85,27 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
     [[{filename: "design/README.md", previous_filename: "docs/old.md"}], 1, true, undefined, false, true],
   ]) {
     const outputs = {};
-    const callOrder = [];
+    const calls = [];
     const eventPullRequest = {number: 42, changed_files: count,
       head: {sha: "a".repeat(40)}, base: {sha: "b".repeat(40)}};
     const serverPullRequest = structuredClone(eventPullRequest);
     if (drift === "head-before") serverPullRequest.head.sha = "c".repeat(40);
-    const githubClient = {rest: {pulls: {listFiles() {}, get: (() => {
-      return async () => {
-        callOrder.push("get");
-        return {data: structuredClone(serverPullRequest)};
-      };
-    })()}}, paginate: async () => {
-      callOrder.push("paginate");
-      if (drift === "head-after") serverPullRequest.head.sha = "c".repeat(40);
-      if (drift === "base-after") serverPullRequest.base.sha = "c".repeat(40);
-      return entries.map(entry => ({status: "modified", ...entry}));
-    }};
+    const listFiles = () => {};
+    const githubClient = {
+      rest: {pulls: {
+        listFiles,
+        async get(options) {
+          calls.push({method: "get", options});
+          return {data: structuredClone(serverPullRequest)};
+        },
+      }},
+      async paginate(endpoint, options) {
+        calls.push({method: "paginate", endpoint, options});
+        if (drift === "head-after") serverPullRequest.head.sha = "c".repeat(40);
+        if (drift === "base-after") serverPullRequest.base.sha = "c".repeat(40);
+        return entries.map(entry => ({status: "modified", ...entry}));
+      },
+    };
     const eventContext = {eventName: "pull_request", repo: {owner: "example", repo: "FireMUD"},
       payload: {pull_request: eventPullRequest}};
     await execute(name => {
@@ -119,8 +124,12 @@ const execute = new AsyncFunction("require", "github", "context", "core", comput
       };
     }, githubClient, eventContext,
     {setOutput: (name, value) => outputs[name] = value, warning() {}});
-    assert.deepEqual(callOrder, ["get", "paginate", "get"],
-      "fallback must verify the same PR tuple before and after complete pagination");
+    const expectedPull = {owner: "example", repo: "FireMUD", pull_number: 42};
+    assert.deepEqual(calls, [
+      {method: "get", options: expectedPull},
+      {method: "paginate", endpoint: listFiles, options: {...expectedPull, per_page: 100}},
+      {method: "get", options: expectedPull},
+    ], "fallback must verify the same PR tuple before and after complete pagination");
     assert.equal(outputs.lightweight_only, String(expected));
     assert.equal(outputs.validation_python_changed, String(expectsPython));
     assert.equal(outputs.python_changed, String(expectsPython));

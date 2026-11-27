@@ -7,5 +7,6 @@ ALTER TABLE recovery_control.initial_gameplay_release_outbox
                 attempt_count > 0
                 AND last_attempt_id IS NOT NULL
                 AND last_attempt_id <> '00000000-0000-0000-0000-000000000000'::uuid
+                AND last_dispatched_at IS NOT NULL
             )
         );
