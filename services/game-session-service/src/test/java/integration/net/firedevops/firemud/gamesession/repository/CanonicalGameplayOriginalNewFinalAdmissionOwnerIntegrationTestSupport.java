@@ -106,11 +106,15 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
     ownerClient = RedisClient.create(ownerUri);
     ownerClient.setOptions(ClientOptions.builder().autoReconnect(false).build());
     ownerEvents =
-        ownerClient.getResources().eventBus().get().subscribe(
-            event -> {
-              if (event instanceof ConnectedEvent) ownerConnected.incrementAndGet();
-              if (event instanceof DisconnectedEvent) ownerDisconnected.incrementAndGet();
-            });
+        ownerClient
+            .getResources()
+            .eventBus()
+            .get()
+            .subscribe(
+                event -> {
+                  if (event instanceof ConnectedEvent) ownerConnected.incrementAndGet();
+                  if (event instanceof DisconnectedEvent) ownerDisconnected.incrementAndGet();
+                });
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName("org.postgresql.Driver");
     String jdbcUrl = postgresContainer().getJdbcUrl();
