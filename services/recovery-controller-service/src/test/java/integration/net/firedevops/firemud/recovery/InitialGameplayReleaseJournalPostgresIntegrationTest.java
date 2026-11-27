@@ -14,6 +14,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -89,6 +90,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.ReflectionUtils;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -285,7 +287,17 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
   @Container
   private static final PostgreSQLContainer<?> POSTGRES =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
+      new PostgreSQLContainer<>(TestContainerImages.postgres())
+          .withCommand(
+              "postgres",
+              "-c",
+              "fsync=off",
+              "-c",
+              "log_error_verbosity=terse",
+              "-c",
+              "log_parameter_max_length_on_error=0",
+              "-c",
+              "log_parameter_max_length=0");
 
   private static Connection connection;
   private static DSLContext dsl;
@@ -392,8 +404,29 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .hasNoCause();
       assertThat(injected.find(scope.operationId())).isEmpty();
       assertThat(output.getAll()).doesNotContain(lockIdentity.toString());
+      String serverLog = POSTGRES.getLogs();
+      assertThat(serverLog)
+          .contains("violates check constraint \"fixture_requires_bound_phase\"")
+          .doesNotContain(lockIdentity.toString());
     } finally {
       dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  void createRequiresRedactedLoggingOnTheCredentialWritingSession() throws Exception {
+    try (Connection unqualified =
+        DriverManager.getConnection(
+            POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      DSLContext unqualifiedDsl = DSL.using(unqualified, SQLDialect.POSTGRES);
+      unqualifiedDsl.execute("SET log_error_verbosity = 'default'");
+      var unqualifiedJournal = new JooqInitialGameplayReleaseJournal(unqualifiedDsl, tupleCodec);
+      Scope scope = scope();
+
+      assertThatThrownBy(() -> unqualifiedJournal.create(scope, UUID.randomUUID()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Recovery journal requires redacted PostgreSQL logs");
+      assertThat(journal.find(scope.operationId())).isEmpty();
     }
   }
 
@@ -718,6 +751,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
   @ParameterizedTest(name = "{0} {1}")
   @CsvSource({
+    "payload_digest, TYPE char(63)",
+    "payload_digest, TYPE varchar(64)",
+    "payload_digest, DROP NOT NULL",
     "send_outcome_uncertain, SET NOT NULL",
     "send_outcome_uncertain, TYPE recovery_control.fixture_uncertainty_flag",
     "retry_provenance, SET NOT NULL",
@@ -1084,11 +1120,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             EffectReadbackState.PREPARED_FENCED,
             prepareReadback.readbackIdentity(),
             base.plusSeconds(5));
-    assertThat(journal.recordEffectReadback(prepare, earlierObservation, base.plusSeconds(5)))
-        .isEqualTo(releasing);
+    assertThatThrownBy(
+            () -> journal.recordEffectReadback(prepare, earlierObservation, base.plusSeconds(5)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("newer than the retained same-attempt observation");
     assertThat(storedOutbox(scope.operationId(), preparedEffectId))
         .isEqualTo(retainedAcknowledgement);
-    EffectReadback laterObservation =
+    EffectReadback retimedObservation =
         readbackFor(
             prepare,
             prepareAttempt,
@@ -1096,10 +1134,24 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             prepareReadback.readbackIdentity(),
             base.plusSeconds(8));
     assertThatThrownBy(
-            () -> journal.recordEffectReadback(prepare, laterObservation, base.plusSeconds(7)))
-        .isInstanceOf(InitialGameplayReleaseConflictException.class);
+            () -> journal.recordEffectReadback(prepare, retimedObservation, base.plusSeconds(7)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("effect readback observation is in the future");
     assertThat(storedOutbox(scope.operationId(), preparedEffectId))
         .isEqualTo(retainedAcknowledgement);
+    assertThatThrownBy(
+            () -> journal.recordEffectReadback(prepare, retimedObservation, base.plusSeconds(9)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("preparation readback identity already has an observation");
+    assertThat(storedOutbox(scope.operationId(), preparedEffectId))
+        .isEqualTo(retainedAcknowledgement);
+    EffectReadback laterObservation =
+        readbackFor(
+            prepare,
+            prepareAttempt,
+            EffectReadbackState.PREPARED_FENCED,
+            "gamesession-preparation-readback-2",
+            retimedObservation.observedAt());
     assertThat(journal.recordEffectReadback(prepare, laterObservation, base.plusSeconds(9)))
         .isEqualTo(releasing);
     String updatedObservation = storedOutbox(scope.operationId(), preparedEffectId);
@@ -1919,10 +1971,16 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
       EffectReadback observedAgain =
           readbackFor(dispatched, attemptId, state, "terminal", base.plusSeconds(6));
-      assertThat(journal.recordEffectReadback(dispatched, observedAgain, base.plusSeconds(7)))
-          .isEqualTo(settled);
-      String afterObservation = storedOutbox(operationId, effectId);
       if (state == EffectReadbackState.PREPARED_FENCED) {
+        assertThatThrownBy(
+                () -> journal.recordEffectReadback(dispatched, observedAgain, base.plusSeconds(7)))
+            .isInstanceOf(InitialGameplayReleaseConflictException.class)
+            .hasMessageContaining("preparation readback identity already has an observation");
+        assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
+        EffectReadback fresh =
+            readbackFor(dispatched, attemptId, state, "fresh", observedAgain.observedAt());
+        assertThat(journal.recordEffectReadback(dispatched, fresh, base.plusSeconds(7)))
+            .isEqualTo(settled);
         var receipts =
             dsl.fetchSingle(
                 "SELECT readback_digest, preparation_observation_digest "
@@ -1931,10 +1989,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         assertThat(receipts.get("readback_digest", String.class))
             .isEqualTo(tupleCodec.digest(valid));
         assertThat(receipts.get("preparation_observation_digest", String.class))
-            .isEqualTo(tupleCodec.digest(observedAgain));
+            .isEqualTo(tupleCodec.digest(fresh));
       } else {
-        assertThat(afterObservation).isEqualTo(before);
+        assertThat(journal.recordEffectReadback(dispatched, observedAgain, base.plusSeconds(7)))
+            .isEqualTo(settled);
+        assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
       }
+      String afterObservation = storedOutbox(operationId, effectId);
       EffectReadback stale =
           readbackFor(dispatched, attemptId, state, "terminal", base.plusSeconds(3));
       EffectReadback future =
@@ -2216,21 +2277,21 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 tupleCodec.digest(ownerEvidence),
                 base.plusSeconds(9)))
         .isEqualTo(finalized);
-    List<EffectReadback> prepareReplays =
-        List.of(
-            prepared,
-            readbackFor(
-                prepare,
-                prepare.lastAttemptId(),
-                EffectReadbackState.PREPARED_FENCED,
-                prepared.readbackIdentity(),
-                base.plusSeconds(9)));
+    EffectReadback retimedPreparation =
+        readbackFor(
+            prepare,
+            prepare.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            prepared.readbackIdentity(),
+            base.plusSeconds(9));
     String retainedPrepare = storedOutbox(operationId, prepare.effect().effectId());
     String retainedHandoff = storedOutbox(operationId, effectId);
-    for (EffectReadback replay : prepareReplays) {
-      assertThat(journal.recordEffectReadback(prepare, replay, base.plusSeconds(10)))
-          .isEqualTo(finalized);
-    }
+    assertThat(journal.recordEffectReadback(prepare, prepared, base.plusSeconds(10)))
+        .isEqualTo(finalized);
+    assertThatThrownBy(
+            () -> journal.recordEffectReadback(prepare, retimedPreparation, base.plusSeconds(10)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("effect readback changed after acknowledgement");
     assertThat(storedOutbox(operationId, prepare.effect().effectId())).isEqualTo(retainedPrepare);
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(retainedHandoff);
     dsl.execute(
@@ -2267,7 +2328,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 base.plusSeconds(10)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("retained handoff readback is incomplete");
-    for (EffectReadback replay : prepareReplays) {
+    for (EffectReadback replay : List.of(prepared, retimedPreparation)) {
       assertThatThrownBy(() -> journal.recordEffectReadback(prepare, replay, base.plusSeconds(10)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("retained handoff readback is incomplete");
@@ -2979,7 +3040,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void newerPartialPreparationHoldsUnclaimedHandoffUntilFreshOwnerProof(
-      boolean preparationArrivesFirst) {
+      boolean preparationArrivesFirst) throws Exception {
     Instant base = Instant.parse("2026-09-01T00:00:00Z");
     OutboxEntry dispatch = authorizedDispatch(base);
     UUID operationId = dispatch.effect().operationId();
@@ -3005,6 +3066,19 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .isEqualTo(Phase.RELEASING);
       originalHandoff = journal.findEffect(operationId, handoffKind);
       assertThat(originalHandoff).isPresent();
+      var retimedPreparation =
+          readbackFor(
+              dispatch,
+              dispatch.lastAttemptId(),
+              EffectReadbackState.PREPARED_FENCED,
+              prepared.readbackIdentity(),
+              partial.observedAt().plusNanos(1));
+      String retained = storedOutbox(operationId, effectId);
+      assertThatThrownBy(
+              () -> journal.recordEffectReadback(dispatch, retimedPreparation, base.plusSeconds(8)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("preparation readback identity already has an observation");
+      assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
     }
     journal.recordEffectReadback(dispatch, partial, base.plusSeconds(8));
 
@@ -3054,7 +3128,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       assertThatThrownBy(
               () -> journal.recordEffectReadback(held, retimedReceipt, base.plusSeconds(9)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
-          .hasMessageContaining("fresh observation after partial evidence");
+          .hasMessageContaining("preparation readback identity already has an observation");
     }
     for (Instant observedAt : List.of(prepared.observedAt(), partial.observedAt())) {
       EffectReadback delayed =
@@ -3088,6 +3162,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             "later-preparation",
             fresh.observedAt().plusNanos(1));
     journal.recordEffectReadback(held, laterPreparation, base.plusSeconds(10));
+    String retainedLatestPreparation = storedOutbox(operationId, effectId);
+    assertThat(journal.recordEffectReadback(held, laterPreparation, base.plusSeconds(10)).phase())
+        .isEqualTo(Phase.RELEASING);
     EffectReadback secondPartial =
         readbackFor(
             held,
@@ -3095,22 +3172,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             EffectReadbackState.UNKNOWN_OR_PARTIAL,
             "second-partial",
             base.plusSeconds(10));
-    journal.recordEffectReadback(held, secondPartial, base.plusSeconds(10));
-    OutboxEntry secondHeld = journal.findNextEffect(operationId).orElseThrow();
-    assertThat(secondHeld.outboxId()).isEqualTo(held.outboxId());
-    assertThat(secondHeld.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
-
-    EffectReadback retimedSuperseded =
+    EffectReadback retimedLatest =
         readbackFor(
             held,
             held.lastAttemptId(),
             EffectReadbackState.PREPARED_FENCED,
             laterPreparation.readbackIdentity(),
             secondPartial.observedAt().plusNanos(1));
-    assertThatThrownBy(
-            () -> journal.recordEffectReadback(secondHeld, retimedSuperseded, base.plusSeconds(11)))
-        .isInstanceOf(InitialGameplayReleaseConflictException.class)
-        .hasMessageContaining("fresh observation after partial evidence");
     assertThat(fresh.observedAt()).isBefore(laterPreparation.observedAt());
     EffectReadback retimedOlderReceipt =
         readbackFor(
@@ -3119,22 +3187,50 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             EffectReadbackState.PREPARED_FENCED,
             fresh.readbackIdentity(),
             secondPartial.observedAt().plusNanos(2));
-    String retainedSecondHold = storedOutbox(operationId, effectId);
-    assertThatThrownBy(() ->
-            journal.recordEffectReadback(secondHeld, retimedOlderReceipt, base.plusSeconds(11)))
-        .isInstanceOf(InitialGameplayReleaseConflictException.class)
-        .hasMessageContaining("fresh observation after partial evidence");
-    assertThat(storedOutbox(operationId, effectId)).isEqualTo(retainedSecondHold);
-    assertThat(journal.findNextEffect(operationId)).contains(secondHeld);
+    var retimedReceipts = List.of(retimedLatest, retimedOlderReceipt);
+    for (var retimed : retimedReceipts) {
+      assertThatThrownBy(() -> journal.recordEffectReadback(held, retimed, base.plusSeconds(11)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("preparation readback identity already has an observation");
+      assertThat(storedOutbox(operationId, effectId)).isEqualTo(retainedLatestPreparation);
+    }
 
-    EffectReadback afterSecondHold =
-        readbackFor(
-            held,
-            held.lastAttemptId(),
-            EffectReadbackState.PREPARED_FENCED,
-            "fresh-after-second-hold",
-            base.plusSeconds(11));
-    journal.recordEffectReadback(secondHeld, afterSecondHold, base.plusSeconds(11));
+    UUID unclaimedHandoffId =
+        journal.findEffect(operationId, handoffKind).orElseThrow().effect().effectId();
+    journal.recordEffectReadback(held, secondPartial, base.plusSeconds(11));
+    OutboxEntry secondHeld = journal.findNextEffect(operationId).orElseThrow();
+    assertThat(secondHeld.outboxId()).isEqualTo(held.outboxId());
+    assertThat(secondHeld.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
+    String retainedSecondHold = storedOutbox(operationId, effectId);
+    try (var reopenedConnection =
+        DriverManager.getConnection(
+            POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      var reopened =
+          new JooqInitialGameplayReleaseJournal(
+              DSL.using(reopenedConnection, SQLDialect.POSTGRES), tupleCodec);
+      assertThat(reopened.findNextEffect(operationId)).contains(secondHeld);
+      for (var retimed : retimedReceipts) {
+        assertThatThrownBy(
+                () -> reopened.recordEffectReadback(secondHeld, retimed, base.plusSeconds(11)))
+            .isInstanceOf(InitialGameplayReleaseConflictException.class)
+            .hasMessageContaining("preparation readback identity already has an observation");
+        assertThat(storedOutbox(operationId, effectId)).isEqualTo(retainedSecondHold);
+        assertThat(reopened.findNextEffect(operationId)).contains(secondHeld);
+      }
+      assertThatThrownBy(() ->
+              reopened.claimEffect(
+                  operationId, unclaimedHandoffId, UUID.randomUUID(), base.plusSeconds(11)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("preparation acknowledgement is unavailable");
+      EffectReadback afterSecondHold =
+          readbackFor(
+              held,
+              held.lastAttemptId(),
+              EffectReadbackState.PREPARED_FENCED,
+              "fresh-after-second-hold",
+              base.plusSeconds(11));
+      reopened.recordEffectReadback(secondHeld, afterSecondHold, base.plusSeconds(11));
+    }
     OutboxEntry handoff = journal.findNextEffect(operationId).orElseThrow();
     assertThat(handoff.effect().kind()).isEqualTo(handoffKind);
     assertThat(handoff.state()).isEqualTo(EffectOutboxState.PENDING);
@@ -4021,11 +4117,19 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(partial),
                 InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(closure));
         var controller =
-            new InitialGameplayReleaseController(
-                legacyJournal,
-                tupleCodec,
-                mock(InitialGameplayReleaseEvidenceProvider.class),
-                port);
+            ReflectionUtils.accessibleConstructor(
+                    InitialGameplayReleaseController.class,
+                    InitialGameplayReleaseJournal.class,
+                    InitialGameplayReleaseTupleCodec.class,
+                    InitialGameplayReleaseEvidenceProvider.class,
+                    InitialGameplayReleaseEffectPort.class,
+                    Clock.class)
+                .newInstance(
+                    legacyJournal,
+                    tupleCodec,
+                    mock(InitialGameplayReleaseEvidenceProvider.class),
+                    port,
+                    Clock.fixed(dispatchTime.plusSeconds(3), ZoneOffset.UTC));
         controller.reconcileNextEffect(V1_OPERATION_ID);
         assertThat(legacyJournal.findNextEffect(V1_OPERATION_ID)).contains(held);
         assertThat(retainedOutboxRow(legacyDsl)).contains(tupleCodec.digest(partial));

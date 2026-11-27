@@ -137,7 +137,8 @@ def parent_snapshot(repo_root: Path, base_ref: str) -> Snapshot:
         raise ValueError(f"immutable receiving parent commit is unavailable: {base_ref}; fetch that exact SHA") from error
     if commit.lower() != base_ref.lower():
         raise ValueError("--base-ref must identify a commit directly")
-    paths = git(repo_root, "ls-tree", "-r", "--name-only", commit, "services", "buildSrc").decode().splitlines()
+    paths = git(repo_root, "ls-tree", "-r", "-z", "--name-only", commit, "services", "buildSrc")
+    paths = [path.decode("utf-8") for path in paths.split(b"\0") if path]
     return {path: git(repo_root, "show", f"{commit}:{path}") for path in paths if relevant_path(path)}
 
 
@@ -153,7 +154,9 @@ def discover_migration_files(snapshot: Snapshot) -> list[MigrationFile]:
     return discovered
 
 
-def saga_adopters(snapshot: Snapshot) -> set[str]:
+def saga_adopters(
+    snapshot: Snapshot, *, require_placeholder_replacement_disabled: bool = True,
+) -> set[str]:
     """Read existing runtime dependencies and composed convention plugins, not classifications.
 
     This follows the repository's literal Kotlin DSL wiring. Test dependencies are
@@ -192,10 +195,29 @@ def saga_adopters(snapshot: Snapshot) -> set[str]:
     for project, source in module_sources.items():
         # Flyway scans nested packages below db/migration, so the parent location
         # exposes Saga resources too, even without a redundant explicit saga location.
-        locations = [data.decode() for path, data in snapshot.items()
-                     if re.fullmatch(rf"services/{re.escape(project)}/src/main/resources/application[^/]*\.ya?ml", path)]
-        if (any(re.search(r"classpath:db/migration(?:/saga)?(?:[\s,\"']|$)", text) for text in locations)
-                and reaches_saga(source, {"module:" + project})):
+        if project == RECOVERY_PROJECT:
+            # Recovery has stricter, already-qualified effective config parsing.
+            # In particular, a higher-priority /config/application.yml can replace
+            # a root location list; root-only scanning would invent Saga adoption.
+            locations = recovery_flyway_locations(
+                snapshot, project,
+                require_placeholder_replacement_disabled=require_placeholder_replacement_disabled,
+            )
+            loads_saga_location = locations is not None and any(
+                location in {"classpath:db/migration", "classpath:db/migration/saga"}
+                for location in locations
+            )
+        else:
+            configured_files = [data.decode() for path, data in snapshot.items()
+                                if re.fullmatch(
+                                    rf"services/{re.escape(project)}/src/main/resources/application[^/]*\.ya?ml",
+                                    path,
+                                )]
+            loads_saga_location = any(
+                re.search(r"classpath:db/migration(?:/saga)?(?:[\s,\"']|$)", text)
+                for text in configured_files
+            )
+        if loads_saga_location and reaches_saga(source, {"module:" + project}):
             adopters.add(project)
     return adopters
 
@@ -206,7 +228,11 @@ def is_recovery_sql_migration(item: MigrationFile) -> bool:
 
 
 def effective_sets(
-    snapshot: Snapshot, migrations: list[MigrationFile], recovery_locations: set[str],
+    snapshot: Snapshot,
+    migrations: list[MigrationFile],
+    recovery_locations: set[str],
+    *,
+    require_placeholder_replacement_disabled: bool = True,
 ) -> dict[str, list[MigrationFile]]:
     grouped: dict[str, list[MigrationFile]] = {}
     for item in migrations:
@@ -217,12 +243,18 @@ def effective_sets(
             continue
         grouped.setdefault(item.project, []).append(item)
     shared = grouped.get("common-saga", [])
-    for adopter in saga_adopters(snapshot):
+    for adopter in saga_adopters(
+            snapshot, require_placeholder_replacement_disabled=require_placeholder_replacement_disabled):
         grouped.setdefault(adopter, []).extend(shared)
     return grouped
 
 
-def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | None:
+def recovery_flyway_locations(
+    snapshot: Snapshot,
+    project: str,
+    *,
+    require_placeholder_replacement_disabled: bool = True,
+) -> set[str] | None:
     def flatten_properties(
         value: object,
         prefix: tuple[str, ...],
@@ -258,6 +290,8 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
     auto_configuration_switch = "spring.boot.enableautoconfiguration"
     datasource_overrides = {"spring.flyway.url", "spring.flyway.user", "spring.flyway.password"}
     init_sqls = "spring.flyway.initsqls"
+    callback_locations = "spring.flyway.callbacklocations"
+    placeholder_replacement = "spring.flyway.placeholderreplacement"
     effective_exclusions: list[str] | None = None
     for config_path in [*base_paths, *profile_paths]:
         try:
@@ -276,8 +310,7 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
             if any(path == override or path.startswith((override + ".", override + "["))
                    for path in properties for override in datasource_overrides):
                 return None
-            if (init_sqls in ambiguous or properties.get(init_sqls, []) not in ([], "")
-                    or any(path.startswith((init_sqls + ".", init_sqls + "[")) for path in properties)):
+            if init_sqls in ambiguous or callback_locations in ambiguous or placeholder_replacement in ambiguous:
                 return None
             exclusion_property = "spring.autoconfigure.exclude"
             exclusion_paths = {
@@ -333,7 +366,9 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
                                  "spring.flyway.skipdefaultresolvers",
                                  "spring.flyway.skipexecutingmigrations",
                                  "spring.flyway.dryrunoutput",
-                                 "spring.flyway.encoding", "spring.flyway.callbacklocations",
+                                 "spring.flyway.encoding", "spring.flyway.detectencoding",
+                                 "spring.flyway.callbacklocations", "spring.flyway.initsqls",
+                                 "spring.flyway.placeholderreplacement",
                                  "spring.flyway.createschemas",
                                  "spring.flyway.baselineonmigrate"}
             guard_paths = {
@@ -384,8 +419,20 @@ def recovery_flyway_locations(snapshot: Snapshot, project: str) -> set[str] | No
     if "dryrunoutput" in flyway:
         return None
     encoding = flyway.get("encoding", "UTF-8")
-    if not isinstance(encoding, str) or encoding.strip().lower() != "utf-8" or "callbacklocations" in flyway:
+    detect_encoding = flyway.get("detectencoding", False)
+    if (not isinstance(encoding, str) or encoding.strip().lower() != "utf-8"
+            or detect_encoding is not False and not (
+                isinstance(detect_encoding, str) and detect_encoding.strip().lower() == "false"
+            )):
         return None
+    if any(value not in ([], "") for key, value in flyway.items()
+           if key in {"initsqls", "callbacklocations"}):
+        return None
+    if require_placeholder_replacement_disabled:
+        replacement = flyway.get("placeholderreplacement")
+        if replacement is not False and not (
+                isinstance(replacement, str) and replacement.strip().lower() == "false"):
+            return None
     locations = flyway.get("locations", ["classpath:db/migration"])
     if isinstance(locations, str):
         locations = locations.split(",")
@@ -440,7 +487,9 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
     parent_grouped = {}
     if parent is not None:
         recovery_parent_migrations = [item for item in parent_migrations if item.project == RECOVERY_PROJECT]
-        parent_locations = recovery_flyway_locations(parent, RECOVERY_PROJECT) if recovery_parent_migrations else None
+        parent_locations = recovery_flyway_locations(
+            parent, RECOVERY_PROJECT, require_placeholder_replacement_disabled=False,
+        ) if recovery_parent_migrations else None
         if recovery_parent_migrations and (
             not parent_locations
             or not parent_locations <= {RECOVERY_LOCATION, "classpath:db/migration"}
@@ -452,15 +501,18 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
         ):
             issues.append(f"{project_root}: cannot qualify the receiving parent's packaged Flyway configuration "
                           "and effective versioned migration history")
-        parent_grouped = effective_sets(parent, parent_migrations, parent_locations or set())
+        parent_grouped = effective_sets(
+            parent, parent_migrations, parent_locations or set(),
+            require_placeholder_replacement_disabled=False,
+        )
 
     if f"{project_root}/build.gradle.kts" in current or any(item.project == RECOVERY_PROJECT for item in migrations):
         if recovery_locations != {RECOVERY_LOCATION}:
             issues.append(f"{project_root}: packaged Spring configuration must enable Flyway with target latest, "
                           f"select the recovery-control location, use history table {RECOVERY_HISTORY_TABLE} "
                           f"in {RECOVERY_SCHEMA}, allow schema creation, share the journal datasource, "
-                          "and apply UTF-8 migrations without connection init SQL, automatic baselining, dry-run "
-                          "output, or callback locations")
+                          "disable placeholder replacement, apply UTF-8 migrations without non-empty connection "
+                          "init SQL or callback locations, automatic baselining, or dry-run output")
         if not any(is_recovery_sql_migration(item) for item in migrations):
             issues.append(f"{project_root}: requires at least one versioned migration in the recovery-control location")
     recovery_java_root = (
@@ -602,14 +654,80 @@ def run_self_test() -> None:
     recovery_table_setting = (
         b"    schemas: recovery_control\n"
         b"    default-schema: recovery_control\n"
+        b"    placeholder-replacement: false\n"
         b"    table: flyway_schema_history_recovery_control\n"
     )
     recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    check("explicitly disabled Flyway encoding detection preserves fixed UTF-8 migrations", {
+        **recovery_history, recovery_config: recovery_settings + b"    detect-encoding: false\n",
+    }, recovery_history, None)
+    for replacement_config in (
+        recovery_settings.replace(b"placeholder-replacement: false", b"placeholder-replacement: true"),
+        recovery_settings.replace(b"    placeholder-replacement: false\n", b""),
+    ):
+        check("Recovery placeholder replacement must be explicitly disabled", {
+            **recovery_history, recovery_config: replacement_config,
+        }, recovery_history, "historical effective migration no longer applied")
+    check("higher-priority placeholder replacement cannot be enabled", {
+        **recovery_history,
+        recovery_config.replace("/application.yml", "/config/application.yml"):
+            b"spring.flyway.placeholder-replacement: true\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    for config_path, config_data in (
+        (recovery_config, recovery_settings + b"    detect-encoding: true\n"),
+        (recovery_config.replace("/application.yml", "/config/application.yml"),
+         b"spring.flyway.detect-encoding: true\n"),
+    ):
+        check("effective Flyway encoding detection cannot qualify fixed UTF-8 Recovery migrations", {
+            **recovery_history, config_path: config_data,
+        }, recovery_history, "historical effective migration no longer applied")
+    recovery_saga_override = {
+        **recovery_history,
+        "services/recovery-controller-service/build.gradle.kts":
+            b'dependencies { implementation(project(":common-saga")) }',
+        recovery_config: recovery_settings.replace(
+            b"classpath:db/recovery-control-migration",
+            b"classpath:db/migration,classpath:db/migration/saga,classpath:db/recovery-control-migration",
+        ),
+        recovery_config.replace("/application.yml", "/config/application.yml"):
+            b"spring.flyway.locations: classpath:db/recovery-control-migration\n",
+        shared + "V1__saga.sql": b"-- saga\n",
+    }
+    effective_recovery_locations = recovery_flyway_locations(recovery_saga_override, RECOVERY_PROJECT)
+    recovery_adopters = saga_adopters(recovery_saga_override)
+    if effective_recovery_locations != {RECOVERY_LOCATION} or RECOVERY_PROJECT in recovery_adopters:
+        raise AssertionError(
+            "higher-priority Recovery Flyway locations must replace root Saga locations for adoption: "
+            f"{effective_recovery_locations}, {recovery_adopters}"
+        )
+    recovery_saga_sets = effective_sets(
+        recovery_saga_override,
+        discover_migration_files(recovery_saga_override),
+        effective_recovery_locations,
+    )
+    if [item.path for item in recovery_saga_sets[RECOVERY_PROJECT]] != [recovery + "V1__journal.sql"]:
+        raise AssertionError("overridden Recovery locations must not add common Saga migrations")
     check("explicitly empty Flyway connection init SQL qualifies recovery history", {
         **recovery_history,
         recovery_config: recovery_settings + b"    init-sqls: []\n",
+    }, recovery_history, None)
+    recovery_config_override = recovery_config.replace("/application.yml", "/config/application.yml")
+    for setting in ("init-sqls", "callback-locations"):
+        check(f"higher-priority empty Flyway {setting} replaces a non-empty root list", {
+            **recovery_history,
+            recovery_config: recovery_settings + f"    {setting}: [unsafe]\n".encode(),
+            recovery_config_override: f"spring.flyway.{setting}: []\n".encode(),
+        }, recovery_history, None)
+        check(f"effective non-empty Flyway {setting} remains unsupported", {
+            **recovery_history,
+            recovery_config: recovery_settings + f"    {setting}: []\n".encode(),
+            recovery_config_override: f"spring.flyway.{setting}: [unsafe]\n".encode(),
+        }, recovery_history, "non-empty connection init SQL")
+    check("effective empty Flyway callback list qualifies recovery history", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    callback-locations: []\n",
     }, recovery_history, None)
     for override in (
         b"    init-sqls: [SET application_name = fixture]\n",
@@ -618,7 +736,7 @@ def run_self_test() -> None:
     ):
         check("Flyway connection init SQL is unsupported", {
             **recovery_history, recovery_config: recovery_settings + override,
-        }, recovery_history, "without connection init SQL")
+        }, recovery_history, "non-empty connection init SQL")
     for baseline_disabled in (b"false", b"'FaLsE'"):
         check("explicitly disabled recovery auto-baselining", {
             **recovery_history,
@@ -921,7 +1039,7 @@ def run_self_test() -> None:
     }, recovery_history, "Recovery migration sidecars are unsupported")
     ordinary_without_locations = {
         **recovery_history,
-        recovery_config: b"spring:\n  flyway:\n    enabled: true\n",
+        recovery_config: b"spring:\n  flyway:\n    enabled: true\n    placeholder-replacement: false\n",
         "services/recovery-controller-service/src/main/resources/db/migration/V1__first.sql": b"-- first",
         "services/recovery-controller-service/src/main/resources/db/migration/V1__duplicate.sql": b"-- duplicate",
     }
@@ -945,6 +1063,7 @@ def run_self_test() -> None:
         b"spring.flyway.locations: classpath:db/recovery-control-migration\n"
         b"spring.flyway.schemas: [recovery_control]\n"
         b"spring.flyway.table: flyway_schema_history_recovery_control\n"
+        b"spring.flyway.placeholder-replacement: false\n"
     )
     check("dotted Spring Flyway recovery properties",
           {**recovery_history, recovery_config: dotted_recovery_settings}, recovery_history, None)
@@ -1105,7 +1224,8 @@ def run_self_test() -> None:
             "services/example-service/src/main/java/db/recovery-control-migration/V1003__other.java":
                 b"// outside Recovery",
         }
-        combined_fixture = {**history, **recovery_history}
+        unicode_migration = "services/unicode-service/src/main/resources/db/migration/V1__café.sql"
+        combined_fixture = {**history, **recovery_history, unicode_migration: "-- café\n".encode()}
         for path, data in {**combined_fixture, **outside_recovery}.items():
             target = root / path
             target.parent.mkdir(parents=True, exist_ok=True)

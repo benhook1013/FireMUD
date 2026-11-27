@@ -3,6 +3,7 @@ package net.firedevops.firemud.recovery.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import javax.sql.DataSource;
+import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
 import net.firedevops.firemud.recovery.RecoveryControllerServiceApplication;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
 import net.firedevops.firemud.recovery.journal.JooqInitialGameplayReleaseJournal;
@@ -50,6 +51,7 @@ class RecoveryControllerPackagedWiringTest {
       assertThat(context.getBean(InitialGameplayReleaseJournal.class))
           .isInstanceOf(JooqInitialGameplayReleaseJournal.class);
       assertThat(context.getBeansOfType(InitialGameplayReleaseController.class)).hasSize(1);
+      assertThat(context.getBeansOfType(DatabaseAutoConfiguration.class)).isEmpty();
       assertThat(context.getBeansOfType(DataSource.class)).hasSize(1);
       assertThat(new BeanWrapperImpl(context.getBean(DataSource.class)).getPropertyValue("jdbcUrl"))
           .isEqualTo(

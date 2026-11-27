@@ -17,6 +17,7 @@ spring:
     defaultSchema: recovery_control
     table: flyway_schema_history_recovery_control
     locations: classpath:db/recovery-control-migration
+    placeholder-replacement: false
     placeholders:
       serviceSchema: recovery_control
   ssl:

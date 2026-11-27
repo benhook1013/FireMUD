@@ -63,6 +63,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     try {
       return dsl.transactionResult(configuration -> {
         DSLContext tx = DSL.using(configuration);
+        requireRedactedDatabaseLogging(tx);
         tx.execute(
             """
             INSERT INTO recovery_control.initial_gameplay_release_operation (
@@ -101,6 +102,20 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       throw new IllegalStateException("Unable to create the recovery journal operation");
     } catch (org.springframework.dao.DataAccessException failure) {
       throw new IllegalStateException("Unable to create the recovery journal operation");
+    }
+  }
+
+  private static void requireRedactedDatabaseLogging(DSLContext tx) {
+    // Check the same PostgreSQL session before any statement binds the lock credential.
+    Record settings =
+        tx.fetchOne(
+            """
+            SELECT current_setting('log_error_verbosity') = 'terse'
+               AND current_setting('log_parameter_max_length_on_error') = '0'
+               AND current_setting('log_parameter_max_length') = '0' AS redacted
+            """);
+    if (settings == null || !Boolean.TRUE.equals(settings.get("redacted", Boolean.class))) {
+      throw new IllegalStateException("Recovery journal requires redacted PostgreSQL logs");
     }
   }
 
@@ -614,7 +629,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             requireTerminalReplayWithinAttempt(readback, stored, now);
             return operation;
           }
-          if (stored != null
+          if (current.effect().kind() == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF
+              && stored != null
               && sameRetainedOutcome(readback, stored, storedDigest, "acknowledged_at")) {
             requireSuccessfulReadbackState(readback, current.effect().kind());
             requireTerminalReplayWithinAttempt(readback, stored, now);
@@ -824,37 +840,24 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     EffectReadback acknowledgement = requireReadbackReceipt(stored, preparation);
     EffectReadback previous = latestPreparationObservation(stored, preparation, acknowledgement);
     requireTerminalReplayWithinAttempt(readback, stored, now);
-    int order = readback.observedAt().compareTo(previous.observedAt());
-    if (readback.equals(previous)
-        || (order < 0
-            && previous.state() == EffectReadbackState.PREPARED_FENCED
-            && sameRetainedOutcome(previous, readback))) {
+    if (readback.equals(previous)) {
       return;
     }
-    if (order <= 0) {
+    if (!readback.observedAt().isAfter(previous.observedAt())) {
       throw conflict(
           "preparation readback must be newer than the retained same-attempt observation");
     }
     if (readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
       requireSuccessfulReadbackState(readback, preparation.effect().kind());
-      String identityDigest = tupleCodec.digest(readback.readbackIdentity());
-      if (previous.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL
-          && (acknowledgement.readbackIdentity().equals(readback.readbackIdentity())
-              || Boolean.TRUE.equals(
-                  tx.fetchSingle(
-                          "SELECT EXISTS (SELECT 1 FROM recovery_control.initial_gameplay_release_preparation_receipt"
-                              + " WHERE outbox_id = ? AND identity_digest = ?)",
-                          preparation.outboxId(),
-                          identityDigest)
-                      .get(0, Boolean.class)))) {
-        throw conflict(
-            "preparation readback must prove a fresh observation after partial evidence");
+      if (acknowledgement.readbackIdentity().equals(readback.readbackIdentity())
+          || tx.execute(
+                  "INSERT INTO recovery_control.initial_gameplay_release_preparation_receipt"
+                      + " (outbox_id, identity_digest) VALUES (?, ?) ON CONFLICT DO NOTHING",
+                  preparation.outboxId(),
+                  tupleCodec.digest(readback.readbackIdentity()))
+              != 1) {
+        throw conflict("preparation readback identity already has an observation");
       }
-      tx.execute(
-          "INSERT INTO recovery_control.initial_gameplay_release_preparation_receipt"
-              + " (outbox_id, identity_digest) VALUES (?, ?) ON CONFLICT DO NOTHING",
-          preparation.outboxId(),
-          identityDigest);
     }
     tx.execute(
         """
