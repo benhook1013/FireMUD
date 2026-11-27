@@ -524,6 +524,58 @@ for mutation in auth wrong-module compile-started; do
   assert_no_retry
 done
 
+write_compile_classpath_pom_429_cause() {
+  write_compile_classpath_429_cause
+  sed -i '/^   > Could not download/,$d; s/:account-service:/:hosted-environment-identity-controller:/g' "$CASE_DIR/cause.log"
+  cat >> "$CASE_DIR/cause.log" <<'LOG'
+   > Could not resolve io.javaoperatorsdk:operator-framework-spring-boot-starter:6.8.0.
+     Required by:
+         project ':hosted-environment-identity-controller'
+      > Could not resolve io.javaoperatorsdk:operator-framework-spring-boot-starter:6.8.0.
+         > Could not get resource 'https://repo.maven.apache.org/maven2/io/javaoperatorsdk/operator-framework-spring-boot-starter/6.8.0/operator-framework-spring-boot-starter-6.8.0.pom'.
+            > Could not GET 'https://repo.maven.apache.org/maven2/io/javaoperatorsdk/operator-framework-spring-boot-starter/6.8.0/operator-framework-spring-boot-starter-6.8.0.pom'.
+               > Received status code 429 from server: Too Many Requests
+   > Could not resolve io.fabric8:kubernetes-client:7.9.0.
+     Required by:
+         project ':hosted-environment-identity-controller'
+      > Could not resolve io.fabric8:kubernetes-client:7.9.0.
+         > Could not get resource 'https://repo.maven.apache.org/maven2/io/fabric8/kubernetes-client/7.9.0/kubernetes-client-7.9.0.pom'.
+            > Could not GET 'https://repo.maven.apache.org/maven2/io/fabric8/kubernetes-client/7.9.0/kubernetes-client-7.9.0.pom'.
+               > Received status code 429 from server: Too Many Requests
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+}
+
+new_case compile-classpath-pom-429
+write_compile_classpath_pom_429_cause
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; exit 0'
+run_case hosted-environment-identity-controller 0
+assert_call_count 2
+assert_rate_limit_delay
+assert_output_contains "with cached dependency metadata"
+
+for mutation in auth wrong-project wrong-coordinate wrong-origin wrong-pom missing-get mixed-cause compile-started task-started; do
+  new_case "compile-classpath-pom-429-$mutation"
+  write_compile_classpath_pom_429_cause
+  case "$mutation" in
+    auth) sed -i '0,/429 from server: Too Many Requests/s//403 from server: Forbidden/' "$CASE_DIR/cause.log" ;;
+    wrong-project) sed -i '/Required by:/{n;s/identity-controller/identity-operator/;}' "$CASE_DIR/cause.log" ;;
+    wrong-coordinate) sed -i '/^      > Could not resolve/s/client:7.9.0/client:7.8.0/' "$CASE_DIR/cause.log" ;;
+    wrong-origin) sed -i 's/repo.maven.apache.org/repository.invalid/g' "$CASE_DIR/cause.log" ;;
+    wrong-pom) sed -i '/Could not GET/s/client-7.9.0.pom/client-7.8.0.pom/' "$CASE_DIR/cause.log" ;;
+    missing-get) sed -i '/Could not GET/d' "$CASE_DIR/cause.log" ;;
+    mixed-cause) sed -i '/^[*] Try:/i > A second unrelated failure.' "$CASE_DIR/cause.log" ;;
+    compile-started) sed -i '1i > Task :hosted-environment-identity-controller:compileJava FAILED' "$CASE_DIR/cause.log" ;;
+    task-started) sed -i '1i > Task :hosted-environment-identity-controller:processResources' "$CASE_DIR/cause.log" ;;
+  esac
+  # shellcheck disable=SC2016
+  write_wrapper 'cat "$CASE_DIR/cause.log"; exit 1'
+  run_case hosted-environment-identity-controller 1
+  assert_no_retry
+done
+
 new_case annotation-processor-disabled-repository-429
 write_disabled_processor_pom_429_cause
 # shellcheck disable=SC2016

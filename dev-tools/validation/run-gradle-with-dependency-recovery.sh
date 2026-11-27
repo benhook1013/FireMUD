@@ -175,11 +175,44 @@ classify_failure_body() {
         cause_lines[10] == "> Received status code 429 from server: Too Many Requests" &&
         cause_lines[11] == "> There is 1 more failure with an identical cause."
     }
+    # Observe this narrow POM failure independently of the older cases.
+    function observe_pom_429(line,   coordinate, pom_coordinate, pom_url) {
+      if (pom_download_step) {
+        if (line != pom_chain[pom_download_step]) {
+          pom_mismatch = 1
+          pom_download_step = 0
+        } else if (pom_download_step == 6) {
+          pom_downloads++
+          pom_download_step = 0
+        } else {
+          pom_download_step++
+        }
+        return
+      }
+      if (compile_classpath_wrapper == 1 && resolved_configuration == expected_compile_configuration &&
+          line ~ /^> Could not resolve [[:alnum:]_-]+(\.[[:alnum:]_-]+)*:[[:alnum:]_-][[:alnum:]_.-]*:[0-9][[:alnum:]_.-]*\.$/) {
+        coordinate = line
+        sub(/^> Could not resolve /, "", coordinate)
+        sub(/\.$/, "", coordinate)
+        split(coordinate, pom_coordinate, ":")
+        gsub(/\./, "/", pom_coordinate[1])
+        pom_url = "https://repo.maven.apache.org/maven2/" pom_coordinate[1] "/" pom_coordinate[2] "/" pom_coordinate[3] "/" pom_coordinate[2] "-" pom_coordinate[3] ".pom"
+        pom_chain[1] = "Required by:"
+        pom_chain[2] = "project " quote compile_classpath_module quote
+        pom_chain[3] = line
+        pom_chain[4] = "> Could not get resource " quote pom_url quote "."
+        pom_chain[5] = "> Could not GET " quote pom_url quote "."
+        pom_chain[6] = "> Received status code 429 from server: Too Many Requests"
+        pom_download_step = 1
+      }
+    }
     {
       line = trim($0)
       if (line == "" || line == "* What went wrong:") {
         next
       }
+
+      observe_pom_429(line)
 
       # Require the complete matching coordinate, repository path and 429 chain.
       if (jar_download_step) {
@@ -520,6 +553,13 @@ classify_failure_body() {
     }
     END {
       if (is_disabled_processor_pom_429()) {
+        print "before-compile-cached-configuration-only"
+        exit 0
+      }
+      if (pom_downloads && !invalid && !pom_mismatch && !pom_download_step &&
+          !jar_downloads && !jar_download_step &&
+          compile_classpath_wrapper == 1 && resolved_configuration == expected_compile_configuration &&
+          resolver_roots == 1 && other_cause_lines == 2 + 7 * pom_downloads && cache_summary <= 1) {
         print "before-compile-cached-configuration-only"
         exit 0
       }
@@ -865,7 +905,7 @@ fi
 retry_refresh=true
 retry_description="with dependency metadata refresh"
 if [[ "$RESOLUTION_BOUNDARY" == before-compile-cached* ]]; then
-  # Avoid revalidating the entire cache after these all-JAR throttling failures.
+  # Preserve usable cached metadata when the failing reads are precisely known.
   retry_refresh=false
   retry_description="with cached dependency metadata"
 fi
