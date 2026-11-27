@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
@@ -31,8 +32,21 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
   private static final String FENCE_SEQUENCE = "game_session_region_executor_fence_seq";
   private final DSLContext dsl;
 
+  private final CanonicalGameplayOriginalNewCapacityExecutionBudget installationBudget;
+
   CanonicalGameplayRegionRuntimeStatusRepository(DSLContext dsl) {
+    this(dsl, null);
+  }
+
+  private CanonicalGameplayRegionRuntimeStatusRepository(
+      DSLContext dsl, CanonicalGameplayOriginalNewCapacityExecutionBudget installationBudget) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
+    this.installationBudget = installationBudget;
+  }
+
+  CanonicalGameplayRegionRuntimeStatusRepository forBudget(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    return new CanonicalGameplayRegionRuntimeStatusRepository(budget.sql(dsl), budget);
   }
 
   Optional<CanonicalGameplayRegionRuntimeStatus> find(Source source) {
@@ -304,6 +318,9 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
             return Optional.empty();
           }
           if (current.phase != TimelinePreparationPhase.PREPARED) return Optional.empty();
+          // Lock waits and source checks cannot consume the installation deadline and still
+          // grant irreversible permission to create Redis meta.
+          if (installationBudget != null) installationBudget.check();
           int updated =
               transaction.execute(
                   "UPDATE "
@@ -315,6 +332,48 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
           if (updated != 1) throw unavailable();
           return Optional.of(
               new InitialInitializationPermit(current.operationId, current.sourceDigest()));
+        });
+  }
+
+  /** Releases only a retained, exact, single-dispatch definitive Redis no-write result. */
+  void releaseInitialTimelineNoWrite(
+      TimelinePreparation preparation,
+      CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof,
+      Instant now) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(preparation, "preparation");
+    Objects.requireNonNull(now, "now");
+    if (proof == null || !proof.consumeFor(preparation)) throw unavailable();
+    dsl.transaction(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          lockRegionScope(transaction, preparation.tenantRegionTag);
+          Record row =
+              transaction.fetchOne(
+                  "SELECT * FROM "
+                      + PREPARATION_TABLE
+                      + " WHERE initialization_operation_id = ? FOR UPDATE",
+                  preparation.operationId);
+          if (row == null) throw unavailable();
+          TimelinePreparation current = toTimelinePreparation(row);
+          if (!samePreparation(preparation, current)
+              || current.phase != TimelinePreparationPhase.INITIALIZING
+              || transaction.fetchExists(
+                  DSL.selectOne()
+                      .from(DSL.table(TABLE))
+                      .where(DSL.field("tenant_id").eq(preparation.source.tenantId()))
+                      .and(DSL.field("game_instance_id").eq(preparation.source.gameInstanceId()))
+                      .and(DSL.field("region_id").eq(preparation.source.regionId()))))
+            throw unavailable();
+          int changed =
+              transaction.execute(
+                  "UPDATE "
+                      + PREPARATION_TABLE
+                      + " SET phase = 'PREPARED', updated_at = ?"
+                      + " WHERE initialization_operation_id = ? AND phase = 'INITIALIZING'",
+                  java.sql.Timestamp.from(now),
+                  preparation.operationId);
+          if (changed != 1) throw unavailable();
         });
   }
 
@@ -1250,6 +1309,11 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
   static final class InitialInitializationPermit {
     private final UUID operationId;
     private final String sourceDigest;
+    private final AtomicBoolean dispatched = new AtomicBoolean();
+
+    boolean consumeDispatch() {
+      return dispatched.compareAndSet(false, true);
+    }
 
     private InitialInitializationPermit(UUID operationId, String sourceDigest) {
       this.operationId = Objects.requireNonNull(operationId, "operationId");

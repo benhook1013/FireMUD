@@ -128,6 +128,57 @@ afterEach(() => {
 });
 
 describe('owner first-invoice checkout', () => {
+  it('shows payment-method failure without retrying a charge', async () => {
+    const { client, stripe } = setup();
+    client.confirm.mockResolvedValue({
+      status: 'requires_payment_method',
+      clientSecret: null,
+    });
+    fireEvent.click(await consent());
+    await screen.findByText(/The payment method was refused/);
+    expect(client.confirm).toHaveBeenCalledOnce();
+    expect(client.renew).not.toHaveBeenCalled();
+    expect(stripe.handleNextAction).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole('button', {
+        name: /Resume exact confirmation|Authorize first-invoice charge/,
+      })
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Check Account status' })
+    );
+    await waitFor(() =>
+      expect(client.read.mock.calls.length).toBeGreaterThan(2)
+    );
+    expect(client.confirm).toHaveBeenCalledOnce();
+  });
+
+  it('restores explicit original renewal after rejected reauthentication retry credentials', async () => {
+    const original = '44444444-4444-4444-8444-444444444444';
+    const { client } = setup({ ...initial, preRowOriginalRequestId: original });
+    client.reauthenticate.mockRejectedValueOnce(
+      new FirstInvoiceError(401, 'INVALID_CREDENTIALS')
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Renew exact authorization' })
+    );
+    fireEvent.click(await consent());
+    await screen.findByText(/could not match this reauthentication retry/);
+    const oldRequest = client.reauthenticate.mock.calls[0][1].requestId;
+    expect(client.confirm).not.toHaveBeenCalled();
+    expect(client.renew).not.toHaveBeenCalled();
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Renew exact authorization' })
+    );
+    fireEvent.click(await consent());
+    await waitFor(() => expect(client.renew).toHaveBeenCalledOnce());
+    expect(client.reauthenticate.mock.calls[1][1].requestId).not.toBe(
+      oldRequest
+    );
+    expect(client.renew.mock.calls[0][2].requestId).toBe(original);
+    expect(client.confirm).not.toHaveBeenCalled();
+  });
+
   it('keeps Account recovery available if Stripe is unavailable for next action', async () => {
     const { client, stripe } = setup(initial, false);
     fireEvent.click(await consent());

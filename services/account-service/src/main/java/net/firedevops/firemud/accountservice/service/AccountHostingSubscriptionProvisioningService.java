@@ -96,6 +96,12 @@ public final class AccountHostingSubscriptionProvisioningService {
       if (!retained.equals(readback))
         throw new IllegalStateException("Independent awaiting-payment readback mismatch");
       return new AwaitingPayment(readback);
+    } catch (FenceRejectedException refused) {
+      // A concurrent capture may commit after our initial replay check. Recover only the
+      // exact retained claim in a fresh transaction; never repeat provider calls or relax fences.
+      var winner = transaction.execute(status -> firstInvoices.findAwaitingPayment(claim));
+      if (winner != null) return new AwaitingPayment(winner);
+      throw refused;
     } catch (com.stripe.exception.StripeException unresolved) {
       return new Pending(
           Objects.requireNonNull(

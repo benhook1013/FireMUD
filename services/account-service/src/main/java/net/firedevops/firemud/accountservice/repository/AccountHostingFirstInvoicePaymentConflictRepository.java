@@ -41,6 +41,18 @@ final class AccountHostingFirstInvoicePaymentConflictRepository {
   UUID retainedConflictRequestId(VerifiedEvent verified) {
     requireTransaction();
     Objects.requireNonNull(verified, "verified Stripe event is required");
+    Record preCancellation =
+        dsl.fetchOne(
+            "SELECT conflict.creation_request_id AS request_id, conflict.event_payload_digest, "
+                + "inbox.raw_payload, inbox.payload_sha256, inbox.event_type, "
+                + "inbox.provider_created_at_epoch_seconds, inbox.provider_api_version, inbox.livemode "
+                + "FROM subscription_first_invoice_unconsented_paid_events conflict "
+                + "JOIN stripe_event_inbox inbox USING (provider_event_id) WHERE provider_event_id = ?",
+            verified.providerEventId());
+    if (preCancellation != null) {
+      requireExactEvent(verified, preCancellation);
+      return preCancellation.get("request_id", UUID.class);
+    }
     Record row =
         dsl.fetchOne(
             "SELECT COALESCE(conflict.request_id, conflict.cancellation_request_id) AS request_id, "

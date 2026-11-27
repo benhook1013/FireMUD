@@ -553,6 +553,16 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
   }
 
   @Test
+  void callerDeadlineExpiresDuringFinalClockCommit() throws Exception {
+    Fixture f = new Fixture(false);
+    f.transactions.afterThirdCommit = () -> f.time.set(NOW.plusSeconds(60));
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
+    assertThat(f.transactions.events)
+        .containsExactly("begin", "commit", "begin", "commit", "begin", "commit");
+  }
+
+  @Test
   void expiredScopeDoesNotReturnCapturedAuthority() throws Exception {
     Fixture f = new Fixture(false);
     when(f.scopes.findCanonicalEvidenceByTokenHash(
@@ -1461,6 +1471,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     private final List<String> events = new ArrayList<>();
     private boolean failCommit;
     private Runnable afterSecondCommit = () -> {};
+    private Runnable afterThirdCommit = () -> {};
 
     @Override
     public TransactionStatus getTransaction(
@@ -1488,6 +1499,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
       TransactionSynchronizationManager.setActualTransactionActive(false);
       TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(null);
       if (events.size() == 4) afterSecondCommit.run();
+      if (events.size() == 6) afterThirdCommit.run();
       if (failCommit && events.size() == 4)
         throw new IllegalStateException("controlled commit failure");
     }

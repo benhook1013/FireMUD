@@ -40,6 +40,28 @@ import org.junit.jupiter.api.Test;
 /** Controlled command transport only; mock carriers do not qualify admission or source custody. */
 class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
   @Test
+  void unscopedCloseUsesOneAbsoluteDeadlineForEveryCommand() throws Exception {
+    var fixture = new Fixture();
+    var clock = mock(Clock.class);
+    AtomicLong now = new AtomicLong(fixture.deadline - 100);
+    when(clock.millis()).thenAnswer(ignored -> now.get());
+    when(fixture.redis.connect(ByteArrayCodec.INSTANCE)).thenReturn(fixture.connection);
+    fixture.completeWhoami(() -> now.addAndGet(30));
+    fixture.completeScriptLoad(() -> now.addAndGet(50));
+    fixture.completeEvaluation();
+    var owner =
+        new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+            fixture.redis, fixture.catalog, clock, mock());
+    assertThat(
+            owner.closeCapacityExecutionOnce(
+                fixture.execution, fixture.candidate, fixture.assignment, fixture.deadline))
+        .isEqualTo(4);
+    verify(fixture.whoami).get(100, TimeUnit.MILLISECONDS);
+    verify(fixture.scriptLoad).get(70, TimeUnit.MILLISECONDS);
+    verify(fixture.evaluation).get(20, TimeUnit.MILLISECONDS);
+  }
+
+  @Test
   void scopedCloseUsesShrinkingCommandWaitsAndHandsDisposalToItsBudget() throws Exception {
     var fixture = new Fixture();
     AtomicLong remaining = new AtomicLong(500);
@@ -133,7 +155,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
   }
 
   @Test
-  void unscopedCloseRetainsDirectConnectionFiveSecondWaitsAndSynchronousCleanup() throws Exception {
+  void unscopedCloseCapsWaitsAtFiveSecondsAndRetainsSynchronousCleanup() throws Exception {
     var fixture = new Fixture();
     fixture.completeWhoami(() -> {});
     fixture.completeScriptLoad(() -> {});
@@ -142,7 +164,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
 
     assertThat(
             new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-                    fixture.redis, fixture.catalog, Clock.systemUTC(), mock())
+                    fixture.redis,
+                    fixture.catalog,
+                    Clock.fixed(java.time.Instant.now(), java.time.ZoneOffset.UTC),
+                    mock())
                 .closeCapacityExecutionOnce(
                     fixture.execution, fixture.candidate, fixture.assignment))
         .isEqualTo(4);

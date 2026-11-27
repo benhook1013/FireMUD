@@ -155,6 +155,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
   private final java.util.function.Supplier<StatefulRedisConnection<byte[], byte[]>>
       scopedConnection;
   private final java.util.function.LongSupplier remainingCommandMillis;
+  private final long operationDeadlineMillis;
   private final OriginCustody originCustody;
   private final java.util.function.Consumer<java.util.concurrent.CompletableFuture<Void>>
       scopedClose;
@@ -164,7 +165,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       RedisScriptCatalog catalog,
       Clock clock,
       CanonicalGameplayTenantGameplayTagRepository tenantTags) {
-    this(redisClient, catalog, clock, tenantTags, null, null, null, null);
+    this(redisClient, catalog, clock, tenantTags, null, null, null);
   }
 
   CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
@@ -183,6 +184,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
         scopedConnection,
         remainingCommandMillis,
         scopedClose,
+        Long.MAX_VALUE,
         null);
   }
 
@@ -194,7 +196,9 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       java.util.function.Supplier<StatefulRedisConnection<byte[], byte[]>> scopedConnection,
       java.util.function.LongSupplier remainingCommandMillis,
       java.util.function.Consumer<java.util.concurrent.CompletableFuture<Void>> scopedClose,
+      long operationDeadlineMillis,
       OriginCustody originCustody) {
+    this.operationDeadlineMillis = operationDeadlineMillis;
     this.originCustody = originCustody;
     if ((scopedConnection == null) != (remainingCommandMillis == null)
         || (scopedConnection == null) != (scopedClose == null))
@@ -226,6 +230,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
         scopedConnection,
         remainingCommandMillis,
         scopedClose,
+        operationDeadlineMillis,
         new OriginCustody(origin, custody));
   }
 
@@ -245,6 +250,11 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
       OriginalNewCapacityExecution execution,
       long absoluteDeadlineMillis) {
+    if (operationDeadlineMillis == Long.MAX_VALUE) {
+      return withDeadline(absoluteDeadlineMillis)
+          .finalizeOriginalNewOnce(
+              source, template, accountOpen, issuerOpen, execution, absoluteDeadlineMillis);
+    }
     requireNoAmbientTransaction();
     Objects.requireNonNull(execution, "Exact Account capacity execution is required");
     Objects.requireNonNull(source, "Durable original NEW final-admission source is required");
@@ -387,7 +397,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     requireNoAmbientTransaction();
     var candidate = requireSource(source);
     requireExecutionBinding(source, execution);
-    var assignment = tenantTags.assignmentForTransition(execution.transitionId());
+    var assignment =
+        tenantTags.readAssignmentForRetainedCapacityExecution(execution.transitionId());
     requireAssignment(assignment, candidate);
     String accountKey =
         ACCOUNT_PREFIX
@@ -430,6 +441,11 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
       UUID dispatchId,
       long absoluteDeadlineMillis) {
+    if (operationDeadlineMillis == Long.MAX_VALUE) {
+      return withDeadline(absoluteDeadlineMillis)
+          .fenceCapacityExecutionOnce(
+              execution, candidate, assignment, dispatchId, absoluteDeadlineMillis);
+    }
     requireNoAmbientTransaction();
     requireAssignment(assignment, candidate);
     requireExecutionBinding(candidate, execution);
@@ -469,6 +485,10 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       CanonicalGameplayOriginalNewCandidate candidate,
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
       long absoluteDeadlineMillis) {
+    if (operationDeadlineMillis == Long.MAX_VALUE) {
+      return withDeadline(absoluteDeadlineMillis)
+          .closeCapacityExecutionOnce(execution, candidate, assignment, absoluteDeadlineMillis);
+    }
     requireNoAmbientTransaction();
     requireAssignment(assignment, candidate);
     requireExecutionBinding(candidate, execution);
@@ -978,11 +998,26 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     }
   }
 
+  private CanonicalGameplayOriginalNewFinalAdmissionRedisOwner withDeadline(long deadline) {
+    requireDeadline(clock.millis(), deadline);
+    return new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+        redisClient,
+        catalog,
+        clock,
+        tenantTags,
+        scopedConnection,
+        remainingCommandMillis,
+        scopedClose,
+        Math.min(operationDeadlineMillis, deadline),
+        originCustody);
+  }
+
   private long commandWaitMillis() {
     long remaining =
         remainingCommandMillis == null
             ? COMMAND_TIMEOUT_MILLIS
             : remainingCommandMillis.getAsLong();
+    remaining = Math.min(remaining, operationDeadlineMillis - clock.millis());
     if (remaining <= 0) throw unavailable();
     return Math.min(COMMAND_TIMEOUT_MILLIS, remaining);
   }

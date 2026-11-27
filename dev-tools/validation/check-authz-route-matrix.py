@@ -146,7 +146,6 @@ FIRST_INVOICE_REQUIRED_LIVE_CHECKS = {
     "issuer_generation",
     "account_generation",
     "current_subscription_owner",
-    "exact_reserved_instrument",
 }
 REQUIRED_FIELD_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 ROUTE_STATUS_VALUES = {
@@ -5489,16 +5488,26 @@ def validate_first_invoice_routes(
             continue
         label = f"account-service {route_name}"
         if route.get("route_status") != "target_not_currently_routable":
-            append_unique_error(
-                errors, f"{label} must remain target_not_currently_routable"
-            )
+            append_unique_error(errors, f"{label} must remain target_not_currently_routable")
         checks = route_live_checks(route, label, errors, live_checks_cache)
-        missing = sorted(FIRST_INVOICE_REQUIRED_LIVE_CHECKS - checks)
+        is_read = route_name == FIRST_INVOICE_ROUTES[0]
+        binding_check = "retained_first_invoice_binding" if is_read else "exact_reserved_instrument"
+        required = FIRST_INVOICE_REQUIRED_LIVE_CHECKS | {binding_check}
+        missing = sorted(required - checks)
         if missing:
             append_unique_error(
                 errors,
                 f"{label} is missing required first-invoice live checks: {missing}",
             )
+        if is_read and "exact_reserved_instrument" in checks:
+            append_unique_error(errors, f"{label} must use retained read binding, not live instrument eligibility")
+        if (
+            is_read
+            and route.get("mutation_contract") != "current_owner_read_only_exact_retained_invoice_and_reservation"
+        ):
+            append_unique_error(errors, f"{label} must retain the read-only exact invoice/reservation contract")
+        if not is_read and "retained_first_invoice_binding" in checks:
+            append_unique_error(errors, f"{label} cannot substitute retained read binding for mutation authority")
 
 
 def applicability_value(
