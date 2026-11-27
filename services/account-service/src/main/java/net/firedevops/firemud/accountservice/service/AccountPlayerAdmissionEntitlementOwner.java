@@ -657,7 +657,8 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     // Retain only inside this actual evaluator's final source transaction. A supplied bundle
     // cannot register itself as capacity authority, and commit failure returns no evidence.
     try {
-      new AccountTenantCapacityRepository(dsl).retainPlayerEvaluation(evidence);
+      new AccountTenantCapacityRepository(dsl)
+          .retainPlayerEvaluation(evidence, paidReceiptValidUntil);
     } catch (CapacityException retentionFailure) {
       if (retentionFailure.code() == Failure.ENTITLEMENT_UNAVAILABLE) throw unavailable();
       throw retentionFailure;

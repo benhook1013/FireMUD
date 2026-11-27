@@ -207,6 +207,7 @@ public final class AccountTenantCapacityOwner {
             authority.requireCurrent(clock.instant());
             return new CommitDecision(reservation.orElseThrow(), null);
           }
+          authority.requireCurrent(clock.instant());
           UUID denialId = originDecisions.refuseQuota(request);
           capacity.requireFresh(request.evidence());
           authority.requireCurrent(clock.instant());
@@ -253,6 +254,7 @@ public final class AccountTenantCapacityOwner {
       capacity.usage(next);
       var authority = current(next);
       capacity.requireFresh(next.evidence());
+      authority.requireCurrent(clock.instant());
       originDecisions.accept(next);
       requireClaim(row, recoveryOwner, claimFence, clock.instant());
       capacity.requireFresh(next.evidence());
@@ -300,7 +302,7 @@ public final class AccountTenantCapacityOwner {
 
   private AppAuthorityWindow current(Request request) {
     var evidence = request.evidence();
-    capacity.requireRetained(evidence);
+    Instant paidCutoff = capacity.requireRetainedOriginalPaidCutoff(evidence);
     Instant now = clock.instant();
     requireCurrentLifetime(evidence, AccountTenantCapacityRepository.databaseNow(dsl));
     if (!(request.context() instanceof PlayerContext player)) throw unavailable();
@@ -354,24 +356,26 @@ public final class AccountTenantCapacityOwner {
         || !scope.realmId().equals(player.realmId())
         || !scope.playableStateScope().equals(player.playableStateScope())
         || !now.isBefore(Instant.parse(scope.connectScopeExpiresAt()))) throw unavailable();
-    // PostgreSQL owns evaluation freshness; the original caller and scope retain
-    // their independent application-clock cutoffs. Neither clock can extend the other.
+    // PostgreSQL owns evaluation freshness. The caller, scope and paid receipt
+    // retain their independent application-clock cutoffs.
     capacity.requireFresh(evidence);
     var authority =
         new AppAuthorityWindow(
             issuance.identity().notBeforeEpochSecond(),
             issuance.identity().expiresAtEpochSecond(),
-            Instant.parse(scope.connectScopeExpiresAt()));
+            Instant.parse(scope.connectScopeExpiresAt()),
+            paidCutoff);
     authority.requireCurrent(clock.instant());
     return authority;
   }
 
   private record AppAuthorityWindow(
-      long notBeforeEpochSecond, long expiresEpochSecond, Instant scopeExpiry) {
+      long notBeforeEpochSecond, long expiresEpochSecond, Instant scopeExpiry, Instant paidCutoff) {
     private void requireCurrent(Instant now) {
       if (now.getEpochSecond() < notBeforeEpochSecond
           || now.getEpochSecond() >= expiresEpochSecond
-          || !now.isBefore(scopeExpiry)) throw unavailable();
+          || !now.isBefore(scopeExpiry)
+          || (paidCutoff != null && !now.isBefore(paidCutoff))) throw unavailable();
     }
   }
 

@@ -345,6 +345,8 @@ Every category's environment entry must name its exact finite maximum duration, 
 
 Read-only evaluation inspection uses a bounded oldest window and requires the exact environment schedule, current hold snapshot and safe watermark before reporting candidates. The [implementation tracker](../../../project-management/implementation-tracking/player-access-and-session.md#strict-tenant-capacity-owner-preparation) records the receiving owner, proof and remaining lifecycle work.
 
+For paid player admission, Account retains the original [subscription observation cutoff](./subscription-management.md#runtime-entitlement-contract) as immutable private metadata on the exact evaluation. Fresh reservation and rearm require both the original cutoff on Account's application clock and the translated evaluation expiry on PostgreSQL's clock. Paid evaluations without the original cutoff require a fresh evaluation before any new attempt. Account uses the existing exact replay path for retained outcomes.
+
 Retained player-admission version-1 evidence remains immutable and held for owner-governed retention. Player-admission version 2 is required for new capacity requests and their replay. Before activation or reuse of predecessor-populated storage, establish the retained Account and Game Session SQL and Redis inventory and resolve its outstanding confirmation, replay, recovery and restore obligations under the [objective compatibility gates](../../decisions/adr-0081-objective-compatibility-gates-for-database-evolution.md).
 
 ### Playtest Grant Persistence and Authority Consequences

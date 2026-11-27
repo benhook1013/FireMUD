@@ -290,7 +290,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
   }
 
   @Test
-  void paidEvidenceRetainsOnlyRemainingAppLifetimeWhenDatabaseTrails() throws Exception {
+  void paidEvaluationRetainsOriginalAndTranslatedCutoffsWhenDatabaseTrails() throws Exception {
     Fixture f = new Fixture(true);
     var fence = mock(ReadFence.class);
     var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
@@ -298,7 +298,8 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
         .thenReturn(new SourceSelection(SourceKind.PAID_HOSTING, f.tenantEvent));
     when(f.hosting.prepareCurrentRead(TENANT)).thenReturn(fence);
     when(f.observer.observe(fence.binding())).thenReturn(observed);
-    var receipt = f.receipt(Status.ACTIVE);
+    var originalCutoff = NOW.plusSeconds(60).plusNanos(123_789);
+    var receipt = f.receipt(Status.ACTIVE, originalCutoff);
     when(f.hosting.readCurrent(fence, observed)).thenReturn(receipt);
     f.time.set(NOW.plusSeconds(12));
     f.databaseTime.set(NOW);
@@ -306,13 +307,22 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     var value = f.owner.evaluate(f.request, "controlled-token");
 
     var sources = (Map<?, ?>) value.fields().get("sourceReferences");
-    assertThat(sources.get("paidReceiptValidUntil")).isEqualTo(NOW.plusSeconds(48).toString());
+    assertThat(sources.get("paidReceiptValidUntil"))
+        .isEqualTo(originalCutoff.minusSeconds(12).toString());
     assertThat(value.evaluatedAt()).isEqualTo(NOW);
-    assertThat(
-            f.retainedCapacity
-                .get(value.fields().get("evaluationIdentity"))
-                .get("canonical_evidence", byte[].class))
+    var evaluation = f.retainedCapacity.get(value.fields().get("evaluationIdentity"));
+    assertThat(evaluation.get("canonical_evidence", byte[].class))
         .containsExactly(value.canonicalBytes());
+    assertThat(evaluation.get("original_paid_cutoff", java.time.OffsetDateTime.class))
+        .isEqualTo(NOW.plusSeconds(60).plusNanos(123_000).atOffset(java.time.ZoneOffset.UTC));
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    var repository = new AccountTenantCapacityRepository(f.dsl);
+    repository.retainPlayerEvaluation(value, originalCutoff);
+    assertThatThrownBy(
+            () -> repository.retainPlayerEvaluation(value, originalCutoff.plusSeconds(1)))
+        .isInstanceOf(AccountTenantCapacityRepository.CapacityException.class);
+    assertThat(f.retainedCapacity).hasSize(1);
   }
 
   @ParameterizedTest
@@ -1223,6 +1233,8 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
                 .thenReturn((java.time.OffsetDateTime) values[6]);
             when(row.get("expires_at", java.time.OffsetDateTime.class))
                 .thenReturn((java.time.OffsetDateTime) values[7]);
+            when(row.get("original_paid_cutoff", java.time.OffsetDateTime.class))
+                .thenReturn((java.time.OffsetDateTime) values[8]);
             retainedCapacity.put(id, row);
             return 1;
           });

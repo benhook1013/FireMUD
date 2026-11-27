@@ -1923,8 +1923,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
               facts,
               (Map<String, Object>) fields.get("sourceReferences"),
               CLOCK.instant());
-      serializable.executeWithoutResult(
-          ignored -> new AccountTenantCapacityRepository(dsl).retainPlayerEvaluation(evaluation));
+      serializable.executeWithoutResult(ignored ->
+          new AccountTenantCapacityRepository(dsl).retainPlayerEvaluation(evaluation, null));
       return new TenantCapacityAdmission.Request(
               original.identity(),
               original.admissionAttemptId(),

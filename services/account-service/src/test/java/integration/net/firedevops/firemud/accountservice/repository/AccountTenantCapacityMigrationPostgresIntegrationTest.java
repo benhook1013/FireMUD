@@ -615,6 +615,108 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
   }
 
   @Test
+  void paidCutoffUpgradePreservesRetainedEvaluationAndMakesFreshCutoffImmutable() {
+    String schema = "capacity_paid_cutoff_" + UUID.randomUUID().toString().replace("-", "");
+    new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
+    var data = POSTGRES.dataSource(schema);
+    try {
+      configureFlyway(data, schema, "1046.9.0.6").migrate();
+      var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
+      var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
+      var tenant = source();
+      transaction.executeWithoutResult(status ->
+          new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant));
+
+      String legacyEvaluation = digest('a');
+      String freshEvaluation = digest('b');
+      String caller = "spiffe://firemud/ns/prod/sa/game-session-service";
+      Instant evaluatedAt = Instant.parse("2026-11-02T00:00:00Z");
+      var databaseExpiry = AccountTenantCapacityRepository.at(evaluatedAt.plusSeconds(30));
+      var originalCutoff =
+          AccountTenantCapacityRepository.at(evaluatedAt.plusSeconds(43).plusNanos(123_456_000));
+      dsl.execute(
+          "INSERT INTO account_tenant_capacity_evaluations (evaluation_identity, snapshot_identity,"
+              + " tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at,"
+              + " expires_at) VALUES (?, ?, ?, ?, 'game-session-service', ?, ?::timestamptz,"
+              + " ?::timestamptz)",
+          legacyEvaluation,
+          digest('c'),
+          tenant.canonicalTenantId(),
+          caller,
+          new byte[] {10, 0, 12},
+          AccountTenantCapacityRepository.at(evaluatedAt),
+          databaseExpiry);
+      String legacyRowSql =
+          "SELECT ((to_jsonb(evaluation) - 'original_paid_cutoff')"
+              + " || jsonb_build_object('_original_xmin', evaluation.xmin::text))::text"
+              + " FROM account_tenant_capacity_evaluations evaluation WHERE evaluation_identity = ?";
+      String priorHistorySql =
+          "SELECT (to_jsonb(history)"
+              + " || jsonb_build_object('_original_xmin', history.xmin::text))::text AS image"
+              + " FROM flyway_schema_history history WHERE version IS DISTINCT FROM '1046.9.0.7'"
+              + " ORDER BY installed_rank";
+      var legacyRow = dsl.fetchSingle(legacyRowSql, legacyEvaluation).get(0, String.class);
+      var priorHistory = dsl.fetch(priorHistorySql).getValues("image", String.class);
+      assertThat(priorHistory).isNotEmpty();
+
+      var successor = configureFlyway(data, schema, "1046.9.0.7");
+      assertThat(successor.migrate().migrationsExecuted).isEqualTo(1);
+      assertThat(successor.validateWithResult().validationSuccessful).isTrue();
+      assertThat(dsl.fetch(priorHistorySql).getValues("image", String.class))
+          .isEqualTo(priorHistory);
+      assertThat(dsl.fetchSingle(legacyRowSql, legacyEvaluation).get(0, String.class))
+          .isEqualTo(legacyRow);
+
+      String cutoffSql =
+          "SELECT original_paid_cutoff FROM account_tenant_capacity_evaluations"
+              + " WHERE evaluation_identity = ?";
+      assertThat(dsl.fetchSingle(cutoffSql, legacyEvaluation).get(0)).isNull();
+
+      assertThat(
+              dsl.execute(
+                  "INSERT INTO account_tenant_capacity_evaluations (evaluation_identity,"
+                      + " snapshot_identity, tenant_uuid, caller_workload, owner_service,"
+                      + " canonical_evidence, evaluated_at, expires_at, original_paid_cutoff)"
+                      + " VALUES (?, ?, ?, ?, 'game-session-service', ?, ?::timestamptz,"
+                      + " ?::timestamptz, ?::timestamptz)",
+                  freshEvaluation,
+                  digest('d'),
+                  tenant.canonicalTenantId(),
+                  caller,
+                  new byte[] {13, 0, 14},
+                  AccountTenantCapacityRepository.at(evaluatedAt),
+                  databaseExpiry,
+                  originalCutoff))
+          .isEqualTo(1);
+      assertThat(
+              AccountTenantCapacityRepository.time(
+                  dsl.fetchSingle(cutoffSql, freshEvaluation), "original_paid_cutoff"))
+          .isEqualTo(originalCutoff.toInstant());
+
+      assertThatThrownBy(() ->
+              dsl.execute(
+                  "UPDATE account_tenant_capacity_evaluations SET original_paid_cutoff ="
+                      + " ?::timestamptz WHERE evaluation_identity = ?",
+                  originalCutoff.plusSeconds(1),
+                  freshEvaluation))
+          .isInstanceOfSatisfying(
+              org.jooq.exception.DataAccessException.class,
+              failure -> {
+                assertThat(failure.sqlState()).isEqualTo("23514");
+                assertThat(failure)
+                    .hasMessageContaining(
+                        "Capacity evaluation and historical attempt evidence is immutable");
+              });
+      assertThat(
+              AccountTenantCapacityRepository.time(
+                  dsl.fetchSingle(cutoffSql, freshEvaluation), "original_paid_cutoff"))
+          .isEqualTo(originalCutoff.toInstant());
+    } finally {
+      new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
+    }
+  }
+
+  @Test
   void freshAndPopulated1040Through1041UpgradesPreserveRowsHistoryAndScopeReservationChecks() {
     verify1040Upgrade(false);
     verify1040Upgrade(true);

@@ -38,17 +38,17 @@ public final class AccountTenantCapacityRepository {
   }
 
   /** Called by the actual Account player evaluator before its final source transaction commits. */
-  public void retainPlayerEvaluation(RuntimePlayerAdmissionEntitlementEvidence source) {
-    retain(Evidence.player(source));
-  }
-
-  private void retain(Evidence evidence) {
+  public void retainPlayerEvaluation(
+      RuntimePlayerAdmissionEntitlementEvidence source, Instant originalPaidCutoff) {
     transaction();
+    Evidence evidence = Evidence.player(source);
+    OffsetDateTime cutoff = originalPaidCutoff == null ? null : at(originalPaidCutoff);
+    requirePaidCutoff(evidence, cutoff);
     int inserted =
         dsl.execute(
             "INSERT INTO account_tenant_capacity_evaluations "
-                + "(evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz) ON CONFLICT (evaluation_identity) DO NOTHING",
+                + "(evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at, original_paid_cutoff) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz, ?::timestamptz) ON CONFLICT (evaluation_identity) DO NOTHING",
             evidence.evaluationIdentity(),
             evidence.snapshotIdentity(),
             evidence.tenantId(),
@@ -56,12 +56,36 @@ public final class AccountTenantCapacityRepository {
             evidence.owner().service(),
             evidence.canonicalBytes(),
             at(evidence.evaluatedAt()),
-            at(evidence.expiresAt()));
+            at(evidence.expiresAt()),
+            cutoff);
     if (inserted != 0 && inserted != 1) throw unavailable();
-    requireRetained(evidence);
+    OffsetDateTime retained =
+        retainedEvaluation(evidence).get("original_paid_cutoff", OffsetDateTime.class);
+    if (!Objects.equals(toInstant(cutoff), toInstant(retained))) throw unavailable();
   }
 
   public void requireRetained(Evidence evidence) {
+    retainedEvaluation(evidence);
+  }
+
+  /** Returns the original application-clock cutoff for an exact fresh paid evaluation. */
+  public Instant requireRetainedOriginalPaidCutoff(Evidence evidence) {
+    OffsetDateTime cutoff =
+        retainedEvaluation(evidence).get("original_paid_cutoff", OffsetDateTime.class);
+    requirePaidCutoff(evidence, cutoff);
+    return toInstant(cutoff);
+  }
+
+  private static void requirePaidCutoff(Evidence evidence, OffsetDateTime cutoff) {
+    if ("PAID_HOSTING".equals(evidence.fields().get("sourceKind")) != (cutoff != null)
+        || (cutoff != null && cutoff.isBefore(at(evidence.expiresAt())))) throw unavailable();
+  }
+
+  private static Instant toInstant(OffsetDateTime value) {
+    return value == null ? null : value.toInstant();
+  }
+
+  private Record retainedEvaluation(Evidence evidence) {
     transaction();
     Record row =
         dsl.fetchOne(
@@ -81,6 +105,7 @@ public final class AccountTenantCapacityRepository {
             .expiresAt()
             .truncatedTo(java.time.temporal.ChronoUnit.MICROS)
             .equals(time(row, "expires_at"))) throw unavailable();
+    return row;
   }
 
   public Record find(Identity id) {
