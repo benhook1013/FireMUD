@@ -9,9 +9,12 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.dto.AccountAuditTenantIdentity;
 import net.firedevops.firemud.accountservice.jooq.tables.records.AccountAuditOutboxRecord;
@@ -32,6 +35,7 @@ class AccountAuditOutboxRepositoryTest {
   private static final UUID EVENT_ID = UUID.fromString("8a5f6238-f0d9-4992-80cb-e7f447e0f913");
   private static final String RECEIPT_ID = "receipt-1";
   private static final String LOG_EVENT_ID = "log-1";
+  private static final String PAYLOAD = "{\"accountId\":42}";
 
   @Test
   void exactCommittedOrMinimizedTerminalReceiptAfterLostCompareAndSetIsANoOp() {
@@ -40,7 +44,7 @@ class AccountAuditOutboxRepositoryTest {
       assertThatCode(
               () ->
                   repositoryWithReadback(status, RECEIPT_ID, LOG_EVENT_ID, true)
-                      .markDelivered(EVENT_ID, RECEIPT_ID, LOG_EVENT_ID, minimized))
+                      .markDelivered(envelope(), RECEIPT_ID, LOG_EVENT_ID, minimized))
           .doesNotThrowAnyException();
     }
   }
@@ -50,6 +54,8 @@ class AccountAuditOutboxRepositoryTest {
     assertRejected("COMMITTED", "other-receipt", LOG_EVENT_ID, false);
     assertRejected("COMMITTED", RECEIPT_ID, "other-log", false);
     assertRejected("MINIMIZED", RECEIPT_ID, LOG_EVENT_ID, false);
+    assertRejected("COMMITTED", RECEIPT_ID, LOG_EVENT_ID, true);
+    assertRejected("PENDING", RECEIPT_ID, LOG_EVENT_ID, false);
   }
 
   @Test
@@ -57,7 +63,64 @@ class AccountAuditOutboxRepositoryTest {
     AccountAuditOutboxRepository repository =
         repositoryWithReadback("COMMITTED", RECEIPT_ID, LOG_EVENT_ID, false);
 
-    assertThatThrownBy(() -> repository.markDelivered(EVENT_ID, RECEIPT_ID, LOG_EVENT_ID, false))
+    assertThatThrownBy(() -> repository.markDelivered(envelope(), RECEIPT_ID, LOG_EVENT_ID, false))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Audit delivery state changed concurrently");
+  }
+
+  @Test
+  void pendingTransitionComparesCompleteEnvelopeAndDoesNotReplaceConflictingReceiptIds() {
+    for (AccountAuditTenantIdentity identity :
+        List.of(
+            AccountAuditTenantIdentity.platformV1(),
+            AccountAuditTenantIdentity.retainedTenantV1(7L),
+            AccountAuditTenantIdentity.canonicalTenantV2("f4df3b0a-5fc6-4f86-9efc-0f053103b200"))) {
+      for (boolean minimized : new boolean[] {false, true}) {
+        AtomicReference<String> executedSql = new AtomicReference<>();
+        AtomicInteger queryCount = new AtomicInteger();
+        MockDataProvider provider =
+            context -> {
+              queryCount.incrementAndGet();
+              executedSql.set(context.sql().toLowerCase(Locale.ROOT));
+              return new MockResult[] {new MockResult(1)};
+            };
+        DSLContext dsl = DSL.using(new MockConnection(provider), SQLDialect.POSTGRES);
+
+        new AccountAuditOutboxRepository(dsl)
+            .markDelivered(envelope(identity), RECEIPT_ID, LOG_EVENT_ID, minimized);
+
+        assertThat(queryCount.get()).isEqualTo(1);
+        String sql = executedSql.get();
+        assertThat(sql).startsWith("update");
+        assertThat(sql.substring(sql.indexOf("where")))
+            .contains(
+                "audit_event_id",
+                "scope",
+                "tenant_identity_version",
+                "tenant_id\" is not distinct from",
+                "tenant_uuid\" is not distinct from",
+                "producer_service",
+                "event_type",
+                "occurred_at",
+                "schema_version",
+                "payload_digest_version",
+                "payload_digest",
+                "\"payload\" =",
+                "delivery_status",
+                "receiver_receipt_id\" is null",
+                "receiver_log_event_id\" is null",
+                "receiver_receipt_id\" =",
+                "receiver_log_event_id\" =");
+      }
+    }
+  }
+
+  @Test
+  void committedTerminalRetryStillRequiresExactRetainedPayload() {
+    AccountAuditOutboxRepository repository =
+        repositoryWithReadback("COMMITTED", RECEIPT_ID, LOG_EVENT_ID, true, PAYLOAD + " ");
+
+    assertThatThrownBy(() -> repository.markDelivered(envelope(), RECEIPT_ID, LOG_EVENT_ID, false))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Audit delivery state changed concurrently");
   }
@@ -200,13 +263,19 @@ class AccountAuditOutboxRepositoryTest {
     AccountAuditOutboxRepository repository =
         repositoryWithReadback(storedStatus, storedReceiptId, storedLogEventId, true);
     assertThatThrownBy(
-            () -> repository.markDelivered(EVENT_ID, RECEIPT_ID, LOG_EVENT_ID, minimized))
+            () -> repository.markDelivered(envelope(), RECEIPT_ID, LOG_EVENT_ID, minimized))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Audit delivery state changed concurrently");
   }
 
   private static AccountAuditOutboxRepository repositoryWithReadback(
       String status, String receiptId, String logEventId, boolean rowExists) {
+    return repositoryWithReadback(
+        status, receiptId, logEventId, rowExists, "MINIMIZED".equals(status) ? null : PAYLOAD);
+  }
+
+  private static AccountAuditOutboxRepository repositoryWithReadback(
+      String status, String receiptId, String logEventId, boolean rowExists, String payload) {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
         context -> {
@@ -219,6 +288,15 @@ class AccountAuditOutboxRepositoryTest {
             if (rowExists) {
               AccountAuditOutboxRecord row = resultDsl.newRecord(ACCOUNT_AUDIT_OUTBOX);
               row.setAuditEventId(EVENT_ID);
+              row.setScope(envelope().scope());
+              row.setTenantIdentityVersion(envelope().tenantIdentityVersion());
+              row.setProducerService(envelope().producerService());
+              row.setEventType(envelope().eventType());
+              row.setOccurredAt(LocalDateTime.ofInstant(envelope().occurredAt(), ZoneOffset.UTC));
+              row.setSchemaVersion(envelope().schemaVersion());
+              row.setPayloadDigestVersion(envelope().payloadDigestVersion());
+              row.setPayloadDigest(envelope().payloadDigest());
+              row.setPayload(payload);
               row.setDeliveryStatus(status);
               row.setReceiverReceiptId(receiptId);
               row.setReceiverLogEventId(logEventId);
@@ -230,5 +308,23 @@ class AccountAuditOutboxRepositoryTest {
         };
     DSLContext dsl = DSL.using(new MockConnection(provider), SQLDialect.POSTGRES);
     return new AccountAuditOutboxRepository(dsl);
+  }
+
+  private static AccountAuditEnvelope envelope() {
+    return envelope(AccountAuditTenantIdentity.platformV1());
+  }
+
+  private static AccountAuditEnvelope envelope(AccountAuditTenantIdentity identity) {
+    return new AccountAuditEnvelope(
+        EVENT_ID,
+        identity.tenantId() == null && identity.tenantUuid() == null ? "platform" : "tenant",
+        identity,
+        "account-service",
+        "ACCOUNT_REGISTERED",
+        Instant.parse("2026-10-01T00:00:00Z"),
+        1,
+        1,
+        AccountAuditDigest.ofPayload(PAYLOAD),
+        PAYLOAD);
   }
 }

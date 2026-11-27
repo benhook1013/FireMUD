@@ -136,7 +136,11 @@ class LoggingAdminClientTest {
 
     verify(outbox).recordAttempt(envelope.auditEventId());
     verify(outbox, never())
-        .markDelivered(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        .markDelivered(
+            any(AccountAuditEnvelope.class),
+            any(),
+            any(),
+            org.mockito.ArgumentMatchers.anyBoolean());
   }
 
   @Test

@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -22,6 +23,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
+import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
+import net.firedevops.firemud.accountservice.dto.AccountAuditTenantIdentity;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
@@ -275,27 +278,51 @@ class AccountRepositoryIntegrationTest {
 
     outbox.append(
         minimizedEventId, "tenant", 7L, "ACCOUNT_JOINED_PUBLIC_PRODUCTION", minimizedPayload);
-    outbox.markDelivered(minimizedEventId, "receipt-minimized", "log-minimized", true);
     outbox.append(committedEventId, "platform", null, "ACCOUNT_REGISTERED", committedPayload);
-    outbox.markDelivered(committedEventId, "receipt-committed", "log-committed", false);
-    outbox.markDelivered(minimizedEventId, "receipt-minimized", "log-minimized", true);
-    outbox.markDelivered(committedEventId, "receipt-committed", "log-committed", false);
+    List<AccountAuditEnvelope> consumed = outbox.pending(10, Instant.now().plusSeconds(5));
+    AccountAuditEnvelope minimizedEnvelope =
+        consumed.stream()
+            .filter(envelope -> envelope.auditEventId().equals(minimizedEventId))
+            .findFirst()
+            .orElseThrow();
+    AccountAuditEnvelope committedEnvelope =
+        consumed.stream()
+            .filter(envelope -> envelope.auditEventId().equals(committedEventId))
+            .findFirst()
+            .orElseThrow();
+    AccountAuditEnvelope missingEnvelope =
+        new AccountAuditEnvelope(
+            UUID.randomUUID(),
+            committedEnvelope.scope(),
+            committedEnvelope.tenantIdentity(),
+            committedEnvelope.producerService(),
+            committedEnvelope.eventType(),
+            committedEnvelope.occurredAt(),
+            committedEnvelope.schemaVersion(),
+            committedEnvelope.payloadDigestVersion(),
+            committedEnvelope.payloadDigest(),
+            committedEnvelope.payload());
+    outbox.markDelivered(minimizedEnvelope, "receipt-minimized", "log-minimized", true);
+    outbox.markDelivered(committedEnvelope, "receipt-committed", "log-committed", false);
+    outbox.markDelivered(minimizedEnvelope, "receipt-minimized", "log-minimized", true);
+    outbox.markDelivered(committedEnvelope, "receipt-committed", "log-committed", false);
 
     assertThatThrownBy(
-            () -> outbox.markDelivered(minimizedEventId, "other-receipt", "log-minimized", true))
+            () -> outbox.markDelivered(minimizedEnvelope, "other-receipt", "log-minimized", true))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Audit delivery state changed concurrently");
     assertThatThrownBy(
-            () -> outbox.markDelivered(minimizedEventId, "receipt-minimized", "other-log", true))
+            () -> outbox.markDelivered(minimizedEnvelope, "receipt-minimized", "other-log", true))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Audit delivery state changed concurrently");
     assertThatThrownBy(
             () ->
-                outbox.markDelivered(minimizedEventId, "receipt-minimized", "log-minimized", false))
+                outbox.markDelivered(
+                    minimizedEnvelope, "receipt-minimized", "log-minimized", false))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Audit delivery state changed concurrently");
     assertThatThrownBy(
-            () -> outbox.markDelivered(UUID.randomUUID(), "receipt-missing", "log-missing", false))
+            () -> outbox.markDelivered(missingEnvelope, "receipt-missing", "log-missing", false))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Audit delivery state changed concurrently");
 
@@ -374,6 +401,91 @@ class AccountRepositoryIntegrationTest {
                 LocalDateTime.class,
                 committedEventId))
         .isNull();
+  }
+
+  @Test
+  void auditDeliveryRejectsConsumedEnvelopeMismatchWithoutChangingRetainedRow() {
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(dsl);
+    UUID eventId = UUID.randomUUID();
+    outbox.append(eventId, "tenant", 7L, "ACCOUNT_JOINED_PUBLIC_PRODUCTION", "{\"id\":42}");
+    AccountAuditEnvelope consumed = outbox.pending(1, Instant.now().plusSeconds(5)).getFirst();
+    List<AccountAuditEnvelope> mismatches = new ArrayList<>();
+    for (String changedField :
+        List.of(
+            "scope",
+            "tenantId",
+            "tenantIdentity",
+            "producerService",
+            "eventType",
+            "occurredAt",
+            "schemaVersion",
+            "payload")) {
+      AccountAuditTenantIdentity identity =
+          switch (changedField) {
+            case "scope" -> AccountAuditTenantIdentity.platformV1();
+            case "tenantId" -> AccountAuditTenantIdentity.retainedTenantV1(8L);
+            case "tenantIdentity" ->
+                AccountAuditTenantIdentity.canonicalTenantV2(
+                    "f4df3b0a-5fc6-4f86-9efc-0f053103b200");
+            default -> consumed.tenantIdentity();
+          };
+      String payload = "payload".equals(changedField) ? "{\"id\": 42}" : consumed.payload();
+      mismatches.add(
+          new AccountAuditEnvelope(
+              eventId,
+              "scope".equals(changedField) ? "platform" : consumed.scope(),
+              identity,
+              "producerService".equals(changedField) ? "other-service" : consumed.producerService(),
+              "eventType".equals(changedField) ? "OTHER_EVENT" : consumed.eventType(),
+              "occurredAt".equals(changedField)
+                  ? consumed.occurredAt().plusSeconds(1)
+                  : consumed.occurredAt(),
+              "schemaVersion".equals(changedField) ? 2 : consumed.schemaVersion(),
+              consumed.payloadDigestVersion(),
+              AccountAuditDigest.ofPayload(payload),
+              payload));
+    }
+
+    // Both terminal outcomes must compare the consumed payload before changing PENDING.
+    String pendingRow =
+        jdbc.queryForObject(
+            "SELECT row_to_json(a)::text || ':' || xmin::text FROM account_audit_outbox a WHERE audit_event_id = ?",
+            String.class,
+            eventId);
+    for (AccountAuditEnvelope mismatch : mismatches) {
+      for (boolean minimized : new boolean[] {false, true}) {
+        assertThatThrownBy(
+                () -> outbox.markDelivered(mismatch, "receipt-exact", "log-exact", minimized))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Audit delivery state changed concurrently");
+      }
+    }
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT row_to_json(a)::text || ':' || xmin::text FROM account_audit_outbox a WHERE audit_event_id = ?",
+                String.class,
+                eventId))
+        .isEqualTo(pendingRow);
+
+    outbox.markDelivered(consumed, "receipt-exact", "log-exact", false);
+    String committedRow =
+        jdbc.queryForObject(
+            "SELECT row_to_json(a)::text || ':' || xmin::text FROM account_audit_outbox a WHERE audit_event_id = ?",
+            String.class,
+            eventId);
+    for (AccountAuditEnvelope mismatch : mismatches) {
+      assertThatThrownBy(() -> outbox.markDelivered(mismatch, "receipt-exact", "log-exact", false))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Audit delivery state changed concurrently");
+    }
+    outbox.markDelivered(consumed, "receipt-exact", "log-exact", false);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT row_to_json(a)::text || ':' || xmin::text FROM account_audit_outbox a WHERE audit_event_id = ?",
+                String.class,
+                eventId))
+        .isEqualTo(committedRow);
   }
 
   @Test

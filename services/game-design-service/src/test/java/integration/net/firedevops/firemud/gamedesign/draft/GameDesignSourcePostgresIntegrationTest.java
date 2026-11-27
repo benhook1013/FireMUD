@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftBaseReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -149,6 +150,64 @@ class GameDesignSourcePostgresIntegrationTest {
     assertThat(reviewed.requireCurrentRetained(binding).canonicalBytes())
         .containsExactly(original.canonicalBytes());
     assertThat(reviewedClaimRows(local)).isEqualTo(before);
+  }
+
+  @Test
+  void reviewedBaseRejectsWrongDraftWrongReceiptAndUnknownCommitBeforeClaim() {
+    Fixture local = fixture();
+    var reviewed = new GameDesignReviewedBaseRepository(local.dsl());
+    var originalGenesis = local.sources().readGenesis(local.target()).orElseThrow();
+    var reference = DraftBaseReference.parse("genesis:" + originalGenesis.policy().receiptId());
+    var original = local.tx(() -> reviewed.resolve(local.target(), reference));
+    TargetProof other =
+        local.tx(
+            () -> {
+              var version = new Version();
+              version.setTenantId(local.target().gameDesignVersionTenantKey());
+              version.setVersionNumber(2);
+              var saved = new VersionRepository(local.dsl()).save(version);
+              return new TargetProof(
+                  saved.getCanonicalTenantId(),
+                  saved.getCanonicalVersionId(),
+                  saved.getId(),
+                  saved.getTenantId(),
+                  saved.getIdentitySourceGameRowId(),
+                  saved.getIdentitySourceGameTenantKey(),
+                  saved.getIdentitySourceProvenanceKind());
+            });
+    var otherGenesis = local.sources().readGenesis(other).orElseThrow();
+    assertThat(otherGenesis.policy().receiptId()).isNotEqualTo(reference.identity());
+    var before = reviewedClaimRows(local);
+
+    var wrongDraft = binding(other, reference.canonicalValue(), "0", null, "main", true);
+    assertThatThrownBy(() -> local.tx(() -> local.sources().claimReviewed(wrongDraft, original)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("REVIEWED_BASE_BINDING_CONFLICT");
+    assertThatThrownBy(() -> local.tx(() -> reviewed.resolve(other, reference)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("REVIEWED_BASE_GENESIS_IDENTITY_CONFLICT");
+    var wrongReceipt = new DraftBaseReference(DraftBaseReference.Kind.GENESIS, UUID.randomUUID());
+    assertThatThrownBy(() -> local.tx(() -> reviewed.resolve(local.target(), wrongReceipt)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("REVIEWED_BASE_GENESIS_IDENTITY_CONFLICT");
+    var unknownCommit =
+        new DraftBaseReference(DraftBaseReference.Kind.AUTHORED_COMMIT, UUID.randomUUID());
+    assertThatThrownBy(() -> local.tx(() -> reviewed.resolve(local.target(), unknownCommit)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("REVIEWED_BASE_AUTHORED_SOURCE_UNAVAILABLE");
+    assertThat(reviewedClaimRows(local)).isEqualTo(before);
+    assertThat(local.coordinator().readApplicationSlot(local.target())).isEmpty();
+    assertThat(local.coordinator().readApplicationSlot(other)).isEmpty();
+    var otherReference = DraftBaseReference.parse("genesis:" + otherGenesis.policy().receiptId());
+    assertThat(local.tx(() -> reviewed.resolve(local.target(), reference)).canonicalBytes())
+        .containsExactly(original.canonicalBytes());
+    assertThat(local.tx(() -> reviewed.resolve(other, otherReference)).canonicalBytes())
+        .containsExactly(GameDesignReviewedBaseEvidence.genesis(otherGenesis).canonicalBytes());
+
+    var exact = binding(local.target(), reference.canonicalValue(), "0", null, "main", true);
+    assertThat(local.tx(() -> local.sources().claimReviewed(exact, original)).binding())
+        .isEqualTo(exact);
+    assertOriginalReviewedHistoryAfterAdvance(local, reviewed, exact, original, reference);
   }
 
   @Test
