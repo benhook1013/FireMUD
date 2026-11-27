@@ -12,7 +12,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       """
       SELECT
         current_setting('transaction_read_only') = 'off'
-        AND (SELECT count(DISTINCT version) = 5
+        AND (SELECT count(DISTINCT version) = 6
          FROM recovery_control.flyway_schema_history_recovery_control
          WHERE success AND (
            (version = '1' AND script = 'V1__initial_gameplay_release_journal.sql')
@@ -22,7 +22,9 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
            OR (version = '4'
                AND script = 'V4__retain_typed_retry_provenance.sql')
            OR (version = '5'
-               AND script = 'V5__retain_local_dispatch_uncertainty.sql')))
+               AND script = 'V5__retain_local_dispatch_uncertainty.sql')
+           OR (version = '6'
+               AND script = 'V6__retain_latest_preparation_observation.sql')))
         AND has_table_privilege(
           'recovery_control.initial_gameplay_release_attempt_local_no_send', 'INSERT')
         AND has_table_privilege(
@@ -97,7 +99,44 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
           FROM pg_catalog.pg_constraint c
           WHERE c.conrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
             AND c.conname = 'ck_release_outbox_non_pending_attempt'
-            AND c.contype = 'c' AND c.convalidated)
+            AND c.contype = 'c' AND c.convalidated AND c.conenforced
+            AND pg_catalog.pg_get_expr(c.conbin, c.conrelid) =
+              '(((state)::text = ''pending''::text) OR ((attempt_count > 0)'
+              || ' AND (last_attempt_id IS NOT NULL)'
+              || ' AND (last_attempt_id <> ''00000000-0000-0000-0000-000000000000''::uuid)'
+              || ' AND (last_dispatched_at IS NOT NULL)))')
+        AND (SELECT count(*) = 2
+          FROM pg_catalog.pg_attribute
+          WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+            AND NOT attisdropped AND NOT attnotnull
+            AND ((attname = 'preparation_observation_payload'
+                  AND atttypid = 'pg_catalog.jsonb'::regtype)
+              OR (attname = 'preparation_observation_digest'
+                  AND atttypid = 'pg_catalog.bpchar'::regtype AND atttypmod = 68)))
+        AND (SELECT count(*) = 2
+          FROM pg_catalog.pg_constraint c
+          WHERE c.conrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+            AND c.contype = 'c' AND c.convalidated AND c.conenforced
+            AND ((c.conname = 'ck_release_outbox_pending_outcome'
+                  AND pg_catalog.pg_get_expr(c.conbin, c.conrelid) =
+                    '(((state)::text <> ''pending''::text) OR ((last_outcome_code IS NULL)'
+                    || ' AND (send_outcome_uncertain IS NOT TRUE)))')
+              OR (c.conname = 'ck_release_outbox_preparation_observation'
+                  AND pg_catalog.pg_get_expr(c.conbin, c.conrelid) =
+                    '(((preparation_observation_payload IS NULL)'
+                    || ' AND (preparation_observation_digest IS NULL))'
+                    || ' OR ((preparation_observation_payload IS NOT NULL)'
+                    || ' AND (preparation_observation_digest IS NOT NULL)'
+                    || ' AND ((effect_kind)::text = ''prepare_playable_state_fenced''::text)'
+                    || ' AND ((state)::text = ''acknowledged''::text)))')))
+        AND EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_attribute a
+          JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+          WHERE a.attrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
+            AND a.attname = 'created_at' AND NOT a.attisdropped AND a.attnotnull
+            AND a.atttypid = 'pg_catalog.timestamptz'::regtype AND a.atttypmod = -1
+            AND pg_catalog.pg_get_expr(d.adbin, d.adrelid) = 'CURRENT_TIMESTAMP')
         AND NOT EXISTS (
           SELECT operation_id, operation_kind, target_namespace, playable_state_namespace_id,
                  peer_storage_binding, scope_payload, evidence_ref, scope_digest,
@@ -113,6 +152,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                  payload_digest, payload, state, attempt_count, last_attempt_id, last_dispatched_at,
                  last_outcome_code, retry_provenance, send_outcome_uncertain,
                  readback_identity, readback_payload, readback_digest,
+                 preparation_observation_payload, preparation_observation_digest,
                  created_at, updated_at, acknowledged_at
           FROM recovery_control.initial_gameplay_release_outbox WHERE FALSE)
         AND NOT EXISTS (
