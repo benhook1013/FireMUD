@@ -5,6 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 
+import com.github.dockerjava.api.model.ExposedPort;
+import com.github.dockerjava.api.model.PortBinding;
+import com.github.dockerjava.api.model.Ports;
+import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -12,6 +16,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -45,19 +50,23 @@ import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.mockito.AdditionalAnswers;
 import org.mockito.Mockito;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.ResponseBytes;
@@ -67,11 +76,8 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
-import software.amazon.awssdk.services.s3.model.DeleteBucketRequest;
-import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
-import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import tools.jackson.databind.ObjectMapper;
 
@@ -79,9 +85,9 @@ import tools.jackson.databind.ObjectMapper;
  * Composes the Flyway-backed owner rows and real publication services with the AWS SDK and a
  * run-owned MinIO provider. This proves the private PostgreSQL-to-object-store producer boundary;
  * it does not prove public delivery, creator authorization, release activation, or launch. The
- * existing isolated source fixture supplies reviewed ASSET_REFERENCE authority. No MinIO image is
- * selected or provider provisioned here: the endpoint must be explicitly run-owned. Missing
- * Docker/endpoint is a skipped proof, never qualification.
+ * existing isolated source fixture supplies reviewed ASSET_REFERENCE authority. The provider uses
+ * the Compose MinIO image in a disposable container with a random loopback endpoint and
+ * credentials.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class VersionAssetPublicationMinioPostgresIntegrationTest {
@@ -89,6 +95,7 @@ class VersionAssetPublicationMinioPostgresIntegrationTest {
   private static final String TENANT_ID = UUID.randomUUID().toString();
   private static final String PUBLIC_BASE_URL = "https://assets.example.invalid/assets";
   private static final String WORKFLOW_ID = "minio-postgres-composition-workflow";
+  private static final int MINIO_PORT = 9000;
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -96,25 +103,18 @@ class VersionAssetPublicationMinioPostgresIntegrationTest {
 
   private S3Client s3Client;
   private String bucket;
+  private GenericContainer<?> minio;
 
   @AfterEach
-  void removeOnlyTheOwnedBucket() {
-    if (s3Client == null) {
-      return;
-    }
+  void closeMinioResources() {
     try {
-      if (bucket != null) {
-        for (var object :
-            s3Client
-                .listObjectsV2(ListObjectsV2Request.builder().bucket(bucket).build())
-                .contents()) {
-          s3Client.deleteObject(
-              DeleteObjectRequest.builder().bucket(bucket).key(object.key()).build());
-        }
-        s3Client.deleteBucket(DeleteBucketRequest.builder().bucket(bucket).build());
+      if (s3Client != null) {
+        s3Client.close();
       }
     } finally {
-      s3Client.close();
+      if (minio != null) {
+        minio.close();
+      }
     }
   }
 
@@ -336,19 +336,25 @@ class VersionAssetPublicationMinioPostgresIntegrationTest {
       Fixture fixture, Version version, FrozenAssetExportCandidate candidate) {}
 
   @Test
-  void
-      composesPostgresSnapshotAndCandidateWithMinioBeforeWriteAndRetriesAfterLostAcknowledgement() {
-    String endpoint = System.getenv("MINIO_ASSET_EXPORT_ENDPOINT");
-    Assumptions.assumeTrue(
-        endpoint != null && !endpoint.isBlank(),
-        "set MINIO_ASSET_EXPORT_ENDPOINT to run the PostgreSQL-to-MinIO composition proof");
-
-    if (!"true".equals(System.getenv("MINIO_ASSET_EXPORT_RUN_OWNED"))) {
-      throw new IllegalStateException(
-          "MINIO_ASSET_EXPORT_RUN_OWNED=true must explicitly attest a disposable test endpoint");
-    }
-    String accessKey = requiredEnvironment("MINIO_ASSET_EXPORT_ACCESS_KEY");
-    String secretKey = requiredEnvironment("MINIO_ASSET_EXPORT_SECRET_KEY");
+  void composesPostgresSnapshotAndCandidateWithMinioBeforeWriteAndRetriesAfterLostAcknowledgement()
+      throws IOException {
+    String accessKey = UUID.randomUUID().toString();
+    String secretKey = UUID.randomUUID().toString();
+    minio =
+        new GenericContainer<>(composeMinioImage())
+            .withCommand("server", "/data")
+            .withEnv("MINIO_ROOT_USER", accessKey)
+            .withEnv("MINIO_ROOT_PASSWORD", secretKey)
+            .withExposedPorts(MINIO_PORT)
+            .withCreateContainerCmdModifier(
+                command ->
+                    Objects.requireNonNull(command.getHostConfig())
+                        .withPortBindings(
+                            new PortBinding(
+                                Ports.Binding.bindIp("127.0.0.1"), ExposedPort.tcp(MINIO_PORT))))
+            .waitingFor(Wait.forHttp("/minio/health/live").forPort(MINIO_PORT));
+    minio.start();
+    String endpoint = "http://" + minio.getHost() + ":" + minio.getMappedPort(MINIO_PORT);
     s3Client = newS3Client(endpoint, accessKey, secretKey);
     String ownedBucket = "firemud-asset-pg-" + UUID.randomUUID().toString().replace("-", "");
     s3Client.createBucket(CreateBucketRequest.builder().bucket(ownedBucket).build());
@@ -817,12 +823,20 @@ class VersionAssetPublicationMinioPostgresIntegrationTest {
     return artifactRow.get("xmin", String.class);
   }
 
-  private static String requiredEnvironment(String key) {
-    String value = System.getenv(key);
-    if (value == null || value.isBlank()) {
-      throw new IllegalStateException(key + " must be set when MINIO_ASSET_EXPORT_ENDPOINT is set");
+  private static DockerImageName composeMinioImage() throws IOException {
+    FileSystemResource compose =
+        new FileSystemResource(System.getProperty("firemud.asset-proof.compose-file"));
+    Object image =
+        new YamlPropertySourceLoader()
+            .load("asset-proof-compose", compose)
+            .getFirst()
+            .getProperty("services.minio.image");
+    if (!(image instanceof String reference)
+        || !reference.matches("ghcr\\.io/benhook1013/minio-server@sha256:[0-9a-f]{64}")) {
+      throw new IllegalStateException(
+          "Asset proof requires the trusted digest-pinned Compose MinIO image");
     }
-    return value;
+    return DockerImageName.parse(reference);
   }
 
   private static byte[] bytes(String value) {

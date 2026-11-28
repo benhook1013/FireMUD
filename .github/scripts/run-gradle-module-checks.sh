@@ -15,8 +15,10 @@ if [[ $# -lt 1 || $# -gt 2 || ! "$MODULE" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ || \
 fi
 
 declare -a CHECK_ARGS=(-PfullCheck)
+require_physical_proof=false
 # These required physical suites must execute, not restore cached JUnit results.
-if [[ "$MODULE" == "logging-admin-service" || "$MODULE" == "social-groups-service" ]]; then
+if [[ "$MODULE" == "game-design-service" || "$MODULE" == "logging-admin-service" || "$MODULE" == "social-groups-service" ]]; then
+  require_physical_proof=true
   CHECK_ARGS+=(--no-build-cache --no-configuration-cache ":${MODULE}:integrationTest" --rerun)
   # A skipped/no-source task must not satisfy this invocation from old XML.
   # Invalidate only generated JUnit reports for this module before Gradle runs.
@@ -37,8 +39,15 @@ if [[ "$MODULE" == "logging-admin-service" || "$MODULE" == "social-groups-servic
   fi
 fi
 
-verify_required_database_proof() {
+verify_required_physical_proof() {
   case "$MODULE" in
+    game-design-service)
+      local suite="net.firedevops.firemud.gamedesign.service.VersionAssetPublicationMinioPostgresIntegrationTest"
+      bash "$ROOT_DIR/dev-tools/validation/inspect-test-results.sh" --strict \
+        --require-suite "$suite" \
+        --require-case "$suite#composesPostgresSnapshotAndCandidateWithMinioBeforeWriteAndRetriesAfterLostAcknowledgement()" \
+        "$MODULE"
+      ;;
     logging-admin-service)
       local moderation="net.firedevops.firemud.loggingadmin.ModerationAccountUuidMigrationPostgresIntegrationTest"
       local report="net.firedevops.firemud.loggingadmin.ReportAccountUuidMigrationPostgresIntegrationTest"
@@ -120,7 +129,7 @@ trap 'rm -f -- "$CHECK_LOG"' EXIT
 if [[ -z "$CHECK_LOG" ]]; then
   printf 'FIREMUD_STALL_ACTIVATION status=disabled-capture-unavailable\n' >&2
   echo "Compile-failure log unavailable; running the original check without capture" >&2
-  if [[ "$MODULE" != "logging-admin-service" && "$MODULE" != "social-groups-service" ]]; then
+  if [[ "$require_physical_proof" == false ]]; then
     # Preserve the existing exec/process boundary for every unaffected module.
     exec bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
       --runner "$ROOT_DIR/gradlew" -- \
@@ -133,7 +142,7 @@ if [[ -z "$CHECK_LOG" ]]; then
     --max-workers=2 \
     '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
     ":${MODULE}:check" "${CHECK_ARGS[@]}" --profile; then
-    verify_required_database_proof
+    verify_required_physical_proof
     exit 0
   else
     exit "$?"
@@ -179,6 +188,6 @@ if (( check_status > 0 && check_status < 128 )); then
     echo "Compile-failure evidence collection unavailable; preserving check exit $check_status" >&2
 fi
 if (( check_status == 0 )); then
-  verify_required_database_proof
+  verify_required_physical_proof
 fi
 exit "$check_status"
