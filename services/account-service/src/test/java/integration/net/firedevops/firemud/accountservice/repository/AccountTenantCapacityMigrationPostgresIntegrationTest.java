@@ -1272,8 +1272,11 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                     AccountTenantCapacityRepository.at(expiresAt));
                 provisional.set(true);
               }))
-          .hasRootCauseInstanceOf(java.sql.SQLException.class)
-          .hasStackTraceContaining(
+          .rootCause()
+          .isInstanceOfSatisfying(
+              java.sql.SQLException.class,
+              failure -> assertThat(failure.getSQLState()).isEqualTo("P1040"))
+          .hasMessageContaining(
               "Retained capacity evaluation expired before deferred reservation validation");
       assertThat(provisional).isTrue();
       assertThat(originRows(dsl, tenantId)).isEqualTo(oldOrigins);

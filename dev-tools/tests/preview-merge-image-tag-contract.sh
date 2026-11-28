@@ -72,7 +72,7 @@ case "${GH_FIXTURE:-}" in
   branch_wrong)
     printf '[{"workflow_runs":[{"id":104,"status":"completed","conclusion":"success","event":"workflow_run","head_sha":"dddddddddddddddddddddddddddddddddddddd","html_url":"https://example.test/runtime/104","display_title":"Build Runtime Images trusted-branch branch-main sha-%s","created_at":"2026-09-21T00:02:00Z"}]}]' "$head_sha"
     ;;
-  receipt_requalification|requalification_missing_receipt|receipt_after_failed_requalification|failed_requalification_without_receipt|receipt|receipt_wrong_source|receipt_wrong_publisher|receipt_foreign|receipt_failed|receipt_duplicate|legacy|legacy_expired|legacy_missing|wrong_runs|receipt_transient|receipt_rerun)
+  receipt_requalification|requalification_missing_receipt|receipt_after_failed_requalification|receipt_after_tag_conflict|receipt_ignore_ineligible_dispatch|failed_requalification_without_receipt|receipt|receipt_wrong_source|receipt_wrong_publisher|receipt_foreign|receipt_failed|receipt_duplicate|legacy|legacy_expired|legacy_missing|wrong_runs|receipt_transient|receipt_rerun)
     source_title="Build Runtime Images secure-pr-artifact pr-7 base-$base_sha head-$head_sha merge-$merge_sha mode-required"
     fixture_attempt=2
     if [[ "$GH_FIXTURE" == receipt_rerun ]]; then
@@ -146,6 +146,11 @@ case "${GH_FIXTURE:-}" in
         fi
         printf '{"total_count":1,"jobs":[{"id":%s,"run_id":%s,"run_attempt":1,"head_sha":"%s","name":"Publish Fixed PR Merge Image Tags","status":"completed","conclusion":"success","steps":[{"name":"Download successful PR image artifacts","number":5,"status":"completed","conclusion":"success"},{"name":"Validate exact PR source and artifact before registry login","number":6,"status":"completed","conclusion":"success"},{"name":"Publish fixed PR image tags","number":8,"status":"completed","conclusion":"success"}%s]}]}' "$publisher_job_id" "$publisher_id" "$base_sha" "$receipt"
         ;;
+      *'/actions/runs/103/attempts/1/jobs?'*)
+        tag_result=skipped
+        [[ "$GH_FIXTURE" != receipt_after_tag_conflict ]] || tag_result=failure
+        printf '{"total_count":1,"jobs":[{"id":1003,"run_id":103,"run_attempt":1,"head_sha":"%s","name":"Publish Fixed PR Merge Image Tags","status":"completed","conclusion":"failure","steps":[{"name":"Publish fixed PR image tags","number":8,"status":"completed","conclusion":"%s"}]}]}' "$base_sha" "$tag_result"
+        ;;
       *'/actions/runs/103/attempts/1')
         printf '{"id":103,"workflow_id":502,"path":".github/workflows/publish-pr-runtime-images.yml","head_branch":"main","head_sha":"%s","run_attempt":1,"name":"Publish PR Runtime Images","event":"repository_dispatch","status":"completed","conclusion":"failure","display_title":"Publish PR Runtime Images requalification source-run-101 attempt-%s","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' \
           "$base_sha" "$fixture_attempt"
@@ -169,15 +174,19 @@ case "${GH_FIXTURE:-}" in
           esac
           exit 0
         fi
-        if [[ "$GH_FIXTURE" == receipt_after_failed_requalification ]]; then
+        if [[ "$GH_FIXTURE" == receipt_after_failed_requalification || "$GH_FIXTURE" == receipt_after_tag_conflict || "$GH_FIXTURE" == receipt_ignore_ineligible_dispatch ]]; then
           case "$*" in
             *event=workflow_run*)
               printf '{"total_count":1,"workflow_runs":[{"id":102,"workflow_id":502,"run_attempt":1,"event":"workflow_run","status":"completed","conclusion":"success","display_title":"%s","created_at":"2026-09-21T00:01:00Z"}]}' \
                 "Publish PR Runtime Images $source_title source-run-101 attempt-$fixture_attempt"
               ;;
             *event=repository_dispatch*)
-              printf '{"total_count":1,"workflow_runs":[{"id":103,"workflow_id":502,"run_attempt":1,"event":"repository_dispatch","status":"completed","conclusion":"failure","display_title":"Publish PR Runtime Images requalification source-run-101 attempt-%s","created_at":"2026-09-21T00:02:00Z"}]}' \
-                "$fixture_attempt"
+              dispatch_title="Publish PR Runtime Images requalification source-run-101 attempt-$fixture_attempt"
+              if [[ "$GH_FIXTURE" == receipt_ignore_ineligible_dispatch ]]; then
+                dispatch_title="Publish PR Runtime Images source-run-101 attempt-$fixture_attempt"
+              fi
+              printf '{"total_count":1,"workflow_runs":[{"id":103,"workflow_id":502,"run_attempt":1,"event":"repository_dispatch","status":"completed","conclusion":"failure","display_title":"%s","created_at":"2026-09-21T00:02:00Z"}]}' \
+                "$dispatch_title"
               ;;
           esac
           exit 0
@@ -238,15 +247,19 @@ if GH_FIXTURE=stale_head bash "$RESOLVER" "$merge_sha" 7 "$base_sha" >/dev/null 
   exit 1
 fi
 
-for fixture in receipt_requalification receipt_after_failed_requalification receipt legacy receipt_transient receipt_rerun; do
-  GH_FIXTURE="$fixture" WAITER_STATE="$TEMP_DIR/waiter-$fixture.state" \
+for fixture in receipt_requalification receipt_after_failed_requalification receipt_ignore_ineligible_dispatch receipt legacy receipt_transient receipt_rerun; do
+  if ! GH_FIXTURE="$fixture" WAITER_STATE="$TEMP_DIR/waiter-$fixture.state" \
     WAITER_CALLS="$TEMP_DIR/waiter-$fixture.calls" \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=30 \
     HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=30 \
     HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
     HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
     bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/publication-$fixture.out" \
-      2>"$TEMP_DIR/publication-$fixture.err"
+      2>"$TEMP_DIR/publication-$fixture.err"; then
+    echo "$fixture failed to prove the expected publication" >&2
+    tail -20 "$TEMP_DIR/publication-$fixture.err" >&2
+    exit 1
+  fi
   if [[ "$fixture" != receipt_rerun ]]; then
     grep -Fq 'using source artifact 9001 (sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd)' \
       "$TEMP_DIR/publication-$fixture.out"
@@ -289,7 +302,7 @@ PY_RERUN_PROOF_ORDER
   fi
 done
 
-for fixture in requalification_missing_receipt receipt_wrong_source receipt_wrong_publisher receipt_foreign receipt_failed receipt_duplicate legacy_expired legacy_missing; do
+for fixture in requalification_missing_receipt receipt_after_tag_conflict receipt_wrong_source receipt_wrong_publisher receipt_foreign receipt_failed receipt_duplicate legacy_expired legacy_missing; do
   if GH_FIXTURE="$fixture" \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
     HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=2 \

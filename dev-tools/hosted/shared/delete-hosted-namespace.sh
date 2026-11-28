@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-  echo "usage: $0 <namespace> <release_name>" >&2
+if [[ $# -ne 2 && $# -ne 4 ]]; then
+  echo "usage: $0 <namespace> <release_name> [<classified_namespace_uid> <deployed_head_sha>]" >&2
   exit 1
 fi
 
@@ -24,6 +24,16 @@ elif [[ "$namespace" =~ ^pr-[1-9][0-9]{0,50}$ ]]; then
 else
   echo "hosted runtime namespace is not canonical: ${namespace}" >&2
   exit 2
+fi
+
+expected_deployed_head=""
+if [[ $# -eq 4 ]]; then
+  expected_namespace_uid="$3"
+  expected_deployed_head="$4"
+  if [[ "$namespace" != dev || -z "$expected_namespace_uid" || ! "$expected_deployed_head" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "automatic dev-demo reset requires the classified namespace UID and deployed head" >&2
+    exit 2
+  fi
 fi
 
 if ! [[ "$wait_seconds" =~ ^[1-9][0-9]*$ ]] ||
@@ -85,10 +95,25 @@ if [[ -n "$expected_namespace_uid" && "$namespace_uid" != "$expected_namespace_u
 fi
 delete_uid="${expected_namespace_uid:-$namespace_uid}"
 
+resource_version=""
+if [[ -n "$expected_deployed_head" ]]; then
+  if ! resource_version="$(jq -er --arg head "$expected_deployed_head" '
+    (.metadata.annotations // {}) as $annotations
+    | select(($annotations["firemud.dev/last-dev-demo-head-sha"] | ascii_downcase) == $head)
+    | select($annotations | has("firemud.dev/pending-dev-demo-deployment") | not)
+    | .metadata.resourceVersion | select(type == "string" and length > 0)
+  ' <<<"$namespace_json")"; then
+    echo "refusing automatic dev-demo reset: deployed head or namespace version changed, or a pending deployment exists" >&2
+    exit 1
+  fi
+fi
 delete_options="$(
   jq -cn \
     --arg uid "$delete_uid" \
-    '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}}'
+    --arg resource_version "$resource_version" '
+      {apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}}
+      | if $resource_version == "" then . else .preconditions.resourceVersion = $resource_version end
+    '
 )"
 delete_status=0
 printf '%s\n' "$delete_options" |

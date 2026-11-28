@@ -299,6 +299,25 @@ test('a newer exact failure visible during live identity lookup defeats stale ac
   assert.ok(identityReads >= 4, 'changed inventory must recheck tuple before claim and dispatch');
 });
 
+test('incomplete active inventory must converge or leave the refresh undispatched', async () => {
+  for (const recovers of [true, false]) {
+    const f = admissionFixture();
+    const actions = f.admission.github.rest.actions;
+    const list = actions.listWorkflowRuns;
+    let reads = 0;
+    actions.listWorkflowRuns = async input => {
+      if (input.status === 'queued' && (++reads === 1 || !recovers)) {
+        return {data: {total_count: 1, workflow_runs: []}};
+      }
+      return list(input);
+    };
+    f.runs.push(f.makePullRequestRun());
+    assert.equal(await admitRuntimeRefresh(f.admission), recovers ? 'already-active' : 'inventory-unavailable');
+    assert.equal(f.state.waits.filter(delay => delay === 2000).length, 1);
+    assert.equal(f.sent.length, 0);
+  }
+});
+
 test('identity retries are bounded and do not retry authorization failure', async () => {
   for (const [status, observations] of [[503, 6], [403, 1]]) {
     const f = admissionFixture();

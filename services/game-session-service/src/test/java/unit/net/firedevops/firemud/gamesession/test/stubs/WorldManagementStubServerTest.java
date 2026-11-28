@@ -23,7 +23,8 @@ class WorldManagementStubServerTest {
       int port = server.port();
       ManagedChannel channel =
           ManagedChannelBuilder.forAddress("localhost", port).usePlaintext().build();
-      try {
+      try (AutoCloseable stopChannel =
+          () -> assertTrue(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS))) {
         WorldManagementServiceGrpc.WorldManagementServiceBlockingStub stub =
             WorldManagementServiceGrpc.newBlockingStub(channel);
 
@@ -53,8 +54,6 @@ class WorldManagementStubServerTest {
         assertEquals(
             LookTestFixtures.DESTINATION_ROOM_NAME, destination.getSnapshot().getRoomName());
         assertEquals("SOUTH", destination.getSnapshot().getExits(0).getDirection());
-      } finally {
-        assertTrue(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS));
       }
     }
   }
@@ -65,7 +64,8 @@ class WorldManagementStubServerTest {
       int port = server.port();
       ManagedChannel channel =
           ManagedChannelBuilder.forAddress("localhost", port).usePlaintext().build();
-      try {
+      try (AutoCloseable stopChannel =
+          () -> assertTrue(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS))) {
         WorldManagementServiceGrpc.WorldManagementServiceBlockingStub stub =
             WorldManagementServiceGrpc.newBlockingStub(channel);
         RoomInstanceRef requestedRoom =
@@ -85,8 +85,6 @@ class WorldManagementStubServerTest {
         assertEquals("1", response.getSnapshot().getTenantId());
         assertEquals("42", response.getSnapshot().getGameInstanceId());
         assertEquals(LookTestFixtures.ROOM_INSTANCE_ID, response.getSnapshot().getRoomInstanceId());
-      } finally {
-        assertTrue(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS));
       }
     }
   }
@@ -97,7 +95,8 @@ class WorldManagementStubServerTest {
       int port = server.port();
       ManagedChannel channel =
           ManagedChannelBuilder.forAddress("localhost", port).usePlaintext().build();
-      try {
+      try (AutoCloseable stopChannel =
+          () -> assertTrue(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS))) {
         WorldManagementServiceGrpc.WorldManagementServiceBlockingStub stub =
             WorldManagementServiceGrpc.newBlockingStub(channel);
 
@@ -110,8 +109,6 @@ class WorldManagementStubServerTest {
                         .setRoomInstance(
                             RoomInstanceRef.newBuilder().setRoomInstanceId("unknown-room").build())
                         .build()));
-      } finally {
-        assertTrue(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS));
       }
     }
   }
