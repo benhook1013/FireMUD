@@ -15,23 +15,16 @@ import org.flywaydb.core.internal.info.MigrationInfoImpl;
  */
 final class RecoveryTransactionalMigrationCallback extends BaseCallback {
   private static final String MIGRATION_LOCK_TIMEOUT = "5s";
-  private final ThreadLocal<String> previousLockTimeout = new ThreadLocal<>();
 
   @Override
   public boolean supports(Event event, Context context) {
-    return event == Event.BEFORE_EACH_MIGRATE
-        || event == Event.AFTER_EACH_MIGRATE
-        || event == Event.AFTER_EACH_MIGRATE_ERROR;
+    return event == Event.BEFORE_EACH_MIGRATE;
   }
 
   @Override
   public void handle(Event event, Context context) {
-    if (event == Event.BEFORE_EACH_MIGRATE) {
-      requireTransactionalExecution(context);
-      setMigrationLockTimeout(context.getConnection());
-    } else {
-      restoreLockTimeout(context.getConnection(), event == Event.AFTER_EACH_MIGRATE_ERROR);
-    }
+    requireTransactionalExecution(context);
+    setMigrationLockTimeout(context.getConnection());
   }
 
   private static void requireTransactionalExecution(Context context) {
@@ -48,71 +41,23 @@ final class RecoveryTransactionalMigrationCallback extends BaseCallback {
     }
   }
 
-  private void setMigrationLockTimeout(Connection connection) {
-    if (previousLockTimeout.get() != null) {
-      throw new FlywayException("Recovery Flyway migration lock timeout is already active");
-    }
-    String previous;
-    try (var statement = connection.createStatement();
-        ResultSet result = statement.executeQuery("SHOW lock_timeout")) {
-      if (!result.next()) {
-        throw new SQLException("PostgreSQL did not return the current lock timeout");
-      }
-      previous = result.getString(1);
-    } catch (SQLException error) {
-      throw new FlywayException("Unable to read the Recovery Flyway lock timeout", error);
-    }
-
+  private static void setMigrationLockTimeout(Connection connection) {
     try {
-      setLockTimeout(connection, MIGRATION_LOCK_TIMEOUT);
-      previousLockTimeout.set(previous);
-    } catch (SQLException error) {
-      try {
-        setLockTimeout(connection, previous);
-      } catch (SQLException restoreError) {
-        error.addSuppressed(restoreError);
-        abort(connection, error);
+      if (connection.getAutoCommit()) {
+        throw new FlywayException("Recovery migration connection is not in a transaction");
       }
-      throw new FlywayException("Unable to set the Recovery Flyway lock timeout", error);
-    }
-  }
-
-  private void restoreLockTimeout(Connection connection, boolean tolerateMissingValue) {
-    String previous = previousLockTimeout.get();
-    if (previous == null) {
-      if (tolerateMissingValue) {
-        return;
-      }
-      throw new FlywayException("Recovery Flyway migration lock timeout was not captured");
-    }
-    try {
-      setLockTimeout(connection, previous);
-    } catch (SQLException error) {
-      abort(connection, error);
-      throw new FlywayException(
-          "Unable to restore the Recovery Flyway lock timeout; the connection was aborted", error);
-    } finally {
-      previousLockTimeout.remove();
-    }
-  }
-
-  private static void setLockTimeout(Connection connection, String value) throws SQLException {
-    try (PreparedStatement statement =
-        connection.prepareStatement("SELECT set_config('lock_timeout', ?, false)")) {
-      statement.setString(1, value);
-      try (ResultSet result = statement.executeQuery()) {
-        if (!result.next()) {
-          throw new SQLException("PostgreSQL did not apply the lock timeout");
+      // PostgreSQL restores the session setting when Flyway commits or rolls back.
+      try (PreparedStatement statement =
+          connection.prepareStatement("SELECT set_config('lock_timeout', ?, true)")) {
+        statement.setString(1, MIGRATION_LOCK_TIMEOUT);
+        try (ResultSet result = statement.executeQuery()) {
+          if (!result.next()) {
+            throw new SQLException("PostgreSQL did not apply the lock timeout");
+          }
         }
       }
-    }
-  }
-
-  private static void abort(Connection connection, SQLException failure) {
-    try {
-      connection.abort(Runnable::run);
-    } catch (SQLException | RuntimeException abortError) {
-      failure.addSuppressed(abortError);
+    } catch (SQLException error) {
+      throw new FlywayException("Unable to set the Recovery Flyway lock timeout", error);
     }
   }
 }

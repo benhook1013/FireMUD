@@ -235,6 +235,9 @@ class RecoveryJournalHealthIndicatorTest {
       assertThat(closing.await(5, TimeUnit.SECONDS)).isTrue();
       assertThat(first.get(2, TimeUnit.SECONDS).getStatus()).isEqualTo(Status.DOWN);
       assertThat(indicator.health().getStatus()).isEqualTo(Status.DOWN);
+      var probes = (ThreadPoolExecutor) ReflectionTestUtils.getField(indicator, "probes");
+      assertThat(probes).isNotNull();
+      assertThat(probes.getTaskCount()).isEqualTo(1);
       verify(source, times(1)).getConnection();
 
       release.countDown();

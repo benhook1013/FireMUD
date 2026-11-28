@@ -57,6 +57,10 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
       var configuredExclusions = binder.bind("spring.autoconfigure.exclude", String[].class);
       List<String> exclusions =
           configuredExclusions.isBound() ? Arrays.asList(configuredExclusions.get()) : List.of();
+      if (exclusions.contains(RecoveryControllerOwnerConfiguration.class.getName())) {
+        throw new SafeOverrideException(
+            "spring.autoconfigure.exclude must retain the Recovery owner configuration");
+      }
       if (exclusions.contains(DataSourceAutoConfiguration.class.getName())
           || (flywayEnabled && exclusions.contains(FlywayAutoConfiguration.class.getName()))) {
         throw new SafeOverrideException(

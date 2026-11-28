@@ -348,6 +348,22 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         .hasNoCause();
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void rejectsOwnerAutoConfigurationExclusionRegardlessOfFlyway(boolean flywayEnabled) {
+    var environment =
+        fixtureEnvironment()
+            .withProperty("spring.flyway.enabled", Boolean.toString(flywayEnabled))
+            .withProperty(
+                "spring.autoconfigure.exclude[0]",
+                RecoveryControllerOwnerConfiguration.class.getName());
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("spring.autoconfigure.exclude must retain the Recovery owner configuration")
+        .hasNoCause();
+  }
+
   @Test
   void rejectsAutoConfigurationExclusionForEnabledFlyway() {
     var environment =

@@ -38,7 +38,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       """
           + JooqInitialGameplayReleaseJournal.DURABLE_JOURNAL_RELATIONS
           + """
-            AND (SELECT count(*) = 9 AND count(DISTINCT version) FILTER (WHERE success AND (
+            AND (SELECT count(*) = 10 AND count(DISTINCT version) FILTER (WHERE success AND (
                (version = '1' AND script = 'V1__initial_gameplay_release_journal.sql')
                OR (version = '2' AND script = 'V2__retain_initial_gameplay_release_attempt_closure.sql')
                OR (version = '3'
@@ -54,7 +54,9 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                OR (version = '8'
                    AND script = 'V8__require_pending_effect_without_dispatch_timestamp.sql')
                OR (version = '9'
-                   AND script = 'V9__require_pristine_pending_attempt.sql'))) = 9
+                   AND script = 'V9__require_pristine_pending_attempt.sql')
+               OR (version = '10'
+                   AND script = 'V10__refuse_pending_effects_with_retained_attempts.sql'))) = 10
              FROM recovery_control.flyway_schema_history_recovery_control
              WHERE version IS NOT NULL OR type <> 'SCHEMA')
             AND has_table_privilege(
@@ -256,6 +258,11 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                 AND attname = 'readback_identity' AND NOT attisdropped AND NOT attnotnull
                 AND NOT atthasdef
                 AND atttypid = 'pg_catalog.text'::regtype)
+            AND EXISTS (
+              SELECT 1 FROM pg_catalog.pg_attribute
+              WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+                AND attname = 'payload' AND NOT attisdropped AND attnotnull
+                AND atttypid = 'pg_catalog.jsonb'::regtype)
             AND (SELECT count(*) = 2 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND attname IN ('operation_tuple_digest', 'payload_digest')
