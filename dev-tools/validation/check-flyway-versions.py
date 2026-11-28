@@ -47,11 +47,58 @@ RECOVERY_DATASOURCE_URL = (
     "jdbc:postgresql://${FIREMUD_RECOVERY_CONTROL_DB_HOST}:${FIREMUD_RECOVERY_CONTROL_DB_PORT:5432}"
     "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended"
 )
+RECOVERY_DATABASE_PORT = "firemudrecoverycontroldbport"
 PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties|xml)$")
 RUNTIME_DEPENDENCY_RE = re.compile(
     r'(?:implementation|api|runtimeOnly)\s*\(\s*project\(\s*":([^\"]+)"'
     r'|dependencies\.add\(\s*"(?:implementation|api|runtimeOnly)"\s*,\s*project\.project\(\s*":([^\"]+)"'
 )
+
+
+def decode_indexed_string_list(
+    properties: dict[str, object], ambiguous: set[str], property_name: str
+) -> bool:
+    """Decode one Boot indexed string list into its canonical list property."""
+    indexed_paths = {
+        path for path in properties
+        if path.startswith((property_name + "[", property_name + "."))
+    }
+    value = properties.get(property_name)
+    if not indexed_paths and not isinstance(value, dict):
+        return True
+    if property_name in ambiguous:
+        return False
+
+    indexed_values: dict[int, object] = {}
+    if isinstance(value, dict):
+        # Boot flattens integer YAML keys to bracketed collection indices.
+        if not value or any(type(key) is not int for key in value):
+            return False
+        indexed_values.update(value)
+    elif property_name in properties:
+        return False
+
+    index_pattern = re.compile(
+        r"^" + re.escape(property_name) + r"\[(0|[1-9][0-9]*)\]$"
+    )
+    for path in indexed_paths:
+        match = index_pattern.fullmatch(path)
+        if match is None or path in ambiguous:
+            return False
+        index = int(match.group(1))
+        if index in indexed_values:
+            return False
+        indexed_values[index] = properties[path]
+    if set(indexed_values) != set(range(len(indexed_values))) or not all(
+        isinstance(item, str) for item in indexed_values.values()
+    ):
+        return False
+
+    properties[property_name] = [indexed_values[index] for index in range(len(indexed_values))]
+    for path in indexed_paths:
+        properties.pop(path)
+        ambiguous.discard(path)
+    return True
 PLUGIN_RE = re.compile(r'(?:\bid|pluginManager\.apply)\(\s*"([^\"]+)"\s*\)')
 Snapshot = dict[str, bytes]
 SYMLINK_SNAPSHOT = b"\0recovery-migration-symlink\0"
@@ -589,38 +636,11 @@ def recovery_flyway_config(
                    for path in properties):
                 return None
             locations_property = "spring.flyway.locations"
-            indexed_location_paths = {
-                path for path in properties
-                if path.startswith((locations_property + "[", locations_property + "."))
-            }
-            location_value = properties.get(locations_property)
-            if indexed_location_paths or isinstance(location_value, dict):
-                if locations_property in ambiguous:
-                    return None
-                indexed_values: dict[int, object] = {}
-                if isinstance(location_value, dict):
-                    # Boot flattens integer YAML keys to bracketed collection indices.
-                    if not location_value or any(type(key) is not int for key in location_value):
-                        return None
-                    indexed_values.update(location_value)
-                elif locations_property in properties:
-                    return None
-                index_pattern = re.compile(r"^spring\.flyway\.locations\[(0|[1-9][0-9]*)\]$")
-                for path in indexed_location_paths:
-                    match = index_pattern.fullmatch(path)
-                    if match is None or path in ambiguous:
-                        return None
-                    index = int(match.group(1))
-                    if index in indexed_values:
-                        return None
-                    indexed_values[index] = properties[path]
-                if set(indexed_values) != set(range(len(indexed_values))) or not all(
-                        isinstance(value, str) for value in indexed_values.values()):
-                    return None
-                properties[locations_property] = [indexed_values[index] for index in range(len(indexed_values))]
-                for path in indexed_location_paths:
-                    properties.pop(path)
-                    ambiguous.discard(path)
+            if not decode_indexed_string_list(properties, ambiguous, locations_property):
+                return None
+            suffixes_property = "spring.flyway.sqlmigrationsuffixes"
+            if not decode_indexed_string_list(properties, ambiguous, suffixes_property):
+                return None
             schemas_property = "spring.flyway.schemas"
             indexed_schema_paths = {
                 path for path in properties
@@ -691,7 +711,7 @@ def recovery_flyway_config(
                     ambiguous.discard(path)
             exact_guard_paths = {auto_configuration_switch, pool_init_sql, pool_test_query,
                                  datasource_type, *credential_paths, *driver_paths,
-                                 recovery_database_host,
+                                 recovery_database_host, RECOVERY_DATABASE_PORT,
                                  "spring.flyway.validateonmigrate",
                                  "spring.datasource.url", "spring.datasource.hikari.jdbcurl",
                                  "spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
@@ -761,6 +781,10 @@ def recovery_flyway_config(
         # The host belongs to the deployment environment. A packaged default
         # can silently redirect the dedicated journal datasource when the
         # operator omits its required environment value.
+        return None
+    if require_current_configuration and RECOVERY_DATABASE_PORT in effective_settings:
+        # The packaged URL keeps the canonical 5432 fallback, while the actual
+        # port remains a deployment environment override guarded by the runtime.
         return None
     if any(effective_settings[path] != reference for path, reference in credential_paths.items()
            if path in effective_settings):
@@ -1103,6 +1127,12 @@ def run_self_test() -> None:
         **recovery_history,
         recovery_config: recovery_settings + b"FIREMUD_RECOVERY_CONTROL_DB_HOST: shared-postgres\n",
     }, recovery_history, "historical effective migration no longer applied")
+    check("packaged Recovery port override cannot qualify history", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"FIREMUD_RECOVERY_CONTROL_DB_PORT: 0\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    if ":${FIREMUD_RECOVERY_CONTROL_DB_PORT:5432}" not in RECOVERY_DATASOURCE_URL:
+        raise AssertionError("Recovery datasource URL must retain its canonical 5432 fallback")
     check("global auto-configuration accepts ordinary Java-trim padding", {
         **recovery_history,
         recovery_config: recovery_settings + b"spring.boot.enable-auto-configuration: ' true '\n",
@@ -1582,6 +1612,20 @@ def run_self_test() -> None:
         indexed_locations_config:
             b"spring.flyway.locations[0]: classpath:db/recovery-control-migration\n",
     }, recovery_history, None)
+    check("indexed Recovery SQL suffix binds the canonical single .sql entry", {
+        **recovery_history,
+        indexed_locations_config: b"spring.flyway.sql-migration-suffixes[0]: .sql\n",
+    }, recovery_history, None)
+    for malformed_suffixes in (
+        b"spring.flyway.sql-migration-suffixes[1]: .sql\n",
+        b"spring.flyway.sql-migration-suffixes[0]: .sql\nspring.flyway.sql-migration-suffixes[2]: .sql\n",
+        b"spring.flyway.sql-migration-suffixes.0: .sql\n",
+        b"spring.flyway.sql-migration-suffixes[0]: .ddl\n",
+    ):
+        check("malformed or noncanonical indexed Recovery SQL suffix is rejected", {
+            **recovery_history,
+            indexed_locations_config: malformed_suffixes,
+        }, recovery_history, "historical effective migration no longer applied")
     check("numeric YAML Recovery index replaces lower-priority scalar locations", {
         **recovery_history,
         recovery_config: ordinary_locations_settings,

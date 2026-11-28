@@ -58,15 +58,12 @@ class InitialGameplayRecoverCodecTest {
   }
 
   @Test
-  void evidenceReferenceKeepsTheOriginalOwnerIdentityAndDigest() {
-    String decomposed = "owner-cafe\u0301";
+  void evidenceReferenceRequiresNfcAndKeepsAcceptedOwnerIdentityAndDigest() {
     String composed = "owner-caf\u00e9";
-    var first = decode(WIRE.replace("\"evidence\"", "\"" + decomposed + "\""));
-    var second = decode(WIRE.replace("\"evidence\"", "\"" + composed + "\""));
-    assertThat(first.target().evidenceRef()).isEqualTo(decomposed);
-    assertThat(second.target().evidenceRef()).isEqualTo(composed);
-    assertThat(InitialGameplayRecoverCodec.mutationDigest(first))
-        .isNotEqualTo(InitialGameplayRecoverCodec.mutationDigest(second));
+    var request = decode(WIRE.replace("\"evidence\"", "\"" + composed + "\""));
+    assertThat(request.target().evidenceRef()).isEqualTo(composed);
+    assertThat(InitialGameplayRecoverCodec.mutationDigest(request)).isNotEqualTo(DIGEST);
+    rejects(WIRE.replace("\"evidence\"", "\"owner-cafe\u0301\""));
   }
 
   @Test
@@ -148,16 +145,12 @@ class InitialGameplayRecoverCodecTest {
   }
 
   @Test
-  void preservesExactLaunchDescriptorIdAndItsMutationIdentity() {
+  void launchDescriptorIdRequiresNfcAndPreservesAcceptedMutationIdentity() {
     String composedId = "launch-caf\u00e9";
-    String decomposedId = "launch-cafe\u0301";
     var composed = decode(WIRE.replace("\"launch\"", "\"" + composedId + "\""));
-    var decomposed = decode(WIRE.replace("\"launch\"", "\"" + decomposedId + "\""));
     assertThat(composed.target().launchAssociation().launchDescriptorId()).isEqualTo(composedId);
-    assertThat(decomposed.target().launchAssociation().launchDescriptorId())
-        .isEqualTo(decomposedId);
-    assertThat(InitialGameplayRecoverCodec.mutationDigest(decomposed))
-        .isNotEqualTo(InitialGameplayRecoverCodec.mutationDigest(composed));
+    assertThat(InitialGameplayRecoverCodec.mutationDigest(composed)).isNotEqualTo(DIGEST);
+    rejects(WIRE.replace("\"launch\"", "\"launch-cafe\u0301\""));
   }
 
   @Test

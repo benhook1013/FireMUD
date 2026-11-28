@@ -141,7 +141,7 @@ public final class InitialGameplayReleaseController {
   }
 
   private Operation reconcileReadback(Operation operation, OutboxEntry outbox) {
-    Operation reconciled = readBackEffect(operation, outbox, false);
+    Operation reconciled = readBackEffect(operation, outbox);
     if (outbox.effect().kind() != EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF
         || reconciled.phase() != Phase.RELEASING) {
       return reconciled;
@@ -149,7 +149,7 @@ public final class InitialGameplayReleaseController {
     UUID operationId = operation.scope().operationId();
     return journal
         .findHeldPreparationForRefresh(operationId)
-        .map(preparation -> readBackEffect(reconciled, preparation, true))
+        .map(preparation -> readBackEffect(reconciled, preparation))
         .orElseGet(() -> requireOperation(operationId));
   }
 
@@ -193,8 +193,7 @@ public final class InitialGameplayReleaseController {
     return reconcileReadback(operation, dispatched);
   }
 
-  private Operation readBackEffect(
-      Operation operation, OutboxEntry outbox, boolean optionalPreparationRefresh) {
+  private Operation readBackEffect(Operation operation, OutboxEntry outbox) {
     tupleCodec.requireEffectMatchesOperation(outbox.effect(), operation);
     UUID attemptId = outbox.lastAttemptId();
     if (attemptId == null) {
@@ -224,7 +223,7 @@ public final class InitialGameplayReleaseController {
     try {
       return journal.recordEffectReadback(outbox, readback, now);
     } catch (InitialGameplayReleaseConflictException conflict) {
-      if (optionalPreparationRefresh) {
+      if (outbox.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED) {
         // An independent journal read verifies the durable handoff receipt for FINALIZED.
         Operation current = requireOperation(operation.scope().operationId());
         if (current.phase() == Phase.FINALIZED) {
