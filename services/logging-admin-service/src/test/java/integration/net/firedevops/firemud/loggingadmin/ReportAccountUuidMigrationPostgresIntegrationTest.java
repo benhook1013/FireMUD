@@ -36,6 +36,12 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 class ReportAccountUuidMigrationPostgresIntegrationTest {
   private static final String MIGRATION_LOCATION = "classpath:db/migration";
+  private static final List<String> EXPECTED_VERSIONS =
+      List.of(
+          "1", "2", "3", "4", "1000", "1001", "1002", "1003", "1004", "1005", "1006", "1007",
+          "1008");
+  private static final List<String> EXPECTED_PRE_REPORT_VERSIONS =
+      EXPECTED_VERSIONS.subList(0, EXPECTED_VERSIONS.size() - 1);
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
@@ -82,7 +88,9 @@ class ReportAccountUuidMigrationPostgresIntegrationTest {
                 schema,
                 "INSERT INTO player_reports (tenant_id, reporter_account_id, type, description) VALUES (1, NULL, 'BUG', 'null reporter')"));
     // Runtime discovery includes the unchanged service and Saga migration history.
-    assertThat(history(schema)).hasSize(13);
+    assertThat(history(schema))
+        .extracting(MigrationHistoryEntry::version)
+        .containsExactlyElementsOf(EXPECTED_VERSIONS);
   }
 
   @Test
@@ -107,7 +115,9 @@ class ReportAccountUuidMigrationPostgresIntegrationTest {
                 schema, "SELECT account_id FROM log_events WHERE message = 'preserve generic log'"))
         .isEqualTo(42L);
     // All earlier service and Saga migrations remain present.
-    assertThat(history(schema)).hasSize(13);
+    assertThat(history(schema))
+        .extracting(MigrationHistoryEntry::version)
+        .containsExactlyElementsOf(EXPECTED_VERSIONS);
   }
 
   @Test
@@ -118,11 +128,14 @@ class ReportAccountUuidMigrationPostgresIntegrationTest {
         schema,
         "INSERT INTO moderation_actions (tenant_id, account_id, action, reason) VALUES (17, 'b8d093f7-cb70-40ed-9fac-3c82d4bf28f1', 'warning', 'retained action')");
     List<String> rowsBefore = rows(schema, "moderation_actions");
-    List<String> historyBefore = history(schema);
+    List<MigrationHistoryEntry> historyBefore = history(schema);
     migrateToLatest(schema);
     assertThat(rows(schema, "moderation_actions")).isEqualTo(rowsBefore);
-    assertThat(history(schema).subList(0, historyBefore.size())).isEqualTo(historyBefore);
-    assertThat(history(schema)).hasSize(historyBefore.size() + 1);
+    List<MigrationHistoryEntry> historyAfter = history(schema);
+    assertThat(historyAfter)
+        .extracting(MigrationHistoryEntry::version)
+        .containsExactlyElementsOf(EXPECTED_VERSIONS);
+    assertThat(historyAfter.subList(0, historyBefore.size())).isEqualTo(historyBefore);
   }
 
   @Test
@@ -132,12 +145,15 @@ class ReportAccountUuidMigrationPostgresIntegrationTest {
     execute(
         schema,
         "INSERT INTO player_reports (tenant_id, reporter_account_id, target_account_id, type, description) VALUES (41, 43, 47, 'BUG', 'retained report')");
-    List<String> historyBefore = history(schema);
+    List<MigrationHistoryEntry> historyBefore = history(schema);
     List<String> rowsBefore = rows(schema, "player_reports");
 
     FlywayException failure = assertThrows(FlywayException.class, () -> migrateToLatest(schema));
 
     assertThat(failure).hasStackTraceContaining("Account-owned recovery is required");
+    assertThat(historyBefore)
+        .extracting(MigrationHistoryEntry::version)
+        .containsExactlyElementsOf(EXPECTED_PRE_REPORT_VERSIONS);
     assertThat(history(schema)).isEqualTo(historyBefore);
     assertThat(rows(schema, "player_reports")).isEqualTo(rowsBefore);
     assertThat(columnType(schema, "player_reports", "reporter_account_id")).isEqualTo("int8");
@@ -167,7 +183,7 @@ class ReportAccountUuidMigrationPostgresIntegrationTest {
   void migrationWaitsForConcurrentWriterAndRefusesAfterItsRowCommits() throws Exception {
     String schema = createSchema();
     migrateToVersion(schema, "1007");
-    List<String> historyBefore = history(schema);
+    List<MigrationHistoryEntry> historyBefore = history(schema);
 
     ExecutorService executor = Executors.newSingleThreadExecutor();
     try (Connection writer = connection()) {
@@ -195,8 +211,10 @@ class ReportAccountUuidMigrationPostgresIntegrationTest {
       ExecutionException failure =
           assertThrows(ExecutionException.class, () -> migration.get(10, TimeUnit.SECONDS));
       assertThat(failure).hasStackTraceContaining("Account-owned recovery is required");
+      assertThat(historyBefore)
+          .extracting(MigrationHistoryEntry::version)
+          .containsExactlyElementsOf(EXPECTED_PRE_REPORT_VERSIONS);
       assertThat(history(schema)).isEqualTo(historyBefore);
-      assertThat(history(schema)).hasSize(12);
       assertThat(columnType(schema, "player_reports", "reporter_account_id")).isEqualTo("int8");
       assertThat(scalarLong(schema, "SELECT count(*) FROM player_reports")).isEqualTo(1L);
       assertThat(
@@ -273,8 +291,8 @@ class ReportAccountUuidMigrationPostgresIntegrationTest {
     }
   }
 
-  private static List<String> history(String schema) throws SQLException {
-    List<String> entries = new ArrayList<>();
+  private static List<MigrationHistoryEntry> history(String schema) throws SQLException {
+    List<MigrationHistoryEntry> entries = new ArrayList<>();
     try (Connection connection = connection();
         Statement statement = connection.createStatement();
         ResultSet result =
@@ -284,15 +302,16 @@ class ReportAccountUuidMigrationPostgresIntegrationTest {
                     "SELECT version, checksum, success FROM flyway_schema_history ORDER BY installed_rank"))) {
       while (result.next()) {
         entries.add(
-            result.getString("version")
-                + ":"
-                + result.getString("checksum")
-                + ":"
-                + result.getBoolean("success"));
+            new MigrationHistoryEntry(
+                result.getString("version"),
+                result.getString("checksum"),
+                result.getBoolean("success")));
       }
     }
     return entries;
   }
+
+  private record MigrationHistoryEntry(String version, String checksum, boolean successful) {}
 
   private static List<String> rows(String schema, String table) throws SQLException {
     List<String> records = new ArrayList<>();
