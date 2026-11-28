@@ -2031,7 +2031,7 @@ for guard in event head output; do
 done
 
 RESOLVER="$ROOT_DIR/.github/actions/preserve-required-gate/resolve-deferred-gate.sh"
-python3 - "$ROOT_DIR" <<'PY'
+python3 - "$ROOT_DIR" "$tmp_dir/resolver-source-head.js" <<'PY'
 from pathlib import Path
 import sys
 import yaml
@@ -2051,15 +2051,21 @@ assert workflow["concurrency"] == {
     "cancel-in-progress": "false",
 }
 job = workflow["jobs"]["resolve"]
-import copy
-import json
-
 assert job["if"] == "${{ github.event.workflow_run.event == 'pull_request' }}"
 assert "REQUIRED_GATE_PROOF_ALLOWLIST" not in (job.get("env") or {})
 assert job["permissions"] == {"contents": "read", "checks": "read", "pull-requests": "read", "actions": "write", "statuses": "write"}
 checkouts = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")]
 assert len(checkouts) == 1 and checkouts[0]["with"] == {"ref": "${{ github.sha }}", "persist-credentials": "false"}
+hardening, source_head = job["steps"][:2]
+assert hardening["name"] == "Harden runner" and "if" not in hardening
+assert source_head["id"] == "source-head"
+assert source_head["if"] == "${{ github.event.workflow_run.conclusion == 'cancelled' }}"
+assert source_head["continue-on-error"] == "true"
+assert source_head["uses"].startswith("actions/github-script@")
+Path(sys.argv[2]).write_text(source_head["with"]["script"])
 preflight = next(step for step in job["steps"] if step["name"] == "Preflight deferred gate resolution")
+for step in (*job["steps"][2:4], preflight):
+    assert step["if"] == "${{ steps.source-head.outputs.obsolete != 'true' }}"
 admission = next(step for step in job["steps"] if step["name"] == "Admit deferred gate reruns")
 assert preflight["id"] == "preflight" and preflight["run"].endswith(" preflight")
 assert admission["id"] == "admission"
@@ -2069,9 +2075,80 @@ assert confirmation["name"] == "Confirm admitted deferred gate jobs ${{ steps.ad
 assert confirmation["if"] == "${{ steps.admission.outcome == 'success' }}" and confirmation["run"] == ":"
 reconcile = job["steps"][-1]
 assert reconcile["name"] == "Reconcile supplementary required gate status"
-assert reconcile["if"] == "${{ always() }}" and reconcile["run"].endswith(" reconcile")
+assert reconcile["if"] == "${{ always() && steps.source-head.outputs.obsolete != 'true' }}"
+assert reconcile["run"].endswith(" reconcile")
 assert job["steps"].index(reconcile) > job["steps"].index(confirmation)
 PY
+
+node - "$tmp_dir/resolver-source-head.js" <<'NODE'
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const checkSourceHead = new AsyncFunction("context", "github", "core", fs.readFileSync(process.argv[2], "utf8"));
+const oldHead = "a".repeat(40);
+const newHead = "b".repeat(40);
+const repository = {id: 42, full_name: "example/firemud"};
+const base = {ref: "develop", repo: {id: repository.id}};
+const association = {
+  number: 123, base,
+  head: {ref: "feature", sha: newHead, repo: {id: repository.id}},
+};
+const context = {
+  repo: {owner: "example", repo: "firemud"},
+  payload: {
+    action: "completed", repository,
+    workflow_run: {
+      id: 100, workflow_id: 7, name: "CI — Validation", path: ".github/workflows/ci.yml",
+      display_title: `CI — Validation pr-123 base-${"c".repeat(40)} head-${oldHead}`,
+      event: "pull_request", status: "completed", conclusion: "cancelled",
+      head_sha: oldHead, head_branch: "feature", repository, head_repository: repository,
+      pull_requests: [association],
+    },
+  },
+};
+
+async function check(mutate, reads, obsolete) {
+  const input = structuredClone(context);
+  const pull = {...structuredClone(association), state: "open"};
+  const providerError = mutate(input.payload.workflow_run, pull);
+  const requests = [];
+  const outputs = [];
+  const github = {rest: {pulls: {get: async request => {
+    requests.push(request);
+    if (providerError === true) throw new Error("pull unavailable");
+    return {data: pull};
+  }}}};
+  await checkSourceHead(input, github, {notice() {}, setOutput: (...output) => outputs.push(output)});
+  assert.deepEqual(requests, reads ? [{owner: "example", repo: "firemud", pull_number: 123}] : []);
+  assert.deepEqual(outputs, obsolete ? [["obsolete", "true"]] : []);
+}
+
+(async () => {
+  await check(() => {}, true, true);
+  await check((_, pull) => {pull.head.sha = oldHead;}, true, false);
+  await check((_, pull) => {pull.head.sha = oldHead.toUpperCase();}, true, false);
+  await check((_, pull) => {pull.head.ref = "another";}, true, false);
+  await check((_, pull) => {pull.head.repo.id = 9;}, true, false);
+  await check((_, pull) => {delete pull.head.sha;}, true, false);
+  await check(() => true, true, false);
+  await check((source, pull) => {
+    source.pull_requests = [];
+    pull.head.sha = oldHead;
+  }, false, false);
+  for (const mutate of [
+    source => {source.pull_requests.push({...association, number: 124});},
+    source => {delete source.pull_requests[0].head.sha;},
+    source => {source.pull_requests[0].head.sha = oldHead;},
+    source => {source.pull_requests[0].head.repo.id = 9;},
+    source => {source.head_repository = {id: 9};},
+    source => {source.display_title = source.display_title.replace("pr-123", "pr-124");},
+    source => {source.display_title = source.display_title.replace(oldHead, newHead);},
+    source => {source.head_branch = "another";},
+    source => {source.conclusion = "success";},
+    source => {source.conclusion = "failure";},
+  ]) await check(mutate, false, false);
+})().catch(error => {console.error(error); process.exitCode = 1;});
+NODE
 
 mkdir "$tmp_dir/resolver-bin"
 cat >"$tmp_dir/resolver-bin/gh" <<'EOF'
@@ -2920,6 +2997,25 @@ run_resolver metadata-first 100 pending-predecessor
 for scenario in consumed fresh-changed fresh-base-branch fresh-head-repository ordinary-failure stale-pr wrong-tuple wrong-association malformed-path; do
   run_resolver "$scenario"
   [[ "$(resolver_posts "$scenario")" == 0 ]] || { echo "resolver reran rejected target: $scenario" >&2; exit 1; }
+done
+# Each resolver phase stops at the same live stale tuple, before its own
+# workflow/run lookups, predecessor history, barrier reads or any writes.
+for resolver_phase in preflight admit reconcile; do
+  printf '{"scenario":"stale-pr"}\n' >"$tmp_dir/resolver-state-stale-pr"
+  run_resolver stale-pr 100 no-local-workflow-file "$resolver_phase"
+  jq -e '.calls == [
+    "GET /repos/example/firemud/actions/runs/100",
+    "GET /repos/example/firemud/actions/workflows/ci.yml",
+    "GET /repos/example/firemud/pulls/123"
+  ] and (.posts // 0) == 0 and (.status_posts // [] | length) == 0' \
+    "$tmp_dir/resolver-state-stale-pr" >/dev/null || {
+    echo "stale resolver phase $resolver_phase read beyond attribution and the current pull" >&2; exit 1
+  }
+  case "$resolver_phase" in
+    preflight) [[ "$(<"$tmp_dir/resolver-output-stale-pr")" == 'eligible=false' ]] ;;
+    admit) [[ "$(<"$tmp_dir/resolver-output-stale-pr")" == 'accepted_job_ids=[]' ]] ;;
+    reconcile) [[ ! -s "$tmp_dir/resolver-output-stale-pr" ]] ;;
+  esac
 done
 for scenario in source-transient-row-count source-transient-missing-source source-empty-then-complete; do
   run_resolver "$scenario"
