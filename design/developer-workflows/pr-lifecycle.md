@@ -46,7 +46,7 @@ Rules for triage:
 A PR is ready for the human's merge decision when:
 
 - every thread, current and outdated, is resolved under the triage rules, and every Fix-now finding is verified fixed at the current head;
-- every required review channel has completed its configured policy with attributable results, or the human waived Hosted under Change And Merge Policy;
+- every required review channel has completed its configured policy with attributable results. A human waiver under Change And Merge Policy applies only to Hosted and grants no review credit;
 - required CI is green on the exact head; on a stacked base with no required checks, the applicable substantive workflows must actually have run, and the candidate must contain any workflow changes it relies on;
 - proportionate validation and runtime proof from [validation and runtime proof](./validation-and-runtime-proof.md) is complete, including focused tests for important changed behavior that patch coverage shows is untested;
 - the title and body are current.

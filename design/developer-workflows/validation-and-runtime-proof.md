@@ -19,7 +19,7 @@ Optional local Renovate extraction and the daemon JDK refresh workflow are docum
 
 ## Local Gradle Execution
 
-Run heavy local Gradle proof, documentation validation, and service boot-jar builds through `bash dev-tools/validation/run-locked-gradle.sh <tasks>`; direct `./gradlew` bypasses its cross-worktree serialization and cleanup. It needs Linux with `/proc` and pidfd support and fails explicitly elsewhere. Complete local runtime proofs run inside `--resource-session`, which runtime wrappers enter automatically. Local runs force `--no-daemon`; under `CI=true` the local resource guard and run budget do not apply. Internals are in the [validation tools README](../../dev-tools/validation/README.md).
+Run heavy local Gradle proof, documentation validation, and service boot-jar builds through `bash dev-tools/validation/run-locked-gradle.sh <tasks>`; direct `./gradlew` bypasses its cross-worktree serialization and cleanup. It needs Linux with `/proc` and pidfd support and fails explicitly elsewhere. Complete local runtime proofs run inside `--resource-session`, which runtime wrappers enter automatically. Local runs force `--no-daemon`. Under `CI=true`, runs without an inherited resource-session lease are exempt from the local resource guard and run budget. Children with an inherited lease retain local policy and its run budget. Internals are in the [validation tools README](../../dev-tools/validation/README.md).
 
 | Setting | Default | Effect |
 | --- | --- | --- |
