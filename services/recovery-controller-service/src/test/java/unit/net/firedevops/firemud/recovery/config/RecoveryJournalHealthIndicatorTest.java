@@ -3,6 +3,7 @@ package net.firedevops.firemud.recovery.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.intThat;
 import static org.mockito.Mockito.doAnswer;
@@ -33,6 +34,7 @@ import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.Status;
 import org.springframework.test.util.ReflectionTestUtils;
 
+@ResourceLock("postgresql-driver-protocol-logger")
 class RecoveryJournalHealthIndicatorTest {
   private static final long CALLER_DEADLINE_NANOS = TimeUnit.SECONDS.toNanos(2);
   private static final long CALLER_DEADLINE_SCHEDULING_ALLOWANCE_NANOS =
@@ -47,12 +49,15 @@ class RecoveryJournalHealthIndicatorTest {
       int originalTimeout, int expectedTimeout, boolean queryFails) throws SQLException {
     DataSource source = mock(DataSource.class);
     try (Connection connection = mock(Connection.class);
+        PreparedStatement canonicalDeparse = mock(PreparedStatement.class);
         PreparedStatement statement = mock(PreparedStatement.class);
         ResultSet rows = mock(ResultSet.class)) {
+      String canonicalSql = "SET LOCAL quote_all_identifiers = 'off'";
       when(source.getConnection()).thenReturn(connection);
       when(connection.getAutoCommit()).thenReturn(true);
       when(connection.getNetworkTimeout()).thenReturn(originalTimeout);
       when(connection.prepareStatement(anyString())).thenReturn(statement);
+      when(connection.prepareStatement(canonicalSql)).thenReturn(canonicalDeparse);
       if (queryFails) {
         when(statement.executeQuery()).thenThrow(new SQLException("fixture database unavailable"));
       } else {
@@ -70,7 +75,7 @@ class RecoveryJournalHealthIndicatorTest {
         var health = indicator.health();
 
         assertThat(health.getStatus()).isEqualTo(queryFails ? Status.DOWN : Status.UP);
-        var sequence = inOrder(connection, statement);
+        var sequence = inOrder(connection, canonicalDeparse, statement);
         sequence
             .verify(connection)
             .setNetworkTimeout(
@@ -79,15 +84,29 @@ class RecoveryJournalHealthIndicatorTest {
                     preserveShorterTimeout
                         ? timeout == expectedTimeout
                         : timeout > 0 && timeout <= expectedTimeout));
-        assertThat(sequence.verify(connection).prepareStatement(anyString())).isNull();
+        sequence.verify(connection).setAutoCommit(false);
+        assertThat(sequence.verify(connection).prepareStatement(canonicalSql)).isNull();
+        assertThat(sequence.verify(canonicalDeparse).execute()).isFalse();
+        assertThat(
+                sequence
+                    .verify(connection)
+                    .prepareStatement(argThat(sql -> sql.contains("SELECT"))))
+            .isNull();
         sequence.verify(statement).setQueryTimeout(2);
         assertThat(sequence.verify(statement).executeQuery()).isNull();
+        if (queryFails) {
+          sequence.verify(connection).rollback();
+        } else {
+          sequence.verify(connection).commit();
+        }
+        sequence.verify(connection).setAutoCommit(true);
         sequence.verify(connection).setNetworkTimeout(any(), eq(originalTimeout));
         sequence.verify(connection).close();
       } finally {
         indicator.stopProbes();
         rows.close();
         statement.close();
+        canonicalDeparse.close();
         connection.close();
       }
     }
@@ -177,7 +196,6 @@ class RecoveryJournalHealthIndicatorTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  @ResourceLock("postgresql-driver-protocol-logger")
   void readinessChecksDriverTracingAgainAfterSuccessfulProbe(boolean enableTracingDuringProbe)
       throws SQLException {
     DataSource source = mock(DataSource.class);

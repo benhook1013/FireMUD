@@ -24,6 +24,7 @@ import org.springframework.stereotype.Component;
 final class RecoveryJournalHealthIndicator implements HealthIndicator {
   private static final int PROBE_TIMEOUT_SECONDS = 2;
   private static final long PROBE_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(PROBE_TIMEOUT_SECONDS);
+  private static final String CANONICAL_DEPARSE = "SET LOCAL quote_all_identifiers = 'off'";
   private static final String CHECK =
       """
       SELECT
@@ -114,7 +115,8 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                   SELECT a.attnum
                   FROM pg_catalog.pg_attribute a
                   WHERE a.attrelid = c.conrelid AND NOT a.attisdropped
-                    AND a.attname IN ('outbox_id', 'attempt_id')
+                    AND ((a.attname = 'outbox_id' AND a.atttypid = 'pg_catalog.uuid'::regtype)
+                      OR (a.attname = 'attempt_id' AND a.atttypid = 'pg_catalog.uuid'::regtype))
                   ORDER BY CASE a.attname WHEN 'outbox_id' THEN 0 ELSE 1 END))
             AND NOT EXISTS (
               SELECT 1
@@ -328,6 +330,17 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND attname = 'send_outcome_uncertain' AND NOT attisdropped AND NOT attnotnull
                 AND NOT atthasdef AND atttypid = 'pg_catalog.bool'::regtype)
+            AND EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_constraint c
+              WHERE c.conrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+                AND c.conname = 'ck_release_outbox_retry_provenance_shape'
+                AND c.contype = 'c' AND c.convalidated AND c.conenforced
+                AND pg_catalog.pg_get_expr(c.conbin, c.conrelid) =
+                  '((retry_provenance IS NULL) OR (((state)::text = ''retryable''::text)'
+                  || ' AND (retry_provenance = ANY (ARRAY[''local_no_send''::text,'
+                  || ' ''owner_rejected''::text, ''owner_closure''::text]))))'
+                )
             AND EXISTS (
               SELECT 1
               FROM pg_catalog.pg_constraint c
@@ -586,12 +599,22 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       int probeTimeout =
           originalTimeout > 0 ? Math.min(originalTimeout, remainingMillis) : remainingMillis;
       connection.setNetworkTimeout(Runnable::run, probeTimeout);
-      try (var statement = connection.prepareStatement(CHECK)) {
-        statement.setQueryTimeout(PROBE_TIMEOUT_SECONDS);
-        try (var rows = statement.executeQuery()) {
-          ready = rows.next() && rows.getBoolean(1);
+      boolean originalAutoCommit = connection.getAutoCommit();
+      connection.setAutoCommit(false);
+      try (var canonicalDeparse = connection.prepareStatement(CANONICAL_DEPARSE)) {
+        canonicalDeparse.execute();
+        try (var statement = connection.prepareStatement(CHECK)) {
+          statement.setQueryTimeout(PROBE_TIMEOUT_SECONDS);
+          try (var rows = statement.executeQuery()) {
+            ready = rows.next() && rows.getBoolean(1);
+          }
         }
+        connection.commit();
+      } catch (SQLException | RuntimeException unavailable) {
+        connection.rollback();
+        throw unavailable;
       } finally {
+        connection.setAutoCommit(originalAutoCommit);
         connection.setNetworkTimeout(Runnable::run, originalTimeout);
       }
     }

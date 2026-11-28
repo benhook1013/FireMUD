@@ -173,16 +173,14 @@ public final class InitialGameplayReleaseController {
           dispatched, "EFFECT_CALL_OUTCOME_UNKNOWN", clock.instant());
       return requireOperation(operation.scope().operationId());
     }
-    if (applyResult.status() == ApplyStatus.RETRYABLE_NO_EFFECT
-        || applyResult.status() == ApplyStatus.NOT_DISPATCHED) {
+    if (applyResult.status() == ApplyStatus.NOT_DISPATCHED) {
+      recordLocalNoSend(dispatched, applyResult.outcomeCode());
+      return requireOperation(operation.scope().operationId());
+    }
+    if (applyResult.status() == ApplyStatus.RETRYABLE_NO_EFFECT) {
       // An exact, durably closed prior dispatch can be superseded while the apply call was pending.
       journal.recordRetryableEffectForDispatch(
-          dispatched,
-          applyResult.status() == ApplyStatus.NOT_DISPATCHED
-              ? RetrySource.NOT_DISPATCHED
-              : RetrySource.OWNER_REJECTED,
-          applyResult.outcomeCode(),
-          clock.instant());
+          dispatched, RetrySource.OWNER_REJECTED, applyResult.outcomeCode(), clock.instant());
       return requireOperation(operation.scope().operationId());
     }
     if (applyResult.status() == ApplyStatus.AMBIGUOUS) {
@@ -191,6 +189,19 @@ public final class InitialGameplayReleaseController {
       return requireOperation(operation.scope().operationId());
     }
     return reconcileReadback(operation, dispatched);
+  }
+
+  private void recordLocalNoSend(OutboxEntry dispatch, String outcomeCode) {
+    Instant observedAt = clock.instant();
+    try {
+      journal.recordRetryableEffectForDispatch(
+          dispatch, RetrySource.NOT_DISPATCHED, outcomeCode, observedAt);
+    } catch (IllegalStateException unavailable) {
+      // The journal redacts storage errors. Retry only this exact local receipt, once,
+      // with the same observation time. The journal rechecks custody and write qualification.
+      journal.recordRetryableEffectForDispatch(
+          dispatch, RetrySource.NOT_DISPATCHED, outcomeCode, observedAt);
+    }
   }
 
   private Operation readBackEffect(Operation operation, OutboxEntry outbox) {

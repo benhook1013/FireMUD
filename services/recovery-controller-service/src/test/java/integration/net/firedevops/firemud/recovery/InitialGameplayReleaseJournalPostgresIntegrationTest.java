@@ -120,6 +120,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers(disabledWithoutDocker = false)
+@ResourceLock("postgresql-driver-protocol-logger")
 @SuppressWarnings("resource")
 class InitialGameplayReleaseJournalPostgresIntegrationTest {
   private static final String SCHEMA = "recovery_control";
@@ -825,6 +826,69 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
   @Test
   @ResourceLock("packaged-recovery-control-fixture-database")
+  void readinessNormalizesIdentifierRenderingWithoutChangingTheSessionDefault() {
+    String database = "firemud_recovery_control";
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application =
+        startPackagedApplication(true, "--spring.datasource.hikari.maximum-pool-size=1")) {
+      var fixture = application.getBean(DSLContext.class);
+      fixture.execute("SET quote_all_identifiers = 'on'");
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      assertThat(fixture.fetchSingle("SHOW quote_all_identifiers").get(0, String.class))
+          .isEqualTo("on");
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void readinessRequiresUuidRejectionAttemptIdentity() {
+    String database = "firemud_recovery_control";
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application = startPackagedApplication(true)) {
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      application
+          .getBean(DSLContext.class)
+          .execute(
+              """
+              ALTER TABLE recovery_control.initial_gameplay_release_attempt_rejection
+              ALTER COLUMN attempt_id TYPE text USING attempt_id::text
+              """);
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void readinessRequiresTheValidatedRetryProvenanceConstraint() {
+    String database = "firemud_recovery_control";
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application = startPackagedApplication(true)) {
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      var fixture = application.getBean(DSLContext.class);
+      fixture.execute(
+          """
+          ALTER TABLE recovery_control.initial_gameplay_release_outbox
+          DROP CONSTRAINT ck_release_outbox_retry_provenance_shape
+          """);
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+      fixture.execute(
+          """
+          ALTER TABLE recovery_control.initial_gameplay_release_outbox
+          ADD CONSTRAINT ck_release_outbox_retry_provenance_shape
+          CHECK (retry_provenance IS NULL OR state = 'retryable')
+          """);
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
   void packagedFlywayBoundsOutboxLockWaitAndRetriesWithoutLeakingSessionTimeout() throws Exception {
     String database = "firemud_recovery_control";
     String fixtureUrl = POSTGRES.getJdbcUrl();
@@ -937,13 +1001,14 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
   @ParameterizedTest
   @CsvSource({
-    "locations, locations must contain only classpath:db/recovery-control-migration",
-    "group, must commit each migration separately",
-    "datasource, must use the journal datasource",
-    "validate, must validate migrations before applying them",
-    "skip, must execute migrations before recording them",
-    "lock, lock retries must be finite",
-    "callbacks, requires only the transactional migration callback"
+    "locations, Recovery Flyway locations must contain only classpath:db/recovery-control-migration",
+    "group, Recovery Flyway must commit each migration separately",
+    "datasource, Recovery Flyway must use the journal datasource",
+    "validate, Recovery Flyway must validate migrations before applying them",
+    "skip, Recovery Flyway must execute migrations before recording them",
+    "lock, Recovery Flyway lock retries must be finite",
+    "retry-interval, Invalid number for connectRetriesInterval (must be 0 or greater)",
+    "callbacks, Recovery Flyway requires only the transactional migration callback"
   })
   @ResourceLock("packaged-recovery-control-fixture-database")
   void packagedFlywayRejectsDriftFromCustomizerBeforeMigration(String option, String diagnostic)
@@ -963,7 +1028,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                   throw new AssertionError("Effective Flyway drift must refuse startup");
                 }
               })
-          .hasStackTraceContaining("Recovery Flyway " + diagnostic);
+          .hasStackTraceContaining(diagnostic);
       try (var connection =
           DriverManager.getConnection(
               packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
@@ -992,6 +1057,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           case "validate" -> configuration.validateOnMigrate(false);
           case "skip" -> configuration.skipExecutingMigrations(true);
           case "lock" -> configuration.lockRetryCount(-1);
+          case "retry-interval" -> configuration.connectRetriesInterval(-1);
           case "callbacks" ->
               configuration.callbacks(
                   new org.flywaydb.core.api.callback.BaseCallback() {
@@ -1364,6 +1430,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         "outbox_effect_identity",
         "outbox_dispatch",
         "weakened_outbox_dispatch",
+        "weakened_retry_provenance",
         "pending_dispatch_timestamp",
         "weakened_pending_dispatch_timestamp",
         "closure_primary_key",
@@ -1433,6 +1500,14 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               ADD CONSTRAINT ck_release_outbox_non_pending_attempt CHECK (true)
             """);
         assertValidatedDispatchAttemptConstraint(packaged);
+      } else if ("weakened_retry_provenance".equals(drift)) {
+        packaged.execute(
+            """
+            ALTER TABLE recovery_control.initial_gameplay_release_outbox
+              DROP CONSTRAINT ck_release_outbox_retry_provenance_shape,
+              ADD CONSTRAINT ck_release_outbox_retry_provenance_shape
+                CHECK (retry_provenance IS NULL)
+            """);
       } else if ("pending_dispatch_timestamp".equals(drift)) {
         packaged.execute(
             "ALTER TABLE recovery_control.initial_gameplay_release_outbox"
@@ -6184,8 +6259,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
-  void legacyRejectionReceiptsGainAConservativeMigrationFloorWithoutRewritingTheirIdentity()
-      throws Exception {
+  void migrationRefusesLegacyRejectionReceiptsWithoutRewritingTheirIdentity() throws Exception {
     String database = "recovery_rejection_refresh_floor";
     String sourceUrl = POSTGRES.getJdbcUrl();
     String journalUrl = sourceUrl.substring(0, sourceUrl.lastIndexOf('/') + 1) + database;
@@ -6205,22 +6279,28 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             V1_OUTBOX_ID,
             V1_PRIOR_ATTEMPT_ID);
         var outbox = retainedOutboxRow(fixture);
-        var before = fixture.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class);
-        journalFlyway(journalUrl, null).migrate();
-        var after = fixture.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class);
+        assertThatThrownBy(() -> journalFlyway(journalUrl, null).migrate())
+            .hasStackTraceContaining("preparation_refresh_after")
+            .hasStackTraceContaining("contains null values");
         var retained =
             fixture.fetchSingle(
                 """
-                SELECT outbox_id, attempt_id, attempt_ordinal, preparation_refresh_after
+                SELECT outbox_id, attempt_id, attempt_ordinal
                 FROM recovery_control.initial_gameplay_release_attempt_rejection
                 """);
         assertThat(retained.get("outbox_id", UUID.class)).isEqualTo(V1_OUTBOX_ID);
         assertThat(retained.get("attempt_id", UUID.class)).isEqualTo(V1_PRIOR_ATTEMPT_ID);
         assertThat(retained.get("attempt_ordinal", Integer.class)).isEqualTo(1);
-        assertThat(retained.get("preparation_refresh_after", OffsetDateTime.class))
-            .isBetween(before, after);
         assertThat(retainedOutboxRow(fixture)).isEqualTo(outbox);
-        assertCompletePackagedMigrationReceipts(journalUrl);
+        assertThat(
+                fixture
+                    .fetchSingle(
+                        """
+                        SELECT max(version::integer)
+                        FROM recovery_control.flyway_schema_history_recovery_control WHERE success
+                        """)
+                    .get(0, Integer.class))
+            .isEqualTo(10);
       }
     } finally {
       dsl.execute("DROP DATABASE " + database);

@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Isolated;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -21,11 +23,29 @@ import org.springframework.mock.env.MockEnvironment;
 
 @Isolated("Tests the native Hikari configuration JVM property")
 class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
+  private static final String HIKARICP_CONFIGURATION_FILE = "hikaricp.configurationFile";
   private static final String REDIS_AUTO_CONFIGURATION =
       "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration";
 
+  private String priorHikariConfigurationFile;
+
   private final RecoveryControlDatabaseHostEnvironmentPostProcessor postProcessor =
       new RecoveryControlDatabaseHostEnvironmentPostProcessor();
+
+  @BeforeEach
+  void clearAmbientHikariConfigurationFile() {
+    priorHikariConfigurationFile = System.getProperty(HIKARICP_CONFIGURATION_FILE);
+    System.clearProperty(HIKARICP_CONFIGURATION_FILE);
+  }
+
+  @AfterEach
+  void restoreAmbientHikariConfigurationFile() {
+    if (priorHikariConfigurationFile == null) {
+      System.clearProperty(HIKARICP_CONFIGURATION_FILE);
+    } else {
+      System.setProperty(HIKARICP_CONFIGURATION_FILE, priorHikariConfigurationFile);
+    }
+  }
 
   @Test
   void rejectsMissingOrBlankRecoveryDatabaseHost() {
@@ -627,7 +647,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   @ParameterizedTest
   @ValueSource(strings = {"fixture-pool.properties", ""})
   void refusesNativeHikariConfigFileBeforePoolSetup(String configuredFile) {
-    String property = "hikaricp.configurationFile";
+    String property = HIKARICP_CONFIGURATION_FILE;
     String previous = System.getProperty(property);
     var environment = fixtureEnvironment();
     try {

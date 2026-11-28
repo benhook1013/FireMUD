@@ -67,7 +67,7 @@ BOOT_CONFIG_NAME_RE = re.compile(r"/src/main/resources/(?:config/)?application(?
 RUNTIME_CONFIGURATIONS = r"(?:implementation|api|runtimeOnly)"
 RUNTIME_DEPENDENCY_CALL_RE = re.compile(
     rf'(?<![\w$])(?:{RUNTIME_CONFIGURATIONS}|"{RUNTIME_CONFIGURATIONS}")\s*\(\s*'
-    rf'|\b(?:dependencies\.)?add\(\s*"{RUNTIME_CONFIGURATIONS}"\s*,\s*'
+    rf'|\b(?:dependencies\.)?add\s*\(\s*"{RUNTIME_CONFIGURATIONS}"\s*,\s*'
 )
 RUNTIME_PROJECT_ARGUMENT_RE = re.compile(
     r'(?:project\.)?project\s*\(\s*":([\w-]+)"\s*\)\s*\)'
@@ -619,6 +619,7 @@ def runtime_project_dependencies(
 def saga_adopters(snapshot: Snapshot, runtime_dependencies: dict[str, set[str]]) -> set[str]:
     adopters = set()
     location_property = "spring.flyway.locations"
+    enable_property = "spring.flyway.enabled"
     for project, dependencies in runtime_dependencies.items():
         if project == RECOVERY_PROJECT or "common-saga" not in dependencies:
             continue
@@ -630,6 +631,7 @@ def saga_adopters(snapshot: Snapshot, runtime_dependencies: dict[str, set[str]])
             key=lambda path: ("/config/" in path, path.endswith(".yml"), path),
         )
         saga_by_profile: dict[str, bool] = {}
+        enabled_by_profile: dict[str, bool] = {}
         for path in [*base_paths, *profile_paths]:
             profile_match = profiles.fullmatch(path)
             profile = profile_match.group("profile") if profile_match else ""
@@ -637,6 +639,14 @@ def saga_adopters(snapshot: Snapshot, runtime_dependencies: dict[str, set[str]])
                 if configuration is None:
                     raise ValueError(f"{path}: packaged Spring configuration must be a mapping")
                 properties, ambiguous = configuration
+                conditional = any(property_name.startswith("spring.config.activate.")
+                                  for property_name in properties)
+                if enable_property in properties:
+                    enabled = spring_boolean(properties[enable_property])
+                    if enabled is None or enable_property in ambiguous:
+                        raise ValueError(f"{path}: cannot resolve packaged Saga Flyway enabled setting")
+                    if enabled or not conditional:
+                        enabled_by_profile[profile] = enabled
                 if not decode_indexed_string_list(properties, ambiguous, location_property):
                     raise ValueError(f"{path}: cannot resolve packaged Saga Flyway locations")
                 if location_property not in properties:
@@ -651,15 +661,16 @@ def saga_adopters(snapshot: Snapshot, runtime_dependencies: dict[str, set[str]])
                 if not isinstance(locations, list) or not all(isinstance(location, str) for location in locations):
                     raise ValueError(f"{path}: cannot resolve packaged Saga Flyway locations")
                 # The default migration root also exposes its nested Saga resources.
-                loads_saga = any(location in {"classpath:db/migration", "classpath:db/migration/saga"}
-                                 for location in locations)
-                conditional = any(property_name.startswith("spring.config.activate.")
-                                  for property_name in properties)
+                loads_saga = any(location.startswith("classpath:") and
+                                 location.removeprefix("classpath:").strip("/")
+                                 in {"db/migration", "db/migration/saga"} for location in locations)
                 if loads_saga or not conditional:
                     # Without runtime profile selection, retain possible Saga history
                     # from conditional documents, and fold unconditional overrides in order.
                     saga_by_profile[profile] = loads_saga
-        if any(saga_by_profile.values()):
+        if any(enabled_by_profile.get(profile, enabled_by_profile.get("", True))
+               and saga_by_profile.get(profile, saga_by_profile.get("", True))
+               for profile in {""} | saga_by_profile.keys() | enabled_by_profile.keys()):
             adopters.add(project)
     return adopters
 
@@ -923,6 +934,7 @@ def recovery_flyway_config(
                                  *RECOVERY_DATABASE_CREDENTIAL_SELECTORS,
                                  "spring.flyway.validateonmigrate",
                                  "spring.flyway.connectretries",
+                                 "spring.flyway.connectretriesinterval",
                                  "spring.flyway.lockretrycount",
                                  "spring.datasource.url", "spring.datasource.hikari.jdbcurl",
                                  "spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
@@ -1050,6 +1062,14 @@ def recovery_flyway_config(
                 return None
             retry_count = int(digits or "0")
         if type(retry_count) is not int or not 0 <= retry_count <= 2**31 - 1:
+            return None
+    if "connectretriesinterval" in flyway:
+        # Only qualify an explicit duration whose whole-second Flyway value is
+        # unambiguous. Omission leaves the pinned Spring Boot default in effect.
+        interval = flyway["connectretriesinterval"]
+        if not isinstance(interval, str) or not re.fullmatch(r"[0-9]{1,10}s", interval):
+            return None
+        if int(interval[:-1]) > 2**31 - 1:
             return None
     encoding = flyway.get("encoding", "UTF-8")
     # The pinned Java UTF-8 charset deliberately has a different alias set from Python.
@@ -1264,6 +1284,15 @@ def run_self_test() -> None:
     check("Saga history in config/ sets the effective parent frontier",
           {**nested_saga_history, local + "V2__new.sql": b"-- new"},
           nested_saga_history, "frontier V1002")
+    for config in (b"spring.flyway.locations: classpath:/db/migration/\n", b"spring.flyway.enabled: true\n"):
+        inherited_saga = {**history, root_saga_config: config}
+        check("Flyway classpath aliases and default locations include Saga history",
+              {**inherited_saga, local + "V2__new.sql": b"-- new"},
+              inherited_saga, "frontier V1002")
+    for config in (b"spring.flyway.enabled: false\n", b"spring.flyway.locations: classpath:other\n"):
+        isolated_history = {**history, root_saga_config: config}
+        check("Disabled or explicitly separate Flyway does not adopt Saga history",
+              {**isolated_history, local + "V2__new.sql": b"-- new"}, isolated_history, None)
     check("duplicate-only without a base", history, None, None)
     check("new low local", {**history, local + "V2__new.sql": b"-- new"}, history, "frontier V1002")
     check("forward local", {**history, local + "V1003__new.sql": b"-- new"}, history, None)
@@ -1821,6 +1850,13 @@ def run_self_test() -> None:
     }
     check("quoted production runtime wiring preserves the inherited migration frontier",
           dedicated_candidate, quoted_dependency_parent, "effective parent frontier V32")
+    for call in (b'add("runtimeOnly",', b'add ("runtimeOnly",'):
+        check("Gradle add preserves the inherited migration frontier with optional whitespace",
+              dedicated_candidate, {
+                  **shared_recovery_parent,
+                  f"services/{RECOVERY_PROJECT}/build.gradle.kts":
+                      b'dependencies { ' + call + b' project(":shared-journal-inputs")) }',
+              }, "effective parent frontier V32")
     check("an unsupported active quoted runtime declaration fails qualification", dedicated_candidate, {
         **shared_recovery_parent,
         f"services/{RECOVERY_PROJECT}/build.gradle.kts":
@@ -1894,6 +1930,9 @@ def run_self_test() -> None:
         ("spring.flyway.connect-retries", "-1", "historical effective migration no longer applied"),
         ("spring.flyway.connect-retries", "0", None),
         ("spring.flyway.connect-retries", "3", None),
+        ("spring.flyway.connect-retries-interval", "-1s", "historical effective migration no longer applied"),
+        ("spring.flyway.connect-retries-interval", "3s", None),
+        ("spring.flyway.connect-retries-interval", "2147483648s", "historical effective migration no longer applied"),
         ("spring.flyway.lock-retry-count", "-1", "historical effective migration no longer applied"),
         ("spring.flyway.lock-retry-count", "0", None),
         ("spring.flyway.lock-retry-count", "'2147483648'", "historical effective migration no longer applied"),
