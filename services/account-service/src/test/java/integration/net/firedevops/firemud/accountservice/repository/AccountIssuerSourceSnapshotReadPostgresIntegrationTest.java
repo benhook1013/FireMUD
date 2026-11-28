@@ -7,6 +7,7 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -23,6 +24,7 @@ import net.firedevops.firemud.account.v1.ReadCurrentIssuerAuthoritySourceRequest
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException;
 import net.firedevops.firemud.accountservice.repository.AccountIssuerSourceSnapshotReadOwner;
 import net.firedevops.firemud.accountservice.service.impl.AccountIssuerAuthoritySourceGrpcService;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
@@ -62,6 +64,87 @@ class AccountIssuerSourceSnapshotReadPostgresIntegrationTest {
   @AfterAll
   static void stopOwnedContainer() {
     POSTGRES.stop();
+  }
+
+  @Test
+  void readsOldestRetainedIssuerEventWithLaterHeadAndPreservesIssuerRows() {
+    TestContext context = newTestContext();
+    var transaction = context.transaction();
+    transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
+    initializeCanonicalIssuer(context);
+
+    String oldestId = "oldest-issuer-change";
+    transaction.executeWithoutResult(
+        status ->
+            context.sources().appendIssuerAuthorityChange(ISSUER, "SIGNER_COMPROMISE", oldestId));
+    var original =
+        Objects.requireNonNull(
+            transaction.execute(
+                status -> context.sources().readCurrentCanonicalIssuerSource(ISSUER)));
+    var oldest = original.latestEvent().orElseThrow();
+    assertThat(oldest.outboxSequence()).isEqualTo(1L);
+    assertThat(oldest.eventId()).isEqualTo(oldestId);
+
+    String laterId = "later-issuer-change";
+    transaction.executeWithoutResult(
+        status ->
+            context
+                .sources()
+                .appendIssuerAuthorityChange(ISSUER, "ISSUER_SECURITY_CHANGE", laterId));
+    var head =
+        Objects.requireNonNull(
+            transaction.execute(
+                status -> context.sources().readCurrentCanonicalIssuerSource(ISSUER)));
+    var latest = head.latestEvent().orElseThrow();
+    assertThat(latest.outboxSequence()).isEqualTo(2L);
+    assertThat(latest.eventId()).isEqualTo(laterId);
+    List<String> before = context.issuerRowImages();
+
+    var readback =
+        Objects.requireNonNull(
+            transaction.execute(
+                status ->
+                    context
+                        .sources()
+                        .readExactCanonicalIssuerEvent(
+                            ISSUER, 1L, oldestId, oldest.eventDigest())));
+    assertThat(readback.currentSnapshot()).isEqualTo(head);
+    assertThat(readback.selectedEvent().outboxSequence()).isEqualTo("1");
+    assertThat(readback.selectedEvent().issuerAuthGeneration()).isEqualTo("2");
+    assertThat(readback.selectedEvent().eventId()).isEqualTo(oldestId);
+    assertThat(readback.selectedEvent().eventDigest()).isEqualTo(oldest.eventDigest());
+    assertThat(readback.selectedEvent().canonicalJsonUtf8()).isEqualTo(oldest.payload());
+
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    status ->
+                        context
+                            .sources()
+                            .readExactCanonicalIssuerEvent(
+                                ISSUER, 1L, laterId, oldest.eventDigest())))
+        .isInstanceOf(SourceEvidenceUnavailableException.class);
+    assertThatThrownBy(
+            () ->
+                transaction.execute(
+                    status ->
+                        context
+                            .sources()
+                            .readExactCanonicalIssuerEvent(
+                                ISSUER, 1L, oldestId, latest.eventDigest())))
+        .isInstanceOf(SourceEvidenceUnavailableException.class);
+    for (long unavailableSequence : new long[] {0L, 3L}) {
+      assertThatThrownBy(
+              () ->
+                  transaction.execute(
+                      status ->
+                          context
+                              .sources()
+                              .readExactCanonicalIssuerEvent(
+                                  ISSUER, unavailableSequence, oldestId, oldest.eventDigest())))
+          .isInstanceOf(SourceEvidenceUnavailableException.class);
+    }
+    assertThat(context.issuerRowImages()).isEqualTo(before);
   }
 
   @Test
@@ -396,6 +479,19 @@ class AccountIssuerSourceSnapshotReadPostgresIntegrationTest {
       TransactionTemplate transaction,
       BackendPidCapturingSourceRepository sources,
       AccountIssuerSourceSnapshotReadOwner owner) {
+    private List<String> issuerRowImages() {
+      return dsl.fetch(
+              "SELECT 'generation:' || to_jsonb(r)::text || ':' || r.xmin::text "
+                  + "FROM account_authority_generations r "
+                  + "UNION ALL SELECT 'source:' || to_jsonb(r)::text || ':' || r.xmin::text "
+                  + "FROM account_authority_source_records r "
+                  + "UNION ALL SELECT 'stream:' || to_jsonb(r)::text || ':' || r.xmin::text "
+                  + "FROM account_authority_outbox_streams r "
+                  + "UNION ALL SELECT 'event:' || to_jsonb(r)::text || ':' || r.xmin::text "
+                  + "FROM account_authority_outbox_events r ORDER BY 1")
+          .getValues(0, String.class);
+    }
+
     private Map<String, Object> sourceHead() {
       return Objects.requireNonNull(
               dsl.fetchOne(
