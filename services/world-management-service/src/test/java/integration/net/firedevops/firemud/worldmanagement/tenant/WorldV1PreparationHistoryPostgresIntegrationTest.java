@@ -4,6 +4,8 @@ import static net.firedevops.firemud.worldmanagement.WorldPostgresMigrationTestS
 import static net.firedevops.firemud.worldmanagement.WorldPostgresMigrationTestSupport.migration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.google.protobuf.util.JsonFormat;
 import com.zaxxer.hikari.HikariDataSource;
@@ -63,6 +65,7 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -428,6 +431,235 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void changedReleaseCommitFailsBeforeAllocationOnCurrentPostgres() throws Exception {
+    assertReleaseCheckpointSubstitutionDenied(true);
+  }
+
+  @Test
+  void changedWorldContentDigestFailsBeforeAllocationOnCurrentPostgres() throws Exception {
+    assertReleaseCheckpointSubstitutionDenied(false);
+  }
+
+  private static void assertReleaseCheckpointSubstitutionDenied(boolean changeCommit)
+      throws Exception {
+    String schema = "world_release_input_" + UUID.randomUUID().toString().replace("-", "");
+    var source =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    source.setSchema(schema);
+    migration(source, schema, "1025").migrate();
+    var sql = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    var write = new TransactionTemplate(new DataSourceTransactionManager(source));
+    write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    var intake = new WorldAuthoredSourceIntakeRepository(sql);
+    var fixture = fixture(sql, write, intake);
+    var fence = new WorldDesignPublicationFenceRepository(sql, intake);
+    var mapper = new ObjectMapper();
+    var topology = new WorldDraftTopologyCommitRepository(sql, fence, mapper);
+    UUID region = UUID.randomUUID();
+    UUID secondRoom = UUID.randomUUID();
+    UUID originalCommit = UUID.randomUUID();
+    UUID alternateCommit = changeCommit ? UUID.randomUUID() : originalCommit;
+    var originalPlan = historicalPlan(fixture, region, secondRoom, originalCommit, "region");
+    var alternatePlan =
+        historicalPlan(
+            fixture, region, secondRoom, alternateCommit, changeCommit ? "region" : "alternate");
+
+    var draftTables =
+        originalQueries(
+            sql,
+            List.of(
+                "world_design_publication_fence_owner",
+                "world_topology_draft_commit",
+                "world_draft_graph_application",
+                "world_draft_start_location_receipt",
+                "world_authored_topology_identity",
+                "world_region_draft_execution_manifest",
+                "world_design_aggregate_epoch",
+                "world_design_scope_epoch",
+                "region",
+                "zone",
+                "room",
+                "room_exit"));
+    var draftSequences =
+        List.of(
+            "world_authored_topology_identity_id_seq",
+            "world_design_aggregate_epoch_id_seq",
+            "world_design_scope_epoch_id_seq",
+            "region_id_seq",
+            "zone_id_seq",
+            "room_id_seq",
+            "room_exit_id_seq");
+    var originalDraftRows = rows(sql, draftTables);
+    var originalDraftSequences = sequenceState(sql, draftSequences);
+    var alternate =
+        Objects.requireNonNull(
+            write.execute(
+                status -> {
+                  // The digest includes physical template IDs. Transactional RESTART lets both
+                  // fresh Drafts use the same IDs and restores sequence state on rollback.
+                  for (String sequence : draftSequences) {
+                    sql.execute("ALTER SEQUENCE {0} RESTART", DSL.name(sequence));
+                  }
+                  var applied = retainHistoricalDraft(sql, topology, alternatePlan);
+                  var digest = historicalDraftDigest(sql, fixture);
+                  sql.execute("SET CONSTRAINTS ALL IMMEDIATE");
+                  status.setRollbackOnly();
+                  return new AlternateDraft(applied, digest);
+                }));
+    assertThat(rows(sql, draftTables)).isEqualTo(originalDraftRows);
+    assertThat(sequenceState(sql, draftSequences)).isEqualTo(originalDraftSequences);
+
+    var history = frozenHistory(sql, write, fixture, originalPlan);
+    var frozen = history.frozen();
+    var freeze = frozen.request().freeze();
+    var exactSelector =
+        publishedEvidence(
+            new WorldPublishedStartLocationRepository(
+                    sql,
+                    history.captures(),
+                    new WorldDraftGraphApplicationRepository(sql, fence, mapper))
+                .readCommitted(freeze)
+                .orElseThrow());
+    var selected = exactSelector.request();
+    if (changeCommit) {
+      assertThat(alternateCommit.toString()).isNotEqualTo(selected.appliedCommitId());
+      assertThat(alternate.digest()).isEqualTo(selected.contentDigest());
+    } else {
+      assertThat(alternateCommit.toString()).isEqualTo(selected.appliedCommitId());
+      assertThat(alternate.digest()).isNotEqualTo(selected.contentDigest());
+    }
+    var alternateSelector =
+        new WorldPublishedStartLocationEvidence(
+            new WorldPublishedStartLocationEvidence.Request(
+                selected.targetNamespace(),
+                selected.canonicalTenantId(),
+                selected.canonicalVersionId(),
+                selected.intakeRequestId(),
+                selected.publicationFence(),
+                selected.publicationRequestId(),
+                selected.requestDigest(),
+                selected.versionStateEpoch(),
+                selected.publishWorkflowId(),
+                alternateCommit.toString(),
+                alternate.digest(),
+                selected.digestSchemaVersion(),
+                selected.worldAffectedTuples()),
+            alternate.applied().startLocationReceipt().orElseThrow().canonicalBytes(),
+            alternate.applied().application().operation().accountBindingBytes(),
+            alternate.applied().canonicalBytes());
+
+    var current = migration(source, schema, null);
+    current.migrate();
+    current.validate();
+    var exactInput = preparationInput(sql, write, fixture, frozen, exactSelector);
+    var candidate = preparationClaim(sql, write, fixture, frozen, alternateSelector);
+    var plan = exactInput.topologyPlan();
+    assertThatThrownBy(() -> preparationInput(candidate, plan))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            changeCommit
+                ? "Canonical preparation release differs from the exact selected frozen World graph"
+                : "Canonical preparation World participant differs from its exact frozen checkpoint");
+    assertThat(
+            new WorldCompleteLaunchBindingRepository(sql)
+                .read(
+                    NAMESPACE,
+                    fixture.owner().canonicalTenantId(),
+                    candidate.identity().controlPlaneRequestId())
+                .orElseThrow()
+                .evidence())
+        .isEqualTo(candidate.completeLaunchBinding().evidence());
+
+    // Bypass only Java's preparation guard and serialize the valid candidate against the stored
+    // original capture. The SQL writer must independently compare the release to that capture.
+    var raw = mock(WorldCanonicalInstancePreparation.Input.class);
+    when(raw.gameSessionReadRequest()).thenReturn(candidate.gameSessionRequest());
+    when(raw.gameSessionReadEvidence()).thenReturn(candidate.gameSessionRead());
+    when(raw.completeLaunchBinding()).thenReturn(candidate.completeLaunchBinding());
+    when(raw.versionIdentity()).thenReturn(candidate.versionIdentity());
+    when(raw.topologyPlan()).thenReturn(plan);
+
+    var queries = originalQueries(sql, true);
+    queries.putAll(originalQueries(sql, List.copyOf(draftTables.keySet())));
+    queries.putAll(
+        originalQueries(
+            sql,
+            List.of(
+                "world_canonical_instance_execution",
+                "world_canonical_instance_preparation_execution_manifest",
+                "world_design_publication_account_binding",
+                "world_selected_publication_artifact_inventory")));
+    var before = rows(sql, queries);
+    var runtimeSequences =
+        List.of(
+            "world_canonical_instance_execution_fence_seq",
+            "world_canonical_private_game_instance_key_seq",
+            "world_instance_id_seq",
+            "region_instance_id_seq",
+            "zone_instance_id_seq",
+            "room_instance_id_seq",
+            "room_instance_exit_id_seq",
+            "world_canonical_instance_topology_identity_id_seq",
+            "world_canonical_instance_preparation_id_seq");
+    var beforeSequences = sequenceState(sql, runtimeSequences);
+    assertUnqualifiedFreeze(sql, history);
+    assertThat(before.get("world_instance")).isEmpty();
+    assertThat(before.get("world_design_publication_terminal")).isEmpty();
+
+    assertRawPreparationDenied(
+        sql,
+        write,
+        exactInput,
+        "Canonical preparation requires the exact published V44 terminal for this retained release and frozen World source");
+    assertThat(rows(sql, queries)).isEqualTo(before);
+    assertThat(sequenceState(sql, runtimeSequences)).isEqualTo(beforeSequences);
+    assertRawPreparationDenied(
+        sql,
+        write,
+        raw,
+        "Canonical preparation release differs from the exact selected frozen World graph");
+    assertThat(rows(sql, queries)).isEqualTo(before);
+    assertThat(sequenceState(sql, runtimeSequences)).isEqualTo(beforeSequences);
+  }
+
+  private record AlternateDraft(WorldDraftGraphAppliedResult applied, String digest) {}
+
+  private static Map<String, String> sequenceState(DSLContext sql, List<String> sequences) {
+    var state = new LinkedHashMap<String, String>();
+    for (String sequence : sequences) {
+      state.put(
+          sequence,
+          sql.fetchSingle(
+                  "SELECT last_value::text || ':' || is_called::text FROM " + DSL.name(sequence))
+              .get(0, String.class));
+    }
+    return state;
+  }
+
+  private static void assertRawPreparationDenied(
+      DSLContext sql,
+      TransactionTemplate write,
+      WorldCanonicalInstancePreparation.Input input,
+      String message) {
+    String inputJson = WorldCanonicalInstancePreparationRepository.inputJson(input);
+    String inputDigest =
+        DraftAuthorizationFenceBinding.digest(inputJson.getBytes(StandardCharsets.UTF_8));
+    assertThatThrownBy(
+            () ->
+                write.executeWithoutResult(
+                    ignored ->
+                        sql.fetch(
+                            "SELECT * FROM world_prepare_canonical_instance(?,?)",
+                            inputJson,
+                            inputDigest)))
+        .isInstanceOfSatisfying(
+            DataAccessException.class, failure -> assertThat(failure.sqlState()).isEqualTo("23514"))
+        .rootCause()
+        .hasMessageStartingWith("ERROR: " + message + "\n");
+  }
+
   private static Map<String, Object> activationGuard(DSLContext sql) {
     return sql.fetchSingle(
             "SELECT p.oid::bigint AS function_oid,p.proacl::text AS function_acl "
@@ -782,47 +1014,19 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
 
   private static FrozenHistoryFixture frozenHistory(DSLContext sql, TransactionTemplate write)
       throws Exception {
-    var intake = new WorldAuthoredSourceIntakeRepository(sql);
-    Fixture f = fixture(sql, write, intake);
-    var plan = historicalPlan(f);
+    var fixture = fixture(sql, write, new WorldAuthoredSourceIntakeRepository(sql));
+    return frozenHistory(sql, write, fixture, historicalPlan(fixture));
+  }
+
+  private static FrozenHistoryFixture frozenHistory(
+      DSLContext sql, TransactionTemplate write, Fixture f, WorldDraftTopologyCommitPlan plan) {
     assertThat(plan.graph().freshGraphDeclaration()).isPresent();
     assertThat(plan.graph().freshGraphDeclaration().orElseThrow().inboundSourceClosure()).isEmpty();
-    var mapper = new ObjectMapper();
-    var fence = new WorldDesignPublicationFenceRepository(sql, intake);
-    var topology = new WorldDraftTopologyCommitRepository(sql, fence, mapper);
-    var app = application(plan);
-    write.executeWithoutResult(
-        ignored -> {
-          assertThat(sql.fetchValue("SHOW session_replication_role", String.class))
-              .isEqualTo("origin");
-          var stored = topology.store(plan);
-          var applied = WorldDraftGraphAppliedResult.create(app, stored.graphBytes());
-          new WorldDraftStartLocationReceiptRepository(sql)
-              .store(
-                  applied.startLocationReceipt().orElseThrow(),
-                  app.operation().accountBindingBytes());
-          var operation = app.operation();
-          sql.execute(
-              "INSERT INTO world_draft_graph_application (operation_id,request_id,commit_id,authorization_fence_id,operation_bytes,account_binding_bytes,account_binding_digest,result_bytes,result_digest) VALUES (?,?,?,?,?,?,?,?,?)",
-              operation.operationId(),
-              operation.requestId(),
-              operation.commitId(),
-              operation.authorizationFenceId(),
-              operation.canonicalBytes(),
-              operation.accountBindingBytes(),
-              operation.accountBindingDigest(),
-              applied.canonicalBytes(),
-              applied.digest());
-        });
-    var digestService =
-        new net.firedevops.firemud.worldmanagement.service.impl.WorldDraftDesignDigestServiceImpl(
-            new net.firedevops.firemud.worldmanagement.repository.RegionRepository(sql),
-            new net.firedevops.firemud.worldmanagement.repository.ZoneRepository(sql),
-            new net.firedevops.firemud.worldmanagement.repository.RoomRepository(sql),
-            new net.firedevops.firemud.worldmanagement.repository.RoomExitRepository(sql),
-            new net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepository(sql),
-            new net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository(
-                sql));
+    var fence =
+        new WorldDesignPublicationFenceRepository(
+            sql, new WorldAuthoredSourceIntakeRepository(sql));
+    var topology = new WorldDraftTopologyCommitRepository(sql, fence, new ObjectMapper());
+    write.executeWithoutResult(ignored -> retainHistoricalDraft(sql, topology, plan));
     var owner = f.owner();
     String publication = "historical-freeze-" + UUID.randomUUID();
     var selection = publicationSelection(plan, publication, 1L);
@@ -853,14 +1057,11 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
                 ignored ->
                     fence.claimFreeze(
                         freeze,
-                        () -> {
-                          var digest =
-                              digestService.getDraftDesignDigest(
-                                  Long.toString(f.intake().localTenantKey()),
-                                  Long.toString(f.version().localVersionKey()));
-                          return new WorldDesignPublicationFenceEvidence.Checkpoint(
-                              plan.binding().commitId().toString(), digest.contentDigest(), 3);
-                        })));
+                        () ->
+                            new WorldDesignPublicationFenceEvidence.Checkpoint(
+                                plan.binding().commitId().toString(),
+                                historicalDraftDigest(sql, f),
+                                3))));
     var tuples =
         plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
             .map(
@@ -890,7 +1091,7 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
             tuples);
     var captures =
         new WorldCanonicalFrozenTopologyRepository(
-            sql, new WorldAuthoredGraphSnapshotRepository(sql), topology, digestService);
+            sql, new WorldAuthoredGraphSnapshotRepository(sql), topology, draftDigestService(sql));
     var frozen =
         Objects.requireNonNull(
             write.execute(
@@ -898,6 +1099,53 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
                     captures.capture(
                         new WorldCanonicalFrozenTopology.Request(plan, captureRequest))));
     return new FrozenHistoryFixture(f, plan, selection, attempt, captures, frozen);
+  }
+
+  private static WorldDraftGraphAppliedResult retainHistoricalDraft(
+      DSLContext sql,
+      WorldDraftTopologyCommitRepository topology,
+      WorldDraftTopologyCommitPlan plan) {
+    assertThat(sql.fetchValue("SHOW session_replication_role", String.class)).isEqualTo("origin");
+    var stored = topology.store(plan);
+    var app = application(plan);
+    var applied = WorldDraftGraphAppliedResult.create(app, stored.graphBytes());
+    new WorldDraftStartLocationReceiptRepository(sql)
+        .store(applied.startLocationReceipt().orElseThrow(), app.operation().accountBindingBytes());
+    var operation = app.operation();
+    sql.execute(
+        "INSERT INTO world_draft_graph_application (operation_id,request_id,commit_id,authorization_fence_id,operation_bytes,account_binding_bytes,account_binding_digest,result_bytes,result_digest) VALUES (?,?,?,?,?,?,?,?,?)",
+        operation.operationId(),
+        operation.requestId(),
+        operation.commitId(),
+        operation.authorizationFenceId(),
+        operation.canonicalBytes(),
+        operation.accountBindingBytes(),
+        operation.accountBindingDigest(),
+        applied.canonicalBytes(),
+        applied.digest());
+    return applied;
+  }
+
+  private static String historicalDraftDigest(DSLContext sql, Fixture fixture) {
+    return draftDigestService(sql)
+        .getDraftDesignDigest(
+            Long.toString(fixture.intake().localTenantKey()),
+            Long.toString(fixture.version().localVersionKey()))
+        .contentDigest();
+  }
+
+  private static net.firedevops.firemud.worldmanagement.service.impl
+          .WorldDraftDesignDigestServiceImpl
+      draftDigestService(DSLContext sql) {
+    return new net.firedevops.firemud.worldmanagement.service.impl
+        .WorldDraftDesignDigestServiceImpl(
+        new net.firedevops.firemud.worldmanagement.repository.RegionRepository(sql),
+        new net.firedevops.firemud.worldmanagement.repository.ZoneRepository(sql),
+        new net.firedevops.firemud.worldmanagement.repository.RoomRepository(sql),
+        new net.firedevops.firemud.worldmanagement.repository.RoomExitRepository(sql),
+        new net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepository(sql),
+        new net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository(
+            sql));
   }
 
   private record FrozenHistoryFixture(
@@ -1265,6 +1513,29 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
       Fixture f,
       WorldCanonicalFrozenTopology frozen,
       WorldPublishedStartLocationEvidence selector) {
+    return preparationInput(
+        preparationClaim(sql, write, f, frozen, selector),
+        WorldCanonicalInstanceTopologyPlan.create(frozen));
+  }
+
+  private static WorldCanonicalInstancePreparation.Input preparationInput(
+      WorldCanonicalInstanceAssociation.Claim claim, WorldCanonicalInstanceTopologyPlan topology) {
+    return new WorldCanonicalInstancePreparation.Input(
+        claim.gameSessionRequest(),
+        claim.gameSessionRead(),
+        UUID.randomUUID(),
+        1L,
+        claim.completeLaunchBinding(),
+        claim.versionIdentity(),
+        topology);
+  }
+
+  private static WorldCanonicalInstanceAssociation.Claim preparationClaim(
+      DSLContext sql,
+      TransactionTemplate write,
+      Fixture f,
+      WorldCanonicalFrozenTopology frozen,
+      WorldPublishedStartLocationEvidence selector) {
     var s = f.intake().source();
     String control = "historical-prepare-" + UUID.randomUUID();
     var descriptor =
@@ -1297,6 +1568,10 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
             false,
             null);
     var freeze = frozen.request().freeze();
+    String releaseCommit =
+        selector == null ? freeze.appliedCommitId() : selector.request().appliedCommitId();
+    String worldDigest =
+        selector == null ? freeze.contentDigest() : selector.request().contentDigest();
     var participants =
         AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
             .map(
@@ -1306,8 +1581,8 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
                         Long.toString(GAME_DESIGN_VERSION),
                         false,
                         null,
-                        freeze.appliedCommitId(),
-                        "WORLD_MANAGEMENT".equals(owner) ? freeze.contentDigest() : "a".repeat(64),
+                        releaseCommit,
+                        "WORLD_MANAGEMENT".equals(owner) ? worldDigest : "a".repeat(64),
                         AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
                             owner,
                             selector == null
@@ -1331,7 +1606,7 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
                 descriptor.publishedReleaseBundleRef(),
                 2L,
                 freeze.publishWorkflowId(),
-                freeze.appliedCommitId(),
+                releaseCommit,
                 participants,
                 "sha256:" + "c".repeat(64),
                 1,
@@ -1351,7 +1626,7 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
                 descriptor.publishedReleaseBundleRef(),
                 2L,
                 freeze.publishWorkflowId(),
-                freeze.appliedCommitId(),
+                releaseCommit,
                 participants,
                 "sha256:" + "c".repeat(64),
                 1,
@@ -1404,14 +1679,7 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
             1L,
             descriptor,
             release);
-    return new WorldCanonicalInstancePreparation.Input(
-        request,
-        evidence,
-        UUID.randomUUID(),
-        1L,
-        launch,
-        f.version(),
-        WorldCanonicalInstanceTopologyPlan.create(frozen));
+    return new WorldCanonicalInstanceAssociation.Claim(request, evidence, 1L, launch, f.version());
   }
 
   private static Map<String, String> originalQueries(DSLContext sql, boolean withSelector) {
@@ -1571,10 +1839,12 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
       WorldAuthoredVersionIdentityReceipt version) {}
 
   private static WorldDraftTopologyCommitPlan historicalPlan(Fixture f) throws Exception {
-    UUID logical = UUID.randomUUID();
-    UUID secondRoom = UUID.randomUUID();
+    return historicalPlan(f, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "region");
+  }
+
+  private static WorldDraftTopologyCommitPlan historicalPlan(
+      Fixture f, UUID logical, UUID secondRoom, UUID commit, String regionName) throws Exception {
     UUID entity = UUID.randomUUID();
-    UUID commit = UUID.randomUUID();
     List<WorldDesignMutationRevision> values = new ArrayList<>();
     values.add(
         mutation(
@@ -1584,7 +1854,7 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
                 WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
             .setRegion(
                 RegionDesignMutation.newBuilder()
-                    .setName("region")
+                    .setName(regionName)
                     .setWeather("rain")
                     .setShardId(7)
                     .setGenerationSeed(9_007_199_254_740_999L)
