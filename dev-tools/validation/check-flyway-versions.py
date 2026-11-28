@@ -214,7 +214,7 @@ def recovery_config_path(path: str) -> bool:
 
 
 def relevant_path(path: str) -> bool:
-    return path == RECOVERY_CONFIG_DIRECTORY or path in RECOVERY_MIGRATION_ANCESTORS or bool(migration_path(path)) or (
+    return path == RECOVERY_CONFIG_DIRECTORY or path in RECOVERY_MIGRATION_ANCESTORS or bool(MIGRATION_PATH_RE.match(path)) or (
         path.startswith(RECOVERY_MAIN_JAVA_ROOT) and path.endswith(".java")
     ) or (
         path.startswith("services/")
@@ -239,11 +239,10 @@ def current_snapshot(repo_root: Path) -> Snapshot:
              *repo_root.glob("services/*/src/main/resources/config/application*.xml"),
              *repo_root.glob("services/*/src/main/resources/db/migration/**/*"),
              *repo_root.glob("services/*/src/main/java/db/migration/**/*"),
+             *repo_root.glob("services/*/src/main/resources/db/recovery-control-migration/**/*"),
+             *repo_root.glob("services/*/src/main/java/db/recovery-control-migration/**/*"),
              *repo_root.glob(f"{RECOVERY_MAIN_JAVA_ROOT}**/*.java"),
              *repo_root.glob("buildSrc/**/*.kt"), *repo_root.glob("buildSrc/**/*.kts")]
-    for root in RECOVERY_MIGRATION_ROOTS:
-        if not root.startswith(linked_prefixes):
-            paths.extend(repo_root.glob(f"{root}**/*"))
     snapshot = {}
     for path in paths:
         relative = path.relative_to(repo_root).as_posix()
@@ -400,7 +399,11 @@ def java_code_tokens(source: str) -> str:
 def recovery_input_issues(snapshot: Snapshot) -> list[str]:
     """Apply the SQL-only Recovery input policy to either side of a comparison."""
     issues = []
+    dependencies = runtime_project_dependencies(snapshot).get(RECOVERY_PROJECT, set())
     for path in sorted(snapshot):
+        match = MIGRATION_PATH_RE.match(path)
+        if match and match.group(2) == "recovery-control-migration" and match.group(1) in dependencies:
+            issues.append(f"{path}: Recovery runtime dependency contributes to its reserved migration location")
         if path.startswith(RECOVERY_MAIN_JAVA_ROOT) and path.endswith(".java"):
             source = snapshot[path].decode("utf-8", errors="replace")
             tokens = java_code_tokens(source)
@@ -413,6 +416,11 @@ def recovery_input_issues(snapshot: Snapshot) -> list[str]:
                 issues.append(
                     f"{path}: Recovery FlywayMigrationStrategy beans are unsupported; "
                     "packaged SQL must use the default Flyway initializer"
+                )
+            if re.search(r"(?<![\w$])FlywayConfigurationCustomizer(?![\w$])", tokens):
+                issues.append(
+                    f"{path}: Recovery FlywayConfigurationCustomizer beans are unsupported; "
+                    "the packaged migration selection must match the checked SQL"
                 )
         if snapshot[path] == SYMLINK_SNAPSHOT and (
             path in RECOVERY_MIGRATION_ANCESTORS or path.startswith(RECOVERY_MIGRATION_ROOTS)
@@ -461,11 +469,11 @@ def discover_migration_files(snapshot: Snapshot) -> list[MigrationFile]:
     return discovered
 
 
-def saga_runtime_projects(snapshot: Snapshot) -> set[str]:
+def runtime_project_dependencies(snapshot: Snapshot) -> dict[str, set[str]]:
     """Read existing runtime dependencies and composed convention plugins, not classifications.
 
     This follows the repository's literal Kotlin DSL wiring. Test dependencies are
-    deliberately excluded: they do not put Saga resources on startup classpaths.
+    deliberately excluded from startup classpaths.
     """
     registration = snapshot.get("buildSrc/build.gradle.kts", b"").decode()
     plugin_sources: dict[str, str] = {}
@@ -480,24 +488,31 @@ def saga_runtime_projects(snapshot: Snapshot) -> set[str]:
     module_sources = {path.split("/")[1]: data.decode() for path, data in snapshot.items()
                       if re.fullmatch(r"services/[^/]+/build.gradle.kts", path)}
 
-    def reaches_saga(source: str, visited: set[str]) -> bool:
+    def collect(source: str, visited: set[str], dependencies: set[str]) -> None:
         for dependency in RUNTIME_DEPENDENCY_RE.findall(source):
             module = next(part for part in dependency if part)
-            if module == "common-saga":
-                return True
+            dependencies.add(module)
             key = "module:" + module
-            if (key not in visited and module in module_sources
-                    and reaches_saga(module_sources[module], visited | {key})):
-                return True
+            if key not in visited and module in module_sources:
+                visited.add(key)
+                collect(module_sources[module], visited, dependencies)
         for plugin in PLUGIN_RE.findall(source):
             key = "plugin:" + plugin
-            if (key not in visited and plugin in plugin_sources
-                    and reaches_saga(plugin_sources[plugin], visited | {key})):
-                return True
-        return False
+            if key not in visited and plugin in plugin_sources:
+                visited.add(key)
+                collect(plugin_sources[plugin], visited, dependencies)
 
-    return {project for project, source in module_sources.items()
-            if reaches_saga(source, {"module:" + project})}
+    projects: dict[str, set[str]] = {}
+    for project, source in module_sources.items():
+        dependencies: set[str] = set()
+        collect(source, {"module:" + project}, dependencies)
+        projects[project] = dependencies - {project}
+    return projects
+
+
+def saga_runtime_projects(snapshot: Snapshot) -> set[str]:
+    return {project for project, dependencies in runtime_project_dependencies(snapshot).items()
+            if "common-saga" in dependencies}
 
 
 def saga_adopters(
@@ -917,7 +932,8 @@ def recovery_flyway_config(
         ignore_patterns = [] if not ignore_patterns else ignore_patterns.split(",")
     if not isinstance(ignore_patterns, list) or any(
             not isinstance(pattern, str)
-            or pattern.strip(JAVA_TRIM_CHARACTERS).lower()
+            or ":".join(token.strip(JAVA_TRIM_CHARACTERS)
+                        for token in pattern.lower().split(":"))
             not in {"*:future", "versioned:future", "repeatable:future"}
             for pattern in ignore_patterns):
         return None
@@ -1179,6 +1195,20 @@ def run_self_test() -> None:
     )
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    foreign_location = "services/common-platform-core/src/main/resources/db/recovery-control-migration/V1__shared.sql"
+    foreign_resource = {**recovery_history, foreign_location: b"-- unrelated unless loaded"}
+    check("another module does not qualify as Recovery migration history",
+          foreign_resource, recovery_history, None)
+    check("Recovery runtime dependencies cannot publish the reserved migration location", {
+        **foreign_resource,
+        f"services/{RECOVERY_PROJECT}/build.gradle.kts":
+            b'dependencies { implementation(project(":common-platform-core")) }',
+    }, recovery_history, "Recovery runtime dependency contributes to its reserved migration location")
+    check("Recovery customizers cannot change the qualifying migration selection", {
+        **recovery_history,
+        f"{RECOVERY_MAIN_JAVA_ROOT}Override.java":
+            b"@Bean FlywayConfigurationCustomizer pinTarget() { return c -> c.target(1); }",
+    }, recovery_history, "Recovery FlywayConfigurationCustomizer beans are unsupported")
     for credential in (b"username", b"password"):
         missing_credential = datasource_setting.replace(
             b"spring.datasource." + credential + b": ${FIREMUD_RECOVERY_CONTROL_DB_"
@@ -1328,11 +1358,11 @@ def run_self_test() -> None:
     }, empty_description_history, "historical migration content changed")
     check("current recovery must carry its dedicated datasource URL", {
         **recovery_history,
-        recovery_config: recovery_settings.removeprefix(datasource_setting),
+        recovery_config: recovery_settings.removeprefix(b"spring.datasource.url: " + datasource_url + b"\n"),
     }, recovery_history, "historical effective migration no longer applied")
     check("legacy recovery source remains an eligible historical baseline", recovery_history, {
         **recovery_history,
-        recovery_config: recovery_settings.removeprefix(datasource_setting),
+        recovery_config: recovery_settings.removeprefix(b"spring.datasource.url: " + datasource_url + b"\n"),
     }, None)
     for hikari_override in (
         b"spring.datasource.hikari.data-source-properties.applicationName: override\n",
@@ -2504,10 +2534,13 @@ def run_self_test() -> None:
         git(root, "-c", "user.name=Flyway fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "history")
         base = git(root, "rev-parse", "HEAD").decode().strip()
         parent = parent_snapshot(root, base)
-        if current_snapshot(root) != combined_fixture:
-            raise AssertionError("current snapshot must remain scoped to migration and configuration inputs")
-        if parent != combined_fixture or unicode_migration not in parent or unrelated_non_utf8 in parent:
-            raise AssertionError("snapshot migration discovery must scope the Recovery location to its owning service")
+        effective_inputs = {**combined_fixture, **outside_recovery}
+        if current_snapshot(root) != effective_inputs:
+            raise AssertionError("current snapshot must retain reserved paths for dependency validation")
+        if parent != effective_inputs or unicode_migration not in parent or unrelated_non_utf8 in parent:
+            raise AssertionError("base snapshot must retain the same migration and dependency inputs")
+        if any(item.path in outside_recovery for item in discover_migration_files(parent)):
+            raise AssertionError("foreign reserved resources cannot become Recovery history")
         sidecar_path = root / (recovery + "V1__journal.sql.conf")
         sidecar_path.write_text("shouldExecute=false", encoding="utf-8")
         git(root, "add", ".")

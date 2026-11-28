@@ -232,7 +232,10 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
             .anyMatch(pattern ->
                 pattern == null
                     || !futureOnlyPatterns.contains(
-                        pattern.trim().toLowerCase(java.util.Locale.ROOT)))) {
+                        pattern
+                            .trim()
+                            .replaceFirst("[\\x00-\\x20]*:[\\x00-\\x20]*", ":")
+                            .toLowerCase(java.util.Locale.ROOT)))) {
       throw new SafeOverrideException(
           "spring.flyway.ignore-migration-patterns may only ignore future migrations");
     }

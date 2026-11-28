@@ -234,7 +234,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                 AND a.attnum = i.indkey[0] AND NOT a.attisdropped
               WHERE i.indrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
                 AND i.indisunique AND i.indisready AND i.indislive AND i.indnkeyatts = 1
-                AND a.attname = 'operation_id')
+                AND a.attname IN ('operation_id', 'verb'))
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
@@ -309,6 +309,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND attname = 'retry_provenance' AND NOT attisdropped AND NOT attnotnull
+                AND NOT atthasdef
                 AND atttypid = 'pg_catalog.text'::regtype)
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
@@ -362,7 +363,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND attname IN ('acknowledged_at', 'last_dispatched_at')
-                AND NOT attisdropped AND NOT attnotnull
+                AND NOT attisdropped AND NOT attnotnull AND NOT atthasdef
                 AND atttypid = 'pg_catalog.timestamptz'::regtype AND atttypmod = -1)
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute

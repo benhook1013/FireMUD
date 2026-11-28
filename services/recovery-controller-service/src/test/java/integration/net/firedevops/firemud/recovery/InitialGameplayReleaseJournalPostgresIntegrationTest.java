@@ -1384,6 +1384,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     "send_outcome_uncertain, TYPE recovery_control.fixture_uncertainty_flag",
     "retry_provenance, SET NOT NULL",
     "retry_provenance, TYPE varchar(1)",
+    "retry_provenance, SET DEFAULT 'local_no_send'",
     "last_outcome_code, SET NOT NULL",
     "last_outcome_code, TYPE varchar(63)",
     "attempt_count, DROP NOT NULL",
@@ -1392,6 +1393,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     "acknowledged_at, SET NOT NULL",
     "acknowledged_at, TYPE timestamptz(3)",
     "last_dispatched_at, TYPE timestamptz(3)",
+    "last_dispatched_at, SET DEFAULT CURRENT_TIMESTAMP",
+    "acknowledged_at, SET DEFAULT CURRENT_TIMESTAMP",
     "updated_at, TYPE timestamptz(3)",
     "updated_at, TYPE timestamptz(6)",
     "preparation_observation_payload, SET DEFAULT jsonb_build_object()",
@@ -1670,6 +1673,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         "transition_tuple_digest_nullability",
         "transition_missing_key",
         "transition_operation_only_key",
+        "transition_verb_only_key",
         "transition_equivalent_key",
         "outbox_operation_kind_key",
         "outbox_operation_only_key",
@@ -1730,6 +1734,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                   ON recovery_control.initial_gameplay_release_transition (operation_id)
                   INCLUDE (verb)
                 """;
+            case "transition_verb_only_key" ->
+                "CREATE UNIQUE INDEX fixture_transition_verb ON recovery_control.initial_gameplay_release_transition (verb)";
             case "transition_equivalent_key" ->
                 """
                 ALTER TABLE recovery_control.initial_gameplay_release_transition
@@ -5166,6 +5172,78 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isEqualTo(Phase.RELEASING);
     assertThat(journal.findEffect(operationId, EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
         .isPresent();
+  }
+
+  @Test
+  void reconciliationRefusesMissingPreparationAfterCommittedResume() {
+    var pending = authorizedPending(journal, Instant.parse("2026-09-01T00:00:00Z"));
+    UUID operationId = pending.effect().operationId();
+    assertThat(journal.find(operationId).orElseThrow().phase()).isEqualTo(Phase.RESUME_AUTHORIZED);
+    assertThat(journal.findNextEffect(operationId)).contains(pending);
+    assertThat(
+            dsl.execute(
+                "DELETE FROM recovery_control.initial_gameplay_release_outbox WHERE outbox_id=?",
+                pending.outboxId()))
+        .isEqualTo(1);
+
+    assertThatThrownBy(() -> journal.findNextEffect(operationId))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("authorized resume has no retained preparation effect");
+    assertThat(journal.find(operationId).orElseThrow().phase()).isEqualTo(Phase.RESUME_AUTHORIZED);
+    assertThat(journal.findEffect(operationId, EffectKind.PREPARE_PLAYABLE_STATE_FENCED)).isEmpty();
+  }
+
+  @Test
+  void reconciliationKeepsReleasingPreparationHeldWhenAcknowledgementIsMissing() {
+    var base = Instant.parse("2026-09-01T00:00:00Z");
+    var dispatch = authorizedDispatch(base);
+    UUID operationId = dispatch.effect().operationId();
+    var acknowledgement =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "initial-acknowledgement",
+            base.plusSeconds(5));
+    assertThat(
+            journal
+                .recordEffectReadback(dispatch, acknowledgement, acknowledgement.observedAt())
+                .phase())
+        .isEqualTo(Phase.RELEASING);
+    var incomplete =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "partial-without-acknowledgement",
+            base.plusSeconds(6));
+    assertThat(
+            dsl.execute(
+                """
+                UPDATE recovery_control.initial_gameplay_release_outbox
+                SET state='ambiguous', last_outcome_code='UNKNOWN_OR_PARTIAL', acknowledged_at=NULL,
+                    readback_identity=?, readback_payload=CAST(? AS jsonb), readback_digest=?
+                WHERE outbox_id=?
+                """,
+                incomplete.readbackIdentity(),
+                tupleCodec.toJson(incomplete),
+                tupleCodec.digest(incomplete),
+                dispatch.outboxId()))
+        .isEqualTo(1);
+    var corrupt = storedOutbox(operationId, dispatch.effect().effectId());
+    var delayed =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            acknowledgement.readbackIdentity(),
+            base.plusSeconds(7));
+
+    assertThatThrownBy(() -> journal.recordEffectReadback(dispatch, delayed, delayed.observedAt()))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("releasing preparation has no retained acknowledgement");
+    assertThat(storedOutbox(operationId, dispatch.effect().effectId())).isEqualTo(corrupt);
+    assertThat(journal.find(operationId).orElseThrow().phase()).isEqualTo(Phase.RELEASING);
   }
 
   @Test

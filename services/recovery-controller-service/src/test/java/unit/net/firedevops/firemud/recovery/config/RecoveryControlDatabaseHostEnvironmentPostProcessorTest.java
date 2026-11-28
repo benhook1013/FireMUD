@@ -860,7 +860,8 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"*:future", "versioned:future", "repeatable:future"})
+  @ValueSource(
+      strings = {"*:future", "versioned:future", "repeatable:future", "versioned : future"})
   void acceptsFutureOnlyIgnorePattern(String pattern) {
     var environment =
         fixtureEnvironment().withProperty("spring.flyway.ignore-migration-patterns[0]", pattern);

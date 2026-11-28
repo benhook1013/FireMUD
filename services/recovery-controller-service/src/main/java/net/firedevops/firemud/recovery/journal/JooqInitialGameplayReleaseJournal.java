@@ -360,7 +360,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Record record =
         dsl.fetchOne(
             """
-            WITH outbox AS (
+            WITH operation AS (
+              SELECT operation_id, phase
+              FROM recovery_control.initial_gameplay_release_operation
+              WHERE operation_id = ?
+            ), outbox AS (
               SELECT e.*,
                      CASE
                        WHEN e.state = 'retryable' AND (e.retry_provenance IS NULL OR
@@ -373,9 +377,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                        ELSE e.state
                      END AS reconciliation_state
               FROM recovery_control.initial_gameplay_release_outbox e
-              JOIN recovery_control.initial_gameplay_release_operation o USING (operation_id)
-              WHERE e.operation_id = ?
-            )
+              JOIN operation o USING (operation_id)
+            ), next_effect AS (
             SELECT outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest, payload,
                    payload_digest, reconciliation_state AS state, attempt_count, last_attempt_id,
                    last_outcome_code, last_dispatched_at,
@@ -402,10 +405,19 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                      END,
                      created_at, outbox_id
             LIMIT 1
+            )
+            SELECT next_effect.*,
+                   operation.phase = 'resume_authorized' AND NOT EXISTS (
+                     SELECT 1 FROM outbox WHERE effect_kind = 'prepare_playable_state_fenced'
+                   ) AS missing_preparation
+            FROM operation LEFT JOIN next_effect ON true
             """,
             operationId,
             preparationRefreshOnly);
-    if (record == null) {
+    if (record != null && Boolean.TRUE.equals(record.get("missing_preparation", Boolean.class))) {
+      throw conflict("authorized resume has no retained preparation effect");
+    }
+    if (record == null || record.get("outbox_id", UUID.class) == null) {
       // A finalized operation must still have an exact, durable handoff receipt.
       find(operationId);
       return Optional.empty();
@@ -872,6 +884,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               && current.state() != EffectOutboxState.RETRYABLE) {
             throw conflict("effect is not awaiting readback reconciliation");
           }
+          if (isPreparationHeldBeforeHandoff(operation, current)) {
+            throw conflict("releasing preparation has no retained acknowledgement");
+          }
           Record timestamps =
               tx.fetchOne(
                   "SELECT last_dispatched_at, readback_payload, readback_digest, readback_identity FROM"
@@ -903,17 +918,6 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             throw conflict("nonterminal effect unexpectedly retains a definitive readback");
           }
           requireQualifiedWriteSession(tx);
-          if (isPreparationHeldBeforeHandoff(operation, current)) {
-            if (previous == null || previous.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
-              throw conflict("held preparation has no retained partial readback");
-            }
-            if (readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
-              requireSuccessfulReadbackState(readback, current.effect().kind());
-              setReadbackState(
-                  tx, current, readback, readbackDigest, EffectOutboxState.ACKNOWLEDGED, now);
-              return operation;
-            }
-          }
           if (readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL) {
             setReadbackState(
                 tx, current, readback, readbackDigest, EffectOutboxState.AMBIGUOUS, now);
