@@ -243,13 +243,45 @@ jobs:
             done
             elapsed fixture_rollout "$phase_started"
 
+            # The exact Pod policies overlap on an ephemeral-container denial. The
+            # API can report either policy first. Recognize both exact policy,
+            # binding and message tuples without changing the pinned test requests.
+            pinned_probe=dev-tools/hosted/trust-bootstrap/prove-protected-pod-boundary.sh
+            qualified_probe=dev-tools/hosted/trust-bootstrap/qualified-pod-admission-proof.sh
+            [[ "$(git hash-object -- "$pinned_probe")" == f8d32c1ab699524f97aa8ac9bd5ca0a099bb1f5c ]]
+            python3 - "$pinned_probe" "$qualified_probe" <<'PY'
+          import sys
+          from pathlib import Path
+
+          source, qualified = map(Path, sys.argv[1:])
+          original = source.read_text(encoding="utf-8")
+          check = "        elif re.search(rejection, result.stderr):"
+          match = "        if result.returncode == 0:"
+          if original.count(check) != 1 or original.count(match) != 1:
+              raise SystemExit("pinned proof denial matcher changed")
+          overlap = r'''        allowed_rejections = [rejection]
+                  if (policy == boundary and message ==
+                          "hosted runtime ephemeral containers must satisfy the same host and capability restrictions"):
+                      allowed_rejections.append(
+                          r"ValidatingAdmissionPolicy [\"']" + re.escape(identity)
+                          + r"[\"'] with binding [\"']" + re.escape(identity)
+                          + r"[\"'] denied request: " + re.escape(
+                              "Account and Game Session require exactly their application container and no init/ephemeral containers or injected annotations"))
+          '''
+          adjusted = original.replace(match, overlap + match).replace(
+              check, "        elif any(re.search(candidate, result.stderr) for candidate in allowed_rejections):")
+          with qualified.open("x", encoding="utf-8") as output:
+              output.write(adjusted)
+          PY
+            printf 'qualified_probe_sha256=%s\n' "$(sha256sum < "$qualified_probe" | cut -d ' ' -f 1)"
+
             phase_started="$(date +%s)"
             for app in account-service game-session-service; do
               proof_pod="$(kubectl --kubeconfig "$KUBECONFIG" --context "$expected_context" -n dev \
                 get pods -l "app=$app" -o json \
                 | jq -er '.items | select(length == 1) | .[0].metadata.name')"
               printf 'fixture_pod_%s=%s\n' "$app" "$proof_pod"
-              bash dev-tools/hosted/trust-bootstrap/prove-protected-pod-boundary.sh \
+              bash "$qualified_probe" \
                 --context "$expected_context" --namespace dev --pod "$proof_pod"
             done
             elapsed server_dry_run_admission_probes "$phase_started"

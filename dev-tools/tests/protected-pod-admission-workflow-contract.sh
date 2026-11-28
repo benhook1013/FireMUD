@@ -69,5 +69,42 @@ print(json.dumps({"metadata":{"generation":2},"spec":{"failurePolicy":"Ignore" i
                 second = "firemud-trust-runtime-binding-boundary"
                 assert (tmp/"calls").read_text().splitlines() == [first, first, first, second]
                 assert f"policy_readiness=timeout policy={second}" in result.stderr
+
+qualifier_start = proof.index('python3 - "$pinned_probe" "$qualified_probe"')
+qualifier_end = proof.index("\nPY\n", qualifier_start) + len("\nPY\n")
+with tempfile.TemporaryDirectory(prefix="firemud-policy-receipt-") as directory:
+    pinned = pathlib.Path(directory) / "pinned.py"
+    qualified = pathlib.Path(directory) / "qualified.py"
+    pinned.write_text(
+        'import re\n'
+        'def accepted(result, policy, message, boundary, identity, rejection):\n'
+        '    if policy:\n'
+        '        if result.returncode == 0:\n'
+        '            return False\n'
+        '        elif re.search(rejection, result.stderr):\n'
+        '            return True\n'
+        '    return False\n'
+    )
+    subprocess.run(
+        ["bash", "-c", proof[qualifier_start:qualifier_end]],
+        env={**os.environ, "pinned_probe": str(pinned), "qualified_probe": str(qualified)},
+        check=True,
+    )
+    namespace = {}
+    exec(compile(qualified.read_text(), str(qualified), "exec"), namespace)
+    from types import SimpleNamespace
+    boundary = "firemud-trust-runtime-pod-boundary"
+    identity = "firemud-trust-runtime-pod-identity"
+    overlap = "hosted runtime ephemeral containers must satisfy the same host and capability restrictions"
+    denial = (
+        f"ValidatingAdmissionPolicy '{identity}' with binding '{identity}' denied request: "
+        "Account and Game Session require exactly their application container and no init/ephemeral containers or injected annotations"
+    )
+    accepted = namespace["accepted"]
+    assert accepted(SimpleNamespace(returncode=1, stderr=denial), boundary, overlap, boundary, identity, "primary")
+    assert accepted(SimpleNamespace(returncode=1, stderr="primary"), boundary, overlap, boundary, identity, "primary")
+    assert not accepted(SimpleNamespace(returncode=0, stderr=denial), boundary, overlap, boundary, identity, "primary")
+    assert not accepted(SimpleNamespace(returncode=1, stderr=denial), boundary, "other", boundary, identity, "primary")
+    assert not accepted(SimpleNamespace(returncode=1, stderr=denial.replace("with binding '" + identity, "with binding 'unknown")), boundary, overlap, boundary, identity, "primary")
 print("Protected Pod workflow bounded cleanup/readiness contract passed")
 PY
