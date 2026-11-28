@@ -175,7 +175,7 @@ public final class AccountGameplayAdmissionLeaseGrpcService
     }
     if (request == null
         || request.getSerializedSize()
-            > AccountGameplayAdmissionLeaseGrpcCodec.MAX_ORIGINAL_LEASE_REQUEST_WIRE_BYTES) {
+            > AccountGameplayAdmissionLeaseGrpcCodec.MAX_CONFIRMATION_REQUEST_WIRE_BYTES) {
       fail(observer, Status.INVALID_ARGUMENT);
       return;
     }
@@ -189,7 +189,7 @@ public final class AccountGameplayAdmissionLeaseGrpcService
     } catch (StatusRuntimeException rejected) {
       fail(observer, rejected.getStatus());
       return;
-    } catch (IllegalArgumentException malformed) {
+    } catch (IllegalArgumentException | ArithmeticException malformed) {
       fail(observer, Status.INVALID_ARGUMENT);
       return;
     } catch (RuntimeException unavailable) {
@@ -201,7 +201,9 @@ public final class AccountGameplayAdmissionLeaseGrpcService
     try {
       confirmed =
           originalNewCredentialOwner.confirmOriginalFinalAdmission(
-              parsed.presentedInitialGsACompactJwt(), parsed.originalLeaseEvidence());
+              parsed.presentedInitialGsACompactJwt(),
+              parsed.originalLeaseEvidence(),
+              parsed.committedCapacityRequest());
     } catch (StatusRuntimeException failure) {
       fail(observer, failure.getStatus());
       return;
@@ -223,7 +225,8 @@ public final class AccountGameplayAdmissionLeaseGrpcService
               parsed.originalLeaseEvidence().leaseFence().longValueExact(),
               confirmed.admissionAtMillis(),
               confirmed.continuityExpiresAtMillis(),
-              confirmed.authenticatedConfirmationSha256());
+              confirmed.authenticatedConfirmationSha256(),
+              confirmed.committedCapacityResult());
     } catch (RuntimeException invalidOwnerResult) {
       fail(observer, Status.INTERNAL);
       return;

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.client;
 
+import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -13,6 +14,7 @@ import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseServiceGrp
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.AcquireRequest;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.CommittedCapacityRequest;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OperationEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalFinalAdmissionConfirmation;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalFinalAdmissionConfirmationRequest;
@@ -275,10 +277,27 @@ public final class AccountGameplayAdmissionLeaseClient
    */
   public OriginalFinalAdmissionConfirmation confirmOriginalNewGameplayAdmission(
       String presentedInitialGsACompactJwt, byte[] originalLeaseEvidenceUtf8) {
+    return confirmOriginalNewGameplayAdmission(
+        presentedInitialGsACompactJwt, originalLeaseEvidenceUtf8, null);
+  }
+
+  public OriginalFinalAdmissionConfirmation confirmOriginalNewGameplayAdmission(
+      String presentedInitialGsACompactJwt,
+      byte[] originalLeaseEvidenceUtf8,
+      Deadline operationDeadline) {
+    return confirmOriginalNewGameplayAdmission(
+        presentedInitialGsACompactJwt, originalLeaseEvidenceUtf8, operationDeadline, null);
+  }
+
+  public OriginalFinalAdmissionConfirmation confirmOriginalNewGameplayAdmission(
+      String presentedInitialGsACompactJwt,
+      byte[] originalLeaseEvidenceUtf8,
+      Deadline operationDeadline,
+      CommittedCapacityRequest committedCapacityRequest) {
     requireNoAmbientSql("Original-new admission confirmation requires no ambient SQL");
     var wireRequest =
         AccountGameplayAdmissionLeaseGrpcCodec.toConfirmOriginalNewGameplayAdmissionRequest(
-            presentedInitialGsACompactJwt, originalLeaseEvidenceUtf8);
+            presentedInitialGsACompactJwt, originalLeaseEvidenceUtf8, committedCapacityRequest);
     OriginalFinalAdmissionConfirmationRequest expected =
         AccountGameplayAdmissionLeaseGrpcCodec.parseConfirmOriginalNewGameplayAdmissionRequest(
             wireRequest);
@@ -287,9 +306,17 @@ public final class AccountGameplayAdmissionLeaseClient
       return AccountGameplayAdmissionLeaseGrpcCodec
           .parseConfirmOriginalNewGameplayAdmissionResponse(
               expected,
-              requireInitializedStub("Account lease service is not initialized")
-                  .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                  .confirmOriginalNewGameplayAdmission(wireRequest));
+              withPublishedInitializedStub(
+                  "Account lease service is not initialized",
+                  stub -> {
+                    var bounded =
+                        operationDeadline == null
+                            ? stub.withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                            : stub.withDeadline(
+                                operationDeadline.minimum(
+                                    Deadline.after(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)));
+                    return bounded.confirmOriginalNewGameplayAdmission(wireRequest);
+                  }));
     } catch (StatusRuntimeException failure) {
       throw statusFailure("Account original-new admission confirmation failed", failure);
     } catch (IllegalArgumentException malformed) {

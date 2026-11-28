@@ -332,11 +332,13 @@ public final class AccountOriginalNewBoundGameplayIssuanceRepository {
                 + TABLE
                 + " SET confirmed_admission_at_ms = ?, confirmed_continuity_expires_at_ms = ?, "
                 + "confirmation_readback_sha256 = ? WHERE operation_id = ? AND status = 'COMMITTED' "
-                + "AND confirmed_admission_at_ms IS NULL AND handle_consumed_at_ms IS NULL",
+                + "AND confirmed_admission_at_ms IS NULL AND handle_consumed_at_ms IS NULL "
+                + "AND ? > floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint",
             actualAdmissionAtMillis,
             actualContinuityExpiresAtMillis,
             authenticatedReadbackSha256,
-            expected.lineageId());
+            expected.lineageId(),
+            actualContinuityExpiresAtMillis);
     if (changed != 1) throw unavailable();
     Genesis stored = decode(requireByLeaseForUpdate(expected.leaseId()));
     if (!Objects.equals(stored.confirmedAdmissionAtMillis(), actualAdmissionAtMillis)

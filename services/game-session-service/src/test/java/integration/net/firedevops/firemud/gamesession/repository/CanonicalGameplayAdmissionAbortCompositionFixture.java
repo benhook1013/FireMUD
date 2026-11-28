@@ -1156,6 +1156,13 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   }
 
   public UUID prepareOtherControllerNew(String seed) {
+    return prepareOtherControllerNew(
+        seed,
+        UUID.nameUUIDFromBytes((seed + "-request").getBytes(StandardCharsets.UTF_8)),
+        UUID.nameUUIDFromBytes((seed + "-transition").getBytes(StandardCharsets.UTF_8)));
+  }
+
+  UUID prepareOtherControllerNew(String seed, UUID requestId, UUID transitionId) {
     CanonicalGameplayBindingIdentity other;
     do {
       other =
@@ -1183,11 +1190,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, issuerSource)
             .beginOrResumeOrdinaryNew(
                 new CanonicalGameplayIssuerBindingLocalOperation.Request(
-                    UUID.nameUUIDFromBytes((seed + "-request").getBytes(StandardCharsets.UTF_8)),
-                    UUID.nameUUIDFromBytes((seed + "-transition").getBytes(StandardCharsets.UTF_8)),
-                    other,
-                    null,
-                    null));
+                    requestId, transitionId, other, null, null));
     otherOperations.put(seed, operation);
     return operation.operationId();
   }
