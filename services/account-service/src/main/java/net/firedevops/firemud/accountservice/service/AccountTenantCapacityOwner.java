@@ -24,6 +24,7 @@ import net.firedevops.firemud.accountservice.repository.AccountCapacityOriginDec
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateExpiredException;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
@@ -163,20 +164,16 @@ public final class AccountTenantCapacityOwner {
           var parsed = currentMembership(request);
           requireSupportedShape(request);
           EvaluationLifetime lifetime = observeLifetime(evidence, retainedExpiry);
-          if (!lifetime.expired()) {
-            try {
-              currentDelegation(request, lifetime.accountNow());
-            } catch (CommittedCandidateExpiredException expired) {
-              if (!evidence.permitsCreation()
-                  || !expired.matches(sourceTokenJti(evidence), sourceTokenExpiry(evidence)))
-                throw unavailable();
-              currentScope(request, parsed, lifetime.accountNow());
-              if (!observeLifetime(evidence, retainedExpiry).expired()) throw unavailable();
-              return refuseExpired(request);
-            }
-            currentScope(request, parsed, lifetime.accountNow());
-            lifetime = observeLifetime(evidence, retainedExpiry);
+          boolean delegationElapsed = false;
+          try {
+            currentDelegation(request, lifetime.accountNow());
+          } catch (CommittedCandidateExpiredException expired) {
+            delegationElapsed = true;
           }
+          currentScope(request, parsed, lifetime.accountNow());
+          lifetime = observeLifetime(evidence, retainedExpiry);
+          if (delegationElapsed && (!evidence.permitsCreation() || !lifetime.expired()))
+            throw unavailable();
           if (lifetime.expired() && evidence.permitsCreation()) return refuseExpired(request);
           requireFresh(lifetime);
           if (!evidence.permitsCreation())
@@ -350,23 +347,38 @@ public final class AccountTenantCapacityOwner {
   }
 
   private void currentDelegation(Request request, Instant now) {
+    CommittedCandidateVerificationData issuance;
+    try {
+      issuance =
+          qualifiedSource(() ->
+                  issuances.readCurrentCommittedCandidateByJti(sourceTokenJti(request.evidence())))
+              .orElseThrow(AccountTenantCapacityRepository::unavailable);
+    } catch (CommittedCandidateExpiredException expired) {
+      requireExactDelegation(request, expired.verifiedCandidate());
+      throw expired;
+    }
+    requireExactDelegation(request, issuance);
+    if (now.getEpochSecond() < issuance.identity().notBeforeEpochSecond()
+        || now.getEpochSecond() >= issuance.identity().expiresAtEpochSecond()) throw unavailable();
+  }
+
+  private static void requireExactDelegation(
+      Request request, CommittedCandidateVerificationData issuance) {
     if (!(request.context() instanceof PlayerContext player)) throw unavailable();
     var source = sourceReferences(request.evidence());
-    var issuance =
-        qualifiedSource(() ->
-                issuances.readCurrentCommittedCandidateByJti(sourceTokenJti(request.evidence())))
-            .orElseThrow(AccountTenantCapacityRepository::unavailable);
     if (!issuance.identity().accountId().equals(player.accountId())
         || !issuance.identity().callerWorkload().equals(request.evidence().callerWorkload())
         || !issuance.identity().callerContextId().toString().equals(source.get("callerContextId"))
         || !issuance.identity().operationId().toString().equals(source.get("callerOperationId"))
+        || !issuance.identity().tokenJti().equals(sourceTokenJti(request.evidence()))
+        || !Instant.ofEpochSecond(issuance.identity().expiresAtEpochSecond())
+            .equals(sourceTokenExpiry(request.evidence()))
         || !issuance.tokenSha256().equals(source.get("callerTokenSha256"))
         || !issuance
             .canonicalRegistryRecordSha256()
             .equals(source.get("callerRegistryRecordSha256"))
-        || !issuance.commitProofSha256().equals(source.get("callerCommitProofSha256"))
-        || now.getEpochSecond() < issuance.identity().notBeforeEpochSecond()
-        || now.getEpochSecond() >= issuance.identity().expiresAtEpochSecond()) throw unavailable();
+        || !issuance.commitProofSha256().equals(source.get("callerCommitProofSha256")))
+      throw unavailable();
   }
 
   private void currentScope(

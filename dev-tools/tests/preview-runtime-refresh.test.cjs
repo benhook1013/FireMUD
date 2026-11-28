@@ -236,6 +236,21 @@ test('serialized admission waits for the first exact receiver before releasing t
     request: {retries: 0, redirect: 'error'}}]);
 });
 
+test('a typed-proof request ignores native producers and does not forward the admission option', async () => {
+  const f = admissionFixture();
+  f.runs.push(f.makePullRequestRun());
+  f.admission.input.require_typed_proof = false;
+  await assert.rejects(admitRuntimeRefresh(f.admission), /Invalid runtime refresh input/);
+  delete f.admission.input.require_typed_proof;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
+  f.admission.input.require_typed_proof = true;
+  f.state.lookups.length = 0;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert(f.state.lookups.every(({event}) => event === 'repository_dispatch'));
+  assert.equal(f.sent.length, 1);
+  assert(!Object.hasOwn(f.sent[0].client_payload, 'require_typed_proof'));
+});
+
 test('a non-native admission context cannot create a tag or dispatch', async t => {
   for (const overrides of [
     {sha: undefined}, {sha: 'invalid'}, {ref: 'refs/heads/feature'}, {eventName: 'workflow_dispatch'},
@@ -980,6 +995,35 @@ test('advancing a generation requires one exact terminal receiver with a success
   assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['1', '2']);
   assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
   assert.equal(f.sent.length, 2);
+});
+
+test('a terminal predecessor cannot advance beyond the complete claim inventory limit', async () => {
+  const f = admissionFixture();
+  f.state.keepHidden = true;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
+  const [first] = f.claimTags.values();
+  let latest = first;
+  for (let generation = 2; generation <= 300; generation++) {
+    const tag = first.tag.replace(/g1$/, `g${generation}`);
+    const sha = String(generation).padStart(40, '0');
+    const message = JSON.stringify({...JSON.parse(first.message), generation: String(generation)}) + '\n';
+    latest = {...first, sha, tag, message};
+    f.claimTags.set(sha, latest);
+    const ref = `refs/tags/${tag}`;
+    f.claimRefs.set(ref, {ref, object: {type: 'tag', sha}});
+  }
+  const run = {...f.state.newRun, status: 'completed', conclusion: 'failure'};
+  f.runs.push(run);
+  f.receiverJobs.set(`${run.id}:${run.run_attempt}`, [{
+    id: 1, run_id: run.id, run_attempt: run.run_attempt, head_sha: run.head_sha,
+    name: 'Derive Runtime Image Metadata', status: 'completed', conclusion: 'success',
+    steps: [{name: `Runtime refresh claim generation 300 attempt 1 tag ${latest.sha}`,
+      status: 'completed', conclusion: 'success'}],
+  }]);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.claimRefs.size, 300);
+  assert.equal(f.claimTags.size, 300);
+  assert.equal(f.sent.length, 1);
 });
 
 test('a preview wake leaves successful exact claimed publication to the publisher', async () => {

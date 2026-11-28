@@ -794,7 +794,7 @@ async function runReconcile({
   ciRuns = [ciRun], ciNativeRuns = {}, ciJobsByRun = {}, postVisibilityRuns = null,
   postVisibilityFailures = [], preflightRefreshRuns = [], refreshNativeRuns = {}, refreshAttemptJobs = {},
   refreshNativeAttempts = {}, sourceRun = source, sourceCallback = sourceRun,
-  postNativePrRuns = [], postNativePrSnapshots = {},
+  postNativePrRuns = [], postNativePrSnapshots = {}, postNativePrJobs = {},
 } = {}) {
   let now = Date.parse("2026-01-08T00:00:00Z");
   let expire = expireFirstRequest;
@@ -887,8 +887,10 @@ async function runReconcile({
         getWorkflowRunAttempt: async options => {
           const {run_id, attempt_number} = options;
           record("actions.getWorkflowRunAttempt", options, {owner, repo, run_id, attempt_number});
-          const run = preflightRefreshRuns.find(run => run.id === run_id);
-          assert(run, "native attempt proof must address an inventoried typed refresh");
+          const selected = postNativePrRuns.find(run => run.id === run_id);
+          const run = preflightRefreshRuns.find(run => run.id === run_id) ??
+            (selected && (postNativePrSnapshots[run_id] ?? selected));
+          assert(run, "native attempt proof must address an inventoried producer");
           assert.equal(attempt_number, run.run_attempt, "native attempt proof must retain the selected attempt");
           const attempt = Object.hasOwn(refreshNativeAttempts, run_id) ? refreshNativeAttempts[run_id] : run;
           if (attempt instanceof Error) throw attempt;
@@ -904,6 +906,11 @@ async function runReconcile({
             assert.equal(attempt_number, refresh.run_attempt);
             assert.equal(page, 1);
             return {data: refreshAttemptJobs[run_id] ?? {total_count: 0, jobs: []}};
+          }
+          if (postNativePrRuns.some(run => run.id === run_id)) {
+            assert.equal(page, 1);
+            const jobs = postNativePrJobs[run_id] ?? [];
+            return {data: {total_count: jobs.length, jobs}};
           }
           assert.equal(attempt_number, (ciNativeRuns[run_id] ?? ciRun).run_attempt);
           assert(Number.isInteger(page) && page > 0);
@@ -1116,6 +1123,29 @@ async function runReconcile({
     assert.equal(noReuse.postAttempts, 1);
     assert(!noReuse.infos.some(message => message.includes("native PR producer is reusable")));
   }
+  const readyNative = {...liveNative, status: "completed", conclusion: "success",
+    run_started_at: "2026-01-08T00:00:00.100Z", updated_at: "2026-01-08T00:00:00.900Z"};
+  const readyJob = {
+    id: 9003, run_id: readyNative.id, run_attempt: readyNative.run_attempt, head_sha: head,
+    workflow_name: "Build Runtime Images", name: "PR Full-Stack Smoke (runtime-required=true)",
+    status: "completed", conclusion: "success", started_at: "2026-01-08T00:00:00.200Z",
+    completed_at: "2026-01-08T00:00:00.800Z",
+    steps: [
+      ...["Run credential-free full-stack smoke", "Stop smoke stack",
+        "Require successful runtime smoke and authenticated cleanup"].map(name =>
+          ({name, status: "completed", conclusion: "success"})),
+      {name: "Known canonical transition PLAY failure with successful authenticated cleanup",
+        status: "completed", conclusion: "skipped"},
+    ],
+  };
+  for (const origin of [liveNative, readyNative]) {
+    const proven = await runReconcile({postVisibilityRuns: [], postNativePrRuns: [origin],
+      postNativePrSnapshots: {[readyNative.id]: readyNative}, postNativePrJobs: {[readyNative.id]: [readyJob]}});
+    assert.equal(proven.failure, null);
+    assert(proven.infos.some(message => message.includes("newer exact successful native PR producer is reusable")));
+  }
+  const unproved = await runReconcile({postVisibilityRuns: [], postNativePrRuns: [readyNative]});
+  assert.match(unproved.failure?.message, /visibility is unknown/, "success conclusion alone cannot supply visibility");
   for (const conclusion of ["cancelled", "timed_out"]) {
     for (const ambiguousPost of [false, true]) {
       const unusable = {...typedRefresh, conclusion, run_attempt: 2};
@@ -2353,6 +2383,12 @@ fi
 
 waiter_bin="$fixture_dir/waiter-bin"
 mkdir "$waiter_bin"
+cat >"$fixture_dir/waiter-clock.sh" <<'EOF'
+# Hold the test clock across all proof reads and advance at the poll boundary.
+unset SECONDS
+SECONDS=0
+sleep() { SECONDS=$((SECONDS + 30)); }
+EOF
 jq -n --arg repo "$repository" --arg title "$source_title" --arg sha "$head_sha" '
   {id:4242, workflow_id:777, event:"pull_request", display_title:$title, head_sha:$sha,
    created_at:"2025-01-01T00:00:00Z", html_url:"https://example.test/runs/4242",
@@ -2397,15 +2433,115 @@ for scenario in stable superseded; do
   rm -f "$fixture_dir/waiter-native-read"
   waiter_status=0
   PATH="$waiter_bin:$PATH" GH_TOKEN='test-token' GITHUB_REPOSITORY="$repository" \
-    WAIT_FIXTURE_DIR="$fixture_dir" WAIT_SCENARIO="$scenario" HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 \
+    BASH_ENV="$fixture_dir/waiter-clock.sh" WAIT_FIXTURE_DIR="$fixture_dir" WAIT_SCENARIO="$scenario" \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=90 \
     HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0.1 bash "$ROOT_DIR/dev-tools/hosted/shared/wait-for-runtime-images.sh" \
       "$merge_sha" "$base_sha" "$head_sha" >"$fixture_dir/waiter-output" 2>&1 || waiter_status=$?
-  [[ "$waiter_status" == 1 && -e "$fixture_dir/waiter-native-read" ]]
+  if [[ "$waiter_status" != 1 || ! -e "$fixture_dir/waiter-native-read" ]]; then
+    echo "waiter did not verify the $scenario runtime producer with the fixture clock" >&2
+    cat "$fixture_dir/waiter-output" >&2
+    exit 1
+  fi
   if [[ "$scenario" == superseded ]]; then
     grep -Fq 'advanced from attempt 1 to 2' "$fixture_dir/waiter-output"
     grep -Fq 'completed with failure' "$fixture_dir/waiter-output"
   else
     grep -Fq 'Publisher coverage unavailable at the wait deadline' "$fixture_dir/waiter-output"
+  fi
+done
+
+requalification_title='Publish PR Runtime Images requalification source-run-4242 attempt-1'
+retained_digest="sha256:$(printf 'd%.0s' {1..64})"
+python3 - "$fixture_dir" "$requalification_title" "$retained_digest" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+fixture = Path(sys.argv[1])
+requalification_title, digest = sys.argv[2:]
+source = json.loads((fixture / "waiter-source.json").read_text())
+title = f"Publish PR Runtime Images {source['display_title']} source-run-4242 attempt-1"
+common = dict(source, path=".github/workflows/publish-pr-runtime-images.yml", workflow_id=778,
+              name="Publish PR Runtime Images", head_branch="develop")
+original = dict(common, id=6001, event="workflow_run", display_title=title, created_at="2025-01-01T00:00:01Z")
+failures = [dict(common, id=run_id, event="repository_dispatch", conclusion="failure",
+                 display_title=requalification_title, created_at=f"2025-01-01T00:00:0{second}Z")
+            for run_id, second in [(6002, 2), (6003, 3)]]
+
+def store(name, data):
+    (fixture / f"waiter-{name}.json").write_text(json.dumps(data))
+
+def step(name, number, conclusion="success", **other):
+    return dict(name=name, number=number, status="completed", conclusion=conclusion, **other)
+
+def job(run, job_id, name, conclusion, steps):
+    return dict(id=job_id, run_id=run["id"], run_attempt=1, head_sha=run["head_sha"],
+                name=name, conclusion=conclusion, status="completed", steps=steps)
+
+def jobs(run, *entries):
+    store(f"jobs-{run['id']}", dict(total_count=len(entries), jobs=entries))
+
+for event, runs in [("workflow_run", [original]), ("repository_dispatch", failures)]:
+    store(event, dict(total_count=len(runs), workflow_runs=runs))
+    for run in runs:
+        store(f"attempt-{run['id']}", run)
+publish = "Publish Fixed PR Merge Image Tags"
+tag_step = "Publish fixed PR image tags"
+jobs(original, job(original, 1, publish, "success", [
+    step("Download successful PR image artifacts", 1),
+    step("Validate exact PR source and artifact before registry login", 2),
+    step(tag_step, 3),
+    step(f"PR runtime publication receipt v1 source-4242-1 publisher-6001-1 artifact-88 {digest}", 4),
+]))
+early_expiry, skipped_tags = failures
+jobs(early_expiry, job(early_expiry, 2, publish, "skipped", []),
+     job(early_expiry, 3, "Resolve Exact Runtime Publication Source", "failure", [
+         step("Resolve successful exact source run", 1),
+         step(f"Exact runtime artifact expired source-4242-1 artifact-88 {digest}", 2, "failure"),
+     ]))
+jobs(skipped_tags, job(skipped_tags, 4, publish, "failure", [step(tag_step, 1, "skipped")]))
+PY
+cat >"$waiter_bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${@: -1}" in
+  */actions/workflows/runtime-images.yml/runs\?*) jq '{workflow_runs:[.]}' "$WAIT_FIXTURE_DIR/waiter-source.json" ;;
+  */actions/workflows/publish-pr-runtime-images.yml/runs\?event=workflow_run\&*) cat "$WAIT_FIXTURE_DIR/waiter-workflow_run.json" ;;
+  */actions/workflows/publish-pr-runtime-images.yml/runs\?event=repository_dispatch\&*) cat "$WAIT_FIXTURE_DIR/waiter-repository_dispatch.json" ;;
+  */actions/runs/4242) cat "$WAIT_FIXTURE_DIR/waiter-source.json" ;;
+  */actions/runs/*/attempts/1/jobs\?*)
+    if [[ "$WAIT_SCENARIO" == unsafe && "$2" == */runs/6003/* ]]; then
+      jq '.jobs[0].steps[0].started_at = "2025-01-01T00:01:00Z"' "$WAIT_FIXTURE_DIR/waiter-jobs-6003.json"
+    else
+      run="${2#*/runs/}"
+      cat "$WAIT_FIXTURE_DIR/waiter-jobs-${run%%/*}.json"
+    fi
+    ;;
+  */actions/runs/*/attempts/1)
+    run="${2#*/runs/}"
+    cat "$WAIT_FIXTURE_DIR/waiter-attempt-${run%%/*}.json"
+    ;;
+  *) exit 2 ;;
+esac
+EOF
+for scenario in retained unsafe; do
+  waiter_status=0
+  PATH="$waiter_bin:$PATH" GH_TOKEN='test-token' GITHUB_REPOSITORY="$repository" \
+    BASH_ENV="$fixture_dir/waiter-clock.sh" WAIT_FIXTURE_DIR="$fixture_dir" WAIT_SCENARIO="$scenario" \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=90 bash "$ROOT_DIR/dev-tools/hosted/shared/wait-for-runtime-images.sh" \
+      "$merge_sha" "$base_sha" "$head_sha" >"$fixture_dir/waiter-output" 2>&1 || waiter_status=$?
+  if [[ "$scenario" == retained ]]; then
+    if [[ "$waiter_status" != 0 ]] ||
+        ! grep -Fq "using source artifact 88 ($retained_digest)" "$fixture_dir/waiter-output"; then
+      cat "$fixture_dir/waiter-output" >&2
+      exit 1
+    fi
+  else
+    if [[ "$waiter_status" != 1 ]] ||
+        ! grep -Fq 'failed requalification has no proof it skipped fixed-tag checks' "$fixture_dir/waiter-output"; then
+      cat "$fixture_dir/waiter-output" >&2
+      exit 1
+    fi
   fi
 done
 

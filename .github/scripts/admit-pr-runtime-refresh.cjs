@@ -15,9 +15,9 @@ module.exports = async function admitPrRuntimeRefresh({
   const runtimePath = '.github/workflows/runtime-images.yml';
   const admissionPath = '.github/workflows/admit-pr-runtime-refresh.yml';
   const requiredFields = ['pr_number', 'base_ref', 'base_sha', 'head_sha', 'merge_sha'];
+  const optionalFields = ['preview_only', 'require_typed_proof'];
   const shaPattern = /^[0-9a-f]{40}$/;
   const activeStatuses = new Set(['queued', 'waiting', 'requested', 'pending', 'in_progress']);
-  const inventoryEvents = ['pull_request', 'repository_dispatch'];
   const inventoryPages = 3;
   const pageSize = 100;
   const inventoryLimit = inventoryPages * pageSize;
@@ -41,9 +41,9 @@ module.exports = async function admitPrRuntimeRefresh({
   const dataOf = response => response && isRecord(response.data) ? response.data : null;
 
   if (!isRecord(input) ||
-      Reflect.ownKeys(input).some(field => !requiredFields.includes(field) && field !== 'preview_only') ||
+      Reflect.ownKeys(input).some(field => !requiredFields.includes(field) && !optionalFields.includes(field)) ||
       requiredFields.some(field => !Object.hasOwn(input, field)) ||
-      (Object.hasOwn(input, 'preview_only') && input.preview_only !== true)) {
+      optionalFields.some(field => Object.hasOwn(input, field) && input[field] !== true)) {
     fail('Invalid runtime refresh input.');
   }
   if (requiredFields.some(field => typeof input[field] !== 'string')) fail('Invalid runtime refresh input.');
@@ -52,6 +52,8 @@ module.exports = async function admitPrRuntimeRefresh({
       !shaPattern.test(input.base_sha) || !shaPattern.test(input.head_sha) || !shaPattern.test(input.merge_sha)) {
     fail('Invalid runtime refresh input.');
   }
+  const inventoryEvents = input.require_typed_proof === true
+    ? ['repository_dispatch'] : ['pull_request', 'repository_dispatch'];
 
   const repository = context?.payload?.repository;
   const contextRepo = context?.repo;
@@ -650,7 +652,9 @@ module.exports = async function admitPrRuntimeRefresh({
     }
     const generation = (prior?.generation ?? 0) + 1;
     const date = secondsUtc(Date.now());
-    if (!isPositiveInteger(generation) || (prior && date < prior.date)) fail('Invalid successor runtime claim.');
+    if (!isPositiveInteger(generation) || generation > inventoryLimit || (prior && date < prior.date)) {
+      fail('Invalid successor runtime claim.');
+    }
     if (!isTrustedAdmission()) fail('Runtime claim owner revision is unproven.');
     if (finalIdentityCutoff - elapsed() < 15_000) {
       core.info('Runtime admission has insufficient time to verify the claim and record its outcome.');

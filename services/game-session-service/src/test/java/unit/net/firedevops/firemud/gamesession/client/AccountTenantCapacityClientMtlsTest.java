@@ -365,6 +365,7 @@ class AccountTenantCapacityClientMtlsTest {
     var commits = new AtomicInteger();
     var reads = new AtomicInteger();
     var failedCommit = new AtomicReference<CommitTenantCapacityAdmissionRequest>();
+    var retainedRead = new AtomicReference<CommitTenantCapacityAdmissionRequest>();
     Server server =
         startServer(
             "account",
@@ -383,7 +384,7 @@ class AccountTenantCapacityClientMtlsTest {
                   CommitTenantCapacityAdmissionRequest wire,
                   StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
                 reads.incrementAndGet();
-                assertThat(TenantCapacityAdmissionGrpcCodec.parseRequest(wire)).isEqualTo(request);
+                retainedRead.set(wire);
                 observer.onNext(
                     TenantCapacityAdmissionGrpcCodec.toRefusal(request, code, denialId));
                 observer.onCompleted();
@@ -412,12 +413,16 @@ class AccountTenantCapacityClientMtlsTest {
           assertThatThrownBy(() -> restarted.readRetainedAdmissionDenial(request, readDeadline))
               .isInstanceOfSatisfying(
                   StatusRuntimeException.class,
-                  failure ->
-                      assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNKNOWN));
+                  failure -> {
+                    assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNKNOWN);
+                    assertThat(failure.getStatus().getDescription())
+                        .isEqualTo("Account retained admission denial was not proven");
+                  });
         }
       }
       assertThat(commits).hasValue(1);
       assertThat(reads).hasValue(1);
+      assertThat(retainedRead.get()).isEqualTo(TenantCapacityAdmissionGrpcCodec.toRequest(request));
     }
   }
 

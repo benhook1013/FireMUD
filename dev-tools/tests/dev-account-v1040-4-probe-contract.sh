@@ -217,7 +217,7 @@ kubectl() {
     '--request-timeout=10s -n dev auth can-i '*)
       case "${PROBE_SCENARIO:-}" in
         missing-delete-permission) [[ "$*" != *'delete jobs.batch' ]] ;;
-        missing-get-pod-permission) [[ "$*" != *'can-i get pods' ]] ;;
+        missing-get-pod-permission) [[ "$*" != '--request-timeout=10s -n dev auth can-i get pods' ]] ;;
         missing-list-replicasets-permission) [[ "$*" != *'list replicasets.apps' ]] ;;
       esac
       ;;

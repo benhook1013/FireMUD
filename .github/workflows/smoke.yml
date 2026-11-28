@@ -632,7 +632,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "faab1339898819deb1a660de4a63109bb52a4ae088ee9cad72474ef637a3510e";
+            const canonicalRuntimeWorkflowSha256 = "d998a410dc8661df613b2836c34c291c57653077aaaeeb0b42f5039498bccd03";
             // Only authenticated default-branch refreshes may use retained successful definitions.
             // Keep the pre-rollout default and predecessor definitions for mixed-version runs.
             const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -799,6 +799,15 @@ jobs:
                   canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256.has(definitionHash));
             }
 
+            // An attempt-scoped job can omit its redundant attempt number.
+            // Only an execution interval inside the exact native attempt can substitute.
+            function jobExecutionWithinAttempt(source, job) {
+              const [start, jobStart, jobEnd, end] =
+                [source.run_started_at, job.started_at, job.completed_at, source.updated_at].map(Date.parse);
+              if (![start, jobStart, jobEnd, end].every(Number.isFinite)) return null;
+              return start <= jobStart && jobStart <= jobEnd && jobEnd <= end;
+            }
+
             async function verifyCanonicalSmokeProducer(run, candidate, identity, requireTerminalSmokeProof = false) {
               if (!positiveInteger(run.id) || !positiveInteger(run.run_attempt)) return false;
               const exactSnapshotPending = requireTerminalSmokeProof && run.event === "repository_dispatch";
@@ -865,8 +874,9 @@ jobs:
               const workflowSha = source.event === "pull_request" ? identity.mergeSha : source.head_sha;
               const definitionHash = await immutableDefinitionHash(
                 workflowPath, workflowSha, "immutable runtime workflow definition lookup");
-              const currentDefinition = isSuccessfulRuntimeWorkflowDefinition(definitionHash, source.event);
-              if (!currentDefinition && definitionHash !== canonicalLegacyRuntimeWorkflowSha256) return false;
+              const currentDefinition = definitionHash === canonicalRuntimeWorkflowSha256;
+              const acceptedSuccessfulDefinition = isSuccessfulRuntimeWorkflowDefinition(definitionHash, source.event);
+              if (!acceptedSuccessfulDefinition && definitionHash !== canonicalLegacyRuntimeWorkflowSha256) return false;
               if (exactSnapshotPending && candidate && !Object.hasOwn(candidate, "run_attempt")) {
                 // A sparse listing can also reflect an attempt being superseded.
                 const latest = await readLatestCanonicalAttempt(run);
@@ -916,32 +926,20 @@ jobs:
               }
               if (job.conclusion !== "success") return false;
               if (!hasAttempt) {
-                // GitHub's attempt-scoped jobs endpoint can omit this redundant
-                // field. Require the job to actually execute in the exact attempt.
-                const [start, jobStart, jobEnd, end] =
-                  [source.run_started_at, job.started_at, job.completed_at, source.updated_at].map(Date.parse);
-                if (![start, jobStart, jobEnd, end].every(Number.isFinite)) return pendingExactSnapshot();
-                if (jobStart < start || jobEnd < jobStart || jobEnd > end) return false;
+                const insideAttempt = jobExecutionWithinAttempt(source, job);
+                if (insideAttempt == null) return pendingExactSnapshot();
+                if (!insideAttempt) return false;
               }
               const markers = (job.steps ?? []).filter((step) =>
                 step.name === "Known canonical transition PLAY failure with successful authenticated cleanup"
               );
-              if (currentDefinition) {
+              if (acceptedSuccessfulDefinition) {
                 if (markers.length > 1) return false;
                 if (markers.length === 0 || markers[0].status !== "completed" ||
                     markers[0].conclusion == null) return pendingExactSnapshot();
                 if (markers[0].conclusion !== "skipped") return false;
               }
-              if (requireTerminalSmokeProof) {
-                if ((run.workflow_id != null && source.workflow_id !== run.workflow_id) ||
-                    (run.repository?.full_name != null && run.repository.full_name !== repositoryName) ||
-                    (run.head_sha != null && run.head_sha !== source.head_sha) ||
-                    (run.status != null && run.status !== "completed") ||
-                    (run.conclusion != null && run.conclusion !== "success")) return false;
-                if (run.workflow_id == null || run.repository?.full_name == null || run.head_sha == null ||
-                    run.status == null || run.conclusion == null) return pendingExactSnapshot();
-                if (markers.length !== 1 || markers[0].status !== "completed" ||
-                    markers[0].conclusion !== "skipped") return false;
+              if (requireTerminalSmokeProof || !currentDefinition) {
                 if (!Array.isArray(job.steps)) return false;
                 const smokeSteps = job.steps.filter((step) =>
                   step.name === "Run credential-free full-stack smoke"
@@ -955,6 +953,17 @@ jobs:
                   if (smokeSteps[0].status !== "completed" ||
                       smokeSteps[0].conclusion == null) return pendingExactSnapshot();
                 }
+              }
+              if (requireTerminalSmokeProof) {
+                if ((run.workflow_id != null && source.workflow_id !== run.workflow_id) ||
+                    (run.repository?.full_name != null && run.repository.full_name !== repositoryName) ||
+                    (run.head_sha != null && run.head_sha !== source.head_sha) ||
+                    (run.status != null && run.status !== "completed") ||
+                    (run.conclusion != null && run.conclusion !== "success")) return false;
+                if (run.workflow_id == null || run.repository?.full_name == null || run.head_sha == null ||
+                    run.status == null || run.conclusion == null) return pendingExactSnapshot();
+                if (markers.length !== 1 || markers[0].status !== "completed" ||
+                    markers[0].conclusion !== "skipped") return false;
                 for (const name of [
                   "Stop smoke stack",
                   "Require successful runtime smoke and authenticated cleanup",
@@ -1101,16 +1110,21 @@ jobs:
               const producers = jobs.filter((job) => job.name === canonicalSmokeJobName);
               if (producers.length > 1 || (!allowIncompleteSteps && producers.length === 0)) return false;
               const job = producers[0];
+              const typedProof = source.event === "repository_dispatch";
+              const jobHasAttempt = job != null && Object.hasOwn(job, "run_attempt");
+              if (typedProof && candidate && Object.hasOwn(candidate, "run_attempt") &&
+                  candidate.run_attempt !== source.run_attempt) return false;
               if (job && ((job.id != null && !positiveInteger(job.id)) ||
                   (candidate?.id != null && job.id != null && job.id !== candidate.id) ||
                   (job.run_id != null && job.run_id !== source.id) ||
-                  (job.run_attempt != null && job.run_attempt !== source.run_attempt) ||
+                  ((typedProof ? jobHasAttempt : job.run_attempt != null) &&
+                    job.run_attempt !== source.run_attempt) ||
                   (job.head_sha != null && job.head_sha !== source.head_sha) ||
                   (job.check_run_url != null && job.id != null &&
                     job.check_run_url !== `https://api.github.com/repos/${repositoryName}/check-runs/${job.id}`))) return false;
               let incompleteSteps = job?.status !== "completed";
               if (job) {
-                if (job.id == null || job.run_id == null || job.run_attempt == null ||
+                if (job.id == null || job.run_id == null || (!typedProof && job.run_attempt == null) ||
                     job.head_sha == null || job.check_run_url == null) {
                   if (!allowIncompleteSteps) return false;
                   incompleteSteps = true;
@@ -1122,6 +1136,11 @@ jobs:
                 } else if (job.status === "completed") {
                   if (job.conclusion == null) incompleteSteps = true;
                   else if (job.conclusion !== source.conclusion) return false;
+                  else if (typedProof && !jobHasAttempt) {
+                    const insideAttempt = jobExecutionWithinAttempt(source, job);
+                    if (insideAttempt === false) return false;
+                    if (insideAttempt == null) incompleteSteps = true;
+                  }
                 } else if (!allowIncompleteSteps ||
                     !(job.status == null || ["queued", "in_progress", "waiting", "pending", "requested"].includes(job.status)) ||
                     job.conclusion != null) return false;
@@ -1684,7 +1703,6 @@ jobs:
                   return proof === true ? "ordinary" : proof;
                 }
               }
-              if (candidate.run_attempt == null) return "snapshot-pending";
               const playProof = await verifyKnownPlayFailure(replacement, candidate, identity, true, true);
               if (playProof === true) return true;
               if (["snapshot-pending", "attempt-superseded"].includes(playProof)) return playProof;
@@ -2043,7 +2061,7 @@ jobs:
                     }
                     continue smokeGatePolling;
                   }
-                  if (!await isCurrentCanonicalAttempt(replacement)) {
+                  if (Date.now() < sameTupleCancellationDeadline && !await isCurrentCanonicalAttempt(replacement)) {
                     await new Promise((resolve) => setTimeout(resolve, sleepMs));
                     continue smokeGatePolling;
                   }
@@ -2068,15 +2086,19 @@ jobs:
                   }
                   continue smokeGatePolling;
                 }
+                if (!eligibleIdentity.canonicalPlayEligible) {
+                  core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
+                  return;
+                }
+                if (Date.now() < sameTupleCancellationDeadline && !await isCurrentCanonicalAttempt(replacement)) {
+                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                  continue smokeGatePolling;
+                }
                 if (Date.now() >= sameTupleCancellationDeadline) {
                   core.setFailed(
                     `Cancelled runtime-images run ${cancelledRunId} has no freshly proven exact replacement ` +
                     `after ${cancellationDiscoveryMs / 60000} minutes`
                   );
-                  return;
-                }
-                if (!eligibleIdentity.canonicalPlayEligible) {
-                  core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
                   return;
                 }
                 core.setOutput("known_play_exception", "true");
@@ -2350,7 +2372,7 @@ jobs:
                         await new Promise((resolve) => setTimeout(resolve, sleepMs));
                         continue smokeGatePolling;
                       }
-                      if (!await isCurrentCanonicalAttempt(selectedProofRun)) {
+                      if (!needsLiveTuple && !await isCurrentCanonicalAttempt(selectedProofRun)) {
                         await new Promise((resolve) => setTimeout(resolve, sleepMs));
                         continue smokeGatePolling;
                       }
@@ -2373,6 +2395,12 @@ jobs:
                         core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
                         return;
                       }
+                      if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                      if (needsLiveTuple && !await isCurrentCanonicalAttempt(selectedProofRun)) {
+                        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                        continue smokeGatePolling;
+                      }
+                      if (Date.now() - started >= timeoutMs) break smokeGatePolling;
                       core.setOutput("known_play_exception", "true");
                       core.warning("Canonical PLAY transition exception accepted: LOGIN succeeded, direct backend PLAY failed ERROR ENTITLEMENT_UNAVAILABLE. No runtime qualification or image publication.");
                       await core.summary.addHeading("Canonical PLAY transition exception accepted")
@@ -2517,6 +2545,12 @@ jobs:
                     core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
                     return;
                   }
+                  if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                  if (!await isCurrentCanonicalAttempt(matching)) {
+                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    continue smokeGatePolling;
+                  }
+                  if (Date.now() - started >= timeoutMs) break smokeGatePolling;
                   core.setOutput("known_play_exception", "true");
                   core.warning("Canonical PLAY transition exception accepted; no runtime qualification or image publication.");
                   return;
@@ -2815,7 +2849,7 @@ jobs:
                       await new Promise((resolve) => setTimeout(resolve, sleepMs));
                       continue smokeGatePolling;
                     }
-                    if (!await isCurrentCanonicalAttempt(matching)) {
+                    if (!needsLiveTuple && !await isCurrentCanonicalAttempt(matching)) {
                       await new Promise((resolve) => setTimeout(resolve, sleepMs));
                       continue smokeGatePolling;
                     }
@@ -2837,6 +2871,12 @@ jobs:
                       core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
                       return;
                     }
+                    if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                    if (needsLiveTuple && !await isCurrentCanonicalAttempt(matching)) {
+                      await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                      continue smokeGatePolling;
+                    }
+                    if (Date.now() - started >= timeoutMs) break smokeGatePolling;
                     core.setOutput("known_play_exception", "true");
                     core.warning("Canonical PLAY transition exception accepted: LOGIN succeeded, direct backend PLAY failed ERROR ENTITLEMENT_UNAVAILABLE. No runtime qualification or image publication.");
                     await core.summary.addHeading("Canonical PLAY transition exception accepted")

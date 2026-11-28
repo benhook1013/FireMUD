@@ -995,6 +995,10 @@ async function runDispatcher({
       ? inventory : [...(inventory.initial ?? inventory.runs ?? []), ...(inventory.refined ?? [])]),
     ...lateProducers, ...postedRuns,
   ];
+  const claimRefFor = tuple => {
+    const baseRefHash = require("node:crypto").createHash("sha256").update(tuple.baseRef).digest("hex");
+    return `tags/firemud-runtime-refresh-intent/v1/pr-${tuple.prNumber}/${tuple.mergeSha}/${baseRefHash}/g1`;
+  };
   const github = {
     rest: {
       git: {
@@ -1002,6 +1006,10 @@ async function runDispatcher({
           recordApiRequest("git.getRef", request);
           const {ref} = request;
           refRequests.push(ref);
+          if (ref.startsWith("tags/firemud-runtime-refresh-intent/")) {
+            assert(allTuples.some(tuple => claimRefFor(tuple) === ref), "claim read must use an exact fixture comparison");
+            return {data: {ref: `refs/${ref}`, object: {type: "tag", sha: sha("9")}}};
+          }
           const branchError = typeof branchErrors[ref] === "function" ? branchErrors[ref](refRequests.length) : branchErrors[ref];
           if (branchError) throw Object.assign(new Error("fixture branch lookup failed"), { status: branchError });
           return { data: { object: {
@@ -1148,7 +1156,12 @@ async function runDispatcher({
             const producer = inventoriedRuntimeRuns().find(run => run?.id === request.run_id);
             assert(producer, "native job listing must address an inventoried producer");
             assert.equal(request.attempt_number, producer.run_attempt, "native jobs must be read from the selected attempt");
-            return {data: runtimeAttemptJobs[request.run_id] ?? {total_count: 0, jobs: []}};
+            const jobs = producer.event === "repository_dispatch" && producer.status !== "completed" ? [{
+              id: producer.id + 1000000, run_id: producer.id, run_attempt: producer.run_attempt,
+              name: "Derive Runtime Image Metadata", head_sha: producer.head_sha, status: "completed", conclusion: "success",
+              steps: [{name: `Runtime refresh claim generation 1 attempt 1 tag ${sha("9")}`, status: "completed", conclusion: "success"}],
+            }] : [];
+            return {data: runtimeAttemptJobs[request.run_id] ?? {total_count: jobs.length, jobs}};
           }
           ciJobRequests.push(request);
           const jobs = ciEvidence.jobs ?? [ciGate];
@@ -1214,7 +1227,7 @@ async function runDispatcher({
           const broadRuntimeInventoryCalls = inventoryCalls.filter(call =>
             call.created !== "2026-01-08T00:00:00.000Z..*"
           ).length;
-          if (lateProducer && !lateProducerAdded && broadRuntimeInventoryCalls === 2) {
+          if (lateProducer && !lateProducerAdded && broadRuntimeInventoryCalls === 1) {
             lateProducerAdded = true;
             lateProducers.push(lateProducer);
           }
@@ -1323,7 +1336,7 @@ async function runDispatcher({
     const payload = runtimeDispatches(reconcile).find((item) => item.client_payload.pr_number === candidate.prNumber).client_payload;
     assert.deepEqual(payload, {
       pr_number: candidate.prNumber, base_ref: candidate.baseRef, base_sha: candidate.baseSha,
-      head_sha: candidate.headSha, merge_sha: candidate.mergeSha,
+      head_sha: candidate.headSha, merge_sha: candidate.mergeSha, require_typed_proof: true,
     }, "CI callback may dispatch only the independently verified exact source or dependent tuple");
   }
   assert.equal(reconcile.ciJobRequests.length, 1, "PR callbacks require one exact current native CI attempt jobs request");
@@ -1558,11 +1571,12 @@ async function runDispatcher({
       tuples: [tuple],
       inventories: { [event]: [producer(tuple, event, status)] },
     });
-    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
-      `${event} ${status} exact producer must suppress duplicate runtime dispatch`);
+    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, event === "repository_dispatch" ? 0 : 1,
+      `${event} ${status} must satisfy only its matching producer proof policy`);
     assert.equal(result.dispatches.filter((item) => item.event_type === "preview-deploy").length, 1,
       "runtime deduplication must retain preview reconciliation");
-    assert.equal(result.inventoryCalls.length, 2, "complete initial inventories require one query per event kind");
+    assert.equal(result.inventoryCalls.length, event === "repository_dispatch" ? 1 : 3,
+      "only typed producer inventory is authoritative for fan-out");
     assert(result.inventoryCalls.every((request) =>
       request.workflow_id === "runtime-images.yml" &&
       request.per_page === 100 &&
@@ -1593,7 +1607,7 @@ async function runDispatcher({
   ]) {
     const refSuffixedPath = await runDispatcher({
       tuples: [tuple],
-      inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
+      inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "in_progress", null, {
         path: `.github/workflows/runtime-images.yml@${validRef}`,
       })] },
     });
@@ -1603,7 +1617,7 @@ async function runDispatcher({
   for (const invalidRef of ["@", "refs/heads/trailing.", "refs/heads/feature/.hidden", "refs/heads/feature[/test"]) {
     const invalidRefPath = await runDispatcher({
       tuples: [tuple],
-      inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
+      inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "in_progress", null, {
         path: `.github/workflows/runtime-images.yml@${invalidRef}`,
       })] },
     });
@@ -1614,7 +1628,7 @@ async function runDispatcher({
   }
   const wrongWorkflowPath = await runDispatcher({
     tuples: [tuple],
-    inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
+    inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "in_progress", null, {
       path: ".github/workflows/other.yml@refs/heads/develop",
     })] },
   });
@@ -1624,12 +1638,12 @@ async function runDispatcher({
     "an exact-tuple producer with an unrelated workflow path must emit an error");
 
   for (const [status, conclusion] of [
-    ["completed", "failure"],
     ["completed", "cancelled"],
+    ["completed", "timed_out"],
   ]) {
     const result = await runDispatcher({
       tuples: [tuple],
-      inventories: { pull_request: [producer(tuple, "pull_request", status, conclusion)] },
+      inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", status, conclusion)] },
     });
     assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
       `${conclusion} producer must allow an exact-tuple retry`);
@@ -1637,28 +1651,28 @@ async function runDispatcher({
 
   const orderedProducerInventory = async (older, newer, newerConclusion = null) => runDispatcher({
     tuples: [tuple],
-    inventories: { pull_request: [
-      producer(tuple, "pull_request", older[0], older[1], {
+    inventories: { repository_dispatch: [
+      producer(tuple, "repository_dispatch", older[0], older[1], {
         id: 10101,
         created_at: "2026-01-01T00:00:00Z",
       }),
-      producer(tuple, "pull_request", newer[0], newerConclusion, {
+      producer(tuple, "repository_dispatch", newer[0], newerConclusion, {
         id: 10102,
         created_at: "2026-01-02T00:00:00Z",
       }),
     ] },
   });
-  for (const conclusion of ["failure", "cancelled"]) {
+  for (const conclusion of ["timed_out", "cancelled"]) {
     const newestFailure = await orderedProducerInventory(
       ["completed", "success"], ["completed", conclusion], conclusion
     );
-    assert.equal(newestFailure.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
-      `newer ${conclusion} producer must allow refresh despite an older success`);
+    assert.equal(newestFailure.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
+      `newer ${conclusion} producer cannot erase a still-unclassified older typed success`);
   }
   for (const [olderStatus, olderConclusion, newestStatus, newestConclusion, suppress] of [
     ["completed", "failure", "in_progress", null, true],
     ["completed", "success", "in_progress", null, true],
-    ["completed", "failure", "completed", "success", false],
+    ["completed", "failure", "completed", "success", true],
   ]) {
     const newestUsable = await orderedProducerInventory(
       [olderStatus, olderConclusion], [newestStatus, newestConclusion], newestConclusion
@@ -1669,9 +1683,9 @@ async function runDispatcher({
   }
   const ambiguousNewest = await runDispatcher({
     tuples: [tuple],
-    inventories: { pull_request: [
-      producer(tuple, "pull_request", "completed", "success", { id: 10103 }),
-      producer(tuple, "pull_request", "completed", "failure", { id: 10104 }),
+    inventories: { repository_dispatch: [
+      producer(tuple, "repository_dispatch", "completed", "success", { id: 10103 }),
+      producer(tuple, "repository_dispatch", "completed", "failure", { id: 10104 }),
     ] },
   });
   assert.equal(ambiguousNewest.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
@@ -1699,11 +1713,11 @@ async function runDispatcher({
   const numbers = (result) => runtimeDispatches(result).map(item => item.client_payload.pr_number);
   const existingFirst = await runDispatcher({
     tuples: [tuple, sibling],
-    inventories: { pull_request: [producer(tuple, "pull_request", "in_progress")] },
+    inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "in_progress")] },
   });
   assert.deepEqual(numbers(existingFirst), ["102"], "existing first PR must not starve second");
   assert.equal(existingFirst.errors.length, 0, existingFirst.errors.join("\n"));
-  for (const event of ["pull_request", "repository_dispatch"]) {
+  for (const event of ["repository_dispatch"]) {
     for (const [status, conclusion, earlierActive] of [
       ["completed", "cancelled", false],
       ["completed", "timed_out", false],
@@ -1712,11 +1726,10 @@ async function runDispatcher({
     ]) {
       const laterProducer = producer(sibling, event, "queued", null, {created_at: "2026-01-03T00:00:00Z"});
       const inventories = {
-        pull_request: [producer(tuple, "pull_request", "in_progress")],
-        repository_dispatch: [],
+        repository_dispatch: [producer(tuple, "repository_dispatch", "in_progress")],
       };
       inventories[event].push(laterProducer);
-      if (earlierActive) inventories.pull_request.push(producer(sibling, "pull_request", "in_progress", null, {
+      if (earlierActive) inventories.repository_dispatch.push(producer(sibling, "repository_dispatch", "in_progress", null, {
         id: 90204, created_at: "2026-01-02T00:00:00Z",
       }));
       let transitions = 0;
@@ -1736,21 +1749,21 @@ async function runDispatcher({
         `${event} ${status}/${conclusion} must use target-fresh evidence without duplicating an earlier active exact producer`);
       assert.equal(changedBetweenTargets.inventoryCalls.filter(request =>
         request.created !== "2026-01-08T00:00:00.000Z..*"
-      ).length, needsRefresh ? 6 : 4,
-      "each target gets both event inventories, with another full snapshot only before a required runtime POST");
+      ).length, needsRefresh ? 3 : 2,
+      "each target gets typed inventory, with another full snapshot only before a required runtime POST");
       assert.equal(previewDispatches(changedBetweenTargets).length, 2,
         "fresh producer classification must retain independent preview reconciliation for both targets");
       assert.deepEqual(changedBetweenTargets.errors, [], "fresh terminal or active producer evidence is classifiable");
       assertRequestContracts(changedBetweenTargets);
     }
   }
-  const unavailableLaterInventories = {pull_request: [
-    producer(tuple, "pull_request", "in_progress"), producer(sibling, "pull_request", "queued"),
+  const unavailableLaterInventories = {repository_dispatch: [
+    producer(tuple, "repository_dispatch", "in_progress"), producer(sibling, "repository_dispatch", "queued"),
   ]};
   const unavailableLaterInventory = await runDispatcher({
     tuples: [tuple, sibling], inventories: unavailableLaterInventories,
     afterPreviewDispatch: request => {
-      if (request.client_payload.pr_number === tuple.prNumber) unavailableLaterInventories.pull_request = {malformed: true};
+      if (request.client_payload.pr_number === tuple.prNumber) unavailableLaterInventories.repository_dispatch = {malformed: true};
     },
   });
   assert.deepEqual(numbers(unavailableLaterInventory), [], "unavailable target-fresh evidence cannot authorize a runtime POST");
@@ -1776,14 +1789,14 @@ async function runDispatcher({
   });
   const refreshedAfterEarlierTarget = await runDispatcher({
     tuples: [tuple, sibling],
-    inventories: {pull_request: [producer(tuple, "pull_request", "in_progress")]},
+    inventories: {repository_dispatch: [producer(tuple, "repository_dispatch", "in_progress")]},
     lateProducer: lateSiblingProducer,
   });
   assert.deepEqual(numbers(refreshedAfterEarlierTarget), [],
     "a full fresh inventory for the second target must find a producer absent during the earlier target's decision");
   assert.equal(refreshedAfterEarlierTarget.inventoryCalls.filter(request =>
     request.created !== "2026-01-08T00:00:00.000Z..*"
-  ).length, 4, "both event kinds must be refreshed even when the earlier target reused an existing producer");
+  ).length, 2, "typed inventory must be refreshed even when the earlier target reused an existing producer");
   assert.equal(previewDispatches(refreshedAfterEarlierTarget).length, 2,
     "the later target's producer discovery must not suppress independent preview reconciliation");
   assert.equal(refreshedAfterEarlierTarget.errors.length, 0, refreshedAfterEarlierTarget.errors.join("\n"));
@@ -1793,8 +1806,8 @@ async function runDispatcher({
       id: 90203, created_at: "2026-01-03T00:00:00Z",
     }),
   });
-  assert.deepEqual(numbers(lateNative), [],
-    "a native producer that appears after the first inventory suppresses the exact runtime POST");
+  assert.deepEqual(numbers(lateNative), [tuple.prNumber],
+    "a newly visible native producer cannot supply the required typed proof");
   assert.equal(previewDispatches(lateNative).length, 1,
     "a newly visible runtime producer leaves independent preview reconciliation available");
   assert.equal(lateNative.errors.length, 0, lateNative.errors.join("\n"));
@@ -1878,29 +1891,29 @@ async function runDispatcher({
   assert(vanishedBase.errors.some(message => message.includes("Cannot read current base for PR #101")));
   const unknownFirst = await runDispatcher({
     tuples: [tuple, sibling],
-    inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
+    inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "in_progress", null, {
       repository: { full_name: "other/repo" },
     })] },
   });
   assert.deepEqual(numbers(unknownFirst), ["102"], "invalid first PR evidence must not starve second");
   assert(unknownFirst.errors.some(message => message.includes("PR #101") && message.includes("no dispatch issued")));
 
-  const secondPageRuns = runsDescending("pull_request", "2026-01-02T00:00:00Z");
-  secondPageRuns.push(producer(tuple, "pull_request", "in_progress"));
-  const secondPage = await runDispatcher({ tuples: [tuple], inventories: { pull_request: {
+  const secondPageRuns = runsDescending("repository_dispatch", "2026-01-02T00:00:00Z");
+  secondPageRuns.push(producer(tuple, "repository_dispatch", "in_progress"));
+  const secondPage = await runDispatcher({ tuples: [tuple], inventories: { repository_dispatch: {
       initial: secondPageRuns, refined: [], refinedCreated: "2026-01-02T00:00:00Z..*",
     } } });
   assert.deepEqual(numbers(secondPage), [], "exact page-two producer must suppress duplicate");
   assert.equal(secondPage.errors.length, 0, "page two at the original cutoff must not be treated as malformed refinement");
-  assert(secondPage.inventoryCalls.some(request => request.event === "pull_request" && request.page === 2));
+  assert(secondPage.inventoryCalls.some(request => request.event === "repository_dispatch" && request.page === 2));
   assert(secondPage.inventoryCalls.every(request => request.page <= 10));
 
-  const overBoundPage = runsDescending("pull_request", "2026-01-02T00:00:00Z");
-  overBoundPage[0] = producer(tuple, "pull_request", "in_progress", null, {
+  const overBoundPage = runsDescending("repository_dispatch", "2026-01-02T00:00:00Z");
+  overBoundPage[0] = producer(tuple, "repository_dispatch", "in_progress", null, {
     created_at: "2026-01-02T00:00:00Z",
   });
   const refinedBound = await runDispatcher({
-    tuples: [tuple], callback: {updated_at: "2026-01-03T00:00:00Z"}, inventories: { pull_request: {
+    tuples: [tuple], callback: {updated_at: "2026-01-03T00:00:00Z"}, inventories: { repository_dispatch: {
       total_count: 1001, runs: overBoundPage, refinedCreated: "2026-01-02T00:00:00Z..*", refined: [overBoundPage[0]], refinedTotalCount: 1,
     } },
   });
@@ -1908,7 +1921,7 @@ async function runDispatcher({
   assert.equal(refinedBound.errors.length, 0);
   assert(refinedBound.inventoryCalls.some(request => request.created === "2026-01-02T00:00:00Z..*"));
 
-  const unrelatedInflight = producer(sibling, "pull_request", "in_progress", null, {created_at: "2026-01-02T00:00:00Z"});
+  const unrelatedInflight = producer(sibling, "repository_dispatch", "in_progress", null, {created_at: "2026-01-02T00:00:00Z"});
   const completedRefresh = producer(tuple, "repository_dispatch", "completed", "success", {
     created_at: "2026-01-01T12:00:00Z",
     run_started_at: "2026-01-01T12:01:00Z", updated_at: "2026-01-01T12:10:00Z",
@@ -1925,9 +1938,8 @@ async function runDispatcher({
   const refinedCompleted = await runDispatcher({
     tuples: [tuple], callback: {updated_at: "2026-01-01T06:00:00Z"},
     inventories: {
-      pull_request: {total_count: 1001, runs: [unrelatedInflight], refinedCreated: "2026-01-01T06:00:00Z..*",
-        refined: [unrelatedInflight], refinedTotalCount: 1},
-      repository_dispatch: [completedRefresh],
+      repository_dispatch: {total_count: 1001, runs: [unrelatedInflight, completedRefresh], refinedCreated: "2026-01-01T06:00:00Z..*",
+        refined: [unrelatedInflight, completedRefresh], refinedTotalCount: 2},
     },
     runtimeAttemptJobs: successfulJobs,
   });
@@ -1940,33 +1952,33 @@ async function runDispatcher({
 
   const narrowedAbsence = await runDispatcher({
     tuples: [tuple], callback: {updated_at: "2026-01-03T00:00:00Z"},
-    inventories: {pull_request: {total_count: 1001, runs: [unrelatedInflight], refinedCreated: "2026-01-02T00:00:00Z..*",
+    inventories: {repository_dispatch: {total_count: 1001, runs: [unrelatedInflight], refinedCreated: "2026-01-02T00:00:00Z..*",
       refined: [unrelatedInflight], refinedTotalCount: 1}},
   });
   assert.deepEqual(numbers(narrowedAbsence), [], "narrowed empty exact-producer slice cannot exclude older omitted producers");
   assert(narrowedAbsence.errors.some(message => message.includes("truncated initial inventory")));
 
   for (const args of [
-    { inventories: { pull_request: {
+    { inventories: { repository_dispatch: {
       total_count: 1001, runs: overBoundPage, refinedCreated: "2026-01-02T00:00:00Z..*", refined: overBoundPage, refinedTotalCount: 1001,
     } } },
-    { inventories: { pull_request: {
+    { inventories: { repository_dispatch: {
       total_count: 1001, runs: overBoundPage, refinedCreated: "2026-01-02T00:00:00Z..*", refined: [], refinedTotalCount: 0,
     } } },
-    { inventories: { pull_request: {
+    { inventories: { repository_dispatch: {
       initial: secondPageRuns, initialPageTotals: {1: 101, 2: 102},
     } } },
-    { inventories: { pull_request: { total_count: 1000, runs: [] } } },
-    { inventories: { pull_request: { total_count: 101, runs: [] } } },
-    { inventories: { pull_request: { total_count: 1, runs: [] } } },
-    { apiFailure: "pull_request" },
-    { inventories: { pull_request: { malformed: true } } },
-    { inventories: { pull_request: [null] } },
-    { inventories: { pull_request: [producer(tuple, "pull_request", "completed", "success", {
+    { inventories: { repository_dispatch: { total_count: 1000, runs: [] } } },
+    { inventories: { repository_dispatch: { total_count: 101, runs: [] } } },
+    { inventories: { repository_dispatch: { total_count: 1, runs: [] } } },
+    { apiFailure: "repository_dispatch" },
+    { inventories: { repository_dispatch: { malformed: true } } },
+    { inventories: { repository_dispatch: [null] } },
+    { inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "completed", "success", {
       created_at: "not-a-workflow-run-timestamp",
     })] } },
-    { inventories: { pull_request: [producer(tuple, "pull_request", "queued"), producer(tuple, "pull_request", "queued")] } },
-    { inventories: { pull_request: { total_count: 1001, runs: runsDescending("pull_request", "2026-01-02T00:00:00Z") } } },
+    { inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "queued"), producer(tuple, "repository_dispatch", "queued")] } },
+    { inventories: { repository_dispatch: { total_count: 1001, runs: runsDescending("repository_dispatch", "2026-01-02T00:00:00Z") } } },
   ]) {
     const uncertain = await runDispatcher({ tuples: [tuple], ...args });
     assert.deepEqual(numbers(uncertain), [], "unknown inventory must never dispatch runtime work");
@@ -2019,8 +2031,8 @@ async function runDispatcher({
     ["publisher could have written some tags", {job: {...publisherJob, steps: [{...noWrite, conclusion: "failure"}]}}, []],
     ["artifact is still retained", {artifact: {...artifact, expired: false}}, []],
     ["artifact is from a different upload window", {artifact: {...artifact, created_at: "2026-01-01T11:58:00Z"}}, []],
-    ["the two allowed wake paths both prove no write", {inventory: [publisher, callbackPublisher],
-      additional: {[callbackPublisher.id]: {run: callbackPublisher, jobs: [callbackJob]}}}, ["101"]],
+    ["two exact publishers cannot prove a unique pre-write failure", {inventory: [publisher, callbackPublisher],
+      additional: {[callbackPublisher.id]: {run: callbackPublisher, jobs: [callbackJob]}}}, []],
     ["one wake path could have written tags", {inventory: [publisher, callbackPublisher],
       additional: {[callbackPublisher.id]: {run: callbackPublisher,
         jobs: [{...callbackJob, steps: [{...noWrite, started_at: "2026-01-01T12:12:12Z"}]}]}}}, []],
@@ -2082,8 +2094,10 @@ async function runDispatcher({
         inventories: {repository_dispatch: [existing]},
       });
       assert.deepEqual(numbers(replaced), ["101"], `${conclusion} exact typed producer permits only one replacement`);
-      assert.deepEqual(replaced.runtimeRunReads, [existing.id, existing.id],
+      assert.deepEqual(replaced.runtimeRunReads.slice(0, 2), [existing.id, existing.id],
         "both initial selection and the final pre-POST fence require fresh native terminal-attempt proof");
+      assert.equal(replaced.runtimeRunReads.length, 3);
+      assert.notEqual(replaced.runtimeRunReads[2], existing.id, "post-POST proof reads the replacement, not the old terminal run");
       assert.equal(previewDispatches(replaced).length, 1, "terminal runtime recovery retains independent preview handoff");
       assert.deepEqual(replaced.errors, []);
       assertRequestContracts(replaced);
@@ -2169,13 +2183,13 @@ async function runDispatcher({
     runtimeAttemptJobs: {[validRerun.id]: {total_count: 1, jobs: [validRerunJob]}}});
   assert.deepEqual(numbers(rerunRecovery), ["101"], "a genuinely executed exact rerun is not constrained by stale run-wide timestamps");
   assert.deepEqual(rerunRecovery.errors, []);
-  const earlierRunning = producer(tuple, "pull_request", "in_progress", null, {
+  const earlierRunning = producer(tuple, "repository_dispatch", "in_progress", null, {
     id: 10101, created_at: "2026-01-02T00:00:00Z",
   });
   for (const conclusion of ["cancelled", "timed_out", "failure"]) {
     const unusable = conclusion === "failure" ? failedTyped : terminalTyped(conclusion);
     const retained = await runDispatcher({tuples: [tuple],
-      inventories: {pull_request: [earlierRunning], repository_dispatch: [unusable]},
+      inventories: {repository_dispatch: [earlierRunning, unusable]},
       runtimeAttemptJobs: {[unusable.id]: {total_count: 1, jobs: [failedJob]}}});
     assert.deepEqual(numbers(retained), [], "discarding a terminal typed replacement must reveal an earlier viable exact producer, not dispatch again");
     assert(retained.infos.some(message => message.includes(`exact tuple producer ${earlierRunning.id} remains in_progress`)));
@@ -2251,33 +2265,37 @@ async function runDispatcher({
   assert.equal(manyInvisible.waitedMillis, 120000, "fan-out shares exactly one visibility window");
   const visibilityFloor = "2026-01-08T00:00:00.000Z..*";
   const observations = manyInvisible.inventoryCalls.filter(request => request.created === visibilityFloor);
-  assert.equal(observations.length, 48, "each interval checks typed and native visibility within the same window");
-  for (const event of ["repository_dispatch", "pull_request"]) {
-    assert.equal(observations.filter(request => request.event === event).length, 24);
-  }
-  assert(observations.every(request => request.page === 1 && request.per_page === 100));
+  assert.equal(observations.length, 24, "each interval checks typed visibility within the shared window");
+  assert(observations.every(request => request.event === "repository_dispatch" && request.page === 1 && request.per_page === 100));
   const nativeProducer = producer(tuple, "pull_request", "in_progress", null, {
     created_at: "2026-01-08T00:00:00Z",
     pull_requests: [{number: Number(tuple.prNumber), head: {sha: tuple.headSha}, base: {sha: tuple.baseSha, ref: "develop"}}],
   });
-  const reused = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true, observedNativeProducer: nativeProducer});
-  assert.deepEqual(numbers(reused), ["101"]);
-  assert.deepEqual(reused.errors, []);
-  assert.deepEqual(reused.runtimeRunReads, [nativeProducer.id]);
-  assert.equal(reused.waitedMillis, 0);
-  assert(reused.infos.some(message => message.includes("Exact native runtime producer") &&
-    message.includes("separate from admission")));
-  const movedNative = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true, observedNativeProducer: nativeProducer,
-    runtimeRunOverrides: {[nativeProducer.id]: {run_attempt: nativeProducer.run_attempt + 1}}});
-  assert.deepEqual(numbers(movedNative), ["101"]);
-  assert(movedNative.errors.some(message => message.includes("visibility is unknown")));
-  assert(manyInvisible.inventoryCalls.some(request => request.event === "pull_request" && request.created !== visibilityFloor),
-    "broad preflight still checks native producers");
-  assert(manyInvisible.inventoryCalls.some(request => request.event === "repository_dispatch" && request.created !== visibilityFloor),
-    "broad preflight still checks existing dispatch producers");
+  const ignoredNative = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true, observedNativeProducer: nativeProducer});
+  assert.deepEqual(numbers(ignoredNative), ["101"]);
+  assert(ignoredNative.errors.some(message => message.includes("visibility is unknown")));
+  assert.deepEqual(ignoredNative.runtimeRunReads, []);
+  assert.equal(ignoredNative.waitedMillis, 120000);
+  assert(manyInvisible.inventoryCalls.every(request => request.event === "repository_dispatch"),
+    "both inventory and visibility require typed producers");
+  let earlierProofAvailable = false;
+  const earlierBound = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true,
+    inventories: {repository_dispatch: [earlierRunning]},
+    runtimeAttemptJobs: {get [earlierRunning.id]() {
+      return earlierProofAvailable ? undefined : {total_count: 0, jobs: []};
+    }},
+    afterPreviewDispatch: () => { earlierProofAvailable = true; },
+  });
+  assert.deepEqual(numbers(earlierBound), ["101"], "the unbound pre-POST producer cannot suppress admission");
+  assert.deepEqual(earlierBound.errors, []);
+  assert(earlierBound.infos.some(message => message.includes(`Existing exact typed runtime producer ${earlierRunning.id}/1 is active`)));
+  assert(!earlierBound.infos.some(message => message.includes("became visible after")),
+    "existing work must not be credited as new post-POST visibility");
   const sameSecond = await runDispatcher({tuples: [tuple], initialTime: "2026-01-08T00:00:00.200Z",
-    visibilityResponse: (_request, [posted]) => ({total_count: 1,
-      workflow_runs: [{...posted, created_at: "2026-01-08T00:00:00Z"}]}),
+    visibilityResponse: (_request, [posted]) => {
+      posted.created_at = "2026-01-08T00:00:00Z";
+      return {total_count: 1, workflow_runs: [posted]};
+    },
   });
   assert.deepEqual(numbers(sameSecond), ["101"]);
   assert.deepEqual(sameSecond.errors, [], "a unique new exact run in the POST's timestamp second is visible");
@@ -2456,7 +2474,7 @@ async function runDispatcher({
     "accepted handoffs before and after the failed target are still observed");
   assert(changedFilesFailure.errors.some(error => error.includes("Cannot verify runtime changed files for PR #102")));
   assert(!changedFilesFailure.errors.some(error => error.includes("visibility is unknown")));
-  const previewUnknown = await runDispatcher({tuples: [previewTuple], apiFailure: "pull_request"});
+  const previewUnknown = await runDispatcher({tuples: [previewTuple], apiFailure: "repository_dispatch"});
   assert.equal(runtimeDispatches(previewUnknown).length, 0);
   assert.equal(previewDispatches(previewUnknown).length, 1, "uncertain runtime inventory must not suppress independent preview reconciliation");
   const previewFailed = await runDispatcher({tuples: [previewTuple, sibling], previewFailurePr: "101"});
@@ -3207,9 +3225,16 @@ bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
 require_contains "$contract_fixture_dir/output" 'Matching runtime-images workflow 101 succeeded'
 require_contains "$contract_fixture_dir/output" 'Trusted PR image publisher 201 succeeded'
 
+cat >"$contract_fixture_dir/proof-clock.sh" <<'EOF'
+# Keep the clock fixed through the proof reads. Stop on the first poll sleep.
+unset SECONDS
+SECONDS=0
+sleep() { SECONDS=$((SECONDS + $1)); }
+EOF
 if CONTRACT_PUBLISHER_MOVE_FILE="$contract_fixture_dir/publisher-moved" \
+  BASH_ENV="$contract_fixture_dir/proof-clock.sh" \
   PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
-  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=60 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=60 \
   bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
     >"$contract_fixture_dir/publisher-moved.output" 2>"$contract_fixture_dir/publisher-moved.error"; then
@@ -3334,16 +3359,10 @@ for fixture in dispatch-success dispatch-earlier-attempt dispatch-legacy callbac
     fi
   fi
 done
-cat >"$contract_fixture_dir/stale-source-clock.sh" <<'EOF'
-# Keep the clock fixed through the proof reads. Stop on the first poll sleep.
-unset SECONDS
-SECONDS=0
-sleep() { SECONDS=$((SECONDS + $1)); }
-EOF
 if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
   CONTRACT_CURRENT_SOURCE_ATTEMPT=3 \
   CONTRACT_CURRENT_SOURCE_READ="$contract_fixture_dir/stale-current-attempt.reads" \
-  BASH_ENV="$contract_fixture_dir/stale-source-clock.sh" \
+  BASH_ENV="$contract_fixture_dir/proof-clock.sh" \
   PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
   HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=60 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=60 \
   bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \

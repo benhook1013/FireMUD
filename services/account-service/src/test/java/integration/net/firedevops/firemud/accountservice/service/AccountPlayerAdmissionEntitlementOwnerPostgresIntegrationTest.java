@@ -384,8 +384,8 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     var firstHold = capacityRequest(f);
     long quota = firstHold.evidence().quota();
     assertThat(quota).isBetween(1L, 10L);
-    assertThat(f.capacityOwner.commit(firstHold, PEER).state())
-        .isEqualTo(TenantCapacityAdmission.State.RESERVED);
+    var firstReservation = f.capacityOwner.commit(firstHold, PEER);
+    assertThat(firstReservation.state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
     for (long used = 1; used < quota; used++) {
       var occupying = capacityRequest(f);
       assertThat(f.capacityOwner.commit(occupying, PEER).state())
@@ -443,9 +443,6 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             + " WHERE tenant_uuid=? AND request_id=? AND admission_id=?";
     assertThat(f.dsl.fetchSingle(countDeniedReservations, identity).get("n", Long.class)).isZero();
 
-    // Recovery claims are checked against live PostgreSQL time, not the frozen evaluation clock.
-    Clock recoveryClock = mock(Clock.class);
-    when(recoveryClock.instant()).thenAnswer(invocation -> databaseNow(f.dsl));
     // The external no-execution observation is controlled; all Account storage mutations are real.
     var recovery =
         new AccountTenantCapacityRecoveryWorker(
@@ -463,7 +460,21 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
                     7,
                     "sha256:" + "e".repeat(64),
                     "controlled-owner-no-execution".getBytes(StandardCharsets.US_ASCII)),
-            recoveryClock);
+            databaseClock(f.dsl));
+    Instant evaluationExpiresAt = request.evidence().expiresAt();
+    assertThat(f.clock.instant()).isBefore(evaluationExpiresAt);
+    f.clock.setInstant(evaluationExpiresAt.plus(1, ChronoUnit.MICROS));
+    assertThat(f.clock.instant()).isAfter(evaluationExpiresAt);
+    awaitDatabaseExpiry(f.dsl, evaluationExpiresAt);
+    var heldWindow =
+        f.dsl.fetchSingle(
+            "SELECT clock_timestamp() AS observed_at, reconcile_deadline "
+                + "FROM account_tenant_capacity_reservations WHERE reservation_id = ?",
+            firstReservation.reservationId());
+    Instant observedAt = heldWindow.get("observed_at", OffsetDateTime.class).toInstant();
+    assertThat(observedAt).isAfterOrEqualTo(firstHold.evidence().expiresAt());
+    assertThat(observedAt)
+        .isBefore(heldWindow.get("reconcile_deadline", OffsetDateTime.class).toInstant());
     assertThat(
             recovery
                 .reconcile(firstHold, AccountTenantCapacityRecoveryWorker.NoCommitAction.RELEASE)
@@ -474,11 +485,6 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         .containsEntry("held_units", quota - 1)
         .containsEntry("used_units", 0L);
     // The exact durable refusal must win over both returned quota headroom and expired evidence.
-    Instant evaluationExpiresAt = request.evidence().expiresAt();
-    assertThat(f.clock.instant()).isBefore(evaluationExpiresAt);
-    f.clock.setInstant(evaluationExpiresAt.plus(1, ChronoUnit.MICROS));
-    assertThat(f.clock.instant()).isAfter(evaluationExpiresAt);
-    awaitDatabaseExpiry(f.dsl, evaluationExpiresAt);
     var retainedReservations =
         f.dsl
             .fetch(
@@ -632,7 +638,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
                     7,
                     "sha256:" + "e".repeat(64),
                     "controlled-owner-no-execution".getBytes(StandardCharsets.US_ASCII)),
-            Clock.systemUTC());
+            databaseClock(f.dsl));
     if (rearm) {
       var reservation = f.capacityOwner.commit(prior, PEER);
       assertThat(reservation.state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
@@ -769,6 +775,13 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
 
   private static Instant databaseNow(DSLContext dsl) {
     return dsl.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class).toInstant();
+  }
+
+  private static Clock databaseClock(DSLContext dsl) {
+    // Recovery claim windows use PostgreSQL time independently of the controlled Account clock.
+    Clock clock = mock(Clock.class);
+    when(clock.instant()).thenAnswer(ignored -> databaseNow(dsl));
+    return clock;
   }
 
   private static TenantCapacityAdmission.Evidence capacityEvidence(Fixture f, Request request) {

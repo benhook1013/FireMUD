@@ -361,9 +361,10 @@ grep -Fq 'Trusted PR image publisher 103 completed with failure' "$TEMP_DIR/fail
 
 # A publisher with a mismatched merge token must not satisfy the PR wait.
 if GH_FIXTURE=wrong_runs \
-  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
-  HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=1 \
-  HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  BASH_ENV="$TEMP_DIR/proof-rejection-clock.sh" \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=60 \
+  HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=60 \
+  HOSTED_IMAGE_WAIT_SLEEP_SECONDS=60 \
   HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
   bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/wrong-runs.out" 2>"$TEMP_DIR/wrong-runs.err"; then
   echo "waiter accepted a publisher for a different merge identity" >&2

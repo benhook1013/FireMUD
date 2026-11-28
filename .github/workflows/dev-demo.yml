@@ -487,28 +487,48 @@ jobs:
             echo "::error title=Invalid dev-demo head SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
             exit 1
           fi
-          if [[ "${RETAINED_ACTIVATION:-}" == true ]]; then
-            intent="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${DEPLOYED_BASE_SHA}:${HEAD_SHA}"
-            resource_version="$(
-              kubectl --request-timeout=10s get namespace "$RUNTIME_NAMESPACE" -o json |
-                jq -er --arg uid "$NAMESPACE_UID" --arg base "$DEPLOYED_BASE_SHA" --arg head "$HEAD_SHA" --arg intent "$intent" '
-                  select(.metadata.name == "dev" and .metadata.uid == $uid
-                    and .metadata.labels["firemud.dev/dev-demo"] == "true"
-                    and .metadata.labels["firemud.dev/environment-class"] == "dev-demo-cluster"
-                    and .metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == $base
-                    and .metadata.annotations["firemud.dev/requested-dev-demo-head-sha"] == $head
-                    and .metadata.annotations["firemud.dev/pending-dev-demo-deployment"] == $intent)
-                  | .metadata.resourceVersion | select(type == "string" and length > 0)
-                '
-            )"
-            kubectl --request-timeout=10s annotate namespace "$RUNTIME_NAMESPACE" \
-              --resource-version="$resource_version" \
-              "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" \
-              "firemud.dev/pending-dev-demo-deployment-" --overwrite >/dev/null
-          else
-            kubectl annotate namespace "$RUNTIME_NAMESPACE" \
-              "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" --overwrite >/dev/null
+          [[ "$DEPLOYED_BASE_SHA" =~ ^[0-9a-f]{40}$ && "$DEPLOYED_BASE_SHA" != "$HEAD_SHA" ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$RETAINED_ACTIVATION" == true || "$RETAINED_ACTIVATION" == false ]]
+          request_id="dev-demo-smoke-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          intent="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${DEPLOYED_BASE_SHA}:${HEAD_SHA}"
+          bootstrap_hold="${intent}:${request_id}"
+          (( ${#request_id} <= 128 && ${#bootstrap_hold} <= 256 ))
+          namespace_identity="$(
+            kubectl --request-timeout=10s get namespace "$RUNTIME_NAMESPACE" -o json |
+              jq -er --arg uid "$NAMESPACE_UID" --arg base "$DEPLOYED_BASE_SHA" --arg head "$HEAD_SHA" \
+                --arg intent "$intent" --arg retained "$RETAINED_ACTIVATION" '
+                select(.kind == "Namespace" and .metadata.name == "dev" and .metadata.deletionTimestamp == null
+                  and .metadata.labels["firemud.dev/dev-demo"] == "true"
+                  and .metadata.labels["firemud.dev/environment-class"] == "dev-demo-cluster"
+                  and .metadata.annotations["firemud.dev/requested-dev-demo-head-sha"] == $head
+                  and .metadata.annotations["firemud.dev/pending-dev-demo-bootstrap"] == null)
+                | if $retained == "true" then
+                    select(.metadata.uid == $uid
+                      and .metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == $base
+                      and .metadata.annotations["firemud.dev/pending-dev-demo-deployment"] == $intent)
+                  else
+                    select(.metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == null
+                      and .metadata.annotations["firemud.dev/pending-dev-demo-deployment"] == null)
+                  end
+                | select(.metadata.uid | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"))
+                | select(.metadata.resourceVersion | type == "string" and length > 0)
+                | [.metadata.uid, .metadata.resourceVersion] | @tsv'
+          )"
+          IFS=$'\t' read -r namespace_uid resource_version <<<"$namespace_identity"
+          settle_deployment=()
+          if [[ "$RETAINED_ACTIVATION" == true ]]; then
+            settle_deployment+=("firemud.dev/pending-dev-demo-deployment-")
           fi
+          kubectl --request-timeout=10s annotate namespace "$RUNTIME_NAMESPACE" \
+            --resource-version="$resource_version" \
+            "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" \
+            "firemud.dev/pending-dev-demo-bootstrap=${bootstrap_hold}" \
+            "${settle_deployment[@]}" --overwrite >/dev/null
+          {
+            echo "bootstrap_hold=$bootstrap_hold"
+            echo "namespace_uid=$namespace_uid"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Show deployed dev-demo services
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' }}
@@ -601,28 +621,31 @@ jobs:
           IMAGE_TAG: ${{ needs.dev-demo-plan.outputs.image_tag }}
           CERTIFICATE_PROFILE: ${{ steps.certificate-identity.outputs.mode }}
           DEPLOYED_BASE_SHA: ${{ steps.v2-migration-mode.outputs.deployed_base_sha }}
+          BOOTSTRAP_HOLD: ${{ steps.record-deployed-head.outputs.bootstrap_hold }}
+          EXPECTED_NAMESPACE_UID: ${{ steps.record-deployed-head.outputs.namespace_uid }}
         run: |
           set -euo pipefail
           echo "DEV_DEMO_STAGE=bootstrap-intent" >> "$GITHUB_ENV"
           [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ && "$DEPLOYED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$(git rev-parse HEAD)" == "$HEAD_SHA" && "$DEPLOYED_BASE_SHA" != "$HEAD_SHA" ]]
-          namespace_identity="$(
+          request_id="dev-demo-smoke-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bootstrap_hold="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${DEPLOYED_BASE_SHA}:${HEAD_SHA}:${request_id}"
+          [[ "$BOOTSTRAP_HOLD" == "$bootstrap_hold" ]]
+          namespace_uid="$(
             KUBECONFIG="$NAMESPACE_KUBECONFIG" kubectl get namespace dev -o json |
-              jq -er --arg sha "$HEAD_SHA" '
+              jq -er --arg sha "$HEAD_SHA" --arg uid "$EXPECTED_NAMESPACE_UID" --arg hold "$BOOTSTRAP_HOLD" '
                 select(.kind == "Namespace" and .metadata.name == "dev"
                   and .metadata.deletionTimestamp == null
+                  and .metadata.uid == $uid
                   and .metadata.labels["firemud.dev/dev-demo"] == "true"
                   and .metadata.labels["firemud.dev/environment-class"] == "dev-demo-cluster"
                   and .metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == $sha
-                  and ((.metadata.annotations // {})
-                    | has("firemud.dev/pending-dev-demo-bootstrap") | not))
-                | select(.metadata.uid | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"))
-                | select(.metadata.resourceVersion | type == "string" and length > 0)
-                | [.metadata.uid, .metadata.resourceVersion] | @tsv
+                  and .metadata.annotations["firemud.dev/pending-dev-demo-bootstrap"] == $hold
+                  and .metadata.annotations["firemud.dev/pending-dev-demo-deployment"] == null)
+                | .metadata.uid | select(type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"))
               '
           )"
-          IFS=$'\t' read -r namespace_uid namespace_resource_version <<<"$namespace_identity"
           helm_revision="$(
             helm list -n dev --filter '^dev$' -o json |
               jq -er '
@@ -634,13 +657,6 @@ jobs:
           )"
           rendered_digest="$(sha256sum </tmp/dev-demo-rendered.yaml)"
           values_digest="$(sha256sum </tmp/dev-demo-values.yaml)"
-          request_id="dev-demo-smoke-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          (( ${#request_id} <= 128 ))
-          bootstrap_hold="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${DEPLOYED_BASE_SHA}:${HEAD_SHA}:${request_id}"
-          (( ${#bootstrap_hold} <= 256 ))
-          KUBECONFIG="$NAMESPACE_KUBECONFIG" kubectl annotate namespace dev \
-            --resource-version="$namespace_resource_version" \
-            "firemud.dev/pending-dev-demo-bootstrap=${bootstrap_hold}" --overwrite >/dev/null
           evidence_dir="$(mktemp -d "$RUNNER_TEMP/dev-demo-bootstrap.XXXXXXXX")"
           jq -n -e \
             --arg repository "$GITHUB_REPOSITORY" --arg runId "$GITHUB_RUN_ID" \
@@ -1204,6 +1220,7 @@ jobs:
           BOOTSTRAP_OUTCOME: ${{ steps.bootstrap-smoke.outcome }}
           BOOTSTRAP_RESULT_READY: ${{ steps.bootstrap-smoke.outputs.result_ready }}
           BOOTSTRAP_RETENTION_OUTCOME: ${{ steps.retain-bootstrap-result.outcome }}
+          BOOTSTRAP_NAMESPACE_RETENTION_OUTCOME: ${{ steps.preserve-bootstrap-result.outcome }}
           BOOTSTRAP_HOLD_CLEAR_OUTCOME: ${{ steps.clear-bootstrap-hold.outcome }}
         run: |
           failure_stage="${DEV_DEMO_STAGE:-unknown}"
@@ -1229,6 +1246,8 @@ jobs:
               echo ""
               if [[ "$BOOTSTRAP_RESULT_READY" == true && "$BOOTSTRAP_RETENTION_OUTCOME" == success ]]; then
                 echo "The target was recorded and the original smoke bootstrap result was retained in this attempt. Use the [verification procedure]($guide) to check the existing release and migration state before repeating readiness or smoke."
+              elif [[ "$BOOTSTRAP_RESULT_READY" == true && "$BOOTSTRAP_NAMESPACE_RETENTION_OUTCOME" == success ]]; then
+                echo "The result upload failed. The exact verified receipt was retained on the held dev Namespace in \`firemud.dev/pending-dev-demo-bootstrap-result\`. Use the [verification procedure]($guide) to retrieve it through the namespace manager and obtain owner readbacks before repeating smoke. Keep the hold in place."
               elif [[ "$BOOTSTRAP_RESULT_READY" == true ]]; then
                 echo "The target was recorded and bootstrap ran, but its result was not retained. Use the [verification procedure]($guide) and obtain owner readback of the original bootstrap. Hold smoke verification until the owners establish the result."
               else

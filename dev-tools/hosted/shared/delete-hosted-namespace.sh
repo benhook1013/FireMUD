@@ -120,7 +120,7 @@ delete_status=0
 printf '%s\n' "$delete_options" |
   kubectl delete --raw "/api/v1/namespaces/${namespace}" -f - >/dev/null || delete_status=$?
 if ((delete_status != 0)); then
-  if [[ -n "$expected_namespace_uid" ]]; then
+  if [[ -n "$expected_namespace_uid" && -z "$expected_deployed_head" ]]; then
     echo "unable to request UID-fenced deletion of hosted namespace ${namespace}" >&2
     exit "$delete_status"
   fi

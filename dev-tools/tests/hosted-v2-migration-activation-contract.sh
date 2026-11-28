@@ -59,6 +59,7 @@ assert_rejected() {
 
 # The automatic reset must authorize deletion from the fresh owned snapshot.
 (
+  unset PREVIEW_EXPECTED_NAMESPACE_UID
   delete_helper="$ROOT_DIR/dev-tools/hosted/shared/delete-hosted-namespace.sh"
   delete_request="$fixture_dir/delete-request.json"
   delete_attempt="$fixture_dir/delete-attempt"
@@ -75,7 +76,14 @@ assert_rejected() {
       'get namespace dev --ignore-not-found -o json')
         [[ -s "$DELETE_REQUEST" ]] || printf '%s\n' "$RESET_NAMESPACE_JSON"
         ;;
-      'delete --raw /api/v1/namespaces/dev -f -') cat >"$DELETE_REQUEST" ;;
+      'get namespace dev --ignore-not-found -o name')
+        case "${RESET_DELETE_OUTCOME:-success}" in
+          lost-response-original|lost-response-replacement) printf '%s\n' 'namespace/dev' ;;
+          lost-response-unavailable) return 1 ;;
+        esac ;;
+      'delete --raw /api/v1/namespaces/dev -f -')
+        cat >"$DELETE_REQUEST"
+        [[ "${RESET_DELETE_OUTCOME:-success}" == success ]] ;;
       'wait --for=delete namespace/dev --timeout=180s') ;;
       *) return 2 ;;
     esac
@@ -101,6 +109,19 @@ assert_rejected() {
   RESET_NAMESPACE_JSON="$clean_snapshot"
   bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" >"$fixture_dir/reset.stdout"
   jq -e '.preconditions == {uid:"fixture-dev-uid",resourceVersion:"7"}' "$delete_request" >/dev/null
+  for outcome in lost-response-absent lost-response-original lost-response-replacement lost-response-unavailable; do
+    rm "$delete_request"
+    reset_status=0
+    RESET_DELETE_OUTCOME="$outcome" bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" \
+      >"$fixture_dir/reset.stdout" 2>"$fixture_dir/reset.stderr" || reset_status=$?
+    jq -e '.preconditions == {uid:"fixture-dev-uid",resourceVersion:"7"}' "$delete_request" >/dev/null
+    if [[ "$outcome" == lost-response-absent ]]; then
+      test "$reset_status" -eq 0
+      grep -Fq 'Hosted namespace dev is absent.' "$fixture_dir/reset.stdout"
+    else
+      test "$reset_status" -ne 0
+    fi
+  done
   rm "$delete_request"
   bash "$delete_helper" dev dev >"$fixture_dir/reset.stdout"
   jq -e '.preconditions == {uid:"fixture-dev-uid",resourceVersion:"7"}' "$delete_request" >/dev/null

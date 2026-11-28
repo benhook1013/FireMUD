@@ -296,9 +296,9 @@ if not matching_runs:
 
 # A failed explicit requalification can follow an already completed original
 # publication for this exact source attempt. Keep that retained success usable
-# only when the complete exact-tuple inventory has one unambiguous latest
-# failed requalification and one earlier successful original publisher.
-# The exact failed attempt must subsequently prove it skipped tag access.
+# only when the complete exact-tuple inventory has one earlier successful
+# original publisher and every later candidate is an unambiguous failure.
+# Each exact failed attempt must subsequently prove it skipped tag access.
 # Other terminal failures, active candidates, and ambiguous histories retain
 # their existing fail-closed behavior.
 run_ids = [run.get("id") for run in matching_runs]
@@ -315,17 +315,23 @@ requalification_title = f"Publish PR Runtime Images requalification source-run-{
 if (len(ordered) > 1 and run.get("event") == "repository_dispatch"
         and run.get("display_title") == requalification_title
         and run.get("status") == "completed" and run.get("conclusion") == "failure"):
-    earlier = ordered[1:]
-    if (len(ordered) != 2 or len(earlier) != 1
-            or earlier[0].get("event") != "workflow_run"
-            or earlier[0].get("status") != "completed"
-            or earlier[0].get("conclusion") != "success"):
+    failures, original = ordered[:-1], ordered[-1]
+    if (len({candidate["created_at"] for candidate in ordered}) != len(ordered)
+            or original.get("event") != "workflow_run"
+            or original.get("status") != "completed"
+            or original.get("conclusion") != "success"):
         raise SystemExit(1)
-    failed_id, failed_attempt, failed_workflow = run.get("id"), run.get("run_attempt"), run.get("workflow_id")
-    if any(type(value) is not int or value <= 0 for value in (failed_attempt, failed_workflow)):
-        raise SystemExit(1)
-    selection_reason = f"retained-after-failed-requalification:{failed_id}:{failed_attempt}:{failed_workflow}"
-    run = earlier[0]
+    descriptors = []
+    for failed in failures:
+        failed_id = failed.get("id")
+        failed_attempt, failed_workflow = failed.get("run_attempt"), failed.get("workflow_id")
+        if (failed.get("event") != "repository_dispatch" or failed.get("display_title") != requalification_title
+                or failed.get("status") != "completed" or failed.get("conclusion") != "failure"
+                or any(type(value) is not int or value <= 0 for value in (failed_attempt, failed_workflow))):
+            raise SystemExit(1)
+        descriptors.append(f"{failed_id}:{failed_attempt}:{failed_workflow}")
+    selection_reason = "retained-after-failed-requalification:" + ",".join(descriptors)
+    run = original
 attempt, workflow_id = run.get("run_attempt"), run.get("workflow_id")
 if any(type(value) is not int or value <= 0 for value in (attempt, workflow_id)):
     raise SystemExit(1)
@@ -435,16 +441,11 @@ publisher = read_object(publisher_path)
 verify_run(publisher, run_id, attempt, workflow_id, event, ".github/workflows/publish-pr-runtime-images.yml")
 if publisher.get("display_title") != title or publisher.get("name") not in ("Publish PR Runtime Images", title):
     unavailable("native publisher title differs from the selected run")
-retained_expiry = None
 requalification = title == f"Publish PR Runtime Images requalification source-run-{source_id} attempt-{source_attempt}"
 if requalification and (event != "repository_dispatch" or source_event != "pull_request"):
     unavailable("publication requalification requires an original pull_request source run")
-if selection_reason != "latest":
-    failed = re.fullmatch(r"retained-after-failed-requalification:([1-9][0-9]*):([1-9][0-9]*):([1-9][0-9]*)",
-                          selection_reason)
-    if not failed or failed[3] != workflow_id or event != "workflow_run" or source_event != "pull_request":
-        unavailable("failed requalification selection is not bound to the publisher workflow")
-    failed_id, failed_attempt, failed_workflow = failed.groups()
+
+def prove_failed_requalification(failed_id, failed_attempt, failed_workflow):
     failed_path = f"runs/{failed_id}/attempts/{failed_attempt}"
     requalification_run = read_object(failed_path)
     verify_run(requalification_run, failed_id, failed_attempt, failed_workflow, "repository_dispatch",
@@ -482,9 +483,28 @@ if selection_reason != "latest":
         )
         if not retained_expiry:
             unavailable("failed requalification expiry differs from the selected source attempt")
-    elif (len(tag_steps) != 1 or tag_steps[0].get("status") != "completed"
+        return retained_expiry.groups()
+    elif (failed_publish_jobs[0].get("conclusion") != "failure"
+            or len(tag_steps) != 1 or tag_steps[0].get("status") != "completed"
             or tag_steps[0].get("conclusion") != "skipped" or tag_steps[0].get("started_at") is not None):
         unavailable("failed requalification has no proof it skipped fixed-tag checks")
+    return None
+
+retained_expiries = []
+if selection_reason != "latest":
+    prefix = "retained-after-failed-requalification:"
+    failures = selection_reason.removeprefix(prefix).split(",")
+    if not selection_reason.startswith(prefix) or event != "workflow_run" or source_event != "pull_request":
+        unavailable("failed requalification selection is not bound to the publisher workflow")
+    seen_failures = {run_id}
+    for descriptor in failures:
+        failed = re.fullmatch(r"([1-9][0-9]*):([1-9][0-9]*):([1-9][0-9]*)", descriptor)
+        if not failed or failed[1] in seen_failures or failed[3] != workflow_id:
+            unavailable("failed requalification selection is not bound to the publisher workflow")
+        seen_failures.add(failed[1])
+        expiry = prove_failed_requalification(*failed.groups())
+        if expiry:
+            retained_expiries.append(expiry)
 job = successful_job(publisher, publisher_path, ("Publish Fixed PR Merge Image Tags",))
 download = successful_step(job, "Download successful PR image artifacts")
 validate = successful_step(job, "Validate exact PR source and artifact before registry login")
@@ -505,12 +525,12 @@ if receipts:
     )
     if not match or receipt["number"] <= publish["number"]:
         unavailable("publication receipt does not bind the successful producer and publisher attempts")
-    if retained_expiry and retained_expiry.groups() != match.groups():
+    if any(expiry != match.groups() for expiry in retained_expiries):
         unavailable("failed requalification expired a different artifact than the retained publication")
     print(f"{match[1]}\t{match[2]}")
     raise SystemExit(0)
 
-if requalification:
+if requalification or retained_expiries:
     unavailable("publication requalification requires a native receipt")
 
 # Earlier publishers can still use the native artifact inventory while it

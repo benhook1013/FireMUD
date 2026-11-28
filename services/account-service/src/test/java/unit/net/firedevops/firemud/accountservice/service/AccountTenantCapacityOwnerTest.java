@@ -32,6 +32,7 @@ import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeM
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateExpiredException;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner;
@@ -169,6 +170,7 @@ class AccountTenantCapacityOwnerTest {
   private enum InitialDenialPath {
     QUOTA,
     EXPIRES_AT_MEMBERSHIP_OBSERVATION,
+    DELEGATION_ALREADY_ELAPSED,
     EXPIRES_DURING_SCOPE_QUALIFICATION,
     EXPIRES_ACROSS_SCOPE_CLOCK_SAMPLES,
     EXPIRES_DURING_DELEGATION_READ,
@@ -252,23 +254,26 @@ class AccountTenantCapacityOwnerTest {
         .when(f.dsl)
         .execute(eq(originInsertSql), any(Object[].class));
     f.retained = true;
-    var scope = qualifySources(f);
+    var exactSources = qualifySources(f);
     Runnable expire =
         () -> {
           when(f.clock.instant()).thenReturn(f.request.evidence().expiresAt());
           f.databaseExpired = true;
         };
-    if (path == InitialDenialPath.EXPIRES_DURING_DELEGATION_READ) {
-      when(scope.connectScopeExpiresAt()).thenReturn(f.request.evidence().expiresAt().toString());
-    }
     switch (path) {
       case QUOTA -> {}
       case EXPIRES_AT_MEMBERSHIP_OBSERVATION -> f.onDatabaseObservation = expire;
+      case DELEGATION_ALREADY_ELAPSED -> {
+        var elapsed = markDelegationExpired(f, exactSources.delegation());
+        when(f.issuances.readCurrentCommittedCandidateByJti(
+                CapacityAdmissionTestFixture.DELEGATION_JTI))
+            .thenThrow(elapsed);
+      }
       case EXPIRES_DURING_DELEGATION_READ ->
           when(f.issuances.readCurrentCommittedCandidateByJti(
                   CapacityAdmissionTestFixture.DELEGATION_JTI))
               .thenAnswer(ignored -> {
-                throw markDelegationExpired(f);
+                throw markDelegationExpired(f, exactSources.delegation());
               });
       case EXPIRES_ACROSS_SCOPE_CLOCK_SAMPLES ->
           when(f.scopes.findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request)))
@@ -277,13 +282,13 @@ class AccountTenantCapacityOwnerTest {
                 var observations = new AtomicInteger();
                 f.onDatabaseObservation =
                     () -> f.databaseExpired = observations.incrementAndGet() >= 2;
-                return Optional.of(scope);
+                return Optional.of(exactSources.scope());
               });
       case EXPIRES_DURING_SCOPE_QUALIFICATION ->
           when(f.scopes.findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request)))
               .thenAnswer(ignored -> {
                 expire.run();
-                return Optional.of(scope);
+                return Optional.of(exactSources.scope());
               });
       case EXPIRES_DURING_USAGE_LOCK ->
           doAnswer(
@@ -307,11 +312,9 @@ class AccountTenantCapacityOwnerTest {
     assertThat(f.originDecision).isSameAs(genericRefusal);
     assertThat(f.pendingOriginDecision).isNull();
     UUID committedId = genericRefusal.get("decision_id", UUID.class);
-    if (path == InitialDenialPath.EXPIRES_AT_MEMBERSHIP_OBSERVATION) {
-      verifyNoInteractions(f.issuances, f.scopes);
-    } else {
-      verify(f.scopes).findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request));
-    }
+    verify(f.issuances)
+        .readCurrentCommittedCandidateByJti(CapacityAdmissionTestFixture.DELEGATION_JTI);
+    verify(f.scopes).findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request));
     if (path != InitialDenialPath.QUOTA && path != InitialDenialPath.EXPIRES_DURING_USAGE_LOCK) {
       verify(f.dsl, never())
           .fetchOne(
@@ -349,13 +352,13 @@ class AccountTenantCapacityOwnerTest {
     var f = new Fixture(false, qualifiedRequest(true));
     f.existing = false;
     f.retained = true;
-    qualifySources(f);
+    var exactSources = qualifySources(f);
     String scopeTokenHash = verifiedScopeTokenHash(f.request);
     when(f.scopes.findCanonicalEvidenceByTokenHash(scopeTokenHash)).thenReturn(Optional.empty());
     when(f.issuances.readCurrentCommittedCandidateByJti(
             CapacityAdmissionTestFixture.DELEGATION_JTI))
         .thenAnswer(ignored -> {
-          throw markDelegationExpired(f);
+          throw markDelegationExpired(f, exactSources.delegation());
         });
 
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
@@ -369,13 +372,37 @@ class AccountTenantCapacityOwnerTest {
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
 
-  private static CommittedCandidateExpiredException markDelegationExpired(Fixture f) {
+  @Test
+  void alreadyElapsedDelegationWithDifferentCommitProofDoesNotRetainDenial() throws Exception {
+    var f = new Fixture(false, qualifiedRequest(true));
+    f.existing = false;
+    f.retained = true;
+    var exactSources = qualifySources(f);
+    when(exactSources.delegation().commitProofSha256()).thenReturn("f".repeat(64));
+    var elapsed = markDelegationExpired(f, exactSources.delegation());
+    when(f.issuances.readCurrentCommittedCandidateByJti(
+            CapacityAdmissionTestFixture.DELEGATION_JTI))
+        .thenThrow(elapsed);
+
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> {
+              assertThat(failure.code()).isEqualTo(Failure.ENTITLEMENT_UNAVAILABLE);
+              assertThat(failure.durableDenialId()).isNull();
+            });
+    verify(f.issuances)
+        .readCurrentCommittedCandidateByJti(CapacityAdmissionTestFixture.DELEGATION_JTI);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  private static CommittedCandidateExpiredException markDelegationExpired(
+      Fixture f, CommittedCandidateVerificationData candidate) {
     f.databaseExpired = true;
     Instant tokenExpiry = sourceTokenExpiry(f.request);
     assertThat(tokenExpiry).isAfter(f.request.evidence().expiresAt());
     when(f.clock.instant()).thenReturn(tokenExpiry);
-    return new CommittedCandidateExpiredException(
-        CapacityAdmissionTestFixture.DELEGATION_JTI, tokenExpiry.getEpochSecond());
+    return new CommittedCandidateExpiredException(candidate);
   }
 
   @Test
@@ -1016,9 +1043,7 @@ class AccountTenantCapacityOwnerTest {
         .when(f.dsl)
         .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
     // A retained reservation/history/origin with this attempt but a different outer identity.
-    org.mockito.Mockito.doReturn(mock(Record.class))
-        .when(f.dsl)
-        .fetchOne(startsWith("SELECT 1 FROM (SELECT tenant_uuid"), any(Object[].class));
+    stubRetainedAttemptConflict(f);
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
         .isInstanceOfSatisfying(
             AccountTenantCapacityRepository.CapacityException.class,
@@ -1037,9 +1062,7 @@ class AccountTenantCapacityOwnerTest {
               expired
                   ? f.request.evidence().expiresAt()
                   : CapacityAdmissionTestFixture.NOW.plusSeconds(1));
-      org.mockito.Mockito.doReturn(mock(Record.class))
-          .when(f.dsl)
-          .fetchOne(startsWith("SELECT 1 FROM (SELECT tenant_uuid"), any(Object[].class));
+      stubRetainedAttemptConflict(f);
       assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
           .isInstanceOfSatisfying(
               AccountTenantCapacityRepository.CapacityException.class,
@@ -1049,12 +1072,23 @@ class AccountTenantCapacityOwnerTest {
     }
   }
 
+  private static void stubRetainedAttemptConflict(Fixture f) {
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              Object[] parameters = (Object[]) invocation.getRawArguments()[1];
+              assertThat(parameters[0]).isEqualTo(f.request.admissionAttemptId());
+              return mock(Record.class);
+            })
+        .when(f.dsl)
+        .fetchOne(startsWith("SELECT 1 FROM (SELECT tenant_uuid"), any(Object[].class));
+  }
+
   @Test
   void expiryDuringSourceQualificationCannotBecomeBillingRefusal() throws Exception {
     var f = new Fixture(false, qualifiedRequest(false));
     f.existing = false;
     f.retained = true;
-    var scope = qualifySources(f);
+    var scope = qualifySources(f).scope();
     var scopeTokenHash = verifiedScopeTokenHash(f.request);
     var now =
         new java.util.concurrent.atomic.AtomicReference<>(
@@ -1148,8 +1182,11 @@ class AccountTenantCapacityOwnerTest {
         .verifiedConnectScopeTokenHash();
   }
 
-  private static AccountConnectScopeRepository.CanonicalConnectScopeEvidence qualifySources(
-      Fixture f) {
+  private record QualifiedSources(
+      AccountConnectScopeRepository.CanonicalConnectScopeEvidence scope,
+      CommittedCandidateVerificationData delegation) {}
+
+  private static QualifiedSources qualifySources(Fixture f) {
     var player = (TenantCapacityAdmission.PlayerContext) f.request.context();
     var parsed =
         net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence
@@ -1158,9 +1195,7 @@ class AccountTenantCapacityOwnerTest {
         .thenReturn(parsed.membershipSource());
     var source = (Map<?, ?>) f.request.evidence().fields().get("sourceReferences");
     var issuance =
-        mock(
-            AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData.class,
-            org.mockito.Mockito.RETURNS_DEEP_STUBS);
+        mock(CommittedCandidateVerificationData.class, org.mockito.Mockito.RETURNS_DEEP_STUBS);
     when(issuance.identity().accountId()).thenReturn(player.accountId());
     when(issuance.identity().callerWorkload()).thenReturn(f.request.evidence().callerWorkload());
     when(issuance.identity().callerContextId())
@@ -1176,6 +1211,7 @@ class AccountTenantCapacityOwnerTest {
         .thenReturn((String) source.get("callerRegistryRecordSha256"));
     when(issuance.commitProofSha256()).thenReturn((String) source.get("callerCommitProofSha256"));
     var delegationJti = UUID.fromString((String) source.get("callerTokenJti"));
+    when(issuance.identity().tokenJti()).thenReturn(delegationJti);
     when(f.issuances.readCurrentCommittedCandidateByJti(delegationJti))
         .thenReturn(Optional.of(issuance));
     var scope = mock(AccountConnectScopeRepository.CanonicalConnectScopeEvidence.class);
@@ -1186,11 +1222,11 @@ class AccountTenantCapacityOwnerTest {
     when(scope.playableStateNamespaceUuid()).thenReturn(player.playableStateNamespaceId());
     when(scope.realmId()).thenReturn(player.realmId());
     when(scope.playableStateScope()).thenReturn(player.playableStateScope());
-    when(scope.connectScopeExpiresAt())
-        .thenReturn(CapacityAdmissionTestFixture.NOW.plusSeconds(3600).toString());
+    var target = (Map<?, ?>) f.request.evidence().fields().get("target");
+    when(scope.connectScopeExpiresAt()).thenReturn((String) target.get("connectScopeExpiresAt"));
     when(f.scopes.findCanonicalEvidenceByTokenHash(parsed.verifiedConnectScopeTokenHash()))
         .thenReturn(Optional.of(scope));
-    return scope;
+    return new QualifiedSources(scope, issuance);
   }
 
   private static final class Fixture {

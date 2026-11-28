@@ -1348,6 +1348,7 @@ if deploy_by_name["Retain migration deployment intent"]["env"]["KUBECONFIG"] != 
     raise SystemExit("retained deployment intent must use the scoped namespace manager")
 for obsolete in (
     "dev-account-v1040-4-probe.sh",
+    "probe-dev-account-v1040-4.sh",
     "account_origin_",
     "account-probe-access",
     "account-v1040-4-preflight",
@@ -1472,9 +1473,10 @@ kubectl() {
 }
 """
 
-    def run_retained_step(step, annotations, allowed=True, namespace_uid="namespace-uid"):
+    def run_retained_step(step, annotations, allowed=True, namespace_uid="namespace-uid", retained=True):
         calls.write_text("", encoding="utf-8")
         snapshot.write_text(json.dumps({
+            "kind": "Namespace",
             "metadata": {
                 **metadata, "uid": namespace_uid, "annotations": {**metadata["annotations"], **annotations},
             }
@@ -1482,9 +1484,10 @@ kubectl() {
         result = subprocess.run(
             ["bash", "-e", "-c", fake_kubectl + step["run"]],
             env={
-                **os.environ, "GITHUB_ENV": str(fixture / "env"), "GITHUB_RUN_ID": "123",
+                **os.environ, "GITHUB_ENV": str(fixture / "env"), "GITHUB_OUTPUT": str(fixture / "out"),
+                "GITHUB_RUN_ID": "123",
                 "GITHUB_RUN_ATTEMPT": "2", "RUNTIME_NAMESPACE": "dev", "NAMESPACE_UID": "namespace-uid",
-                "RETAINED_ACTIVATION": "true", "DEPLOYED_BASE_SHA": base_sha, "HEAD_SHA": target_sha,
+                "RETAINED_ACTIVATION": str(retained).lower(), "DEPLOYED_BASE_SHA": base_sha, "HEAD_SHA": target_sha,
                 "ANNOTATION_CALLS": str(calls), "NAMESPACE_SNAPSHOT": str(snapshot),
                 "ANNOTATION_ALLOWED": str(allowed).lower(),
             },
@@ -1508,18 +1511,30 @@ kubectl() {
         if status == 0 or mutations:
             raise SystemExit("migration deployment intent must preserve an existing hold and refuse namespace replacement")
 
+    bootstrap_annotation = f"firemud.dev/pending-dev-demo-bootstrap={pending_value}:dev-demo-smoke-bootstrap-123-2"
     record_call = [
-        *annotation_prefix, f"firemud.dev/last-dev-demo-head-sha={target_sha}", f"{pending_key}-", "--overwrite",
+        *annotation_prefix, f"firemud.dev/last-dev-demo-head-sha={target_sha}", bootstrap_annotation,
+        f"{pending_key}-", "--overwrite",
     ]
     if run_retained_step(deployed_head_step, {pending_key: pending_value}) != (0, [record_call]):
         raise SystemExit("recording the retained target must settle the exact hold in the same version-fenced request")
     status, mutations = run_retained_step(deployed_head_step, {pending_key: pending_value}, allowed=False)
     if status == 0 or mutations != [record_call]:
         raise SystemExit("ambiguous retained-head recording must fail without an unfenced follow-up write")
-    for annotations in ({}, {pending_key: "other-attempt"}):
+    for annotations in ({}, {pending_key: "other-attempt"}, {
+        pending_key: pending_value, "firemud.dev/pending-dev-demo-bootstrap": "competing-attempt",
+    }):
         status, mutations = run_retained_step(deployed_head_step, annotations)
         if status == 0 or mutations:
             raise SystemExit("retained-head recording must require this attempt's exact deployment intent")
+    fresh_record_call = [
+        *annotation_prefix, f"firemud.dev/last-dev-demo-head-sha={target_sha}", bootstrap_annotation, "--overwrite",
+    ]
+    if run_retained_step(
+        deployed_head_step, {"firemud.dev/last-dev-demo-head-sha": None},
+        retained=False, namespace_uid="fresh-namespace-uid",
+    ) != (0, [fresh_record_call]):
+        raise SystemExit("a newly deployed namespace must record its head and bootstrap hold together")
 bootstrap_step = deploy_by_name["Create dev-demo smoke account"]
 intent_step = deploy_by_name["Capture dev-demo bootstrap intent"]
 retain_intent = deploy_by_name["Retain dev-demo bootstrap intent before sending"]
@@ -1537,8 +1552,11 @@ if intent_step["if"] != "${{ success() && steps.record-deployed-head.outcome == 
     raise SystemExit("dev-demo bootstrap intent must follow successful deployment recording")
 if intent_step["env"].get("NAMESPACE_KUBECONFIG") != "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig":
     raise SystemExit("dev-demo bootstrap intent must use the namespace-manager kubeconfig")
-if "firemud.dev/pending-dev-demo-bootstrap" not in intent_step["run"]:
-    raise SystemExit("dev-demo bootstrap intent must create a durable namespace hold")
+if (intent_step["env"].get("BOOTSTRAP_HOLD") != "${{ steps.record-deployed-head.outputs.bootstrap_hold }}"
+        or intent_step["env"].get("EXPECTED_NAMESPACE_UID") != "${{ steps.record-deployed-head.outputs.namespace_uid }}"
+        or '["firemud.dev/pending-dev-demo-bootstrap"] == $hold' not in intent_step["run"]
+        or 'kubectl annotate' in intent_step["run"]):
+    raise SystemExit("dev-demo bootstrap intent must verify the same hold and namespace recorded with the target")
 if bootstrap_step["if"] != "${{ success() && steps.retain-bootstrap-intent.outcome == 'success' }}":
     raise SystemExit("dev-demo bootstrap must wait for durable intent retention")
 if bootstrap_step["env"]["BOOTSTRAP_REQUEST_ID"] != "${{ steps.bootstrap-intent.outputs.request_id }}":
@@ -1572,11 +1590,12 @@ if not all(fragment in preserve_result["run"] for fragment in (
     '"${#receipt}" -le 8192',
 )):
     raise SystemExit("namespace-held receipt must be bounded and fenced to the exact held deployment")
-if not all(fragment in cleanup_evidence["if"] for fragment in (
-    "steps.bootstrap-smoke.outputs.result_ready != 'true'",
-    "steps.retain-bootstrap-result.outcome == 'success'",
-    "steps.preserve-bootstrap-result.outcome == 'success'",
-)):
+if cleanup_evidence["if"] != (
+    "${{ always() && steps.bootstrap-intent.outcome == 'success' && "
+    "(steps.bootstrap-smoke.outputs.result_ready != 'true' || "
+    "steps.retain-bootstrap-result.outcome == 'success' || "
+    "steps.preserve-bootstrap-result.outcome == 'success') }}"
+):
     raise SystemExit("local verified receipt cleanup must follow one successful retention path")
 if not (
     bootstrap_step["run"].index("write-bootstrap-result.py")
@@ -1757,6 +1776,7 @@ if failure_summary["env"] != {
     "BOOTSTRAP_OUTCOME": "${{ steps." + bootstrap_step["id"] + ".outcome }}",
     "BOOTSTRAP_RESULT_READY": "${{ steps." + bootstrap_step["id"] + ".outputs.result_ready }}",
     "BOOTSTRAP_RETENTION_OUTCOME": "${{ steps." + deploy_by_name["Retain successful dev-demo bootstrap result"]["id"] + ".outcome }}",
+    "BOOTSTRAP_NAMESPACE_RETENTION_OUTCOME": "${{ steps." + preserve_result["id"] + ".outcome }}",
     "BOOTSTRAP_HOLD_CLEAR_OUTCOME": "${{ steps." + clear_bootstrap_hold["id"] + ".outcome }}",
 }:
     raise SystemExit("recorded-target verification advice must use this attempt's native outcomes")
@@ -1781,6 +1801,7 @@ with tempfile.TemporaryDirectory() as directory:
         ("success", "success", "skipped", "", "skipped", "skipped", "runtime-readiness", "refer bootstrap recovery to the affected owners"),
         ("success", "success", "cancelled", "", "skipped", "skipped", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
         ("success", "success", "success", "true", "failure", "skipped", "bootstrap", "obtain owner readback of the original bootstrap"),
+        ("success", "success", "success", "true", "namespace", "skipped", "bootstrap", "exact verified receipt was retained on the held dev Namespace"),
         ("success", "success", "success", "true", "success", "success", "smoke", "before repeating readiness or smoke"),
         ("success", "success", "success", "true", "success", "failure", "bootstrap", "Verify the exact dev namespace UID and retained result"),
         ("success", "success", "failure", "true", "success", "skipped", "bootstrap", "original smoke bootstrap result was retained"),
@@ -1801,7 +1822,8 @@ with tempfile.TemporaryDirectory() as directory:
                 "RECORD_OUTCOME": recorded,
                 "BOOTSTRAP_OUTCOME": bootstrap,
                 "BOOTSTRAP_RESULT_READY": ready,
-                "BOOTSTRAP_RETENTION_OUTCOME": retention,
+                "BOOTSTRAP_RETENTION_OUTCOME": "failure" if retention == "namespace" else retention,
+                "BOOTSTRAP_NAMESPACE_RETENTION_OUTCOME": "success" if retention == "namespace" else "skipped",
                 "BOOTSTRAP_HOLD_CLEAR_OUTCOME": hold_clear,
             },
             check=True,
@@ -1838,6 +1860,12 @@ with tempfile.TemporaryDirectory() as directory:
         elif expected not in evidence or guide not in evidence or "Do not replay Helm or bootstrap" not in evidence:
             raise SystemExit("recorded target lacks the correct verification boundary")
         if deployed == "success" and recorded == "success":
+            if retention == "namespace" and (
+                "firemud.dev/pending-dev-demo-bootstrap-result" not in evidence
+                or "Keep the hold in place" not in evidence
+                or "result was not retained" in evidence
+            ):
+                raise SystemExit("dev-demo must distinguish the retained namespace receipt from missing evidence")
             if (ready != "true" or retention != "success") and "before repeating readiness or smoke" in evidence:
                 raise SystemExit("incomplete original bootstrap must not receive smoke verification advice")
             if ready == "true" and "refer bootstrap recovery to the affected owners" in evidence:
@@ -2877,13 +2905,15 @@ if [[ "$1" == -n && "$3" == get && "$4" == endpointslices.discovery.k8s.io ]]; t
   fi
   exit 0
 fi
-[[ $# -eq 5 ]]
-[[ "$1" == annotate ]]
-[[ "$2" == namespace ]]
-[[ "$3" == dev ]]
-[[ "$4" == "firemud.dev/last-dev-demo-head-sha=${TEST_EXPECTED_HEAD:?}" ]]
-[[ "$5" == --overwrite ]]
-printf 'kubectl-deployed-head=%s\n' "$4" >>"${TEST_DEPLOYMENT_LOG:?}"
+if [[ "$*" == '--request-timeout=10s get namespace dev -o json' ]]; then
+  jq -n --arg head "${TEST_EXPECTED_HEAD:?}" '
+    {kind:"Namespace", metadata:{name:"dev", uid:"fresh-namespace", resourceVersion:"7",
+      labels:{"firemud.dev/dev-demo":"true", "firemud.dev/environment-class":"dev-demo-cluster"},
+      annotations:{"firemud.dev/requested-dev-demo-head-sha":$head}}}'
+  exit 0
+fi
+[[ "$*" == "--request-timeout=10s annotate namespace dev --resource-version=7 firemud.dev/last-dev-demo-head-sha=${TEST_EXPECTED_HEAD:?} firemud.dev/pending-dev-demo-bootstrap=123:2:${TEST_BASE_SHA:?}:${TEST_EXPECTED_HEAD}:dev-demo-smoke-bootstrap-123-2 --overwrite" ]]
+printf 'kubectl-deployed-head=%s\n' "$6" >>"${TEST_DEPLOYMENT_LOG:?}"
 SH
 chmod +x "$deployment_stub_dir/helm" "$deployment_stub_dir/kubectl"
 
@@ -2892,6 +2922,7 @@ run_deployment_evidence_fixture() {
   local deployment_log="$fixture_dir/deployment-${scenario}.log"
   local github_env="$fixture_dir/deployment-${scenario}.env"
   local head_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  local base_sha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   local deploy_status
   local deploy_script="$deploy_release_step"
 
@@ -2927,8 +2958,15 @@ run_deployment_evidence_fixture() {
         PATH="$deployment_stub_dir:$PATH" \
         RUNTIME_NAMESPACE=dev \
         HEAD_SHA="$head_sha" \
+        DEPLOYED_BASE_SHA="$base_sha" \
+        NAMESPACE_UID=reset-namespace \
+        RETAINED_ACTIVATION=false \
+        GITHUB_RUN_ID=123 \
+        GITHUB_RUN_ATTEMPT=2 \
+        GITHUB_OUTPUT="$fixture_dir/deployment-${scenario}.output" \
         TEST_DEPLOYMENT_LOG="$deployment_log" \
         TEST_EXPECTED_HEAD="$head_sha" \
+        TEST_BASE_SHA="$base_sha" \
         bash "$record_deployed_head_step"
     )
   fi
