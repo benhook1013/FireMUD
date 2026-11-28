@@ -56,6 +56,22 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
     insertPointer(dsl, 3L, 20L, "alpha", "preview", 202L, false, false, "ISOLATED");
     insertPointer(dsl, 4L, 10L, "demo", "preview", 102L, true, false, "SHARED");
     migrateToVersion(dataSource, "8");
+    var retainedRows = dsl.fetch("SELECT * FROM gameplay_admission_pointer ORDER BY id");
+    var retainedHistory = dsl.fetch("SELECT * FROM flyway_schema_history ORDER BY installed_rank");
+    // The current numeric reader requires the real mixed-representation schema, not V8 alone.
+    migrateToVersion(dataSource, "27");
+    assertThat(
+            dsl.select(retainedRows.fields())
+                .from("gameplay_admission_pointer")
+                .orderBy(DSL.field("id"))
+                .fetch())
+        .isEqualTo(retainedRows);
+    assertThat(dsl.fetch("SELECT * FROM flyway_schema_history ORDER BY installed_rank"))
+        .containsAll(retainedHistory);
+    assertThat(
+            dsl.fetch("SELECT representation_version FROM gameplay_admission_pointer")
+                .getValues(0, Integer.class))
+        .containsOnly(1);
     DatabaseGameplayAdmissionPointerAuthorityService service =
         new DatabaseGameplayAdmissionPointerAuthorityService(
             new GameplayAdmissionPointerRepository(dsl),
@@ -69,6 +85,9 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
             service.findPointer(10L, "demo", "preview").orElseThrow());
 
     assertThat(service.listPointers()).containsExactlyElementsOf(expected);
+    assertThat(service.listPointers())
+        .extracting(GameplayAdmissionPointerSnapshot::representationVersion)
+        .containsOnly(1);
     assertThat(service.listPointersForTenants(List.of(20L, 10L)))
         .containsExactlyElementsOf(expected);
     assertThat(service.listPointersForTenants(List.of(10L, 20L)))
@@ -77,6 +96,98 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
         .containsExactly(expected.get(1), expected.get(3));
     assertThat(dsl.fetch("SELECT * FROM gameplay_admission_pointer ORDER BY id"))
         .isEqualTo(rowsBefore);
+  }
+
+  @Test
+  void v1074_1AddsTenantScopedAuditIndexAndPreservesRetainedEvents() {
+    DriverManagerDataSource dataSource = isolatedDataSource();
+    migrateCatalogToVersion(dataSource, "1074");
+    DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    dsl.execute(
+        "INSERT INTO gameplay_admission_pointer_event ("
+            + "id, world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
+            + "game_instance_id, pointer_version, visible, requires_character_selection, "
+            + "state_scope, character_creation_policy, actor_principal, reason, "
+            + "control_plane_request_id, occurred_at, public_production_realm) "
+            + "VALUES "
+            + "(8701, 'demo', 'live', 'Demo World', 'Live Realm', 101, 1001, 1, true, false, "
+            + "'SHARED', 'ALLOW_NEW', 'migration-test', 'retained audit', 'index-test-8701', "
+            + "CURRENT_TIMESTAMP, true), "
+            + "(8702, 'demo', 'live', 'Demo World', 'Live Realm', 101, 1001, 2, true, false, "
+            + "'SHARED', 'ALLOW_NEW', 'migration-test', 'retained audit', 'index-test-8702', "
+            + "CURRENT_TIMESTAMP, true), "
+            + "(8703, 'demo', 'live', 'Demo World', 'Live Realm', 102, 1002, 3, true, false, "
+            + "'SHARED', 'ALLOW_NEW', 'migration-test', 'retained audit', 'index-test-8703', "
+            + "CURRENT_TIMESTAMP, true), "
+            + "(8704, 'alpha', 'preview', 'Alpha World', 'Preview Realm', 101, 1003, 4, true, "
+            + "false, 'ISOLATED', 'ALLOW_NEW', 'migration-test', 'retained audit', "
+            + "'index-test-8704', CURRENT_TIMESTAMP, false)");
+
+    var retainedEvents =
+        dsl.fetch(
+            "SELECT event.xmin::text AS original_xmin, event.* "
+                + "FROM gameplay_admission_pointer_event event "
+                + "ORDER BY tenant_id, world_slug, realm_slug, id DESC");
+    var catalogHistory =
+        dsl.fetch(
+            "SELECT catalog_epoch, catalog_digest FROM game_session_runtime_family_catalog_epoch "
+                + "ORDER BY catalog_epoch");
+    var canonicalUuidIndexesBefore =
+        dsl.fetch(
+            "SELECT indexname, indexdef FROM pg_indexes "
+                + "WHERE schemaname = current_schema() "
+                + "AND indexname IN ('uq_gameplay_admission_pointer_event_canonical_realm_version', "
+                + "'uq_gameplay_admission_pointer_event_initial_realm_version') "
+                + "ORDER BY indexname");
+    assertThat(canonicalUuidIndexesBefore.map(record -> record.get("indexname", String.class)))
+        .containsExactly(
+            "uq_gameplay_admission_pointer_event_canonical_realm_version",
+            "uq_gameplay_admission_pointer_event_initial_realm_version");
+
+    Flyway flyway = migrateCatalogToVersion(dataSource, "1074.1");
+
+    assertThat(
+            dsl.fetch(
+                "SELECT event.xmin::text AS original_xmin, event.* "
+                    + "FROM gameplay_admission_pointer_event event "
+                    + "ORDER BY tenant_id, world_slug, realm_slug, id DESC"))
+        .isEqualTo(retainedEvents);
+    assertThat(
+            retainedEvents.getValues(retainedEvents.field("representation_version", Integer.class)))
+        .containsOnly(1);
+    assertThat(retainedEvents.getValues(retainedEvents.field("pointer_version", Long.class)))
+        .containsExactly(4L, 2L, 1L, 3L);
+    var index =
+        dsl.fetchSingle(
+            "SELECT pg_get_indexdef(indexrelid) AS indexdef, indisunique, indisvalid "
+                + "FROM pg_index WHERE indexrelid = "
+                + "'idx_gameplay_admission_pointer_event_tenant_world_realm_id'::regclass");
+    assertThat(index.get("indexdef", String.class))
+        .endsWith("USING btree (tenant_id, world_slug, realm_slug, id DESC)");
+    assertThat(index.get("indisunique", Boolean.class)).isFalse();
+    assertThat(index.get("indisvalid", Boolean.class)).isTrue();
+    assertThat(
+            dsl.fetch(
+                "SELECT indexname, indexdef FROM pg_indexes "
+                    + "WHERE schemaname = current_schema() "
+                    + "AND indexname IN ('uq_gameplay_admission_pointer_event_canonical_realm_version', "
+                    + "'uq_gameplay_admission_pointer_event_initial_realm_version') "
+                    + "ORDER BY indexname"))
+        .isEqualTo(canonicalUuidIndexesBefore);
+    var currentCatalogHistory =
+        dsl.fetch(
+            "SELECT catalog_epoch, catalog_digest FROM game_session_runtime_family_catalog_epoch "
+                + "ORDER BY catalog_epoch");
+    assertThat(currentCatalogHistory).hasSize(catalogHistory.size() + 1);
+    assertThat(currentCatalogHistory.subList(0, catalogHistory.size())).isEqualTo(catalogHistory);
+    assertThat(
+            dsl.fetchSingle("SELECT gs_runtime_family_catalog_installed()").get(0, Boolean.class))
+        .isTrue();
+    assertThat(
+            Arrays.stream(flyway.info().applied())
+                .map(migration -> migration.getVersion().getVersion())
+                .toList())
+        .contains("1074", "1074.1");
   }
 
   @Test
@@ -364,6 +475,31 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
         Flyway.configure()
             .dataSource(dataSource)
             .locations(MIGRATION_LOCATION)
+            .target(MigrationVersion.fromVersion(version))
+            .load();
+    flyway.migrate();
+    return flyway;
+  }
+
+  private static Flyway migrateCatalogToVersion(
+      DriverManagerDataSource dataSource, String version) {
+    String schema =
+        DSL.using(dataSource, SQLDialect.POSTGRES)
+            .fetchSingle("SELECT current_schema()")
+            .get(0, String.class);
+    String sagaLocation =
+        "filesystem:"
+            + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                .toAbsolutePath()
+                .normalize();
+    Flyway flyway =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table("flyway_schema_history_game_session_service")
+            .locations(MIGRATION_LOCATION, sagaLocation)
+            .placeholders(Map.of("serviceSchema", schema))
             .target(MigrationVersion.fromVersion(version))
             .load();
     flyway.migrate();

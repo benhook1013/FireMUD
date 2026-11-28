@@ -1158,7 +1158,7 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
     return tuple(requestId, auditReason, AUTHORITY_EXPIRES_AT);
   }
 
-  private static StartSessionPostAuthorizationExecutionTuple tupleWithAuthorizationExpiry(
+  static StartSessionPostAuthorizationExecutionTuple tupleWithAuthorizationExpiry(
       String requestId, Instant authorizationExpiresAt) {
     return tuple(requestId, "pin one normalized template association", authorizationExpiresAt);
   }

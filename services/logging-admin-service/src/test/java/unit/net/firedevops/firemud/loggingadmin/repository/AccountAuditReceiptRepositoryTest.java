@@ -86,10 +86,10 @@ class AccountAuditReceiptRepositoryTest {
     String lookupSql = executedSql.get(1);
     assertThat(lookupSql)
         .contains("scope", "tenant_key", "audit_event_id")
-        .doesNotContain("tenant_id");
+        .doesNotContain("\"tenant_id\"");
     assertThat(projectionLookupBindings).hasSize(1);
     assertThat(projectionLookupBindings.get(0))
-        .containsExactly(scope.databaseValue(), expectedTenantKey, AUDIT_EVENT_ID);
+        .containsExactly(scope.databaseValue(), 1, expectedTenantKey, AUDIT_EVENT_ID);
     assertThat(inserted.inserted()).isTrue();
     assertThat(inserted.receipt().logEventId()).isEqualTo(LOG_EVENT_ID);
     assertThat(inserted.receipt().receiptId()).isEqualTo(RECEIPT_ID);
@@ -101,7 +101,9 @@ class AccountAuditReceiptRepositoryTest {
   private static CreateLogEventRequest request(AccountAuditScope scope, Long tenantId) {
     return new CreateLogEventRequest(
         scope,
+        1,
         tenantId,
+        null,
         AUDIT_EVENT_ID,
         "account-service",
         "ACCOUNT_REGISTERED",
@@ -119,6 +121,7 @@ class AccountAuditReceiptRepositoryTest {
     row.setLogEventId(LOG_EVENT_ID);
     row.setReceiptId(RECEIPT_ID);
     row.setScope(scope.databaseValue());
+    row.setTenantIdentityVersion(1);
     row.setTenantId(tenantId);
     row.setAuditEventId(AUDIT_EVENT_ID);
     row.setProducerService("account-service");

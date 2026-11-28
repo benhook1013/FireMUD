@@ -3,15 +3,20 @@ package integration.net.firedevops.firemud.gamesession.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import integration.net.firedevops.firemud.gamesession.repository.CanonicalHumanPublicationOwnerTestFixtures;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -27,8 +32,10 @@ import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundl
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec.ReadRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalLaunchPreparationSnapshot;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalLaunchPreparationRequest;
@@ -43,6 +50,7 @@ import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOper
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.ReservationResult;
+import net.firedevops.firemud.gamesession.service.GameSessionAuthoredWorldIntakeService;
 import net.firedevops.firemud.gamesession.service.GameSessionCanonicalLaunchPreparationService;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -58,6 +66,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -100,6 +109,134 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
   @BeforeAll
   static void awaitPostgresJdbcReady() {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(postgres);
+  }
+
+  @Test
+  void authoredSourceIntakeRejectsChangedExternalScopeBeforeOwnerWrites() {
+    Fixture fixture = fixture(false, false);
+    String worldSlug = freshSource().worldSlug();
+    var wrongSources =
+        List.of(
+            freshSource("other-namespace", TENANT, SOURCE_OPERATION, worldSlug),
+            freshSource(NAMESPACE, uuid(115), SOURCE_OPERATION, worldSlug),
+            freshSource(NAMESPACE, TENANT, uuid(116), worldSlug),
+            freshSource(NAMESPACE, TENANT, SOURCE_OPERATION, "other-world"));
+    AuthoredWorldSourceClient controlledClient = mock(AuthoredWorldSourceClient.class);
+    var transactionManager = spy(fixture.transactionManager());
+    var intake =
+        new GameSessionAuthoredWorldIntakeService(
+            controlledClient, fixture.sourceRepository(), transactionManager, NAMESPACE);
+
+    for (var wrongSource : wrongSources) {
+      when(controlledClient.read(any(ReadRequest.class))).thenReturn(wrongSource);
+      assertThatThrownBy(() -> intake.intake(INTAKE_REQUEST, TENANT, SOURCE_OPERATION, worldSlug))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Authenticated authored-world source does not match intake");
+    }
+
+    verify(controlledClient, times(wrongSources.size())).read(any(ReadRequest.class));
+    verifyNoInteractions(transactionManager);
+    fixture.requireNoAuthoredSourceIntake();
+  }
+
+  @Test
+  void authoredSourceIntakeRollsBackBothOwnerWritesAfterSourceInsertFails() {
+    Fixture fixture = fixture(false, false);
+    var source = freshSource();
+    AuthoredWorldSourceClient controlledClient = mock(AuthoredWorldSourceClient.class);
+    when(controlledClient.read(any(ReadRequest.class))).thenReturn(source);
+    var intake =
+        new GameSessionAuthoredWorldIntakeService(
+            controlledClient, fixture.sourceRepository(), fixture.transactionManager(), NAMESPACE);
+
+    DSLContext dsl = fixture.dsl();
+    // The source row references the binding inserted earlier in the same owner transaction.
+    dsl.execute(
+        """
+        CREATE FUNCTION reject_authored_world_intake() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'forced authored-world source intake failure';
+        END;
+        $$
+        """);
+    dsl.execute(
+        """
+        CREATE TRIGGER reject_authored_world_intake
+        AFTER INSERT ON game_session_authored_world_source_intake
+        FOR EACH ROW EXECUTE FUNCTION reject_authored_world_intake()
+        """);
+
+    assertThatThrownBy(
+            () -> intake.intake(INTAKE_REQUEST, TENANT, SOURCE_OPERATION, source.worldSlug()))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("forced authored-world source intake failure");
+
+    verify(controlledClient).read(any(ReadRequest.class));
+    fixture.requireNoAuthoredSourceIntake();
+  }
+
+  @Test
+  void authoredSourceIntakeRecoversOriginalCommitAfterReadbackLossWithoutReopeningSource() {
+    Fixture fixture = fixture(false, false);
+    var source = freshSource();
+    AuthoredWorldSourceClient controlledClient = mock(AuthoredWorldSourceClient.class);
+    when(controlledClient.read(any(ReadRequest.class)))
+        .thenAnswer(
+            invocation -> {
+              ReadRequest request = invocation.getArgument(0);
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(request.targetNamespace()).isEqualTo(NAMESPACE);
+              assertThat(request.canonicalTenantId()).isEqualTo(TENANT);
+              assertThat(request.operationId()).isEqualTo(source.operationId());
+              assertThat(request.worldSlug()).isEqualTo(source.worldSlug());
+              return source;
+            });
+
+    var repository = spy(fixture.sourceRepository());
+    doReturn(Optional.empty()).when(repository).read(any(), any(), any(), any());
+    var intake =
+        new GameSessionAuthoredWorldIntakeService(
+            controlledClient, repository, fixture.transactionManager(), NAMESPACE);
+
+    assertThatThrownBy(
+            () -> intake.intake(INTAKE_REQUEST, TENANT, source.operationId(), source.worldSlug()))
+        .isInstanceOf(GameSessionAuthoredWorldSourceRepository.InvalidIntakeEvidenceException.class)
+        .hasMessageContaining("missing after commit readback");
+    var committed =
+        fixture.sourceRepository().readByIntakeRequest(NAMESPACE, INTAKE_REQUEST).orElseThrow();
+    assertThat(committed.source()).isEqualTo(source);
+    String sourceTable = "game_session_authored_world_source_intake";
+    String bindingTable = "game_session_authored_world_tenant_source_binding";
+    String sourceRow =
+        historicalProjection(fixture.dsl(), sourceTable, "operation_id", committed.operationId());
+    String bindingRow =
+        historicalProjection(fixture.dsl(), bindingTable, "canonical_tenant_id", TENANT);
+
+    assertThat(intake.intake(INTAKE_REQUEST, TENANT, source.operationId(), source.worldSlug()))
+        .isEqualTo(committed);
+    assertThatThrownBy(
+            () -> intake.intake(INTAKE_REQUEST, TENANT, source.operationId(), "other-world"))
+        .isInstanceOf(GameSessionAuthoredWorldSourceRepository.RegistrationConflictException.class);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .transactions()
+                    .executeWithoutResult(
+                        status ->
+                            intake.intake(
+                                INTAKE_REQUEST, TENANT, source.operationId(), source.worldSlug())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("ambient transaction");
+    verify(controlledClient).read(any(ReadRequest.class));
+    assertThat(
+            historicalProjection(
+                fixture.dsl(), sourceTable, "operation_id", committed.operationId()))
+        .isEqualTo(sourceRow);
+    assertThat(historicalProjection(fixture.dsl(), bindingTable, "canonical_tenant_id", TENANT))
+        .isEqualTo(bindingRow);
+    assertThat(fixture.dsl().fetchCount(DSL.table(DSL.name(sourceTable)))).isEqualTo(1);
+    assertThat(fixture.dsl().fetchCount(DSL.table(DSL.name(bindingTable)))).isEqualTo(1);
+    assertThat(fixture.dsl().fetchCount(DSL.table(DSL.name("game_instances")))).isZero();
   }
 
   @Test
@@ -705,22 +842,26 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
   }
 
   private static AuthoredWorldSourceEvidence freshSource() {
-    String worldSlug = "violet-wilds";
-    String tenantSlug = "tenant-" + TENANT.toString().substring(0, 8);
+    return freshSource(NAMESPACE, TENANT, SOURCE_OPERATION, "violet-wilds");
+  }
+
+  private static AuthoredWorldSourceEvidence freshSource(
+      String namespace, UUID tenant, UUID operation, String worldSlug) {
+    String tenantSlug = "tenant-" + tenant.toString().substring(0, 8);
     String displayName = "Violet Wilds";
     UUID registrationRequestId = uuid(111);
     long sourceGameRowId = 821;
     String sourceGameTenantKey = "fresh-source-821";
     String requestDigest =
         AuthoredWorldSourceDigest.requestDigest(
-            NAMESPACE, registrationRequestId, TENANT, tenantSlug, worldSlug, displayName);
+            namespace, registrationRequestId, tenant, tenantSlug, worldSlug, displayName);
     String evidenceDigest =
         AuthoredWorldSourceDigest.evidenceDigest(
-            NAMESPACE,
+            namespace,
             registrationRequestId,
-            SOURCE_OPERATION,
+            operation,
             requestDigest,
-            TENANT,
+            tenant,
             tenantSlug,
             worldSlug,
             displayName,
@@ -729,11 +870,11 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
             "NEW_GAME_ROW");
     return new AuthoredWorldSourceEvidence(
         1,
-        NAMESPACE,
+        namespace,
         registrationRequestId,
-        SOURCE_OPERATION,
+        operation,
         requestDigest,
-        TENANT,
+        tenant,
         tenantSlug,
         worldSlug,
         displayName,
@@ -1022,6 +1163,14 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
           .isInstanceOf(
               GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException.class)
           .hasMessage("Exactly one complete catalog policy provenance required");
+    }
+
+    void requireNoAuthoredSourceIntake() {
+      assertThat(sourceRepository.readByIntakeRequest(NAMESPACE, INTAKE_REQUEST)).isEmpty();
+      assertThat(dsl.fetchCount(DSL.table(DSL.name("game_session_authored_world_source_intake"))))
+          .isZero();
+      var bindingTable = DSL.table(DSL.name("game_session_authored_world_tenant_source_binding"));
+      assertThat(dsl.fetchCount(bindingTable)).isZero();
     }
 
     IntakeReceipt registerFreshSource() {

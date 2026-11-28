@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecuti
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -357,6 +358,16 @@ class CanonicalGameplayRegionTransferMixedInventoryIntegrationTest
                   proof.scope, proof.prior, cohortSize == 3 ? initialDeadline : transferDeadline());
         } catch (CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable expired) {
           if (cohortSize == 3) throw expired;
+        } catch (DataAccessException wrapped) {
+          // jOOQ wraps the owned connection's pre-commit budget check. This is the same bounded
+          // expiry as above, not evidence that a SQL COMMIT was attempted or its outcome lost.
+          if (cohortSize == 3
+              || !"Cannot commit transaction".equals(wrapped.getMessage())
+              || !(wrapped.getCause()
+                  instanceof
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable)) {
+            throw wrapped;
+          }
         } catch (IllegalStateException held) {
           if (cohortSize == 3
               || !List.of(

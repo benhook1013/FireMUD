@@ -17,6 +17,10 @@ public record SessionClaims(
     String serviceInstanceId) {
 
   public SessionClaims {
+    // Account-less internal service credentials use an empty identity marker.
+    if (!internalService || (accountId != null && !accountId.isEmpty())) {
+      accountId = JwtClaims.requireCanonicalAccountUuid(accountId, "accountId");
+    }
     globalRoles = globalRoles == null ? List.of() : List.copyOf(globalRoles);
     scopedRoles =
         scopedRoles == null

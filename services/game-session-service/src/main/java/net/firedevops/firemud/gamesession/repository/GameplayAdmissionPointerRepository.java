@@ -18,9 +18,12 @@ import net.firedevops.firemud.gamesession.service.AdmissionPointerConflictExcept
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionCatalogPolicy;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
+import org.jooq.SelectJoinStep;
 import org.jooq.exception.IntegrityConstraintViolationException;
+import org.jooq.impl.DSL;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +33,9 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class GameplayAdmissionPointerRepository {
+  private static final Field<Integer> REPRESENTATION_VERSION =
+      DSL.field(DSL.name("gameplay_admission_pointer", "representation_version"), Integer.class);
+
   private final DSLContext dsl;
 
   public GameplayAdmissionPointerRepository(DSLContext dsl) {
@@ -37,12 +43,12 @@ public class GameplayAdmissionPointerRepository {
   }
 
   public long count() {
-    return dsl.fetchCount(GAMEPLAY_ADMISSION_POINTER);
+    return dsl.fetchCount(GAMEPLAY_ADMISSION_POINTER, REPRESENTATION_VERSION.eq(1));
   }
 
   public Optional<GameplayAdmissionPointer> findByTenantIdAndWorldSlugAndRealmSlug(
       Long tenantId, String worldSlug, String realmSlug) {
-    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+    return selectPointerRows()
         .where(
             GAMEPLAY_ADMISSION_POINTER
                 .TENANT_ID
@@ -54,7 +60,7 @@ public class GameplayAdmissionPointerRepository {
 
   public Optional<GameplayAdmissionPointer> findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
       Long tenantId, String worldSlug, String realmSlug) {
-    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+    return selectPointerRows()
         .where(
             GAMEPLAY_ADMISSION_POINTER
                 .TENANT_ID
@@ -72,7 +78,7 @@ public class GameplayAdmissionPointerRepository {
 
   public List<GameplayAdmissionPointer> findAllByTenantIdAndGameInstanceId(
       Long tenantId, Long gameInstanceId) {
-    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+    return selectPointerRows()
         .where(
             GAMEPLAY_ADMISSION_POINTER
                 .TENANT_ID
@@ -85,7 +91,9 @@ public class GameplayAdmissionPointerRepository {
   }
 
   public List<GameplayAdmissionPointer> findAllByOrderByWorldSlugAscRealmSlugAsc() {
-    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+    // Legacy and canonical OPEN rows carry a numeric routing projection.
+    return selectPointerRows()
+        .where(REPRESENTATION_VERSION.in(1, 3))
         .orderBy(
             GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
             GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc(),
@@ -98,7 +106,7 @@ public class GameplayAdmissionPointerRepository {
     if (tenantIds.isEmpty()) {
       return List.of();
     }
-    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+    return selectPointerRows()
         .where(GAMEPLAY_ADMISSION_POINTER.TENANT_ID.in(tenantIds))
         .orderBy(
             GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
@@ -109,7 +117,7 @@ public class GameplayAdmissionPointerRepository {
 
   public List<GameplayAdmissionPointer> findAllByTenantIdOrderByWorldSlugAscRealmSlugAsc(
       Long tenantId) {
-    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+    return selectPointerRows()
         .where(GAMEPLAY_ADMISSION_POINTER.TENANT_ID.eq(tenantId))
         .orderBy(
             GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
@@ -296,13 +304,13 @@ public class GameplayAdmissionPointerRepository {
   }
 
   private Optional<GameplayAdmissionPointer> findById(Long id) {
-    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+    return selectPointerRows()
         .where(GAMEPLAY_ADMISSION_POINTER.ID.eq(id))
         .fetchOptional(this::toEntity);
   }
 
   private Optional<GameplayAdmissionPointer> findByIdForUpdate(Long id) {
-    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+    return selectPointerRows()
         .where(GAMEPLAY_ADMISSION_POINTER.ID.eq(id))
         .forUpdate()
         .fetchOptional(this::toEntity);
@@ -410,9 +418,16 @@ public class GameplayAdmissionPointerRepository {
     record.setUpdatedAt(toLocalDateTime(entity.getUpdatedAt()));
   }
 
+  private SelectJoinStep<Record> selectPointerRows() {
+    return dsl.select(GAMEPLAY_ADMISSION_POINTER.fields())
+        .select(REPRESENTATION_VERSION)
+        .from(GAMEPLAY_ADMISSION_POINTER);
+  }
+
   private GameplayAdmissionPointer toEntity(Record record) {
     GameplayAdmissionPointer entity = new GameplayAdmissionPointer();
     entity.setId(record.get(GAMEPLAY_ADMISSION_POINTER.ID));
+    entity.setRepresentationVersion(record.get(REPRESENTATION_VERSION));
     entity.setWorldSlug(record.get(GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG));
     entity.setWorldDisplayName(record.get(GAMEPLAY_ADMISSION_POINTER.WORLD_DISPLAY_NAME));
     entity.setRealmSlug(record.get(GAMEPLAY_ADMISSION_POINTER.REALM_SLUG));

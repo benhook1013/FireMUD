@@ -37,7 +37,7 @@ public class WorldsCommandHandler {
     }
     GameplayWorldCatalog.ReadSnapshot snapshot = worldCatalog.readSnapshot();
     java.util.Optional<GameplayWorldCatalog.WorldView> maybeWorld =
-        snapshot.resolveWorld(worldSelector);
+        snapshot.resolvePublicWorld(worldSelector);
     if (maybeWorld.isEmpty()) {
       return CharacterBrowseResult.invalidWorld();
     }

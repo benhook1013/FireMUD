@@ -14,7 +14,6 @@ public record RealmBrowseViewOutput(String worldSlug, List<RealmEntry> realms)
   public record RealmEntry(
       String realmSlug,
       String displayName,
-      long gameInstanceId,
       boolean requiresCharacterSelection,
       String stateScope,
       String characterCreationPolicy) {

@@ -104,7 +104,7 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
-  void browseCharactersPreservesWorldAndRealmSelectionDiagnostics() {
+  void browseCharactersUsesOnlyThePublicWorldAndRealmProjection() {
     GameplayCatalogProperties.World demo = world("demo", 22L, 1L, false);
     GameplayCatalogProperties.Realm preview = new GameplayCatalogProperties.Realm();
     preview.setSlug("preview");
@@ -115,16 +115,20 @@ class WorldsCommandHandlerTest {
     preview.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
     preview.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
     demo.setRealms(List.of(demo.getRealms().getFirst(), preview));
-    gameplayCatalogProperties.setWorlds(List.of(demo));
+    var privateOnly = world("private-only", 22L, 3L, false);
+    privateOnly.getRealms().getFirst().setPublicProductionRealm(false);
+    gameplayCatalogProperties.setWorlds(List.of(demo, privateOnly));
     var actor = GameplayCommandTestFixtures.worldBrowseDemo();
 
     assertThat(handler.browseCharacters(actor, "missing", null))
         .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidWorld.class);
     assertThat(handler.browseCharacters(actor, "demo", "hidden"))
         .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidRealm.class);
-    assertThat(handler.browseCharacters(actor, "demo", null))
-        .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.RealmSelectionRequired.class);
+    assertThat(handler.browseCharacters(actor, "private-only", null))
+        .isEqualTo(handler.browseCharacters(actor, "missing", null));
     assertThat(handler.browseCharacters(actor, "demo", "preview"))
+        .isEqualTo(handler.browseCharacters(actor, "demo", "hidden"));
+    assertThat(handler.browseCharacters(actor, "demo", null))
         .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
   }
 

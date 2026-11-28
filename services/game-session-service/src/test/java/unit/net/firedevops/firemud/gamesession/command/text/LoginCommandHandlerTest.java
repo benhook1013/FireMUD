@@ -1556,20 +1556,29 @@ class LoginCommandHandlerTest {
     verify(firstPartyConnectContextRegistry, never()).unregister(anyLong());
   }
 
-  @Test
-  void corruptFirstPartyLoginDeniesWithoutCredentialFallback() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void corruptFirstPartyLoginDeniesWithoutCredentialFallback(boolean hasCredentials) {
+    var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
+    var retained =
+        new SessionContext(1L, 22L, null, 0L, 0L, (String) null)
+            .withFirstPartyConnectContext(fixture.context());
+    when(sessionContextService.findBySessionId(1L)).thenReturn(Optional.of(retained));
     when(firstPartyConnectContextRegistry.find(1L)).thenThrow(new IllegalStateException("corrupt"));
-    LoginCommandHandlingResult result =
-        handler.handle(
-            "1",
-            new TextCommand(
+    TextCommand command =
+        hasCredentials
+            ? new TextCommand(
                 TextCommandType.LOGIN,
                 List.of("demo@example.com", "secret"),
-                "LOGIN demo@example.com secret"),
-            false);
+                "LOGIN demo@example.com secret")
+            : new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+    assertFalse(result.commandResult().accepted());
     assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    verify(firstPartyConnectContextRegistry, never()).requireRetained(any());
     Mockito.verifyNoInteractions(
         accountClient, gameInstanceRepository, gameplayPresenceLifecycleService);
     verify(sessionContextService, never()).save(any());
+    verify(firstPartyConnectContextRegistry, never()).unregister(anyLong());
   }
 }

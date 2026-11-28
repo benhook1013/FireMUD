@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.SocialGroupsClient;
 import net.firedevops.firemud.gamesession.presentation.FriendPresenceViewOutput;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -15,6 +16,7 @@ import net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy;
 import net.firedevops.firemud.socialgroups.v1.FriendRosterEntry;
 import net.firedevops.firemud.socialgroups.v1.FriendRosterFilter;
 import net.firedevops.firemud.socialgroups.v1.ListFriendsResponse;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.Mockito;
@@ -62,11 +64,10 @@ class FriendsFilteredDisclosureTest {
 
     assertThat(view.filter()).isEqualTo(filter);
     assertThat(view.totalCount()).isEqualTo(20);
-    assertThat(view.matchCount()).isZero();
     assertThat(view.friends()).isEmpty();
     String json = new ObjectMapper().writeValueAsString(view);
     assertThat(json).doesNotContain("Secret", OTHER_FRIEND_ACCOUNT_ID, "1744336000000");
-    assertThat(new ObjectMapper().readTree(json).path("matchCount").asInt()).isZero();
+    assertThat(new ObjectMapper().readTree(json).has("matchCount")).isFalse();
     assertThat(text(view))
         .isEqualTo("Friends " + filter + ": no matching friends.")
         .doesNotContain("[", "Secret", OTHER_FRIEND_ACCOUNT_ID);
@@ -92,7 +93,6 @@ class FriendsFilteredDisclosureTest {
     FriendPresenceViewOutput view = render(filter, response);
 
     assertThat(view.totalCount()).isEqualTo(20);
-    assertThat(view.matchCount()).isEqualTo(1);
     assertThat(view.friends())
         .singleElement()
         .satisfies(
@@ -104,24 +104,45 @@ class FriendsFilteredDisclosureTest {
     assertThat(json)
         .contains(visible)
         .doesNotContain("Secret", "Wrong", OTHER_FRIEND_ACCOUNT_ID, wrongState);
+    assertThat(new ObjectMapper().readTree(json).has("matchCount")).isFalse();
     assertThat(new ObjectMapper().readTree(json).path("friends").size()).isEqualTo(1);
     assertThat(text(view))
         .startsWith("Friends " + filter + ":\n7) Visible")
         .doesNotContain("[19/20]", "[1/20]", "Secret", "Wrong");
   }
 
-  @ParameterizedTest
-  @CsvSource({"ALL", "PRIVATE", "SHARED", "OFFLINE"})
-  void unrelatedFiltersKeepExistingMetadataAndEmptyText(String filter) {
-    FriendPresenceViewOutput view = render(filter, roster(filter, 19));
+  @Test
+  void unfilteredRosterKeepsTotalCountWithoutPresenceMatchCount() {
+    FriendPresenceViewOutput view = render("ALL", roster("ALL", 19));
     assertThat(view.totalCount()).isEqualTo(20);
-    assertThat(view.matchCount()).isEqualTo(19);
     assertThat(view.friends()).isEmpty();
+    assertThat(new ObjectMapper().valueToTree(view).has("matchCount")).isFalse();
     assertThat(text(view))
         .isEqualTo(
-            "ALL".equals(filter)
-                ? "Friends [0]: no linked friends. Use FRIENDS ADD <friendAccountId|characterName>."
-                : "Friends " + filter + " [0/20]: no matching friends.");
+            "Friends [0]: no linked friends. Use FRIENDS ADD <friendAccountId|characterName>.");
+  }
+
+  @ParameterizedTest
+  @CsvSource({"PRIVATE", "SHARED", "OFFLINE"})
+  void retiredFiltersDoNotReadRoster(String filter) {
+    SocialGroupsClient social = Mockito.mock(SocialGroupsClient.class);
+    FriendsCommandHandler handler =
+        newHandler(
+            social,
+            Mockito.mock(EntityManagementClient.class),
+            Mockito.mock(ScriptEventPublisher.class));
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(
+                TextCommandType.FRIENDS, java.util.List.of(filter), "FRIENDS " + filter),
+            GAMEPLAY_CONTEXT);
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    Mockito.verifyNoInteractions(social);
+    assertThat(result.outputs())
+        .singleElement()
+        .extracting(PlayerOutput::text)
+        .isEqualTo("ERROR FRIEND_PRESENCE_UNAVAILABLE Friend presence unavailable");
   }
 
   private FriendPresenceViewOutput render(String filter, ListFriendsResponse response) {

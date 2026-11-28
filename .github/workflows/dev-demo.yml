@@ -804,6 +804,18 @@ jobs:
           trap cleanup_bootstrap_resources EXIT
           trap 'exit 130' INT
           trap 'exit 143' TERM
+          # BEGIN gateway port parser
+          parse_bootstrap_gateway_port() {
+            local port
+            port="$(sed -nE 's/^Forwarding from 127[.]0[.]0[.]1:([0-9]{1,5}) -> 8080$/\1/p' "$1" | head -n1)"
+            if [[ "$port" =~ ^[0-9]{1,5}$ ]] \
+              && (( 10#$port >= 1 && 10#$port <= 65535 )); then
+              printf '%s\n' "$((10#$port))"
+              return 0
+            fi
+            return 1
+          }
+          # END gateway port parser
           for credential in DEMO_SMOKE_EMAIL DEMO_SMOKE_PASSWORD DEMO_SMOKE_USERNAME; do
             if [[ -z "${!credential:-}" ]]; then
               echo "::error::${credential} is empty; refusing to create dev-demo bootstrap credentials" >&2
@@ -824,10 +836,7 @@ jobs:
               cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
               exit 1
             fi
-            BOOTSTRAP_GATEWAY_PORT="$({
-              sed -nE 's/^Forwarding from 127[.]0[.]0[.]1:([0-9]+) -> 80$/\1/p' \
-                "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
-            } | head -n1)"
+            BOOTSTRAP_GATEWAY_PORT="$(parse_bootstrap_gateway_port "${BOOTSTRAP_PORT_FORWARD_LOG}" || true)"
             if [[ "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]] \
               && (( BOOTSTRAP_GATEWAY_PORT > 0 && BOOTSTRAP_GATEWAY_PORT <= 65535 )); then
               break

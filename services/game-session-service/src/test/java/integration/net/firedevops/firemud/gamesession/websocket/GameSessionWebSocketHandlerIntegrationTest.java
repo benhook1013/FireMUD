@@ -77,7 +77,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -615,43 +614,32 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketLogoutRetainsReplayStateAndClosesTransport() throws Exception {
-    GameplayWebSocketDriver.CloseEvent closeEvent;
+  void websocketLogoutWithoutDurableFenceRetainsSessionAndTransport() throws Exception {
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
+      var before = sessionContextService.findByTenantAndSessionId(22L, 41L);
+      assertThat(before).isPresent();
+
       client.send("LOGOUT");
-      closeEvent = client.awaitClosed();
+      client.awaitStartsWith("ERROR LOGOUT_UNAVAILABLE");
+      assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isEqualTo(before);
+
+      client.send("WHO");
+      client.awaitStartsWith("OK WHO");
     }
 
-    assertThat(closeEvent.statusCode()).isEqualTo(CloseStatus.NORMAL.getCode());
-    assertThat(closeEvent.reason()).isEqualTo("logout");
-    assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isEmpty();
-    verify(screenBufferService, never()).clear(22L, 1L, 123L);
     verify(commandService, never()).enqueue("41", "LOGOUT", false);
   }
 
   @Test
-  void freshLoginAfterLogoutDoesNotReplayStaleReconnectBuffer() throws Exception {
-    when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
-        .thenReturn(
-            Optional.of(
-                new ScreenBufferService.BufferedScreen(
-                    java.util.List.of(
-                        ScreenBufferService.BufferedEntry.fromText(
-                            "STALE REPLAY SHOULD NOT APPEAR")),
-                    1,
-                    1,
-                    System.currentTimeMillis())));
+  void unavailableWebsocketLogoutDoesNotReplayOrClearRetainedOutput() throws Exception {
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
+      clearInvocations(screenBufferService);
+      client.send("LOGOUT");
+      client.awaitStartsWith("ERROR LOGOUT_UNAVAILABLE");
 
-    performLogoutFlow("41");
-
-    List<String> secondPayloads;
-    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
-      secondPayloads = client.responses();
+      verify(screenBufferService, never()).get(22L, 1L, 123L);
+      verify(screenBufferService, never()).clear(22L, 1L, 123L);
     }
-
-    assertThat(secondPayloads)
-        .noneMatch(payload -> payload.contains("STALE REPLAY SHOULD NOT APPEAR"));
-    verify(screenBufferService, never()).get(22L, 1L, 123L);
   }
 
   @Test
@@ -1073,14 +1061,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   private URI websocketUri() {
     return URI.create("ws://localhost:" + port + "/ws/game");
-  }
-
-  private void performLogoutFlow(String sessionId) throws Exception {
-    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver(sessionId)) {
-      client.send("LOGOUT");
-      GameplayWebSocketDriver.CloseEvent closeEvent = client.awaitClosed();
-      assertThat(closeEvent.reason()).isEqualTo("logout");
-    }
   }
 
   private void bumpProductionAdmissionPointer(

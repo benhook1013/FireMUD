@@ -182,12 +182,20 @@ def wait_for_account_schema(startup_wait_seconds, timeout_seconds):
     raise RuntimeError("Account schema readiness did not converge before smoke execution")
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, _request, _response, _code, _message, _headers, _url):
+        return None
+
+
 def http_readiness_up(readiness_url, timeout_seconds):
     try:
-        with urllib.request.urlopen(readiness_url, timeout=timeout_seconds) as response:
-            body = response.read().decode("utf-8", errors="ignore")
-            return response.status < 500 and '"status":"UP"' in body.replace(" ", "")
-    except (urllib.error.URLError, OSError):
+        opener = urllib.request.build_opener(_NoRedirectHandler())
+        with opener.open(readiness_url, timeout=timeout_seconds) as response:
+            if not 200 <= response.status < 300:
+                return False
+            body = json.loads(response.read().decode("utf-8"))
+            return isinstance(body, dict) and body.get("status") == "UP"
+    except (urllib.error.URLError, OSError, UnicodeError, ValueError):
         return False
 
 
@@ -941,13 +949,18 @@ def send_websocket_command_and_expect(
             retryable_upstream_prefixes=retryable_upstream_prefixes,
         )
     except ExplicitProtocolFailure as exc:
-        if (label == "PLAY" and line.startswith("PLAY ")
-                and exc.response in {
-                    "ERROR ENTITLEMENT_UNAVAILABLE",
-                    "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.",
-                }
-                and step_results and step_results[-1]["label"] == "LOGIN"
-                and step_results[-1]["response"].startswith("OK LOGIN")):
+        if (
+            label == "PLAY"
+            and line.startswith("PLAY ")
+            and exc.response
+            in {
+                "ERROR ENTITLEMENT_UNAVAILABLE",
+                "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.",
+            }
+            and step_results
+            and step_results[-1]["label"] == "LOGIN"
+            and step_results[-1]["response"].startswith("OK LOGIN")
+        ):
             raise PlayEntitlementUnavailable(exc.response) from exc
         raise
     diagnostic_response = redact_login_credential(response, line)

@@ -235,6 +235,11 @@ public class TextCommandInterpreter {
 
   public TextCommandInterpretationResult interpret(
       String sessionId, String rawLine, boolean requiresSoloTick) {
+    TextCommand baseCommand = parser.parse(rawLine, registry);
+    if (baseCommand.type() == TextCommandType.LOGOUT) {
+      return interpretLogoutWithoutNormalization(
+          sessionId, baseCommand, requiresSoloTick, Optional.empty());
+    }
     Optional<SessionContext> context =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     TextCommandRegistry activeRegistry = registryFor(context);
@@ -266,11 +271,40 @@ public class TextCommandInterpreter {
         sessionId, command, requiresSoloTick, Optional.of(observedDirectTextTransport));
   }
 
+  private TextCommandInterpretationResult interpretLogoutWithoutNormalization(
+      String sessionId,
+      TextCommand command,
+      boolean requiresSoloTick,
+      Optional<ObservedDirectTextTransport> observedDirectTextTransport) {
+    // A rejected LOGOUT must not normalize a stale binding (and clear presence) before
+    // the fail-closed handler runs. The handler performs only a raw session read.
+    TextCommandDefinition definition =
+        registry
+            .findDefinition(command.commandId())
+            .orElseGet(
+                () ->
+                    TextCommandDefinition.extensionDefinition(command.type(), command.commandId()));
+    TextCommandInterpretationResult result =
+        dispatcher.dispatch(
+            TextCommandDispatchGroup.SESSION,
+            new TextCommandDispatchRequest(
+                sessionId,
+                command,
+                requiresSoloTick,
+                Optional.empty(),
+                observedDirectTextTransport));
+    return withResolvedCommand(result, command, definition);
+  }
+
   private TextCommandInterpretationResult interpret(
       String sessionId,
       TextCommand command,
       boolean requiresSoloTick,
       Optional<ObservedDirectTextTransport> observedDirectTextTransport) {
+    if (command.type() == TextCommandType.LOGOUT) {
+      return interpretLogoutWithoutNormalization(
+          sessionId, command, requiresSoloTick, observedDirectTextTransport);
+    }
     Optional<SessionContext> context =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     TextCommandRegistry activeRegistry = registryFor(context);

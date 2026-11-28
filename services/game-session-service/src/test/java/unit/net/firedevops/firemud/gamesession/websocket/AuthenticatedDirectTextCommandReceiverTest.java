@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -18,6 +19,7 @@ import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.ExpiredWorldSelectionException;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.UnknownWorldSelectorException;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandPayload;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
@@ -25,16 +27,22 @@ import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
+import net.firedevops.firemud.gamesession.presentation.BriefRenderPolicy;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
+import net.firedevops.firemud.gamesession.presentation.ReplayPolicy;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.PreV1CanonicalPlayAdmissionOwner;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginOwner;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyOwner;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyScope;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.web.socket.WebSocketSession;
 
 /** Wire-selector routing with controlled owners, not source qualification or admission proof. */
@@ -95,6 +103,26 @@ class AuthenticatedDirectTextCommandReceiverTest {
   }
 
   @Test
+  void joinHelpDescribesProtectedLobbyWithoutLookingUpAuthority() {
+    var fixture = fixture();
+    var command = new TextCommand(TextCommandType.HELP, List.of("join"), "HELP join");
+
+    var result = fixture.receiver.receive(fixture.socket, command);
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(
+            new TextPlayerOutputRenderer(new PresentationProperties())
+                .renderAll(command, result.commandResult(), result.outputs()))
+        .isEqualTo(
+            "OK HELP\n"
+                + "JOIN <world>\n"
+                + "After LOGIN, run WORLDS and REALMS <world>.\n"
+                + "Use JOIN <world> when the selected public-production realm requires membership"
+                + " before PLAY.\n\n");
+    verifyNoInteractions(fixture.connection, fixture.lobby, fixture.selections);
+  }
+
+  @Test
   void joinUsesOneFriendlyWorldSelectorButDispatchesOnlyTheRetainedScope() {
     var fixture = fixture();
     when(fixture.lobby.join(null, null, fixture.connection))
@@ -104,12 +132,63 @@ class AuthenticatedDirectTextCommandReceiverTest {
                 UUID.randomUUID(),
                 DirectTextAuthenticatedLobbyOwner.Status.COMPLETED_CURRENT_NON_ADMITTING,
                 Optional.of(JoinPublicProductionMembershipResponse.getDefaultInstance())));
+    var command = new TextCommand(TextCommandType.JOIN, List.of("demo"), "JOIN demo");
+    var result = fixture.receiver.receive(fixture.socket, command);
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs())
+        .singleElement()
+        .satisfies(
+            output -> {
+              assertThat(output.kind()).isEqualTo(PlayerOutputKind.MESSAGE);
+              assertThat(output.replayPolicy()).isEqualTo(ReplayPolicy.NO_REPLAY);
+              assertThat(output.briefRenderPolicy()).isEqualTo(BriefRenderPolicy.ALWAYS_SHOW);
+              assertThat(output.screenBufferEligible()).isFalse();
+            });
+    assertThat(
+            new TextPlayerOutputRenderer(new PresentationProperties())
+                .renderAll(command, result.commandResult(), result.outputs()))
+        .isEqualTo("OK JOIN\nJoined public production realm\n\n");
+    verify(fixture.selections).resolve(fixture.connection.menu, "demo");
+    verify(fixture.lobby).join(null, null, fixture.connection);
+  }
+
+  @Test
+  void successfulRealmsIncludesTheExactRealmSelector() {
+    var fixture = fixture();
+    var scope = fixture.connection.selectedScope;
+    var realm = scope.publicTarget();
+    when(realm.realmDisplayName()).thenReturn("Lantern District");
+    when(realm.realmSlug()).thenReturn("production");
+    when(fixture.lobby.realms(null, null, fixture.connection, fixture.connection.menu, "demo"))
+        .thenReturn(scope);
+    var command = new TextCommand(TextCommandType.REALMS, List.of("demo"), "REALMS demo");
+
+    var result = fixture.receiver.receive(fixture.socket, command);
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(
+            new TextPlayerOutputRenderer(new PresentationProperties())
+                .renderAll(command, result.commandResult(), result.outputs()))
+        .isEqualTo("OK REALMS\nLantern District (production)\n\n");
+  }
+
+  @Test
+  void staleJoinSelectionExplainsRefreshWithoutDispatchingOrChangingTheScope() {
+    var fixture = fixture();
+    var menu = fixture.connection.menu;
+    var scope = fixture.connection.selectedScope;
+    when(fixture.selections.resolve(menu, "demo"))
+        .thenThrow(new DirectTextWorldSelectionService.StaleWorldSelectionException());
+
     var result =
         fixture.receiver.receive(
             fixture.socket, new TextCommand(TextCommandType.JOIN, List.of("demo"), "JOIN demo"));
-    assertThat(result.commandResult().accepted()).isTrue();
-    verify(fixture.selections).resolve(fixture.connection.menu, "demo");
-    verify(fixture.lobby).join(null, null, fixture.connection);
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("SELECTION_STALE");
+    assertThat(result.commandResult().errorMessage()).contains("WORLDS, then REALMS");
+    assertThat(fixture.connection.menu).isSameAs(menu);
+    assertThat(fixture.connection.selectedScope).isSameAs(scope);
+    verifyNoInteractions(fixture.lobby);
   }
 
   @Test
@@ -127,6 +206,35 @@ class AuthenticatedDirectTextCommandReceiverTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(result.commandResult().errorMessage())
         .isEqualTo("Unknown or ambiguous world selector. Run WORLDS and choose a listed selector.");
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void pointerAuthorityFailuresPreserveAuthenticatedRealmSelection(boolean unreachable) {
+    var fixture = fixture();
+    var retainedSelection = fixture.connection.selectedScope;
+    var authority = mock(GameplayAdmissionPointerAuthorityService.class);
+    if (unreachable) {
+      when(authority.listPointers()).thenThrow(new DataAccessResourceFailureException("db"));
+    } else {
+      when(authority.listPointers()).thenReturn(null);
+    }
+    var catalog = new GameplayWorldCatalog(authority);
+    var failure = catchThrowable(catalog::discoverySnapshot);
+    assertThat(failure)
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class);
+    when(fixture.lobby.realms(null, null, fixture.connection, fixture.connection.menu, "demo"))
+        .thenThrow(failure);
+
+    var result =
+        fixture.receiver.receive(
+            fixture.socket,
+            new TextCommand(TextCommandType.REALMS, List.of("demo"), "REALMS demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(unreachable ? "AUTH_UNAVAILABLE" : "ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(fixture.connection.selectedScope).isSameAs(retainedSelection);
   }
 
   @Test

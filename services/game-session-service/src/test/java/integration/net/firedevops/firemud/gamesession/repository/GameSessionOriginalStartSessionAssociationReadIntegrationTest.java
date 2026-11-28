@@ -3,17 +3,35 @@ package integration.net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.grpc.ManagedChannel;
+import io.grpc.Server;
+import io.grpc.ServerInterceptors;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import java.net.InetSocketAddress;
 import java.nio.file.Path;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.InitialConfigured;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence;
+import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidenceGrpcCodec;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
@@ -34,11 +52,14 @@ import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOper
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.ReservationResult;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionTemplateAssociationRepository;
 import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
+import net.firedevops.firemud.gamesession.service.impl.HistoricalOriginalStartSessionOwnerEvidenceReadGrpcService;
+import net.firedevops.firemud.gamesession.v1.HistoricalOriginalStartSessionOwnerEvidenceReadServiceGrpc;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -329,6 +350,203 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
         .isEqualTo(descriptorPinsBefore);
     assertThat(count(fixture, "game_session_canonical_instance_launch"))
         .isEqualTo(associationsBefore);
+  }
+
+  @Test
+  void physicalMtlsHistoricalRpcReadsDatabaseAfterOwnerAndReferenceExpiryWithoutWriting(
+      @TempDir Path certificates) throws Exception {
+    String namespace = "world-runtime";
+    TestIdentity serverIdentity =
+        identity(certificates, "server", namespace, "game-session-service");
+    TestIdentity worldIdentity =
+        identity(certificates, "world", namespace, "world-management-service");
+    TestIdentity accountIdentity = identity(certificates, "account", namespace, "account-service");
+    TestIdentity wrongIdentity =
+        identity(certificates, "wrong", namespace, "logging-admin-service");
+    java.time.Instant referenceExpiry =
+        java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS).plusSeconds(30);
+    var tuple =
+        GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest
+            .tupleWithAuthorizationExpiry("historical-socket-expired", referenceExpiry);
+    Fixture fixture = fixture(tuple, Duration.ofSeconds(5));
+    OwnerBackedStarting starting = fixture.startWithOwnerPins(tuple);
+    var request = historicalRequest(starting);
+    assertThat(fixture.read(selector(starting.startingInstance().launchAssociation()))).isPresent();
+    assertThat(ownerLeaseExpired(fixture, starting)).isFalse();
+    assertThat(java.time.Instant.now()).isBefore(referenceExpiry);
+    String before = ownerRows(fixture);
+    var producer =
+        new HistoricalOriginalStartSessionOwnerEvidenceReadGrpcService(fixture.reads(), namespace);
+    Server server =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(
+                            serverIdentity.key(), serverIdentity.certificate()))
+                    .trustManager(
+                        worldIdentity.certificate(),
+                        accountIdentity.certificate(),
+                        wrongIdentity.certificate())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(ServerInterceptors.intercept(producer, new GrpcPeerIdentityInterceptor()))
+            .build()
+            .start();
+    try {
+      long expiryDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(40);
+      while (!ownerLeaseExpired(fixture, starting)
+          || java.time.Instant.now().isBefore(referenceExpiry)) {
+        if (System.nanoTime() >= expiryDeadline) {
+          throw new AssertionError(
+              "Owner and authorization reference did not expire in the bounded proof window");
+        }
+        Thread.sleep(10L);
+      }
+      assertThat(ownerLeaseExpired(fixture, starting)).isTrue();
+      assertThat(java.time.Instant.now()).isAfterOrEqualTo(referenceExpiry);
+      assertThat(fixture.read(selector(starting.startingInstance().launchAssociation()))).isEmpty();
+      for (TestIdentity caller : List.of(worldIdentity, accountIdentity)) {
+        ManagedChannel channel = historicalChannel(server.getPort(), serverIdentity, caller);
+        try {
+          var response =
+              HistoricalOriginalStartSessionOwnerEvidenceReadServiceGrpc.newBlockingStub(channel)
+                  .withDeadlineAfter(10, TimeUnit.SECONDS)
+                  .readHistoricalOriginalStartSessionOwnerEvidence(
+                      HistoricalOriginalStartSessionOwnerEvidenceGrpcCodec.toRequest(request));
+          var result =
+              HistoricalOriginalStartSessionOwnerEvidenceGrpcCodec.fromResponse(request, response);
+          assertThat(result.originalTuple().canonicalBytes())
+              .containsExactly(tuple.canonicalBytes());
+          assertThat(result.accountRedemptionProjection()).containsExactly(tuple.canonicalBytes());
+          assertThat(result.ownerAttemptId()).isEqualTo(starting.claim().ownerAttemptId());
+          assertThat(result.launchAssociation().launchBindingEvidence())
+              .isEqualTo(starting.startingInstance().launchAssociation().launchBindingEvidence());
+        } finally {
+          channel.shutdownNow().awaitTermination(10, TimeUnit.SECONDS);
+        }
+      }
+      ManagedChannel denied = historicalChannel(server.getPort(), serverIdentity, wrongIdentity);
+      try {
+        assertThatThrownBy(
+                () ->
+                    HistoricalOriginalStartSessionOwnerEvidenceReadServiceGrpc.newBlockingStub(
+                            denied)
+                        .withDeadlineAfter(10, TimeUnit.SECONDS)
+                        .readHistoricalOriginalStartSessionOwnerEvidence(
+                            HistoricalOriginalStartSessionOwnerEvidenceGrpcCodec.toRequest(
+                                request)))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+      } finally {
+        denied.shutdownNow().awaitTermination(10, TimeUnit.SECONDS);
+      }
+      assertThat(ownerRows(fixture)).isEqualTo(before);
+    } finally {
+      server.shutdownNow().awaitTermination(10, TimeUnit.SECONDS);
+    }
+  }
+
+  private static boolean ownerLeaseExpired(Fixture fixture, OwnerBackedStarting starting) {
+    var row =
+        Objects.requireNonNull(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT lease_expires_at <= clock_timestamp() AS expired FROM game_session_start_session_operator_attempt WHERE owner_attempt_id = ?",
+                    starting.claim().ownerAttemptId()),
+            "Expected retained owner attempt");
+    return Boolean.TRUE.equals(row.get("expired", Boolean.class));
+  }
+
+  private static String ownerRows(Fixture fixture) {
+    StringBuilder rows = new StringBuilder();
+    for (String table :
+        List.of(
+            "game_session_start_session_operator_attempt",
+            "game_session_start_session_template_association_pin",
+            "game_session_start_session_launch_descriptor_pin",
+            "game_session_canonical_instance_launch",
+            "game_instances")) {
+      var row =
+          Objects.requireNonNull(
+              fixture
+                  .dsl()
+                  .fetchOne(
+                      "SELECT coalesce(jsonb_agg(to_jsonb(owner_row) ORDER BY to_jsonb(owner_row)::text), '[]'::jsonb)::text AS rows FROM "
+                          + table
+                          + " owner_row"),
+              "Expected aggregate owner row");
+      rows.append(row.get("rows", String.class));
+    }
+    return rows.toString();
+  }
+
+  private static ManagedChannel historicalChannel(
+      int port, TestIdentity server, TestIdentity client) throws Exception {
+    return NettyChannelBuilder.forAddress("localhost", port)
+        .sslContext(
+            GrpcSslContexts.forClient()
+                .trustManager(server.certificate())
+                .keyManager(client.key(), client.certificate())
+                .build())
+        .build();
+  }
+
+  private record TestIdentity(PrivateKey key, X509Certificate certificate) {}
+
+  private static TestIdentity identity(
+      Path directory, String alias, String namespace, String service) throws Exception {
+    Path store = directory.resolve(alias + ".p12");
+    String password = "local-historical-proof";
+    Process keytool =
+        new ProcessBuilder(
+                Path.of(System.getProperty("java.home"), "bin", "keytool").toString(),
+                "-genkeypair",
+                "-alias",
+                alias,
+                "-keyalg",
+                "RSA",
+                "-keysize",
+                "2048",
+                "-dname",
+                "CN=" + alias,
+                "-validity",
+                "30",
+                "-ext",
+                "SAN=URI:spiffe://firemud/ns/"
+                    + namespace
+                    + "/sa/"
+                    + service
+                    + ",DNS:localhost,IP:127.0.0.1",
+                "-ext",
+                "EKU=serverAuth,clientAuth",
+                "-storetype",
+                "PKCS12",
+                "-keystore",
+                store.toString(),
+                "-storepass",
+                password,
+                "-keypass",
+                password,
+                "-noprompt")
+            .redirectErrorStream(true)
+            .start();
+    if (!keytool.waitFor(30, TimeUnit.SECONDS)) {
+      keytool.destroyForcibly();
+      throw new IllegalStateException("Historical RPC test certificate generation timed out");
+    }
+    if (keytool.exitValue() != 0)
+      throw new IllegalStateException("Historical RPC test certificate generation failed");
+    KeyStore keys = KeyStore.getInstance("PKCS12");
+    try (var input = java.nio.file.Files.newInputStream(store)) {
+      keys.load(input, password.toCharArray());
+    }
+    return new TestIdentity(
+        (PrivateKey) keys.getKey(alias, password.toCharArray()),
+        (X509Certificate) keys.getCertificate(alias));
   }
 
   @Test

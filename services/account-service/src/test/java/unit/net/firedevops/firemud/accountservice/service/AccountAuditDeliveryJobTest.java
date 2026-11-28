@@ -37,12 +37,12 @@ class AccountAuditDeliveryJobTest {
   void marksOnlyAnExactReceiverReceiptDelivered() {
     AccountAuditEnvelope envelope = platformRegistration();
     when(outbox.pending(eq(50), Mockito.any(Instant.class))).thenReturn(List.of(envelope));
-    when(client.deliver(envelope))
+    when(client.deliverOrRecover(envelope))
         .thenReturn(new LoggingAdminClient.AuditDeliveryResult("receipt-1", "log-1", false));
 
     job.deliverPending();
 
-    verify(outbox).markDelivered(envelope.auditEventId(), "receipt-1", "log-1", false);
+    verify(outbox).markDelivered(envelope, "receipt-1", "log-1", false);
     verify(outbox, never()).recordAttempt(envelope.auditEventId());
   }
 
@@ -50,12 +50,12 @@ class AccountAuditDeliveryJobTest {
   void minimizedReceiverReceiptMarksSameIdentityTerminal() {
     AccountAuditEnvelope envelope = platformRegistration();
     when(outbox.pending(eq(50), Mockito.any(Instant.class))).thenReturn(List.of(envelope));
-    when(client.deliver(envelope))
+    when(client.deliverOrRecover(envelope))
         .thenReturn(new LoggingAdminClient.AuditDeliveryResult("receipt-2", "log-2", true));
 
     job.deliverPending();
 
-    verify(outbox).markDelivered(envelope.auditEventId(), "receipt-2", "log-2", true);
+    verify(outbox).markDelivered(envelope, "receipt-2", "log-2", true);
     verify(outbox, never()).recordAttempt(envelope.auditEventId());
   }
 
@@ -63,12 +63,12 @@ class AccountAuditDeliveryJobTest {
   void unavailableReceiverKeepsSameEnvelopePending() {
     AccountAuditEnvelope envelope = platformRegistration();
     when(outbox.pending(eq(50), Mockito.any(Instant.class))).thenReturn(List.of(envelope));
-    when(client.deliver(envelope)).thenThrow(new IllegalStateException("unavailable"));
+    when(client.deliverOrRecover(envelope)).thenThrow(new IllegalStateException("unavailable"));
 
     job.deliverPending();
 
     verify(outbox).recordAttempt(envelope.auditEventId());
-    verify(outbox, never()).markDelivered(envelope.auditEventId(), "receipt-1", "log-1", false);
+    verify(outbox, never()).markDelivered(envelope, "receipt-1", "log-1", false);
   }
 
   @Test
@@ -77,8 +77,9 @@ class AccountAuditDeliveryJobTest {
     AccountAuditEnvelope later =
         platformRegistration(UUID.fromString("4cb5f750-6d75-4eaa-b0b4-2a9a285e2c32"));
     when(outbox.pending(eq(50), Mockito.any(Instant.class))).thenReturn(List.of(failed, later));
-    when(client.deliver(failed)).thenThrow(new IllegalStateException("receiver unavailable"));
-    when(client.deliver(later))
+    when(client.deliverOrRecover(failed))
+        .thenThrow(new IllegalStateException("receiver unavailable"));
+    when(client.deliverOrRecover(later))
         .thenReturn(new LoggingAdminClient.AuditDeliveryResult("receipt-2", "log-2", false));
     Mockito.doThrow(new IllegalStateException("outbox unavailable"))
         .when(outbox)
@@ -86,10 +87,9 @@ class AccountAuditDeliveryJobTest {
 
     job.deliverPending();
 
-    verify(outbox, never())
-        .markDelivered(eq(failed.auditEventId()), anyString(), anyString(), anyBoolean());
-    verify(client).deliver(later);
-    verify(outbox).markDelivered(later.auditEventId(), "receipt-2", "log-2", false);
+    verify(outbox, never()).markDelivered(eq(failed), anyString(), anyString(), anyBoolean());
+    verify(client).deliverOrRecover(later);
+    verify(outbox).markDelivered(later, "receipt-2", "log-2", false);
   }
 
   @Test

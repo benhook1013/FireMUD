@@ -168,10 +168,21 @@ public final class GameSessionGrpcService
           gameInstanceRepository
               .findFirstByTenantIdAndOwnerAccountIdAndStatus(tenantId, ownerAccountId, "RUNNING")
               .orElse(null);
+      if (existingRunningSession != null) {
+        responseObserver.onNext(
+            StartSessionResponse.newBuilder()
+                .setError(
+                    GrpcAppErrors.error(
+                        meterRegistry,
+                        "SESSION_REPLACEMENT_UNAVAILABLE",
+                        "Replacing an active session is not supported"))
+                .build());
+        responseObserver.onCompleted();
+        return;
+      }
       if (clientIp != null
           && !clientIp.isBlank()
-          && !ipConnectionLimiter.canAccept(
-              clientIp, existingRunningSession != null ? existingRunningSession.getId() : null)) {
+          && !ipConnectionLimiter.canAccept(clientIp, null)) {
         StartSessionResponse response =
             StartSessionResponse.newBuilder()
                 .setError(
@@ -186,13 +197,8 @@ public final class GameSessionGrpcService
           new StartSessionRequest(
               tenantId, gameTemplateId, request.getControlPlaneRequestId(), ownerAccountId);
       GameInstanceDto instance = gameInstanceService.startSession(dto, false);
-      boolean transferredRegistration = false;
       if (clientIp != null && !clientIp.isBlank()) {
-        transferredRegistration =
-            existingRunningSession != null
-                && ipConnectionLimiter.transferRegistration(
-                    clientIp, existingRunningSession.getId(), instance.id());
-        if (!transferredRegistration && !ipConnectionLimiter.tryRegister(clientIp, instance.id())) {
+        if (!ipConnectionLimiter.tryRegister(clientIp, instance.id())) {
           gameInstanceService.stopSession(instance.id());
           StartSessionResponse response =
               StartSessionResponse.newBuilder()
@@ -203,20 +209,6 @@ public final class GameSessionGrpcService
           responseObserver.onNext(response);
           responseObserver.onCompleted();
           return;
-        }
-      }
-      if (existingRunningSession != null) {
-        if (!transferredRegistration) {
-          ipConnectionLimiter.release(existingRunningSession.getId());
-        }
-        try {
-          gameInstanceService.stopSession(existingRunningSession.getId());
-        } catch (IllegalStateException ex) {
-          LOG.warn(
-              "Replacement session {} admitted, but teardown of previous session {} failed",
-              instance.id(),
-              existingRunningSession.getId(),
-              ex);
         }
       }
       StartSessionResponse response =
@@ -685,11 +677,7 @@ public final class GameSessionGrpcService
       responseObserver.onCompleted();
     } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       ListGameplayWorldsResponse response =
-          ListGameplayWorldsResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
-              .build();
+          ListGameplayWorldsResponse.newBuilder().setError(admissionPointerError(ex)).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -724,11 +712,7 @@ public final class GameSessionGrpcService
     } catch (AuthorityProjectionUnavailableException
         | GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       ListGameplayRealmsResponse response =
-          ListGameplayRealmsResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
-              .build();
+          ListGameplayRealmsResponse.newBuilder().setError(admissionPointerError(ex)).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -756,14 +740,20 @@ public final class GameSessionGrpcService
     try {
       long tenantId =
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
+      if (request.getWorldSlug().isBlank() || request.getRealmSlug().isBlank()) {
+        throw new IllegalArgumentException("Unknown gameplay realm selection");
+      }
       GameplayAdmissionPointerSnapshot realm =
           gameplayWorldCatalog
               .findAdmissionPointerFromAuthoritySnapshot(
                   tenantId,
                   request.getWorldSlug(),
                   request.getRealmSlug(),
-                  gameplayAdmissionPointerAuthorityService.listPointersByTenant(tenantId))
-              .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay realm selection"));
+                  () -> gameplayAdmissionPointerAuthorityService.listPointersByTenant(tenantId))
+              .orElseThrow(
+                  () ->
+                      new GameplayWorldCatalog.AuthorityPointerUnavailableException(
+                          "Authoritative gameplay realm selection is missing"));
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
               .setAdmissionPointer(
@@ -792,11 +782,7 @@ public final class GameSessionGrpcService
     } catch (AuthorityProjectionUnavailableException
         | GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       GetAdmissionPointerResponse response =
-          GetAdmissionPointerResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
-              .build();
+          GetAdmissionPointerResponse.newBuilder().setError(admissionPointerError(ex)).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -990,6 +976,15 @@ public final class GameSessionGrpcService
         .setPlayableStateNamespaceId(
             requireIdentity(realm.playableStateNamespaceId(), "playableStateNamespaceId"))
         .build();
+  }
+
+  private ErrorDetail admissionPointerError(RuntimeException failure) {
+    String code =
+        failure instanceof GameplayWorldCatalog.AuthorityPointerUnavailableException unavailable
+                && unavailable.authorityUnavailable()
+            ? "AUTH_UNAVAILABLE"
+            : "ADMISSION_POINTER_UNAVAILABLE";
+    return GrpcAppErrors.error(meterRegistry, code, failure.getMessage());
   }
 
   private static String requireWorldSelector(String worldSelector) {

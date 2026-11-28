@@ -7,23 +7,67 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog.AuthorityPointerUnavailableException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 
 class GameplayWorldCatalogTest {
   private final GameplayAdmissionPointerAuthorityService authorityService =
       Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+
+  @Test
+  void storageFailureDoesNotBecomeAnEmptyPublicCatalog() {
+    var storageFailure = new org.jooq.exception.DataAccessException("internal storage detail");
+    when(authorityService.listPointers()).thenThrow(storageFailure);
+    var catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThatThrownBy(catalog::browseView)
+        .hasCause(storageFailure)
+        .isInstanceOfSatisfying(
+            AuthorityPointerUnavailableException.class,
+            failure -> assertThat(failure.authorityUnavailable()).isFalse());
+    assertThatThrownBy(catalog::publicWorldsFromAuthoritySnapshot)
+        .hasCause(storageFailure)
+        .isInstanceOfSatisfying(
+            AuthorityPointerUnavailableException.class,
+            failure -> assertThat(failure.authorityUnavailable()).isFalse());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"08006", "57014"})
+  void catalogAndTenantPointerReadsRecognizeConnectionAndStatementTimeout(String sqlState) {
+    var storageFailure =
+        new org.jooq.exception.DataAccessException(
+            "internal storage detail", new SQLException("private SQL detail", sqlState));
+    var selected = publicPointer("demo", "Demo World", 1L, 11L);
+    when(authorityService.listPointers()).thenThrow(storageFailure);
+    when(authorityService.listPointersByTenant(1L)).thenThrow(storageFailure);
+    var catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThatThrownBy(catalog::browseView)
+        .hasCause(storageFailure)
+        .isInstanceOfSatisfying(
+            AuthorityPointerUnavailableException.class,
+            failure -> assertThat(failure.authorityUnavailable()).isTrue());
+    assertThatThrownBy(() -> catalog.requireUniqueVisiblePublicProductionRealm(selected))
+        .hasCause(storageFailure)
+        .isInstanceOfSatisfying(
+            AuthorityPointerUnavailableException.class,
+            failure -> assertThat(failure.authorityUnavailable()).isTrue());
+  }
 
   @Test
   void directPublicProductionGuardReadsOnlyTheExpectedTenant() {
@@ -463,8 +507,10 @@ class GameplayWorldCatalogTest {
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
     assertThatThrownBy(catalog::visibleWorldsFromAuthoritySnapshot)
-        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class)
-        .hasMessageContaining("pointer list is unavailable");
+        .hasMessageContaining("pointer list is unavailable")
+        .isInstanceOfSatisfying(
+            AuthorityPointerUnavailableException.class,
+            failure -> assertThat(failure.authorityUnavailable()).isFalse());
   }
 
   @Test
@@ -498,6 +544,27 @@ class GameplayWorldCatalogTest {
     assertThat(catalog.visibleWorldsFromAuthoritySnapshot())
         .extracting(GameplayWorldCatalog.WorldView::slug)
         .containsExactly("unrelated");
+  }
+
+  @Test
+  void unhealthyTenantDoesNotReleaseItsCollisionWithAnotherTenantsPublicWorld() {
+    var unhealthy = pointer("demo", "Original world", "private", "Private", 22L, 12L, 1L);
+    var healthy = publicPointer("DEMO", "Other world", 33L, 21L);
+    var unrelated = publicPointer("unrelated", "Unrelated world", 44L, 31L);
+    when(authorityService.listPointers()).thenReturn(List.of(unhealthy, healthy, unrelated));
+    when(authorityService.listPointersByTenant(33L)).thenReturn(List.of(healthy));
+    var catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.resolveWorld("DEMO")).isEmpty();
+    assertThat(catalog.browseRealms("demo")).isEmpty();
+    assertThat(catalog.visibleWorldsFromAuthoritySnapshot())
+        .extracting(GameplayWorldCatalog.WorldView::slug)
+        .containsExactly("unrelated");
+    assertThat(catalog.publicWorldsFromAuthoritySnapshot())
+        .extracting(GameplayWorldCatalog.WorldView::slug)
+        .containsExactly("unrelated");
+
+    catalog.requireUniqueVisiblePublicProductionRealm(healthy);
   }
 
   @Test

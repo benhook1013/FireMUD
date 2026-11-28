@@ -7,12 +7,16 @@ import java.util.Optional;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 class WorldsTextCommandDispatchHandlerTest {
   private final GameplayCatalogProperties gameplayCatalogProperties =
@@ -70,6 +74,90 @@ class WorldsTextCommandDispatchHandlerTest {
                 assertThat(output.text())
                     .isEqualTo(
                         "ERROR INVALID_ARGUMENT REALMS requires a valid world selector. Use WORLDS first."));
+    Mockito.verifyNoInteractions(scriptEventPublisher);
+  }
+
+  @Test
+  void charsReturnsTheSameWireRefusalForUndiscoverableAndUnknownTargets() {
+    var demo = world("demo", 22L, 41L, false);
+    var preview = world("preview", 22L, 42L, false).getRealms().getFirst();
+    preview.setSlug("preview");
+    preview.setPublicProductionRealm(false);
+    demo.setRealms(List.of(demo.getRealms().getFirst(), preview));
+    var privateOnly = world("private-only", 22L, 43L, false);
+    privateOnly.getRealms().getFirst().setPublicProductionRealm(false);
+    gameplayCatalogProperties.setWorlds(List.of(demo, privateOnly));
+    var context = GameplayCommandTestFixtures.authoredDispatchEmberline();
+    var parser = new TextCommandParser();
+
+    var unknownWorld =
+        handler.handle(
+            new TextCommandDispatchRequest(
+                "session-1",
+                parser.parse("CHARS unknown"),
+                false,
+                Optional.of(context),
+                Optional.empty()));
+    var privateWorld =
+        handler.handle(
+            new TextCommandDispatchRequest(
+                "session-1",
+                parser.parse("CHARS private-only"),
+                false,
+                Optional.of(context),
+                Optional.empty()));
+    var unknownRealm =
+        handler.handle(
+            new TextCommandDispatchRequest(
+                "session-1",
+                parser.parse("CHARS demo unknown"),
+                false,
+                Optional.of(context),
+                Optional.empty()));
+    var privateRealm =
+        handler.handle(
+            new TextCommandDispatchRequest(
+                "session-1",
+                parser.parse("CHARS demo preview"),
+                false,
+                Optional.of(context),
+                Optional.empty()));
+
+    assertThat(unknownWorld.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(unknownRealm.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(privateWorld.outputs()).isEqualTo(unknownWorld.outputs());
+    assertThat(privateRealm.outputs()).isEqualTo(unknownRealm.outputs());
+    Mockito.verifyNoInteractions(scriptEventPublisher);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void discoveryPreservesThePointerAuthorityFailureClass(boolean unreachable) {
+    var authority = Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    if (unreachable) {
+      Mockito.when(authority.listPointers())
+          .thenThrow(new DataAccessResourceFailureException("db"));
+    } else {
+      Mockito.when(authority.listPointers()).thenReturn(null);
+    }
+    var localHandler =
+        new WorldsTextCommandDispatchHandler(
+            new WorldsCommandHandler(new GameplayWorldCatalog(authority)), scriptEventPublisher);
+    var actor = GameplayCommandTestFixtures.authoredDispatchEmberline();
+    var parser = new TextCommandParser();
+    String expected = unreachable ? "AUTH_UNAVAILABLE" : "ADMISSION_POINTER_UNAVAILABLE";
+
+    for (String command : List.of("WORLDS", "REALMS demo", "CHARS demo")) {
+      var result =
+          localHandler.handle(
+              new TextCommandDispatchRequest(
+                  "session-1", parser.parse(command), false, Optional.of(actor), Optional.empty()));
+      assertThat(result.commandResult().accepted()).isFalse();
+      assertThat(result.commandResult().errorCode()).isEqualTo(expected);
+      assertThat(result.outputs())
+          .singleElement()
+          .satisfies(output -> assertThat(output.text()).contains(expected));
+    }
     Mockito.verifyNoInteractions(scriptEventPublisher);
   }
 

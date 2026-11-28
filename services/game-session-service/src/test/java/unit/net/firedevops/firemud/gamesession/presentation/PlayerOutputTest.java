@@ -33,9 +33,19 @@ class PlayerOutputTest {
             PlayerOutput.view(
                     new WorldsViewOutput(
                         java.util.List.of(
-                            new WorldsViewOutput.WorldEntry("demo", "Demo World", 1L, false))))
+                            new WorldsViewOutput.WorldEntry("demo", "Demo World", false))))
                 .screenBufferEligible())
         .isFalse();
+    assertThat(
+            PlayerOutput.view(new RealmBrowseViewOutput("demo", java.util.List.of()))
+                .replayPolicy())
+        .isEqualTo(ReplayPolicy.NO_REPLAY);
+    assertThat(
+            PlayerOutput.view(new RealmBrowseViewOutput("demo", java.util.List.of()))
+                .screenBufferEligible())
+        .isFalse();
+    assertThat(PlayerOutput.view(new WorldsViewOutput(java.util.List.of())).replayPolicy())
+        .isEqualTo(ReplayPolicy.NO_REPLAY);
     assertThat(PlayerOutput.prompt("demo> ").screenBufferEligible()).isFalse();
     assertThat(PlayerOutput.notice("notice").screenBufferEligible()).isFalse();
     assertThat(PlayerOutput.error("LOGIN_REQUIRED", "Use LOGIN").screenBufferEligible()).isFalse();

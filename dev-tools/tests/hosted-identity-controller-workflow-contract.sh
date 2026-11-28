@@ -1869,7 +1869,7 @@ for job_name, job in jobs.items():
     assert len(writes) == 1, job_name
     cleanup = next(step for step in steps if step.get("name") == "Remove runtime kubeconfig")
     assert cleanup["if"] == "${{ always() }}", job_name
-    if job_name == "deploy-runtime":
+    if job_name in {"deploy-runtime", "verify-runtime"}:
         assert runtime_kubeconfig_marker in cleanup["run"], job_name
         assert manager_kubeconfig_marker in cleanup["run"], job_name
     else:
@@ -1898,8 +1898,33 @@ for job_name, job in jobs.items():
     else:
         assert manager_kubeconfig_marker in cleanup["run"], job_name
 assert manager_kubeconfig_jobs == {
-    "deploy-runtime", "publish-preview-proof", "destroy-runtime"
+    "deploy-runtime", "verify-runtime", "publish-preview-proof", "destroy-runtime"
 }
+verification_steps = {step.get("name"): step for step in jobs["verify-runtime"]["steps"]}
+verification_files = {
+    "Write runtime kubeconfig": ("TRUSTED_HOSTED_PREVIEW_RUNTIME_KUBECONFIG", "preview-runtime"),
+    "Write verification namespace-manager kubeconfig": ("TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG", "preview-namespace-manager"),
+    "Write verification identity-requester kubeconfig": ("TRUSTED_HOSTED_IDENTITY_REQUESTER_KUBECONFIG", "hosted-identity-requester"),
+}
+for name, (secret, filename) in verification_files.items():
+    assert verification_steps[name]["with"] == {
+        "content": "${{ secrets." + secret + " }}",
+        "path": "${{ runner.temp }}/" + filename + ".kubeconfig",
+        "export-to-github-env": "false",
+    }
+    assert '"$RUNNER_TEMP/' + filename + '.kubeconfig"' in verification_steps["Remove runtime kubeconfig"]["run"]
+assert verification_steps["Write verification identity-requester kubeconfig"]["if"] == (
+    "${{ needs.validate-target.outputs.certificate_identity_mode == 'hosted-controller' }}"
+)
+assert verification_steps["Wait for exact controller identity projection"]["env"] == {
+    "KUBECONFIG": runtime_kubeconfig_path,
+    "NAMESPACE_KUBECONFIG": manager_kubeconfig_path,
+    "IDENTITY_KUBECONFIG": "${{ runner.temp }}/hosted-identity-requester.kubeconfig",
+}
+for name in ("Capture exact runtime Namespace UID before verification", "Publish trusted preview verification failure"):
+    assert verification_steps[name]["env"]["KUBECONFIG"] == manager_kubeconfig_path
+for name in ("Wait for runtime rollouts", "Read allocated TCP port"):
+    assert verification_steps[name]["env"]["KUBECONFIG"] == runtime_kubeconfig_path
 assert "Set up Helm" not in deploy_by_name
 assert not any(
     "migration" in step.get("name", "").lower() for step in deploy_steps
@@ -2412,6 +2437,7 @@ capture_uid_step = verify_by_name[
 assert capture_uid_step_index == verify_head_step_index + 1
 assert capture_uid_step["id"] == "capture-runtime-namespace"
 assert capture_uid_step["env"] == {
+    "KUBECONFIG": manager_kubeconfig_path,
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
     "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
@@ -2544,6 +2570,7 @@ for required in (
 verify_failure = verify_steps[verify_failure_index]
 assert verify_failure["if"] == "${{ !cancelled() && failure() }}"
 assert verify_failure["env"] == {
+    "KUBECONFIG": manager_kubeconfig_path,
     "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
     "PREVIEW_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
