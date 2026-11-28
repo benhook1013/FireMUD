@@ -251,7 +251,8 @@ classify_failure_body() {
         next
       }
       if (line == "> Received status code 429 from server: Too Many Requests") {
-        buildsrc_http_429++
+        if (buildsrc_configuration) buildsrc_http_429++
+        else if (resolved_configuration ~ /^:[[:alnum:]-]+:compileClasspath$/) cached_compile_http_429++
         transient++
         next
       }
@@ -484,7 +485,10 @@ classify_failure_body() {
           !((transient && repository_requests) || (searched && repository_urls))) {
         exit 1
       }
-      if (buildsrc_jar_downloads) print "before-compile-rate-limit"
+      compile_module = resolved_configuration
+      sub(/:compileClasspath$/, "", compile_module)
+      if (buildsrc_jar_downloads ||
+          (cached_compile_http_429 && resolver_roots == 1 && cache_task == ("`" compile_module ":compileJava`"))) print "before-compile-rate-limit"
       else if (wrapped_resolution_causes || (fixtures_resolver && jar_downloads)) print "before-compile"
       exit 0
     }
@@ -774,7 +778,7 @@ fi
 
 sleep "$RETRY_DELAY"
 if [[ "$RETRY_WITHOUT_REFRESH" == true ]]; then
-  echo "Recognized pinned buildSrc JAR rate limiting before task execution; retrying the original Gradle command once after ${RETRY_DELAY}s without forcing dependency refresh."
+  echo "Recognized dependency rate limiting before compilation; retrying the original Gradle command once after ${RETRY_DELAY}s without forcing dependency refresh."
   run_gradle_check false "$REFRESH_LOG"
 else
   echo "Recognized Gradle dependency-resolution failure at the bounded pre-substantive boundary; retrying the complete Gradle command once with dependency metadata refresh after ${RETRY_DELAY}s."

@@ -63,12 +63,13 @@ assert_rejected() {
   delete_request="$fixture_dir/delete-request.json"
   base_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   namespace_for_head "$base_sha"
-  export FAKE_NAMESPACE_JSON DELETE_REQUEST="$delete_request"
-  FAKE_NAMESPACE_JSON="$(jq -c '.metadata.resourceVersion = "7"' <<<"$FAKE_NAMESPACE_JSON")"
+  RESET_NAMESPACE_JSON="$(jq -c '.metadata.resourceVersion = "7"' <<<"$FAKE_NAMESPACE_JSON")"
+  export RESET_NAMESPACE_JSON DELETE_REQUEST="$delete_request"
+  # shellcheck disable=SC2329 # Exported to the delete helper's child Bash as its kubectl mock.
   kubectl() {
     case "$*" in
       'get namespace dev --ignore-not-found -o json')
-        [[ -s "$DELETE_REQUEST" ]] || printf '%s\n' "$FAKE_NAMESPACE_JSON"
+        [[ -s "$DELETE_REQUEST" ]] || printf '%s\n' "$RESET_NAMESPACE_JSON"
         ;;
       'delete --raw /api/v1/namespaces/dev -f -') cat >"$DELETE_REQUEST" ;;
       'wait --for=delete namespace/dev --timeout=180s') ;;
@@ -76,16 +77,16 @@ assert_rejected() {
     esac
   }
   export -f kubectl
-  clean_snapshot="$FAKE_NAMESPACE_JSON"
+  clean_snapshot="$RESET_NAMESPACE_JSON"
   for change in     '.metadata.uid = "replacement"'     '.metadata.annotations["firemud.dev/last-dev-demo-head-sha"] = "changed"'     '.metadata.annotations["firemud.dev/pending-dev-demo-deployment"] = ""'     'del(.metadata.resourceVersion)'; do
-    FAKE_NAMESPACE_JSON="$(jq -c "$change" <<<"$clean_snapshot")"
+    RESET_NAMESPACE_JSON="$(jq -c "$change" <<<"$clean_snapshot")"
     if bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" >"$fixture_dir/reset.stdout" 2>"$fixture_dir/reset.stderr" ||
       [[ -e "$delete_request" ]]; then
       echo "automatic reset did not refuse changed namespace evidence: $change" >&2
       exit 1
     fi
   done
-  FAKE_NAMESPACE_JSON="$clean_snapshot"
+  RESET_NAMESPACE_JSON="$clean_snapshot"
   bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" >"$fixture_dir/reset.stdout"
   jq -e '.preconditions == {uid:"fixture-dev-uid",resourceVersion:"7"}' "$delete_request" >/dev/null
 )

@@ -209,6 +209,34 @@ assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2
 assert_output_contains "Connection reset"
 assert_output_contains "refresh-complete"
 
+# A Maven Central 429 during classpath serialization happens before Java
+# compilation. Retry the complete command once without refreshing warm inputs.
+new_case load-testing-gatling-pom-rate-limit
+{
+  printf '%s\n' 'FAILURE: Build failed with an exception.' '* What went wrong:'
+  printf '%s\n' "Configuration cache state could not be cached: field \`classpath\` of task \`:load-testing:compileJava\` of type \`org.gradle.api.tasks.compile.JavaCompile\`: error writing value of type 'org.gradle.api.internal.artifacts.configurations.DefaultResolvableConfiguration'"
+  printf '%s\n' "> Could not resolve all files for configuration ':load-testing:compileClasspath'."
+  for artifact in gatling-core gatling-http; do
+    pom="https://repo.maven.apache.org/maven2/io/gatling/$artifact/3.16.1/$artifact-3.16.1.pom"
+    printf '%s\n' "   > Could not resolve io.gatling:$artifact:3.16.1." \
+      '     Required by:' "         project ':load-testing'" \
+      "      > Could not resolve io.gatling:$artifact:3.16.1." \
+      "         > Could not get resource '$pom'." \
+      "            > Could not GET '$pom'." \
+      '               > Received status code 429 from server: Too Many Requests'
+  done
+  printf '%s\n' '' '* Try:' '> Run with --stacktrace option to get the stack trace.'
+} > "$CASE_DIR/cause.log"
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; exit 0'
+run_case load-testing 0
+assert_call_count 2
+[[ "$(head -n 1 "$CASE_DIR/calls")" == "$(tail -n 1 "$CASE_DIR/calls")" ]] || fail "classpath rate limit changed the original command"
+delay="$(cat "$CASE_DIR/sleeps")"
+if [[ ! "$delay" =~ ^[0-9]+$ ]] || (( delay < 15 || delay > 30 )); then
+  fail "classpath rate limit missed the bounded delay"
+fi
+
 # Preserve the c515-style pinned missing-artifact recovery path without
 # claiming the miss is stale: a passing refreshed full check is still required.
 new_case absent-pinned-artifact

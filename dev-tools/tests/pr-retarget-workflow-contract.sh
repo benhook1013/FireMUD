@@ -1569,8 +1569,11 @@ async function runDispatcher({
       callback: {updated_at: "2026-01-02T00:00:00Z"},
       inventories: { [event]: [producer(tuple, event, "completed", "success")] },
     });
-    assert.equal(completedSuccess.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
-      `${event} completed source success must preserve recovery dispatch for missing or expired publication`);
+    assert.equal(runtimeDispatches(completedSuccess).length, event === "pull_request" ? 1 : 0,
+      `${event} completed success must retain its event-specific recovery policy without proof of expired, unpublished artifacts`);
+    assert.equal(previewDispatches(completedSuccess).length, 1,
+      "runtime recovery policy must preserve independent preview reconciliation");
+    assert.deepEqual(completedSuccess.errors, []);
   }
 
   for (const validRef of [
@@ -2035,7 +2038,7 @@ async function runDispatcher({
   ]) {
     const result = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-04T00:00:00Z"},
       inventories: {repository_dispatch: [completedRefresh]}, runtimeAttemptJobs: {[completedRefresh.id]: {total_count: 1, jobs: [job]}}});
-    assert.deepEqual(numbers(result), ["101"], "a green but unusable exact attempt must not suppress the refresh");
+    assert.deepEqual(numbers(result), [], "a green exact attempt with unusable proof leaves publication unresolved");
     assert.deepEqual(result.errors, []);
   }
   const recentTransition = await runDispatcher({
@@ -3107,7 +3110,7 @@ if [[ "$*" == *'/actions/runs/201/attempts/1' || "$*" == *'/actions/runs/202/att
   else
     run=202
     event=repository_dispatch
-    title='Publish PR Runtime Images source-run-101 attempt-2'
+    title='Publish PR Runtime Images requalification source-run-101 attempt-2'
   fi
   printf '{"id":%s,"workflow_id":502,"path":".github/workflows/publish-pr-runtime-images.yml","head_branch":"main","head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","run_attempt":1,"name":"Publish PR Runtime Images","event":"%s","status":"completed","conclusion":"success","display_title":"%s","repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"}}' \
     "$run" "$event" "$title"
@@ -3231,14 +3234,14 @@ for conclusion in [None, ""]:
     split = subprocess.run(["bash", "-c", "IFS=$'\\t' read -r state id status conclusion url event created attempt workflow; printf '%s\\n' \"$state\" \"$id\" \"$status\" \"$conclusion\" \"$url\" \"$event\" \"$created\" \"$attempt\" \"$workflow\""], input=result.stdout, capture_output=True, text=True)
     assert split.stdout.splitlines() == ["found", "101", "in_progress", "pending", source["html_url"], source["event"], source["created_at"], "2", "501"], "optional conclusion must preserve Bash field positions"
 
-base = {"id": 202, "workflow_id": 502, "run_attempt": 1, "event": "repository_dispatch", "status": "completed", "conclusion": "success", "html_url": "https://example.test/publisher/202", "display_title": "Publish PR Runtime Images source-run-101 attempt-2", "created_at": "2026-07-24T00:04:00Z"}
+base = {"id": 202, "workflow_id": 502, "run_attempt": 1, "event": "repository_dispatch", "status": "completed", "conclusion": "success", "html_url": "https://example.test/publisher/202", "display_title": "Publish PR Runtime Images requalification source-run-101 attempt-2", "created_at": "2026-07-24T00:04:00Z"}
 fixtures = {
     "dispatch-success": base,
-    "dispatch-earlier-attempt": {**base, "display_title": "Publish PR Runtime Images source-run-101 attempt-1"},
+    "dispatch-earlier-attempt": {**base, "display_title": "Publish PR Runtime Images requalification source-run-101 attempt-1"},
     "dispatch-legacy": {**base, "display_title": "Publish PR Runtime Images source-run-101"},
     "callback-earlier-attempt": {**base, "event": "workflow_run",
         "display_title": "Publish PR Runtime Images " + source["display_title"] + " source-run-101 attempt-1"},
-    "dispatch-wrong-source": {**base, "display_title": "Publish PR Runtime Images source-run-999 attempt-2"},
+    "dispatch-wrong-source": {**base, "display_title": "Publish PR Runtime Images requalification source-run-999 attempt-2"},
     "dispatch-wrong-event": {**base, "event": "push"},
     "dispatch-malformed-title": {**base, "display_title": "Publish PR Runtime Images source-run-101 extra"},
     "dispatch-failure": {**base, "conclusion": "failure"},
@@ -3247,7 +3250,7 @@ fixtures = {
 for name, run in fixtures.items():
     (root / (name + ".json")).write_text(json.dumps({"total_count": 1, "fixture_event": "workflow_run" if name.startswith("callback-") else "repository_dispatch", "workflow_runs": [run]}))
 # Matching publication remains discoverable beyond the first page.
-many = [{**base, "id": 300 + index, "display_title": f"Publish PR Runtime Images source-run-{500 + index} attempt-2"} for index in range(100)] + [base]
+many = [{**base, "id": 300 + index, "display_title": f"Publish PR Runtime Images requalification source-run-{500 + index} attempt-2"} for index in range(100)] + [base]
 (root / "dispatch-second-page.json").write_text(json.dumps([{"total_count": 101, "workflow_runs": many[:100]}, {"total_count": 101, "workflow_runs": many[100:]}]))
 (root / "dispatch-overflow.json").write_text(json.dumps({"total_count": 1001, "workflow_runs": many[:100]}))
 (root / "dispatch-incomplete.json").write_text(json.dumps([{"total_count": 101, "workflow_runs": many[:100]}, {"total_count": 101, "workflow_runs": []}]))
