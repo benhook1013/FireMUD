@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
+import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -11,6 +12,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
+import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
@@ -919,6 +925,106 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
     f.assertNoSuccessEffects();
   }
 
+  @Test
+  void competingExactIntentAndPolicyWritesRetainOnePendingRequestWithoutSuccessEffects()
+      throws Exception {
+    JournalFixture fixture = journalFixture();
+    String requestId = fixture.requestId() + "-raced";
+    var operations = fixture.operations();
+    var scope = fixture.scope();
+    String caller = fixture.caller();
+
+    assertThat(
+            raceExactOwnerWrite(
+                fixture, () -> operations.insertCanonicalIntent(requestId, scope, caller)))
+        .containsExactly(true, false);
+
+    List<CanonicalJoinOperationEvidence> competingPolicy =
+        raceExactOwnerWrite(
+            fixture,
+            () -> operations.bindCanonicalPolicyEvidence(requestId, scope, caller, true, 17L));
+    CanonicalJoinOperationEvidence evidence = competingPolicy.getFirst();
+    assertThat(competingPolicy).containsExactly(evidence, evidence);
+    assertThat(evidence.status()).isEqualTo("PENDING");
+    assertThat(evidence.intentDigest())
+        .isEqualTo(AccountJoinDigest.intentV2(requestId, scope, caller));
+    assertThat(evidence.requestDigest())
+        .isEqualTo(
+            AccountJoinDigest.requestV2(
+                scope, caller, AccountJoinDigest.EntitlementAvailabilityV2.AVAILABLE, true, 17L));
+    assertThat(evidence.membershipId()).isNull();
+    assertThat(evidence.terminalProof()).isNull();
+
+    String physicalRow =
+        "SELECT row_to_json(j)::text, xmin::text FROM account_join_operations j WHERE request_id = ?";
+    var committed = retainedPhysicalRow(fixture.dsl(), physicalRow, requestId);
+    CanonicalJoinOperationEvidence replay =
+        fixture
+            .transaction()
+            .execute(
+                status ->
+                    operations.bindCanonicalPolicyEvidence(requestId, scope, caller, true, 17L));
+    assertThat(replay).isEqualTo(evidence);
+    assertThat(retainedPhysicalRow(fixture.dsl(), physicalRow, requestId)).isEqualTo(committed);
+    fixture.assertNoSuccessEffects();
+  }
+
+  private static <T> List<T> raceExactOwnerWrite(JournalFixture fixture, Supplier<T> write)
+      throws Exception {
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      var waitingPid = new CompletableFuture<Integer>();
+      var waitingResult = new CompletableFuture<T>();
+      T winner =
+          fixture
+              .transaction()
+              .execute(
+                  status -> {
+                    int blockingPid = ownerBackendPid(fixture.owner());
+                    T result = Objects.requireNonNull(write.get());
+                    executor.submit(
+                        () -> {
+                          try {
+                            waitingResult.complete(
+                                fixture
+                                    .transaction()
+                                    .execute(
+                                        waitingStatus -> {
+                                          waitingPid.complete(ownerBackendPid(fixture.owner()));
+                                          return write.get();
+                                        }));
+                          } catch (RuntimeException failure) {
+                            waitingPid.completeExceptionally(failure);
+                            waitingResult.completeExceptionally(failure);
+                          }
+                        });
+                    assertThat(awaitOwnerBlock(fixture.dsl(), blockingPid, waitingPid)).isTrue();
+                    return result;
+                  });
+      return List.of(Objects.requireNonNull(winner), waitingResult.get(15, TimeUnit.SECONDS));
+    }
+  }
+
+  private static int ownerBackendPid(DSLContext owner) {
+    return owner.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+  }
+
+  private static boolean awaitOwnerBlock(
+      DSLContext setup, int blockingPid, CompletableFuture<Integer> waitingPid) {
+    long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+    while (System.nanoTime() < deadline) {
+      int pid = waitingPid.getNow(0);
+      if (pid > 0
+          && Boolean.TRUE.equals(
+              setup
+                  .fetchSingle("SELECT ? = ANY(pg_blocking_pids(?))", blockingPid, pid)
+                  .get(0, Boolean.class))) {
+        return true;
+      }
+      LockSupport.parkNanos(Duration.ofMillis(25).toNanos());
+    }
+    return false;
+  }
+
   private JournalFixture journalFixture() {
     String schema = createSchema("canonical_join_scope_");
     var source = postgres.dataSource(schema);
@@ -961,12 +1067,13 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
           operations.insertCanonicalIntent(requestId, scope, caller);
         });
     return new JournalFixture(
-        setup, transaction, operations, scopes, scope, privateAccountId, requestId, caller);
+        setup, owner, transaction, operations, scopes, scope, privateAccountId, requestId, caller);
   }
 
   /** Physical journal storage proof only; supplied caller/scope selectors do not authenticate. */
   private record JournalFixture(
       DSLContext dsl,
+      DSLContext owner,
       TransactionTemplate transaction,
       AccountJoinOperationRepository operations,
       AccountConnectScopeRepository scopes,
