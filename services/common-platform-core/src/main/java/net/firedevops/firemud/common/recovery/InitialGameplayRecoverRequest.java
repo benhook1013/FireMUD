@@ -3,6 +3,7 @@ package net.firedevops.firemud.common.recovery;
 import java.text.Normalizer;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 
 /**
@@ -21,6 +22,8 @@ public record InitialGameplayRecoverRequest(
   public static final String TARGET_OWNER = "recovery-controller-service";
   public static final int MAX_EVIDENCE_REFERENCE_BYTES = 512;
   public static final int MAX_STORAGE_IDENTITY_BYTES = 256;
+  public static final int MAX_WORLD_SLUG_BYTES = 120;
+  private static final Pattern CANONICAL_WORLD_SLUG = Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
 
   public InitialGameplayRecoverRequest {
     controlPlaneRequestId = uuid(controlPlaneRequestId);
@@ -68,10 +71,7 @@ public record InitialGameplayRecoverRequest(
     public LaunchAssociation {
       gameInstanceUuid = uuid(gameInstanceUuid);
       tenantAssociationOperationId = uuid(tenantAssociationOperationId);
-      worldSlug = text(worldSlug, 128);
-      if (worldSlug.codePoints().anyMatch(InitialGameplayRecoverRequest::isNoncharacter)) {
-        throw new IllegalArgumentException("World slug must not contain Unicode noncharacters");
-      }
+      worldSlug = requireWorldSlug(worldSlug);
       launchControlPlaneRequestId = uuid(launchControlPlaneRequestId);
       launchDescriptorId = exactSelector(launchDescriptorId, 256, "Launch descriptor");
       descriptorRequestDigest = digest(descriptorRequestDigest);
@@ -212,6 +212,15 @@ public record InitialGameplayRecoverRequest(
     value = text(value, 63);
     if (!value.matches("[a-z0-9](?:[a-z0-9-]*[a-z0-9])?")) {
       throw new IllegalArgumentException("Namespace must be a Kubernetes namespace");
+    }
+    return value;
+  }
+
+  private static String requireWorldSlug(String value) {
+    Objects.requireNonNull(value, "worldSlug");
+    if (GameTenantCreationDigest.utf8ByteLength(value) > MAX_WORLD_SLUG_BYTES
+        || !CANONICAL_WORLD_SLUG.matcher(value).matches()) {
+      throw new IllegalArgumentException("World slug must be a canonical routing selector");
     }
     return value;
   }

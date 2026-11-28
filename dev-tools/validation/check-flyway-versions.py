@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 try:
@@ -28,9 +29,15 @@ RECOVERY_PROJECT = "recovery-controller-service"
 RECOVERY_LOCATION = "classpath:db/recovery-control-migration"
 RECOVERY_RESOURCE_ROOT = f"services/{RECOVERY_PROJECT}/src/main/resources"
 RECOVERY_CONFIG_DIRECTORY = f"{RECOVERY_RESOURCE_ROOT}/config"
+RECOVERY_OWNER_CONFIGURATION = "net.firedevops.firemud.recovery.config.RecoveryControllerOwnerConfiguration"
 RECOVERY_SQL_ROOT = f"{RECOVERY_RESOURCE_ROOT}/db/recovery-control-migration/"
 RECOVERY_JAVA_ROOT = f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration/"
 RECOVERY_MAIN_JAVA_ROOT = f"services/{RECOVERY_PROJECT}/src/main/java/"
+RECOVERY_CONFIG_JAVA_ROOT = RECOVERY_MAIN_JAVA_ROOT + "net/firedevops/firemud/recovery/config/"
+RECOVERY_CALLBACK_SOURCES = {
+    RECOVERY_CONFIG_JAVA_ROOT + "RecoveryControllerOwnerConfiguration.java",
+    RECOVERY_CONFIG_JAVA_ROOT + "RecoveryTransactionalMigrationCallback.java",
+}
 RECOVERY_MIGRATION_ROOTS = (RECOVERY_SQL_ROOT, RECOVERY_JAVA_ROOT)
 RECOVERY_MIGRATION_ANCESTORS = {
     path.as_posix()
@@ -48,7 +55,7 @@ JAVA_TRIM_CHARACTERS = "".join(map(chr, range(0x21)))
 JAVA_UNICODE_ESCAPE_RE = re.compile(r"\\u+([0-9a-fA-F]{4})")
 RECOVERY_DATASOURCE_URL = (
     "jdbc:postgresql://${FIREMUD_RECOVERY_CONTROL_DB_HOST}:${FIREMUD_RECOVERY_CONTROL_DB_PORT:5432}"
-    "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended"
+    "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended&options=-c%20lock_timeout%3D10s"
 )
 RECOVERY_DATABASE_PORT = "firemudrecoverycontroldbport"
 RECOVERY_DATABASE_CREDENTIAL_SELECTORS = {
@@ -56,9 +63,27 @@ RECOVERY_DATABASE_CREDENTIAL_SELECTORS = {
     "firemudrecoverycontroldbpassword",
 }
 PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties|xml)$")
-RUNTIME_DEPENDENCY_RE = re.compile(
-    r'(?:implementation|api|runtimeOnly)\s*\(\s*project\(\s*":([^\"]+)"'
-    r'|dependencies\.add\(\s*"(?:implementation|api|runtimeOnly)"\s*,\s*project\.project\(\s*":([^\"]+)"'
+BOOT_CONFIG_NAME_RE = re.compile(r"/src/main/resources/(?:config/)?application(?:-[^/]+)?\.(?:ya?ml|properties|xml)$")
+RUNTIME_CONFIGURATIONS = r"(?:implementation|api|runtimeOnly)"
+RUNTIME_DEPENDENCY_CALL_RE = re.compile(
+    rf'(?<![\w$])(?:{RUNTIME_CONFIGURATIONS}|"{RUNTIME_CONFIGURATIONS}")\s*\(\s*'
+    rf'|\b(?:dependencies\.)?add\s*\(\s*"{RUNTIME_CONFIGURATIONS}"\s*,\s*'
+)
+RUNTIME_PROJECT_ARGUMENT_RE = re.compile(
+    r'(?:project\.)?project\s*\(\s*":([\w-]+)"\s*\)\s*\)'
+)
+EXTERNAL_RUNTIME_DEPENDENCY_RE = re.compile(
+    r'(?:"[\w.+-]+:[\w.+-]+(?::[\w.+-]+)?"|libs\.[\w.]+'
+    r'|libs\.findLibrary\("[\w.-]+"\)\.get\(\))\s*\)'
+)
+RUNTIME_DEPENDENCY_OPTIONS_RE = re.compile(r"\s*\{")
+LEGACY_RECOVERY_LOCATION_RE = re.compile(r"classpath:db/migration(?:/[\w-]+)*")
+REPLACEMENT_FLYWAY_RE = re.compile(
+    r'(?<![\w$])(?:FlywayMigrationInitializer\b|(?:new\s+(?:org\.flywaydb\.core\.)?Flyway\s*\()'
+    r'|(?:Flyway\s*\.\s*configure\s*\()'
+    r'|(?:registerBean\s*\([^;]*?\bFlyway\s*\.\s*class\b)'
+    r'|(?:@(?:org\.springframework\.context\.annotation\.)?Bean\b'
+    r'[^{};]*?\bFlyway\s+[\w$]+\s*\())'
 )
 
 
@@ -112,17 +137,28 @@ def decode_indexed_string_list(
         ambiguous.discard(path)
     return True
 PLUGIN_RE = re.compile(r'(?:\bid|pluginManager\.apply)\(\s*"([^\"]+)"\s*\)')
+KOTLIN_COMMENT_OR_LITERAL_RE = re.compile(
+    r'//[^\r\n]*|/\*|"""[\s\S]*?"""|"(?:\\.|[^"\\\r\n])*"'
+    r"|'(?:\\.|[^'\\\r\n])*'"
+)
+KOTLIN_BLOCK_COMMENT_RE = re.compile(r"/\*|\*/")
 Snapshot = dict[str, bytes]
 SYMLINK_SNAPSHOT = b"\0recovery-migration-symlink\0"
 
 
-class UniqueKeyLoader(yaml.SafeLoader):
-    """Reject repeated keys authored in a mapping before YAML merge expansion."""
+class RuntimeLiteralLoader(yaml.SafeLoader):
+    """Bound merge expansion and reject repeated keys authored in Recovery YAML."""
 
     def __init__(self, stream: object) -> None:
         super().__init__(stream)
         self._authored_mappings_checked: set[yaml.MappingNode] = set()
         self._flattening_mappings: set[yaml.MappingNode] = set()
+        self._merge_entries = 0
+
+    def construct_document(self, node: yaml.Node) -> object:
+        self._authored_mappings_checked.clear()
+        self._merge_entries = 0
+        return super().construct_document(node)
 
     def flatten_mapping(self, node: yaml.MappingNode) -> None:
         if node in self._flattening_mappings:
@@ -159,20 +195,29 @@ class UniqueKeyLoader(yaml.SafeLoader):
                     "while constructing a mapping", node.start_mark,
                     "found unhashable YAML key", key_node.start_mark,
                 ) from error
-        super().flatten_mapping(node)
-
-
-class RuntimeLiteralLoader(UniqueKeyLoader):
-    """Use the supported subset of packaged Recovery YAML."""
-
-    def flatten_mapping(self, node: yaml.MappingNode) -> None:
-        for merge_key, sources in node.value:
-            if (merge_key.tag == "tag:yaml.org,2002:merge"
-                    and isinstance(sources, yaml.SequenceNode) and len(sources.value) > 1):
-                raise yaml.constructor.ConstructorError(
-                    "while constructing a Recovery mapping", node.start_mark,
-                    "multi-source YAML merges are unsupported in packaged Recovery YAML", merge_key.start_mark,
-                )
+        for key_node, source in node.value:
+            if key_node.tag != "tag:yaml.org,2002:merge":
+                continue
+            if isinstance(source, yaml.SequenceNode):
+                if len(source.value) > 1:
+                    raise yaml.constructor.ConstructorError(
+                        "while constructing a Recovery mapping", node.start_mark,
+                        "multi-source YAML merges are unsupported in packaged Recovery YAML",
+                        key_node.start_mark,
+                    )
+                if not source.value:
+                    continue
+                source = source.value[0]
+            if isinstance(source, yaml.MappingNode):
+                self.flatten_mapping(source)
+                # Charge every copied entry, including defaults shadowed by a local key.
+                self._merge_entries += len(source.value)
+                if self._merge_entries > RECOVERY_YAML_ENTRY_LIMIT:
+                    raise yaml.constructor.ConstructorError(
+                        "while constructing a Recovery mapping", node.start_mark,
+                        f"packaged Spring YAML exceeds {RECOVERY_YAML_ENTRY_LIMIT} expanded entries per document",
+                        key_node.start_mark,
+                    )
         super().flatten_mapping(node)
 
 
@@ -214,7 +259,7 @@ def recovery_config_path(path: str) -> bool:
 
 
 def relevant_path(path: str) -> bool:
-    return path == RECOVERY_CONFIG_DIRECTORY or path in RECOVERY_MIGRATION_ANCESTORS or bool(migration_path(path)) or (
+    return path == RECOVERY_CONFIG_DIRECTORY or path in RECOVERY_MIGRATION_ANCESTORS or bool(MIGRATION_PATH_RE.match(path)) or (
         path.startswith(RECOVERY_MAIN_JAVA_ROOT) and path.endswith(".java")
     ) or (
         path.startswith("services/")
@@ -239,11 +284,10 @@ def current_snapshot(repo_root: Path) -> Snapshot:
              *repo_root.glob("services/*/src/main/resources/config/application*.xml"),
              *repo_root.glob("services/*/src/main/resources/db/migration/**/*"),
              *repo_root.glob("services/*/src/main/java/db/migration/**/*"),
+             *repo_root.glob("services/*/src/main/resources/db/recovery-control-migration/**/*"),
+             *repo_root.glob("services/*/src/main/java/db/recovery-control-migration/**/*"),
              *repo_root.glob(f"{RECOVERY_MAIN_JAVA_ROOT}**/*.java"),
              *repo_root.glob("buildSrc/**/*.kt"), *repo_root.glob("buildSrc/**/*.kts")]
-    for root in RECOVERY_MIGRATION_ROOTS:
-        if not root.startswith(linked_prefixes):
-            paths.extend(repo_root.glob(f"{root}**/*"))
     snapshot = {}
     for path in paths:
         relative = path.relative_to(repo_root).as_posix()
@@ -397,10 +441,17 @@ def java_code_tokens(source: str) -> str:
     return "".join(characters)
 
 
-def recovery_input_issues(snapshot: Snapshot) -> list[str]:
+def recovery_input_issues(snapshot: Snapshot, dependencies: set[str]) -> list[str]:
     """Apply the SQL-only Recovery input policy to either side of a comparison."""
     issues = []
     for path in sorted(snapshot):
+        if BOOT_CONFIG_NAME_RE.search(path) and path.split("/")[1] in dependencies:
+            # Classpath config is discovered from the packaged libraries too.
+            # The source snapshot cannot establish precedence for those resources.
+            issues.append(f"{path}: Recovery runtime dependency publishes default packaged Spring configuration")
+        match = MIGRATION_PATH_RE.match(path)
+        if match and match.group(2) == "recovery-control-migration" and match.group(1) in dependencies:
+            issues.append(f"{path}: Recovery runtime dependency contributes to its reserved migration location")
         if path.startswith(RECOVERY_MAIN_JAVA_ROOT) and path.endswith(".java"):
             source = snapshot[path].decode("utf-8", errors="replace")
             tokens = java_code_tokens(source)
@@ -413,6 +464,20 @@ def recovery_input_issues(snapshot: Snapshot) -> list[str]:
                 issues.append(
                     f"{path}: Recovery FlywayMigrationStrategy beans are unsupported; "
                     "packaged SQL must use the default Flyway initializer"
+                )
+            if re.search(r"(?<![\w$])FlywayConfigurationCustomizer(?![\w$])", tokens):
+                issues.append(
+                    f"{path}: Recovery FlywayConfigurationCustomizer beans are unsupported; "
+                    "the packaged migration selection must match the checked SQL"
+                )
+            if path not in RECOVERY_CALLBACK_SOURCES and re.search(
+                r"(?<![\w$])(?:Callback|BaseCallback)(?![\w$])", tokens
+            ):
+                issues.append(f"{path}: Recovery Flyway only supports its transactional migration callback")
+            if REPLACEMENT_FLYWAY_RE.search(tokens):
+                issues.append(
+                    f"{path}: Recovery replacement Flyway beans are unsupported; "
+                    "packaged SQL must use the Boot-managed Flyway and initializer"
                 )
         if snapshot[path] == SYMLINK_SNAPSHOT and (
             path in RECOVERY_MIGRATION_ANCESTORS or path.startswith(RECOVERY_MIGRATION_ROOTS)
@@ -461,75 +526,151 @@ def discover_migration_files(snapshot: Snapshot) -> list[MigrationFile]:
     return discovered
 
 
-def saga_runtime_projects(snapshot: Snapshot) -> set[str]:
+def kotlin_source(source: str, path: str) -> tuple[str, str, set[int]]:
+    """Preserve literal arguments separately from the executable call positions."""
+    arguments = list(source)
+    code = arguments.copy()
+    literal_starts = set()
+    cursor = 0
+    while match := KOTLIN_COMMENT_OR_LITERAL_RE.search(source, cursor):
+        cursor = match.end()
+        token = match.group()
+        if token == "/*":
+            depth = 1
+            while depth:
+                delimiter = KOTLIN_BLOCK_COMMENT_RE.search(source, cursor)
+                if delimiter is None:
+                    raise ValueError(f"{path}: unterminated Kotlin block comment")
+                depth += 1 if delimiter.group() == "/*" else -1
+                cursor = delimiter.end()
+        blank = re.sub(r"[^\r\n]", " ", source[match.start():cursor])
+        code[match.start():cursor] = blank
+        if token.startswith(("//", "/*")):
+            arguments[match.start():cursor] = blank
+        else:
+            literal_starts.add(match.start())
+    return "".join(arguments), "".join(code), literal_starts
+
+
+def runtime_project_dependencies(
+    snapshot: Snapshot, recovery_issues: list[str] | None = None,
+) -> dict[str, set[str]]:
     """Read existing runtime dependencies and composed convention plugins, not classifications.
 
     This follows the repository's literal Kotlin DSL wiring. Test dependencies are
-    deliberately excluded: they do not put Saga resources on startup classpaths.
+    deliberately excluded from startup classpaths.
     """
-    registration = snapshot.get("buildSrc/build.gradle.kts", b"").decode()
-    plugin_sources: dict[str, str] = {}
-    for plugin_id, class_name in re.findall(
+    registration_path = "buildSrc/build.gradle.kts"
+    registration, registration_code, _ = kotlin_source(
+        snapshot.get(registration_path, b"").decode(), registration_path,
+    )
+    plugin_paths: dict[str, str] = {}
+    for match in re.finditer(
         r'id\s*=\s*"([^\"]+)"\s+implementationClass\s*=\s*"([^\"]+)"', registration
     ):
+        if registration_code[match.start()].isspace():
+            continue
+        plugin_id, class_name = match.groups()
         path = "buildSrc/src/main/kotlin/" + class_name.replace(".", "/") + ".kt"
         if path not in snapshot:
             raise ValueError(f"missing convention source for {plugin_id}: {path}")
-        plugin_sources[plugin_id] = snapshot[path].decode()
+        plugin_paths[plugin_id] = path
 
-    module_sources = {path.split("/")[1]: data.decode() for path, data in snapshot.items()
-                      if re.fullmatch(r"services/[^/]+/build.gradle.kts", path)}
+    module_paths = {path.split("/")[1]: path for path in snapshot
+                    if re.fullmatch(r"services/[^/]+/build.gradle.kts", path)}
 
-    def reaches_saga(source: str, visited: set[str]) -> bool:
-        for dependency in RUNTIME_DEPENDENCY_RE.findall(source):
-            module = next(part for part in dependency if part)
-            if module == "common-saga":
-                return True
+    def collect(path: str, visited: set[str], dependencies: set[str], qualifying_recovery: bool) -> None:
+        source, code, literal_starts = kotlin_source(snapshot[path].decode(), path)
+        for call in RUNTIME_DEPENDENCY_CALL_RE.finditer(source):
+            if code[call.start()].isspace() and call.start() not in literal_starts:
+                continue
+            project_match = RUNTIME_PROJECT_ARGUMENT_RE.match(source, call.end())
+            declaration = project_match or EXTERNAL_RUNTIME_DEPENDENCY_RE.match(source, call.end())
+            if (qualifying_recovery and recovery_issues is not None
+                    and (declaration is None or RUNTIME_DEPENDENCY_OPTIONS_RE.match(source, declaration.end()))):
+                line = source.count("\n", 0, call.start()) + 1
+                recovery_issues.append(f"{path}:{line}: cannot resolve Recovery production runtime dependency "
+                                       "from supported literal Gradle wiring")
+            if project_match is None:
+                continue
+            module = project_match.group(1)
+            dependencies.add(module)
             key = "module:" + module
-            if (key not in visited and module in module_sources
-                    and reaches_saga(module_sources[module], visited | {key})):
-                return True
-        for plugin in PLUGIN_RE.findall(source):
+            if key not in visited and module in module_paths:
+                visited.add(key)
+                collect(module_paths[module], visited, dependencies, qualifying_recovery)
+        for match in PLUGIN_RE.finditer(source):
+            if code[match.start()].isspace():
+                continue
+            plugin = match.group(1)
             key = "plugin:" + plugin
-            if (key not in visited and plugin in plugin_sources
-                    and reaches_saga(plugin_sources[plugin], visited | {key})):
-                return True
-        return False
+            if key not in visited and plugin in plugin_paths:
+                visited.add(key)
+                collect(plugin_paths[plugin], visited, dependencies, qualifying_recovery)
 
-    return {project for project, source in module_sources.items()
-            if reaches_saga(source, {"module:" + project})}
+    projects: dict[str, set[str]] = {}
+    for project, path in module_paths.items():
+        dependencies: set[str] = set()
+        collect(path, {"module:" + project}, dependencies, project == RECOVERY_PROJECT)
+        projects[project] = dependencies - {project}
+    return projects
 
 
-def saga_adopters(
-    snapshot: Snapshot, *, require_current_configuration: bool = True,
-) -> set[str]:
+def saga_adopters(snapshot: Snapshot, runtime_dependencies: dict[str, set[str]]) -> set[str]:
     adopters = set()
-    for project in saga_runtime_projects(snapshot):
-        # Flyway scans nested packages below db/migration, so the parent location
-        # exposes Saga resources too, even without a redundant explicit saga location.
-        if project == RECOVERY_PROJECT:
-            # Recovery has stricter, already-qualified effective config parsing.
-            # In particular, a higher-priority /config/application.yml can replace
-            # a root location list; root-only scanning would invent Saga adoption.
-            config = recovery_flyway_config(
-                snapshot, project,
-                require_current_configuration=require_current_configuration,
-            )
-            loads_saga_location = config is not None and any(
-                location in {"classpath:db/migration", "classpath:db/migration/saga"}
-                for location in config.locations
-            )
-        else:
-            configured_files = [data.decode() for path, data in snapshot.items()
-                                if re.fullmatch(
-                                    rf"services/{re.escape(project)}/src/main/resources/application[^/]*\.ya?ml",
-                                    path,
-                                )]
-            loads_saga_location = any(
-                re.search(r"classpath:db/migration(?:/saga)?(?:[\s,\"']|$)", text)
-                for text in configured_files
-            )
-        if loads_saga_location:
+    location_property = "spring.flyway.locations"
+    enable_property = "spring.flyway.enabled"
+    for project, dependencies in runtime_dependencies.items():
+        if project == RECOVERY_PROJECT or "common-saga" not in dependencies:
+            continue
+        resource_root = f"services/{project}/src/main/resources"
+        base_paths = packaged_base_yaml_paths(resource_root)
+        profiles = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application-(?P<profile>[^/]+)\.ya?ml")
+        profile_paths = sorted(
+            (path for path in snapshot if profiles.fullmatch(path)),
+            key=lambda path: ("/config/" in path, path.endswith(".yml"), path),
+        )
+        saga_by_profile: dict[str, bool] = {}
+        enabled_by_profile: dict[str, bool] = {}
+        for path in [*base_paths, *profile_paths]:
+            profile_match = profiles.fullmatch(path)
+            profile = profile_match.group("profile") if profile_match else ""
+            for configuration in packaged_yaml_documents(snapshot, path):
+                if configuration is None:
+                    raise ValueError(f"{path}: packaged Spring configuration must be a mapping")
+                properties, ambiguous = configuration
+                conditional = any(property_name.startswith("spring.config.activate.")
+                                  for property_name in properties)
+                if enable_property in properties:
+                    enabled = spring_boolean(properties[enable_property])
+                    if enabled is None or enable_property in ambiguous:
+                        raise ValueError(f"{path}: cannot resolve packaged Saga Flyway enabled setting")
+                    if enabled or not conditional:
+                        enabled_by_profile[profile] = enabled
+                if not decode_indexed_string_list(properties, ambiguous, location_property):
+                    raise ValueError(f"{path}: cannot resolve packaged Saga Flyway locations")
+                if location_property not in properties:
+                    continue
+                if location_property in ambiguous:
+                    raise ValueError(f"{path}: cannot resolve packaged Saga Flyway locations")
+                locations = properties[location_property]
+                if locations is None:
+                    locations = []
+                if isinstance(locations, str):
+                    locations = [location.strip(JAVA_TRIM_CHARACTERS) for location in locations.split(",")]
+                if not isinstance(locations, list) or not all(isinstance(location, str) for location in locations):
+                    raise ValueError(f"{path}: cannot resolve packaged Saga Flyway locations")
+                # The default migration root also exposes its nested Saga resources.
+                loads_saga = any(location.startswith("classpath:") and
+                                 location.removeprefix("classpath:").strip("/")
+                                 in {"db/migration", "db/migration/saga"} for location in locations)
+                if loads_saga or not conditional:
+                    # Without runtime profile selection, retain possible Saga history
+                    # from conditional documents, and fold unconditional overrides in order.
+                    saga_by_profile[profile] = loads_saga
+        if any(enabled_by_profile.get(profile, enabled_by_profile.get("", True))
+               and saga_by_profile.get(profile, saga_by_profile.get("", True))
+               for profile in {""} | saga_by_profile.keys() | enabled_by_profile.keys()):
             adopters.add(project)
     return adopters
 
@@ -552,17 +693,19 @@ def effective_sets(
     snapshot: Snapshot,
     migrations: list[MigrationFile],
     recovery_locations: set[str],
-    *,
-    require_current_configuration: bool = True,
+    runtime_dependencies: dict[str, set[str]],
 ) -> dict[str, list[MigrationFile]]:
     grouped: dict[str, list[MigrationFile]] = {}
+    recovery_dependencies = runtime_dependencies.get(RECOVERY_PROJECT, set())
     for item in migrations:
-        if item.project == RECOVERY_PROJECT and not recovery_loads_migration(item, recovery_locations):
-            continue
-        grouped.setdefault(item.project, []).append(item)
+        if item.project != RECOVERY_PROJECT:
+            grouped.setdefault(item.project, []).append(item)
+        if (item.project == RECOVERY_PROJECT or item.project in recovery_dependencies) and (
+            recovery_loads_migration(item, recovery_locations)
+        ):
+            grouped.setdefault(RECOVERY_PROJECT, []).append(item)
     shared = grouped.get("common-saga", [])
-    for adopter in saga_adopters(
-            snapshot, require_current_configuration=require_current_configuration):
+    for adopter in saga_adopters(snapshot, runtime_dependencies):
         grouped.setdefault(adopter, []).extend(shared)
     return grouped
 
@@ -580,64 +723,94 @@ def spring_boolean(value: object) -> bool | None:
     return None
 
 
+def flatten_properties(
+    value: object,
+    prefix: tuple[str, ...],
+    properties: dict[str, object],
+    ambiguous: set[str],
+) -> None:
+    if not isinstance(value, dict):
+        return
+    for key, child in value.items():
+        if not isinstance(key, str):
+            continue
+        parts = []
+        for part in key.split("."):
+            name, bracket, index = part.partition("[")
+            parts.append(re.sub(r"[-_]", "", name).lower() + bracket + index)
+        child_prefix = (*prefix, *parts)
+        if prefix and key.startswith("["):
+            child_prefix = (*prefix[:-1], prefix[-1] + parts[0], *parts[1:])
+        path = ".".join(child_prefix)
+        if path in properties:
+            previous = properties[path]
+            if type(previous) is not type(child) or previous != child:
+                ambiguous.add(path)
+        properties[path] = child
+        flatten_properties(child, child_prefix, properties, ambiguous)
+
+def count_yaml_entries(
+    value: object, active: set[int], completed: dict[int, int], config_path: str,
+) -> int:
+    # Count the expanded entries before flattening or comparing properties.
+    # Memoization lets each alias contribute its full size without expanding it.
+    if not isinstance(value, (dict, list)):
+        return 0
+    identity = id(value)
+    if identity in active:
+        raise ValueError(f"{config_path}: recursive YAML aliases are unsupported")
+    if identity in completed:
+        return completed[identity]
+    active.add(identity)
+    entries = 0
+    try:
+        children = value.values() if isinstance(value, dict) else value
+        for child in children:
+            entries += 1 + count_yaml_entries(child, active, completed, config_path)
+            if entries > RECOVERY_YAML_ENTRY_LIMIT:
+                raise ValueError(f"{config_path}: packaged Spring YAML exceeds "
+                                 f"{RECOVERY_YAML_ENTRY_LIMIT} expanded entries per document")
+    finally:
+        active.remove(identity)
+    completed[identity] = entries
+    return entries
+
+def packaged_base_yaml_paths(resource_root: str) -> list[str]:
+    # Config in the packaged config/ directory takes precedence over the root.
+    return [f"{directory}/application.{extension}"
+            for directory in (resource_root, f"{resource_root}/config")
+            for extension in ("yaml", "yml")]
+
+
+def packaged_yaml_documents(
+    snapshot: Snapshot, path: str,
+) -> Iterator[tuple[dict[str, object], set[str]] | None]:
+    try:
+        documents = list(yaml.load_all(snapshot.get(path, b""), Loader=RuntimeLiteralLoader))
+    except (yaml.YAMLError, RecursionError) as error:
+        raise ValueError(f"{path}: invalid packaged Spring configuration: {error}") from error
+    for document in documents:
+        if document is None:
+            continue
+        if not isinstance(document, dict):
+            yield None
+            continue
+        properties: dict[str, object] = {}
+        ambiguous: set[str] = set()
+        try:
+            count_yaml_entries(document, set(), {}, path)
+            flatten_properties(document, (), properties, ambiguous)
+        except RecursionError as error:
+            raise ValueError(f"{path}: packaged Spring YAML nesting is too deep") from error
+        yield properties, ambiguous
+
+
 def recovery_flyway_config(
     snapshot: Snapshot,
     project: str,
     *,
     require_current_configuration: bool = True,
 ) -> RecoveryFlywayConfig | None:
-    def flatten_properties(
-        value: object,
-        prefix: tuple[str, ...],
-        properties: dict[str, object],
-        ambiguous: set[str],
-    ) -> None:
-        if not isinstance(value, dict):
-            return
-        for key, child in value.items():
-            if not isinstance(key, str):
-                continue
-            parts = []
-            for part in key.split("."):
-                name, bracket, index = part.partition("[")
-                parts.append(re.sub(r"[-_]", "", name).lower() + bracket + index)
-            child_prefix = (*prefix, *parts)
-            if prefix and key.startswith("["):
-                child_prefix = (*prefix[:-1], prefix[-1] + parts[0], *parts[1:])
-            path = ".".join(child_prefix)
-            if path in properties:
-                previous = properties[path]
-                if type(previous) is not type(child) or previous != child:
-                    ambiguous.add(path)
-            properties[path] = child
-            flatten_properties(child, child_prefix, properties, ambiguous)
-
-    def count_yaml_entries(
-        value: object, active: set[int], completed: dict[int, int], config_path: str,
-    ) -> int:
-        # Count the expanded entries before flattening or comparing properties.
-        # Memoization lets each alias contribute its full size without expanding it.
-        if not isinstance(value, (dict, list)):
-            return 0
-        identity = id(value)
-        if identity in active:
-            raise ValueError(f"{config_path}: recursive YAML aliases are unsupported")
-        if identity in completed:
-            return completed[identity]
-        active.add(identity)
-        entries = 0
-        try:
-            children = value.values() if isinstance(value, dict) else value
-            for child in children:
-                entries += 1 + count_yaml_entries(child, active, completed, config_path)
-                if entries > RECOVERY_YAML_ENTRY_LIMIT:
-                    raise ValueError(f"{config_path}: packaged Spring YAML exceeds "
-                                     f"{RECOVERY_YAML_ENTRY_LIMIT} expanded entries per document")
-        finally:
-            active.remove(identity)
-        completed[identity] = entries
-        return entries
-
     resource_root = f"services/{project}/src/main/resources"
     # Properties and imported files can override the packaged YAML. This static
     # check qualifies only the configuration sources it can evaluate completely.
@@ -647,11 +820,7 @@ def recovery_flyway_config(
     xml_pattern = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application(?:-[^/]+)?\.xml")
     if any(xml_pattern.fullmatch(path) for path in snapshot):
         return None
-    # Config in the packaged config/ directory takes precedence over the root.
-    # Within a location Spring Boot gives .yml precedence over .yaml.
-    base_paths = [f"{directory}/application.{extension}"
-                  for directory in (resource_root, f"{resource_root}/config")
-                  for extension in ("yaml", "yml")]
+    base_paths = packaged_base_yaml_paths(resource_root)
     profile_pattern = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application-[^/]+\.ya?ml")
     profile_paths = sorted(path for path in snapshot if profile_pattern.fullmatch(path))
     profile_selection = re.compile(r"^spring\.profiles\.(?:active|default|include)(?:\[0\])?$")
@@ -683,23 +852,10 @@ def recovery_flyway_config(
     placeholder_replacement = "spring.flyway.placeholderreplacement"
     effective_exclusions: list[str] | None = None
     for config_path in [*base_paths, *profile_paths]:
-        try:
-            documents = list(yaml.load_all(snapshot.get(config_path, b""), Loader=RuntimeLiteralLoader))
-        except (yaml.YAMLError, RecursionError) as error:
-            raise ValueError(f"{config_path}: invalid packaged Spring configuration: {error}") from error
-
-        for document in documents:
-            if document is None:
-                continue
-            if not isinstance(document, dict):
+        for configuration in packaged_yaml_documents(snapshot, config_path):
+            if configuration is None:
                 return None
-            properties: dict[str, object] = {}
-            ambiguous: set[str] = set()
-            try:
-                count_yaml_entries(document, set(), {}, config_path)
-                flatten_properties(document, (), properties, ambiguous)
-            except RecursionError as error:
-                raise ValueError(f"{config_path}: packaged Spring YAML nesting is too deep") from error
+            properties, ambiguous = configuration
             obsolete_profile_index = re.compile(
                 r"^spring\.profiles(?:\[[^]]+\]|\.[0-9]+)(?:\.|$)"
             )
@@ -777,6 +933,9 @@ def recovery_flyway_config(
                                  recovery_database_host, RECOVERY_DATABASE_PORT,
                                  *RECOVERY_DATABASE_CREDENTIAL_SELECTORS,
                                  "spring.flyway.validateonmigrate",
+                                 "spring.flyway.connectretries",
+                                 "spring.flyway.connectretriesinterval",
+                                 "spring.flyway.lockretrycount",
                                  "spring.datasource.url", "spring.datasource.hikari.jdbcurl",
                                  "spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
                                  "spring.flyway.table", "spring.flyway.schemas", "spring.flyway.defaultschema",
@@ -863,7 +1022,8 @@ def recovery_flyway_config(
     if spring_boolean(auto_configuration_enabled) is not True:
         return None
     if effective_exclusions is not None and any(
-        name.strip().rsplit(".", 1)[-1] in {"FlywayAutoConfiguration", "DataSourceAutoConfiguration"}
+        name.strip() == RECOVERY_OWNER_CONFIGURATION
+        or name.strip().rsplit(".", 1)[-1] in {"FlywayAutoConfiguration", "DataSourceAutoConfiguration"}
         for name in effective_exclusions
     ):
         return None
@@ -892,6 +1052,25 @@ def recovery_flyway_config(
     if "tablespace" in flyway:
         # The checker cannot establish that an explicit history tablespace exists.
         return None
+    for count in ("connectretries", "lockretrycount"):
+        retry_count = flyway.get(count)
+        if count not in flyway or count == "connectretries" and retry_count is None:
+            continue
+        if isinstance(retry_count, str) and re.fullmatch(r"\+?[0-9]+", retry_count):
+            digits = retry_count.lstrip("+0")
+            if len(digits) > 10:
+                return None
+            retry_count = int(digits or "0")
+        if type(retry_count) is not int or not 0 <= retry_count <= 2**31 - 1:
+            return None
+    if "connectretriesinterval" in flyway:
+        # Only qualify an explicit duration whose whole-second Flyway value is
+        # unambiguous. Omission leaves the pinned Spring Boot default in effect.
+        interval = flyway["connectretriesinterval"]
+        if not isinstance(interval, str) or not re.fullmatch(r"[0-9]{1,10}s", interval):
+            return None
+        if int(interval[:-1]) > 2**31 - 1:
+            return None
     encoding = flyway.get("encoding", "UTF-8")
     # The pinned Java UTF-8 charset deliberately has a different alias set from Python.
     if (not isinstance(encoding, str)
@@ -906,7 +1085,8 @@ def recovery_flyway_config(
         ignore_patterns = [] if not ignore_patterns else ignore_patterns.split(",")
     if not isinstance(ignore_patterns, list) or any(
             not isinstance(pattern, str)
-            or pattern.strip(JAVA_TRIM_CHARACTERS).lower()
+            or ":".join(token.strip(JAVA_TRIM_CHARACTERS)
+                        for token in pattern.lower().split(":"))
             not in {"*:future", "versioned:future", "repeatable:future"}
             for pattern in ignore_patterns):
         return None
@@ -978,26 +1158,29 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
     migrations = discover_migration_files(current)
     recovery_config = recovery_flyway_config(current, RECOVERY_PROJECT)
     recovery_locations = recovery_config.locations if recovery_config else set()
-    grouped = effective_sets(current, migrations, recovery_locations)
     issues = []
+    current_dependencies = runtime_project_dependencies(current, issues)
+    grouped = effective_sets(current, migrations, recovery_locations, current_dependencies)
     project_root = f"services/{RECOVERY_PROJECT}"
 
     parent_migrations = discover_migration_files(parent) if parent is not None else []
     parent_grouped = {}
     if parent is not None:
-        issues.extend(recovery_input_issues(parent))
+        parent_dependencies = runtime_project_dependencies(parent, issues)
+        recovery_parent_dependencies = parent_dependencies.get(RECOVERY_PROJECT, set())
+        issues.extend(recovery_input_issues(parent, recovery_parent_dependencies))
         recovery_parent_migrations = [item for item in parent_migrations if item.project == RECOVERY_PROJECT]
-        has_inherited_saga = (
-            any(item.project == "common-saga" for item in parent_migrations)
-            and RECOVERY_PROJECT in saga_runtime_projects(parent)
+        has_possible_parent_history = bool(recovery_parent_migrations) or any(
+            item.project in recovery_parent_dependencies for item in parent_migrations
         )
         parent_config = recovery_flyway_config(
             parent, RECOVERY_PROJECT, require_current_configuration=False,
-        ) if recovery_parent_migrations or has_inherited_saga else None
+        ) if has_possible_parent_history else None
         parent_locations = parent_config.locations if parent_config else set()
-        if (recovery_parent_migrations or has_inherited_saga) and (
+        if has_possible_parent_history and (
             not parent_locations
-            or not parent_locations <= {RECOVERY_LOCATION, "classpath:db/migration", "classpath:db/migration/saga"}
+            or any(location != RECOVERY_LOCATION and not LEGACY_RECOVERY_LOCATION_RE.fullmatch(location)
+                   for location in parent_locations)
             or any(
                 item.location == RECOVERY_LOCATION
                 and (RECOVERY_LOCATION not in parent_locations or not is_recovery_sql_migration(item))
@@ -1007,8 +1190,7 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
             issues.append(f"{project_root}: cannot qualify the receiving parent's packaged Flyway configuration "
                           "and effective versioned migration history")
         parent_grouped = effective_sets(
-            parent, parent_migrations, parent_locations,
-            require_current_configuration=False,
+            parent, parent_migrations, parent_locations, parent_dependencies,
         )
         if recovery_config and parent_config and parent_config.placeholder_delimiters:
             prefix, suffix = parent_config.placeholder_delimiters
@@ -1030,7 +1212,7 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
                           "non-empty connection init SQL or callback locations, automatic baselining, or dry-run output")
         if not any(is_recovery_sql_migration(item) for item in migrations):
             issues.append(f"{project_root}: requires at least one versioned migration in the recovery-control location")
-    issues.extend(recovery_input_issues(current))
+    issues.extend(recovery_input_issues(current, current_dependencies.get(RECOVERY_PROJECT, set())))
     for project, items in sorted(grouped.items()):
         seen: dict[tuple[int, ...], MigrationFile] = {}
         for item in items:
@@ -1093,6 +1275,24 @@ def run_self_test() -> None:
             raise AssertionError(f"{label}: expected {expected!r}, got {issues}")
 
     check("unchanged legacy history", history, history, None)
+    root_saga_config = "services/example-service/src/main/resources/application.yml"
+    nested_saga_config = root_saga_config.replace("/application.yml", "/config/application.yml")
+    nested_saga_history = {path: data for path, data in history.items() if path != root_saga_config}
+    nested_saga_history[nested_saga_config] = history[root_saga_config]
+    check("moving an adopter's configuration to config/ preserves Saga history",
+          nested_saga_history, history, None)
+    check("Saga history in config/ sets the effective parent frontier",
+          {**nested_saga_history, local + "V2__new.sql": b"-- new"},
+          nested_saga_history, "frontier V1002")
+    for config in (b"spring.flyway.locations: classpath:/db/migration/\n", b"spring.flyway.enabled: true\n"):
+        inherited_saga = {**history, root_saga_config: config}
+        check("Flyway classpath aliases and default locations include Saga history",
+              {**inherited_saga, local + "V2__new.sql": b"-- new"},
+              inherited_saga, "frontier V1002")
+    for config in (b"spring.flyway.enabled: false\n", b"spring.flyway.locations: classpath:other\n"):
+        isolated_history = {**history, root_saga_config: config}
+        check("Disabled or explicitly separate Flyway does not adopt Saga history",
+              {**isolated_history, local + "V2__new.sql": b"-- new"}, isolated_history, None)
     check("duplicate-only without a base", history, None, None)
     check("new low local", {**history, local + "V2__new.sql": b"-- new"}, history, "frontier V1002")
     check("forward local", {**history, local + "V1003__new.sql": b"-- new"}, history, None)
@@ -1114,6 +1314,16 @@ def run_self_test() -> None:
     }
     check("newly effective shared history below local frontier", newly_adopted, unadopted_parent, "frontier V2000")
     check("unchanged non-adopter with raw shared history", unadopted_parent, unadopted_parent, None)
+    later_local_only = {
+        **unadopted_parent,
+        "services/example-service/build.gradle.kts": wiring["services/example-service/build.gradle.kts"],
+        nested_saga_config: (
+            b"spring.flyway.locations: [classpath:db/migration, classpath:db/migration/saga]\n"
+            b"---\nspring:\n  flyway:\n    locations: [classpath:db/migration/local]\n"
+        ),
+    }
+    check("a later unconditional YAML document replaces earlier Saga locations",
+          later_local_only, unadopted_parent, None)
 
     forward_parent = {path: data for path, data in unadopted_parent.items()
                       if path != local + "V2000__init.sql"}
@@ -1168,6 +1378,20 @@ def run_self_test() -> None:
     )
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    foreign_location = "services/common-platform-core/src/main/resources/db/recovery-control-migration/V1__shared.sql"
+    foreign_resource = {**recovery_history, foreign_location: b"-- unrelated unless loaded"}
+    check("another module does not qualify as Recovery migration history",
+          foreign_resource, recovery_history, None)
+    check("Recovery runtime dependencies cannot publish the reserved migration location", {
+        **foreign_resource,
+        f"services/{RECOVERY_PROJECT}/build.gradle.kts":
+            b'dependencies { implementation(project(":common-platform-core")) }',
+    }, recovery_history, "Recovery runtime dependency contributes to its reserved migration location")
+    check("Recovery customizers cannot change the qualifying migration selection", {
+        **recovery_history,
+        f"{RECOVERY_MAIN_JAVA_ROOT}Override.java":
+            b"@Bean FlywayConfigurationCustomizer pinTarget() { return c -> c.target(1); }",
+    }, recovery_history, "Recovery FlywayConfigurationCustomizer beans are unsupported")
     for credential in (b"username", b"password"):
         missing_credential = datasource_setting.replace(
             b"spring.datasource." + credential + b": ${FIREMUD_RECOVERY_CONTROL_DB_"
@@ -1259,6 +1483,29 @@ def run_self_test() -> None:
             b"@Bean FlywayMigrationStrategy recoveryStrategy() { return migrationStrategy; }\n"
         ),
     }, recovery_history, "FlywayMigrationStrategy beans are unsupported")
+    check("a Recovery bean cannot replace Boot-managed Flyway", {
+        **recovery_history,
+        f"{RECOVERY_MAIN_JAVA_ROOT}Override.java": (
+            b"@Bean public org.flywaydb.core.Flyway embeddedFlyway() { return flywayFactory(); }"
+        ),
+    }, recovery_history, "Recovery replacement Flyway beans are unsupported")
+    check("Boot-managed Flyway keeps the inspection guard and transactional callback eligible", {
+        **recovery_history,
+        f"{RECOVERY_CONFIG_JAVA_ROOT}RecoveryControllerOwnerConfiguration.java": (
+            b"import org.flywaydb.core.Flyway;\n"
+            b"import org.flywaydb.core.api.callback.Callback;\n"
+            b"@Bean Callback recoveryTransactionalMigrationCallback() { return new RecoveryTransactionalMigrationCallback(); }\n"
+            b"@Bean BeanPostProcessor guard() { return processor(); }\n"
+            b"private boolean applies(Object bean) { return bean instanceof Flyway; }"
+        ),
+    }, recovery_history, None)
+    check("extra Recovery Flyway callbacks cannot qualify SQL-only history", {
+        **recovery_history,
+        f"{RECOVERY_CONFIG_JAVA_ROOT}ExtraCallback.java": (
+            b"import org.flywaydb.core.api.callback.BaseCallback;\n"
+            b"class ExtraCallback extends BaseCallback {}"
+        ),
+    }, recovery_history, "only supports its transactional migration callback")
     check("Recovery Java migration in a sibling package cannot override SQL version authority", {
         **recovery_history,
         recovery_java_migration: (
@@ -1317,11 +1564,11 @@ def run_self_test() -> None:
     }, empty_description_history, "historical migration content changed")
     check("current recovery must carry its dedicated datasource URL", {
         **recovery_history,
-        recovery_config: recovery_settings.removeprefix(datasource_setting),
+        recovery_config: recovery_settings.removeprefix(b"spring.datasource.url: " + datasource_url + b"\n"),
     }, recovery_history, "historical effective migration no longer applied")
     check("legacy recovery source remains an eligible historical baseline", recovery_history, {
         **recovery_history,
-        recovery_config: recovery_settings.removeprefix(datasource_setting),
+        recovery_config: recovery_settings.removeprefix(b"spring.datasource.url: " + datasource_url + b"\n"),
     }, None)
     for hikari_override in (
         b"spring.datasource.hikari.data-source-properties.applicationName: override\n",
@@ -1457,16 +1704,16 @@ def run_self_test() -> None:
     }
     effective_recovery_config = recovery_flyway_config(recovery_saga_override, RECOVERY_PROJECT)
     effective_recovery_locations = effective_recovery_config.locations if effective_recovery_config else set()
-    recovery_adopters = saga_adopters(recovery_saga_override)
-    if effective_recovery_locations != {RECOVERY_LOCATION} or RECOVERY_PROJECT in recovery_adopters:
+    if effective_recovery_locations != {RECOVERY_LOCATION}:
         raise AssertionError(
             "higher-priority Recovery Flyway locations must replace root Saga locations for adoption: "
-            f"{effective_recovery_locations}, {recovery_adopters}"
+            f"{effective_recovery_locations}"
         )
     recovery_saga_sets = effective_sets(
         recovery_saga_override,
         discover_migration_files(recovery_saga_override),
         effective_recovery_locations,
+        runtime_project_dependencies(recovery_saga_override),
     )
     if [item.path for item in recovery_saga_sets[RECOVERY_PROJECT]] != [recovery + "V1__journal.sql"]:
         raise AssertionError("overridden Recovery locations must not add common Saga migrations")
@@ -1481,6 +1728,14 @@ def run_self_test() -> None:
     check("qualified Saga-only Recovery parent retains inherited versions",
           isolated_recovery_candidate, inherited_recovery_parent,
           "historical effective migration no longer applied")
+    saga_root_input = shared.replace("/saga/", "/") + "V1003__root.sql"
+    root_only_saga_parent = {
+        path: data for path, data in inherited_recovery_parent.items()
+        if path != shared + "V1002__saga.sql"
+    }
+    root_only_saga_parent[saga_root_input] = b"-- outside the selected nested location"
+    check("Saga-only Recovery locations do not inherit SQL from the shared parent directory",
+          {**root_only_saga_parent, **recovery_history}, root_only_saga_parent, None)
     check("unqualified Saga-only Recovery parent cannot lose inherited versions",
           isolated_recovery_candidate, {
               **inherited_recovery_parent,
@@ -1509,7 +1764,7 @@ def run_self_test() -> None:
         parent_with_owned_migration,
         discover_migration_files(parent_with_owned_migration),
         {"classpath:db/migration/saga"},
-        require_current_configuration=False,
+        {},
     )
     if [item.path for item in effective_parent[RECOVERY_PROJECT]] != [owned_migration_path]:
         raise AssertionError("legacy Saga-only location must load only the owned migration beneath it")
@@ -1518,6 +1773,105 @@ def run_self_test() -> None:
           "historical effective migration no longer applied")
     check("legacy Saga-only location has no effective history from sibling migrations",
           {**recovery_history, **sibling_migrations}, saga_only_recovery_parent, None)
+    library = "services/shared-journal-inputs/src/main/resources/db/migration/"
+    direct_input = library + "internal/V23__direct.sql"
+    transitive_input = "services/nested-journal-inputs/src/main/resources/db/migration/internal/V32__nested.sql"
+    sibling_input = library + "internal-other/V90__unselected.sql"
+    shared_recovery_parent = {
+        f"services/{RECOVERY_PROJECT}/build.gradle.kts":
+            b'dependencies { runtimeOnly(project(":shared-journal-inputs")) }',
+        "services/shared-journal-inputs/build.gradle.kts":
+            b'dependencies { api(project(":nested-journal-inputs")) }',
+        recovery_config: b"spring.flyway.locations: classpath:db/migration/internal\n",
+        direct_input: b"-- direct",
+        transitive_input: b"-- transitive",
+        sibling_input: b"-- unselected sibling",
+    }
+    dedicated_candidate = {**shared_recovery_parent, **recovery_history}
+    shared_issues, _, _ = collect_issues(dedicated_candidate, shared_recovery_parent)
+    if (not any(f"historical effective migration no longer applied: {direct_input}" in issue
+                for issue in shared_issues)
+            or not any(f"historical effective migration no longer applied: {transitive_input}" in issue
+                       for issue in shared_issues)
+            or not any("effective parent frontier V32" in issue for issue in shared_issues)
+            or any(sibling_input in issue for issue in shared_issues)):
+        raise AssertionError(f"selected dependency migrations must define the Recovery parent history: {shared_issues}")
+    check("the dedicated location excludes legacy dependency migrations",
+          dedicated_candidate, dedicated_candidate, None)
+    platform_input = "services/common-platform-core/src/main/resources/db/migration/V1002__shared.sql"
+    platform_recovery_parent = {
+        f"services/{RECOVERY_PROJECT}/build.gradle.kts":
+            b'dependencies { implementation(project(":common-platform-core")) }',
+        recovery_config: b"spring.flyway.locations: classpath:db/migration\n",
+        platform_input: b"-- platform",
+    }
+    platform_candidate = {**platform_recovery_parent, **recovery_history}
+    platform_issues, _, _ = collect_issues(platform_candidate, platform_recovery_parent)
+    if (not any(f"historical effective migration no longer applied: {platform_input}" in issue
+                for issue in platform_issues)
+            or not any("effective parent frontier V1002" in issue for issue in platform_issues)):
+        raise AssertionError(f"platform SQL alone must establish the Recovery parent history: {platform_issues}")
+    check("an ambiguous production project declaration cannot qualify the receiving parent's history",
+          dedicated_candidate, {
+              **shared_recovery_parent,
+              f"services/{RECOVERY_PROJECT}/build.gradle.kts":
+                  b'dependencies { runtimeOnly(project(path = ":shared-journal-inputs")) }',
+          }, "cannot resolve Recovery production runtime dependency")
+    check("a customized project dependency cannot qualify transitive Recovery history",
+          dedicated_candidate, {
+              **shared_recovery_parent,
+              f"services/{RECOVERY_PROJECT}/build.gradle.kts":
+                  b'dependencies { runtimeOnly(project(":shared-journal-inputs")) { isTransitive = false } }',
+          }, "cannot resolve Recovery production runtime dependency")
+    commented_dependencies = {
+        **shared_recovery_parent,
+        f"services/{RECOVERY_PROJECT}/build.gradle.kts": (
+            b'val description = "literal // and /* delimiters";\n'
+            b'val notes = """Sample: runtimeOnly(project(path = ":other")) and api(project(":common-saga"))""";\n'
+            b'val example = "runtimeOnly(project(path = \\":example-service\\"))";\n'
+            b'dependencies { /* legal comment */ runtimeOnly(project(":shared-journal-inputs")) }\n'
+            b'// implementation(project(path = ":common-saga"))\n'
+            b'/* outer /* nested */ implementation(project(":common-saga")) */\n'
+        ),
+    }
+    dependencies = runtime_project_dependencies(commented_dependencies)[RECOVERY_PROJECT]
+    if dependencies != {"shared-journal-inputs", "nested-journal-inputs"}:
+        raise AssertionError(f"comments changed the resolved Recovery dependency graph: {dependencies}")
+    check("commented Recovery project declarations preserve qualification",
+          {**commented_dependencies, **recovery_history}, dedicated_candidate, None)
+    quoted_dependency_parent = {
+        **shared_recovery_parent,
+        f"services/{RECOVERY_PROJECT}/build.gradle.kts": (
+            b'dependencies {\n'
+            b'  "runtimeOnly"(project(":shared-journal-inputs"))\n'
+            b'  "testImplementation"(project(":common-saga"))\n'
+            b'}\n'
+        ),
+    }
+    check("quoted production runtime wiring preserves the inherited migration frontier",
+          dedicated_candidate, quoted_dependency_parent, "effective parent frontier V32")
+    for call in (b'add("runtimeOnly",', b'add ("runtimeOnly",'):
+        check("Gradle add preserves the inherited migration frontier with optional whitespace",
+              dedicated_candidate, {
+                  **shared_recovery_parent,
+                  f"services/{RECOVERY_PROJECT}/build.gradle.kts":
+                      b'dependencies { ' + call + b' project(":shared-journal-inputs")) }',
+              }, "effective parent frontier V32")
+    check("an unsupported active quoted runtime declaration fails qualification", dedicated_candidate, {
+        **shared_recovery_parent,
+        f"services/{RECOVERY_PROJECT}/build.gradle.kts":
+            b'dependencies { "runtimeOnly"(project(path = ":shared-journal-inputs")) }',
+    }, "cannot resolve Recovery production runtime dependency")
+    dependency_config = "services/nested-journal-inputs/src/main/resources/config/application.yml"
+    dependency_settings = {dependency_config: b"spring.application.name: shared-journal-inputs\n"}
+    check("default configuration in a transitive Recovery dependency cannot qualify the package", {
+        **dedicated_candidate, **dependency_settings,
+    }, dedicated_candidate, "Recovery runtime dependency publishes default packaged Spring configuration")
+    check("a test-only project's default configuration is outside the production package", {
+        **recovery_history, **dependency_settings,
+        f"services/{RECOVERY_PROJECT}/build.gradle.kts":
+            b'dependencies { testImplementation(project(":nested-journal-inputs")) }',
+    }, recovery_history, None)
     check("explicitly empty Flyway connection init SQL qualifies recovery history", {
         **recovery_history,
         recovery_config: recovery_settings + b"    init-sqls: []\n",
@@ -1573,6 +1927,16 @@ def run_self_test() -> None:
         ("spring.datasource.hikari.username", "${OTHER_FIXTURE_USER}", "historical effective migration no longer applied"),
         ("spring.datasource.hikari.password", "literal-test-value", "historical effective migration no longer applied"),
         ("spring.flyway.validate-on-migrate", "false", "historical effective migration no longer applied"),
+        ("spring.flyway.connect-retries", "-1", "historical effective migration no longer applied"),
+        ("spring.flyway.connect-retries", "0", None),
+        ("spring.flyway.connect-retries", "3", None),
+        ("spring.flyway.connect-retries-interval", "-1s", "historical effective migration no longer applied"),
+        ("spring.flyway.connect-retries-interval", "3s", None),
+        ("spring.flyway.connect-retries-interval", "2147483648s", "historical effective migration no longer applied"),
+        ("spring.flyway.lock-retry-count", "-1", "historical effective migration no longer applied"),
+        ("spring.flyway.lock-retry-count", "0", None),
+        ("spring.flyway.lock-retry-count", "'2147483648'", "historical effective migration no longer applied"),
+        ("spring.flyway.lock-retry-count", "true", "historical effective migration no longer applied"),
         ("spring.flyway.tablespace", "recovery_fast", "historical effective migration no longer applied"),
         ("spring.flyway.group", "true", "historical effective migration no longer applied"),
         ("spring.flyway.group", "false", None),
@@ -1888,6 +2252,13 @@ def run_self_test() -> None:
     check("Redis-only autoconfiguration exclusion preserves recovery Flyway", {
         **recovery_history, recovery_config: redis_exclusion_settings,
     }, recovery_history, None)
+    check("excluding the Recovery owner configuration prevents qualification", {
+        **recovery_history,
+        recovery_config: redis_exclusion_settings.replace(
+            b"org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration",
+            b"net.firedevops.firemud.recovery.config.RecoveryControllerOwnerConfiguration",
+        ),
+    }, recovery_history, "packaged Spring configuration must enable Flyway")
     check("higher-priority Redis-only exclusion replaces root Flyway exclusion", {
         **recovery_history,
         recovery_config: (
@@ -2356,6 +2727,20 @@ def run_self_test() -> None:
             raise
     else:
         raise AssertionError("YAML expanded entry limit was not enforced")
+    defaults = ", ".join(f"setting{index}: value" for index in range(64))
+    merge_copies = "".join(f"copy{index}: {{<<: *defaults}}\n"
+                           for index in range(RECOVERY_YAML_ENTRY_LIMIT // 64 + 1))
+    try:
+        collect_issues({
+            **complete_recovery_history,
+            recovery_config: recovery_settings + f"---\ndefaults: &defaults {{{defaults}}}\n{merge_copies}".encode(),
+        }, complete_recovery_history)
+    except ValueError as error:
+        if (f"{recovery_config}: invalid packaged Spring configuration:" not in str(error)
+                or f"exceeds {RECOVERY_YAML_ENTRY_LIMIT} expanded entries per document" not in str(error)):
+            raise
+    else:
+        raise AssertionError("YAML merge entry limit was not enforced during construction")
     try:
         collect_issues({
             **complete_recovery_history,
@@ -2490,10 +2875,13 @@ def run_self_test() -> None:
         git(root, "-c", "user.name=Flyway fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "history")
         base = git(root, "rev-parse", "HEAD").decode().strip()
         parent = parent_snapshot(root, base)
-        if current_snapshot(root) != combined_fixture:
-            raise AssertionError("current snapshot must remain scoped to migration and configuration inputs")
-        if parent != combined_fixture or unicode_migration not in parent or unrelated_non_utf8 in parent:
-            raise AssertionError("snapshot migration discovery must scope the Recovery location to its owning service")
+        effective_inputs = {**combined_fixture, **outside_recovery}
+        if current_snapshot(root) != effective_inputs:
+            raise AssertionError("current snapshot must retain reserved paths for dependency validation")
+        if parent != effective_inputs or unicode_migration not in parent or unrelated_non_utf8 in parent:
+            raise AssertionError("base snapshot must retain the same migration and dependency inputs")
+        if any(item.path in outside_recovery for item in discover_migration_files(parent)):
+            raise AssertionError("foreign reserved resources cannot become Recovery history")
         sidecar_path = root / (recovery + "V1__journal.sql.conf")
         sidecar_path.write_text("shouldExecute=false", encoding="utf-8")
         git(root, "add", ".")
@@ -2546,7 +2934,7 @@ def run_self_test() -> None:
                     if snapshot != {linked_path: SYMLINK_SNAPSHOT}:
                         raise AssertionError(f"Recovery migration link was not captured: {linked_path}")
                     if not any("Recovery migration symlinks are unsupported" in issue
-                               for issue in recovery_input_issues(snapshot)):
+                               for issue in recovery_input_issues(snapshot, set())):
                         raise AssertionError(f"Recovery migration link was not rejected: {linked_path}")
 
         for config_link in (RECOVERY_CONFIG_DIRECTORY, recovery_config_override):

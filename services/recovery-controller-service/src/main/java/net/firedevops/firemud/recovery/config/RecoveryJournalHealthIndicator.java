@@ -24,6 +24,7 @@ import org.springframework.stereotype.Component;
 final class RecoveryJournalHealthIndicator implements HealthIndicator {
   private static final int PROBE_TIMEOUT_SECONDS = 2;
   private static final long PROBE_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(PROBE_TIMEOUT_SECONDS);
+  private static final String CANONICAL_DEPARSE = "SET LOCAL quote_all_identifiers = 'off'";
   private static final String CHECK =
       """
       SELECT
@@ -38,7 +39,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       """
           + JooqInitialGameplayReleaseJournal.DURABLE_JOURNAL_RELATIONS
           + """
-            AND (SELECT count(*) = 9 AND count(DISTINCT version) FILTER (WHERE success AND (
+            AND (SELECT count(*) = 11 AND count(DISTINCT version) FILTER (WHERE success AND (
                (version = '1' AND script = 'V1__initial_gameplay_release_journal.sql')
                OR (version = '2' AND script = 'V2__retain_initial_gameplay_release_attempt_closure.sql')
                OR (version = '3'
@@ -54,7 +55,11 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                OR (version = '8'
                    AND script = 'V8__require_pending_effect_without_dispatch_timestamp.sql')
                OR (version = '9'
-                   AND script = 'V9__require_pristine_pending_attempt.sql'))) = 9
+                   AND script = 'V9__require_pristine_pending_attempt.sql')
+               OR (version = '10'
+                   AND script = 'V10__refuse_pending_effects_with_retained_attempts.sql')
+               OR (version = '11'
+                   AND script = 'V11__retain_owner_rejection_refresh_floor.sql'))) = 11
              FROM recovery_control.flyway_schema_history_recovery_control
              WHERE version IS NOT NULL OR type <> 'SCHEMA')
             AND has_table_privilege(
@@ -110,7 +115,8 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                   SELECT a.attnum
                   FROM pg_catalog.pg_attribute a
                   WHERE a.attrelid = c.conrelid AND NOT a.attisdropped
-                    AND a.attname IN ('outbox_id', 'attempt_id')
+                    AND ((a.attname = 'outbox_id' AND a.atttypid = 'pg_catalog.uuid'::regtype)
+                      OR (a.attname = 'attempt_id' AND a.atttypid = 'pg_catalog.uuid'::regtype))
                   ORDER BY CASE a.attname WHEN 'outbox_id' THEN 0 ELSE 1 END))
             AND NOT EXISTS (
               SELECT 1
@@ -171,6 +177,8 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                 AND a.attname = required.column_name AND NOT a.attisdropped
                 AND a.atttypid = required.column_type AND a.atttypmod = required.type_modifier
                 AND a.attnotnull = required.required_not_null
+                AND (a.attname NOT IN ('evidence_snapshot', 'evidence_identity', 'evidence_digest', 'finalized_at')
+                     OR NOT a.atthasdef)
               WHERE a.attnum IS NULL)
             AND (SELECT count(DISTINCT pg_catalog.pg_get_expr(c.conbin, c.conrelid)) = 3
               FROM pg_catalog.pg_constraint c
@@ -191,20 +199,21 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                 AND i.indpred IS NULL AND i.indnkeyatts = 1
                 AND a.atttypid = 'pg_catalog.uuid'::regtype AND a.attnotnull
                 AND a.attname IN ('operation_id', 'maintenance_lock_identity'))
-            AND EXISTS (
-              SELECT 1
+            AND (SELECT count(DISTINCT effect.attname) = 2
               FROM pg_catalog.pg_index i
               JOIN pg_catalog.pg_attribute op ON op.attrelid = i.indrelid
                  AND op.attnum = i.indkey[0] AND NOT op.attisdropped
-              JOIN pg_catalog.pg_attribute kind ON kind.attrelid = i.indrelid
-                 AND kind.attnum = i.indkey[1] AND NOT kind.attisdropped
+              JOIN pg_catalog.pg_attribute effect ON effect.attrelid = i.indrelid
+                 AND effect.attnum = i.indkey[1] AND NOT effect.attisdropped
               WHERE i.indrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND i.indisunique AND i.indisvalid AND i.indisready AND i.indislive AND i.indimmediate
                 AND i.indpred IS NULL AND i.indnkeyatts = 2
                 AND op.attname = 'operation_id' AND op.attnotnull
                 AND op.atttypid = 'pg_catalog.uuid'::regtype
-                AND kind.attname = 'effect_kind' AND kind.attnotnull
-                AND kind.atttypid = 'pg_catalog.varchar'::regtype AND kind.atttypmod = 52)
+                AND effect.attnotnull
+                AND ((effect.attname = 'effect_kind'
+                      AND effect.atttypid = 'pg_catalog.varchar'::regtype AND effect.atttypmod = 52)
+                  OR (effect.attname = 'effect_id' AND effect.atttypid = 'pg_catalog.uuid'::regtype)))
             AND EXISTS (
               SELECT 1
               FROM pg_catalog.pg_index i
@@ -234,7 +243,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                 AND a.attnum = i.indkey[0] AND NOT a.attisdropped
               WHERE i.indrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
                 AND i.indisunique AND i.indisready AND i.indislive AND i.indnkeyatts = 1
-                AND a.attname = 'operation_id')
+                AND a.attname IN ('operation_id', 'verb'))
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
@@ -254,7 +263,13 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND attname = 'readback_identity' AND NOT attisdropped AND NOT attnotnull
+                AND NOT atthasdef
                 AND atttypid = 'pg_catalog.text'::regtype)
+            AND EXISTS (
+              SELECT 1 FROM pg_catalog.pg_attribute
+              WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+                AND attname = 'payload' AND NOT attisdropped AND attnotnull
+                AND atttypid = 'pg_catalog.jsonb'::regtype)
             AND (SELECT count(*) = 2 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND attname IN ('operation_tuple_digest', 'payload_digest')
@@ -263,7 +278,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
-                AND attname = 'readback_digest' AND NOT attisdropped AND NOT attnotnull
+                AND attname = 'readback_digest' AND NOT attisdropped AND NOT attnotnull AND NOT atthasdef
                 AND atttypid = 'pg_catalog.bpchar'::regtype AND atttypmod = 68)
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
@@ -299,7 +314,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
-                AND attname = 'last_outcome_code' AND NOT attisdropped AND NOT attnotnull
+                AND attname = 'last_outcome_code' AND NOT attisdropped AND NOT attnotnull AND NOT atthasdef
                 AND (atttypid = 'pg_catalog.text'::regtype
                   OR (atttypid = 'pg_catalog.varchar'::regtype
                     -- varchar typmod includes the four-byte header. Outcome codes allow 64 characters.
@@ -308,12 +323,24 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND attname = 'retry_provenance' AND NOT attisdropped AND NOT attnotnull
+                AND NOT atthasdef
                 AND atttypid = 'pg_catalog.text'::regtype)
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND attname = 'send_outcome_uncertain' AND NOT attisdropped AND NOT attnotnull
                 AND NOT atthasdef AND atttypid = 'pg_catalog.bool'::regtype)
+            AND EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_constraint c
+              WHERE c.conrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+                AND c.conname = 'ck_release_outbox_retry_provenance_shape'
+                AND c.contype = 'c' AND c.convalidated AND c.conenforced
+                AND pg_catalog.pg_get_expr(c.conbin, c.conrelid) =
+                  '((retry_provenance IS NULL) OR (((state)::text = ''retryable''::text)'
+                  || ' AND (retry_provenance = ANY (ARRAY[''local_no_send''::text,'
+                  || ' ''owner_rejected''::text, ''owner_closure''::text]))))'
+                )
             AND EXISTS (
               SELECT 1
               FROM pg_catalog.pg_constraint c
@@ -350,7 +377,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
-                AND attname = 'readback_payload' AND NOT attisdropped AND NOT attnotnull
+                AND attname = 'readback_payload' AND NOT attisdropped AND NOT attnotnull AND NOT atthasdef
                 AND atttypid = 'pg_catalog.jsonb'::regtype)
             AND (SELECT count(*) = 2
               FROM pg_catalog.pg_attribute
@@ -361,7 +388,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND attname IN ('acknowledged_at', 'last_dispatched_at')
-                AND NOT attisdropped AND NOT attnotnull
+                AND NOT attisdropped AND NOT attnotnull AND NOT atthasdef
                 AND atttypid = 'pg_catalog.timestamptz'::regtype AND atttypmod = -1)
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
@@ -433,8 +460,13 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               SELECT outbox_id, attempt_id, attempt_ordinal, readback_payload, readback_digest,
                      dispatched_at, recorded_at
               FROM recovery_control.initial_gameplay_release_attempt_closure WHERE FALSE)
+            AND EXISTS (
+              SELECT 1 FROM pg_catalog.pg_attribute
+              WHERE attrelid = 'recovery_control.initial_gameplay_release_attempt_rejection'::regclass
+                AND attname = 'preparation_refresh_after' AND NOT attisdropped AND attnotnull
+                AND NOT atthasdef AND atttypid = 'pg_catalog.timestamptz'::regtype AND atttypmod = -1)
             AND NOT EXISTS (
-              SELECT outbox_id, attempt_id, attempt_ordinal
+              SELECT outbox_id, attempt_id, attempt_ordinal, preparation_refresh_after
               FROM recovery_control.initial_gameplay_release_attempt_rejection WHERE FALSE)
             AND NOT EXISTS (
               SELECT outbox_id, attempt_id, attempt_ordinal, dispatched_at, recorded_at
@@ -567,12 +599,22 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       int probeTimeout =
           originalTimeout > 0 ? Math.min(originalTimeout, remainingMillis) : remainingMillis;
       connection.setNetworkTimeout(Runnable::run, probeTimeout);
-      try (var statement = connection.prepareStatement(CHECK)) {
-        statement.setQueryTimeout(PROBE_TIMEOUT_SECONDS);
-        try (var rows = statement.executeQuery()) {
-          ready = rows.next() && rows.getBoolean(1);
+      boolean originalAutoCommit = connection.getAutoCommit();
+      connection.setAutoCommit(false);
+      try (var canonicalDeparse = connection.prepareStatement(CANONICAL_DEPARSE)) {
+        canonicalDeparse.execute();
+        try (var statement = connection.prepareStatement(CHECK)) {
+          statement.setQueryTimeout(PROBE_TIMEOUT_SECONDS);
+          try (var rows = statement.executeQuery()) {
+            ready = rows.next() && rows.getBoolean(1);
+          }
         }
+        connection.commit();
+      } catch (SQLException | RuntimeException unavailable) {
+        connection.rollback();
+        throw unavailable;
       } finally {
+        connection.setAutoCommit(originalAutoCommit);
         connection.setNetworkTimeout(Runnable::run, originalTimeout);
       }
     }

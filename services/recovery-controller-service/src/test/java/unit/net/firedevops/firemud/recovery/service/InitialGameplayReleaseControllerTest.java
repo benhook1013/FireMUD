@@ -540,6 +540,111 @@ class InitialGameplayReleaseControllerTest {
         true, EffectApplyResult.retryableNoEffect("OWNER_REJECTED"), RetrySource.OWNER_REJECTED);
   }
 
+  private enum FailedOutcomeWrite {
+    LOCAL_NO_SEND_RECORDED_ON_RETRY,
+    LOCAL_NO_SEND_ALREADY_RECORDED,
+    LOCAL_NO_SEND_CONFLICTS_ON_RETRY,
+    LOCAL_NO_SEND_STILL_UNAVAILABLE,
+    UNKNOWN_OWNER_OUTCOME
+  }
+
+  @ParameterizedTest
+  @EnumSource(FailedOutcomeWrite.class)
+  void retriesOnlyTheExactLocalNoSendJournalWrite(FailedOutcomeWrite scenario) {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var clock = mock(Clock.class);
+    var operation = mock(Operation.class);
+    var scope = mock(Scope.class);
+    var effect = mock(PreparePlayableStateFencedEffect.class);
+    var pending = mock(OutboxEntry.class);
+    var dispatched = mock(OutboxEntry.class);
+    UUID operationId = UUID.randomUUID();
+    UUID effectId = UUID.randomUUID();
+    int ordinal = 1;
+    Instant observedAt = Instant.parse("2026-09-01T00:00:00Z");
+    when(clock.instant()).thenReturn(observedAt, observedAt.plusSeconds(1));
+    when(operation.scope()).thenReturn(scope);
+    when(scope.operationId()).thenReturn(operationId);
+    when(effect.effectId()).thenReturn(effectId);
+    when(pending.state()).thenReturn(EffectOutboxState.PENDING);
+    when(pending.effect()).thenReturn(effect);
+    when(dispatched.state()).thenReturn(EffectOutboxState.DISPATCHED);
+    when(dispatched.effect()).thenReturn(effect);
+    when(dispatched.attemptCount()).thenReturn(ordinal);
+    when(journal.find(operationId)).thenReturn(Optional.of(operation));
+    when(journal.findNextEffect(operationId)).thenReturn(Optional.of(pending));
+    var attempt = new AtomicReference<UUID>();
+    when(journal.claimEffect(eq(operationId), eq(effectId), any(), any()))
+        .thenAnswer(invocation -> {
+          UUID claimedAttempt = invocation.getArgument(2);
+          attempt.set(claimedAttempt);
+          when(dispatched.lastAttemptId()).thenReturn(claimedAttempt);
+          return dispatched;
+        });
+    var unavailable = new IllegalStateException("Unable to record recovery journal effect outcome");
+    var conflict =
+        new InitialGameplayReleaseConflictException("effect dispatch generation changed");
+    var retained = new java.util.concurrent.atomic.AtomicBoolean();
+    if (scenario == FailedOutcomeWrite.UNKNOWN_OWNER_OUTCOME) {
+      when(port.apply(eq(effect), any(), eq(ordinal)))
+          .thenThrow(new IllegalStateException("response lost after possible owner send"));
+      when(journal.recordAmbiguousEffectForDispatch(
+              dispatched, "EFFECT_CALL_OUTCOME_UNKNOWN", observedAt))
+          .thenThrow(unavailable);
+    } else {
+      when(port.apply(eq(effect), any(), eq(ordinal)))
+          .thenReturn(EffectApplyResult.notDispatched("TRANSPORT_REFUSED"));
+      when(journal.recordRetryableEffectForDispatch(
+              dispatched, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", observedAt))
+          .thenAnswer(invocation -> {
+            if (scenario == FailedOutcomeWrite.LOCAL_NO_SEND_ALREADY_RECORDED) {
+              retained.set(true);
+            }
+            throw unavailable;
+          })
+          .thenAnswer(invocation -> {
+            if (scenario == FailedOutcomeWrite.LOCAL_NO_SEND_CONFLICTS_ON_RETRY) throw conflict;
+            if (scenario == FailedOutcomeWrite.LOCAL_NO_SEND_STILL_UNAVAILABLE) throw unavailable;
+            if (scenario == FailedOutcomeWrite.LOCAL_NO_SEND_RECORDED_ON_RETRY) {
+              assertThat(retained.get()).isFalse();
+              retained.set(true);
+            }
+            assertThat(retained.get()).isTrue();
+            return true;
+          });
+    }
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            new InitialGameplayReleaseTupleCodec(),
+            mock(InitialGameplayReleaseEvidenceProvider.class),
+            port,
+            clock);
+    switch (scenario) {
+      case LOCAL_NO_SEND_RECORDED_ON_RETRY, LOCAL_NO_SEND_ALREADY_RECORDED ->
+          assertThat(controller.reconcileNextEffect(operationId)).isSameAs(operation);
+      case LOCAL_NO_SEND_CONFLICTS_ON_RETRY ->
+          assertThatThrownBy(() -> controller.reconcileNextEffect(operationId)).isSameAs(conflict);
+      case LOCAL_NO_SEND_STILL_UNAVAILABLE, UNKNOWN_OWNER_OUTCOME ->
+          assertThatThrownBy(() -> controller.reconcileNextEffect(operationId))
+              .isSameAs(unavailable);
+    }
+    assertThat(attempt.get()).isNotNull();
+    verify(port, org.mockito.Mockito.only()).apply(effect, attempt.get(), ordinal);
+    verify(clock).instant();
+    if (scenario == FailedOutcomeWrite.UNKNOWN_OWNER_OUTCOME) {
+      verify(journal)
+          .recordAmbiguousEffectForDispatch(dispatched, "EFFECT_CALL_OUTCOME_UNKNOWN", observedAt);
+      verify(journal, never()).recordRetryableEffectForDispatch(any(), any(), any(), any());
+    } else {
+      verify(journal, times(2))
+          .recordRetryableEffectForDispatch(
+              dispatched, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", observedAt);
+      verify(journal, never()).recordAmbiguousEffectForDispatch(any(), any(), any());
+    }
+  }
+
   private void assertPendingClaimHandling(
       boolean ownsClaim, EffectApplyResult applyResult, RetrySource expectedRetrySource) {
     assertClaimHandling(

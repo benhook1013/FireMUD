@@ -57,6 +57,10 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
       var configuredExclusions = binder.bind("spring.autoconfigure.exclude", String[].class);
       List<String> exclusions =
           configuredExclusions.isBound() ? Arrays.asList(configuredExclusions.get()) : List.of();
+      if (exclusions.contains(RecoveryControllerOwnerConfiguration.class.getName())) {
+        throw new SafeOverrideException(
+            "spring.autoconfigure.exclude must retain the Recovery owner configuration");
+      }
       if (exclusions.contains(DataSourceAutoConfiguration.class.getName())
           || (flywayEnabled && exclusions.contains(FlywayAutoConfiguration.class.getName()))) {
         throw new SafeOverrideException(
@@ -70,7 +74,7 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
               + host
               + ":"
               + port
-              + "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended";
+              + "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended&options=-c%20lock_timeout%3D10s";
       var primaryUrl = binder.bind("spring.datasource.url", String.class);
       if (!primaryUrl.isBound() || !Objects.equals(primaryUrl.get(), url)) {
         throw new SafeOverrideException(
@@ -232,7 +236,10 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
             .anyMatch(pattern ->
                 pattern == null
                     || !futureOnlyPatterns.contains(
-                        pattern.trim().toLowerCase(java.util.Locale.ROOT)))) {
+                        pattern
+                            .trim()
+                            .replaceFirst("[\\x00-\\x20]*:[\\x00-\\x20]*", ":")
+                            .toLowerCase(java.util.Locale.ROOT)))) {
       throw new SafeOverrideException(
           "spring.flyway.ignore-migration-patterns may only ignore future migrations");
     }

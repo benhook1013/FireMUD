@@ -103,12 +103,14 @@ import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.availability.ApplicationAvailability;
 import org.springframework.boot.availability.LivenessState;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.flyway.autoconfigure.FlywayConfigurationCustomizer;
 import org.springframework.boot.health.actuate.endpoint.HealthEndpoint;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.health.contributor.Status;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.env.Environment;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -118,6 +120,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers(disabledWithoutDocker = false)
+@ResourceLock("postgresql-driver-protocol-logger")
 @SuppressWarnings("resource")
 class InitialGameplayReleaseJournalPostgresIntegrationTest {
   private static final String SCHEMA = "recovery_control";
@@ -131,7 +134,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           "V6__retain_latest_preparation_observation.sql",
           "V7__retain_preparation_receipt_identities.sql",
           "V8__require_pending_effect_without_dispatch_timestamp.sql",
-          "V9__require_pristine_pending_attempt.sql");
+          "V9__require_pristine_pending_attempt.sql",
+          "V10__refuse_pending_effects_with_retained_attempts.sql",
+          "V11__retain_owner_rejection_refresh_floor.sql");
   private static final String DIGEST = "b".repeat(64);
   private static final java.util.logging.Logger POSTGRES_PROTOCOL_LOG =
       java.util.logging.Logger.getLogger("org.postgresql.core.v3.QueryExecutorImpl");
@@ -474,7 +479,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               scope.operationId(),
               pending.effect().effectId(),
               UUID.randomUUID(),
-              now.plusSeconds(4));
+              () -> now.plusSeconds(4));
       var prepared =
           readbackFor(
               dispatched,
@@ -601,7 +606,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                     operationId,
                     pending.effect().effectId(),
                     UUID.randomUUID(),
-                    base.plusSeconds(6)))
+                    () -> base.plusSeconds(6)))
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("Recovery journal requires durable PostgreSQL commits");
       }
@@ -612,7 +617,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                       operationId,
                       pending.effect().effectId(),
                       UUID.randomUUID(),
-                      base.plusSeconds(6))
+                      () -> base.plusSeconds(6))
                   .state())
           .isEqualTo(EffectOutboxState.DISPATCHED);
     } finally {
@@ -656,7 +661,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       OutboxEntry pending = journal.findNextEffect(scope.operationId()).orElseThrow();
       OutboxEntry claimed =
           journal.claimEffect(
-              scope.operationId(), pending.effect().effectId(), UUID.randomUUID(), now);
+              scope.operationId(), pending.effect().effectId(), UUID.randomUUID(), () -> now);
       EffectReadback prepared =
           readbackFor(
               claimed,
@@ -796,6 +801,283 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       }
     } finally {
       dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void readinessRefusesAnIncompatibleOutboxPayloadColumn() {
+    String database = "firemud_recovery_control";
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application = startPackagedApplication(true)) {
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      application
+          .getBean(DSLContext.class)
+          .execute(
+              """
+              ALTER TABLE recovery_control.initial_gameplay_release_outbox
+              ALTER COLUMN payload TYPE integer USING NULL::integer
+              """);
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void readinessNormalizesIdentifierRenderingWithoutChangingTheSessionDefault() {
+    String database = "firemud_recovery_control";
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application =
+        startPackagedApplication(true, "--spring.datasource.hikari.maximum-pool-size=1")) {
+      var fixture = application.getBean(DSLContext.class);
+      fixture.execute("SET quote_all_identifiers = 'on'");
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      assertThat(fixture.fetchSingle("SHOW quote_all_identifiers").get(0, String.class))
+          .isEqualTo("on");
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void readinessRequiresUuidRejectionAttemptIdentity() {
+    String database = "firemud_recovery_control";
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application = startPackagedApplication(true)) {
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      application
+          .getBean(DSLContext.class)
+          .execute(
+              """
+              ALTER TABLE recovery_control.initial_gameplay_release_attempt_rejection
+              ALTER COLUMN attempt_id TYPE text USING attempt_id::text
+              """);
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void readinessRequiresTheValidatedRetryProvenanceConstraint() {
+    String database = "firemud_recovery_control";
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application = startPackagedApplication(true)) {
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      var fixture = application.getBean(DSLContext.class);
+      fixture.execute(
+          """
+          ALTER TABLE recovery_control.initial_gameplay_release_outbox
+          DROP CONSTRAINT ck_release_outbox_retry_provenance_shape
+          """);
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+      fixture.execute(
+          """
+          ALTER TABLE recovery_control.initial_gameplay_release_outbox
+          ADD CONSTRAINT ck_release_outbox_retry_provenance_shape
+          CHECK (retry_provenance IS NULL OR state = 'retryable')
+          """);
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void packagedFlywayBoundsOutboxLockWaitAndRetriesWithoutLeakingSessionTimeout() throws Exception {
+    String database = "firemud_recovery_control";
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try {
+      // Bound the fixture independently if the migration loses its narrower lock timeout.
+      dsl.execute("ALTER DATABASE " + database + " SET statement_timeout TO '20s'");
+      journalFlyway(packagedUrl, "5").migrate();
+      try (var fixture =
+              startPackagedApplication(false, "--spring.datasource.hikari.maximum-pool-size=1");
+          var inspection =
+              DriverManager.getConnection(
+                  packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        var pool = fixture.getBean(HikariDataSource.class);
+        var configuration =
+            Flyway.configure()
+                .configuration(journalFlyway(packagedUrl, null).getConfiguration())
+                .dataSource(pool)
+                .callbacks(
+                    fixture.getBean("recoveryTransactionalMigrationCallback", Callback.class));
+        var flyway = configuration.load();
+        int backend;
+        try (var pooled = pool.getConnection()) {
+          var session = DSL.using(pooled, SQLDialect.POSTGRES);
+          backend = session.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+          session.execute("SET lock_timeout TO '0'");
+        }
+        inspection.setAutoCommit(false);
+        var inspector = DSL.using(inspection, SQLDialect.POSTGRES);
+        inspector.execute(
+            "LOCK TABLE recovery_control.initial_gameplay_release_outbox IN ACCESS SHARE MODE");
+        try {
+          assertThatThrownBy(flyway::migrate)
+              .hasStackTraceContaining("canceling statement due to lock timeout");
+          try (var pooled = pool.getConnection()) {
+            var session = DSL.using(pooled, SQLDialect.POSTGRES);
+            assertThat(session.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class))
+                .isEqualTo(backend);
+            assertThat(session.fetchSingle("SHOW lock_timeout").get(0, String.class))
+                .isEqualTo("0");
+          }
+          assertThat(
+                  inspector
+                      .fetchSingle(
+                          "SELECT max(version::integer) FROM recovery_control.flyway_schema_history_recovery_control WHERE success")
+                      .get(0, Integer.class))
+              .isEqualTo(5);
+        } finally {
+          inspection.rollback();
+        }
+      }
+      try (var application =
+          startPackagedApplication(true, "--spring.datasource.hikari.maximum-pool-size=1")) {
+        assertCompletePackagedMigrationReceipts(packagedUrl);
+        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+        try (var pooledConnection = application.getBean(HikariDataSource.class).getConnection()) {
+          assertThat(
+                  DSL.using(pooledConnection, SQLDialect.POSTGRES)
+                      .fetchSingle("SHOW lock_timeout")
+                      .get(0, String.class))
+              .isEqualTo("10s");
+        }
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void packagedFlywayBoundsHistoryValidationLockAndRestartsAfterItClears() throws Exception {
+    String database = "firemud_recovery_control";
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try {
+      dsl.execute("ALTER DATABASE " + database + " SET statement_timeout TO '20s'");
+      try (var application = startPackagedApplication(true)) {
+        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      }
+      try (var inspection =
+          DriverManager.getConnection(
+              packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        inspection.setAutoCommit(false);
+        DSL.using(inspection, SQLDialect.POSTGRES)
+            .execute(
+                "LOCK TABLE recovery_control.flyway_schema_history_recovery_control"
+                    + " IN ACCESS EXCLUSIVE MODE");
+        try {
+          assertThatThrownBy(
+                  () -> {
+                    try (var unexpected = startPackagedApplication(true)) {
+                      throw new AssertionError("Startup should not complete with a locked history");
+                    }
+                  })
+              .hasStackTraceContaining("canceling statement due to lock timeout");
+        } finally {
+          inspection.rollback();
+        }
+      }
+      try (var application = startPackagedApplication(true)) {
+        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+        assertCompletePackagedMigrationReceipts(packagedUrl);
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "locations, Recovery Flyway locations must contain only classpath:db/recovery-control-migration",
+    "group, Recovery Flyway must commit each migration separately",
+    "datasource, Recovery Flyway must use the journal datasource",
+    "validate, Recovery Flyway must validate migrations before applying them",
+    "skip, Recovery Flyway must execute migrations before recording them",
+    "lock, Recovery Flyway lock retries must be finite",
+    "retry-interval, Invalid number for connectRetriesInterval (must be 0 or greater)",
+    "callbacks, Recovery Flyway requires only the transactional migration callback"
+  })
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void packagedFlywayRejectsDriftFromCustomizerBeforeMigration(String option, String diagnostic)
+      throws Exception {
+    String database = "firemud_recovery_control";
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try {
+      assertThatThrownBy(
+              () -> {
+                try (var ignored =
+                    startPackagedApplication(
+                        true,
+                        DriftedFlywayConfiguration.class,
+                        "--fixture.flyway.drift=" + option)) {
+                  throw new AssertionError("Effective Flyway drift must refuse startup");
+                }
+              })
+          .hasStackTraceContaining(diagnostic);
+      try (var connection =
+          DriverManager.getConnection(
+              packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        assertThat(
+                DSL.using(connection, SQLDialect.POSTGRES)
+                    .fetchSingle("SELECT to_regnamespace('recovery_control') IS NULL")
+                    .get(0, Boolean.class))
+            .isTrue();
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @TestConfiguration(proxyBeanMethods = false)
+  static class DriftedFlywayConfiguration {
+    @Bean
+    FlywayConfigurationCustomizer driftedFlyway(Environment environment) {
+      return configuration -> {
+        switch (environment.getRequiredProperty("fixture.flyway.drift")) {
+          case "locations" -> configuration.locations("classpath:unqualified-recovery-migrations");
+          case "group" -> configuration.group(true);
+          case "datasource" ->
+              configuration.dataSource(
+                  POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+          case "validate" -> configuration.validateOnMigrate(false);
+          case "skip" -> configuration.skipExecutingMigrations(true);
+          case "lock" -> configuration.lockRetryCount(-1);
+          case "retry-interval" -> configuration.connectRetriesInterval(-1);
+          case "callbacks" ->
+              configuration.callbacks(
+                  new org.flywaydb.core.api.callback.BaseCallback() {
+                    @Override
+                    public boolean supports(
+                        org.flywaydb.core.api.callback.Event event,
+                        org.flywaydb.core.api.callback.Context context) {
+                      return false;
+                    }
+
+                    @Override
+                    public void handle(
+                        org.flywaydb.core.api.callback.Event event,
+                        org.flywaydb.core.api.callback.Context context) {
+                      throw new AssertionError("unexpected unqualified callback execution");
+                    }
+                  });
+          default -> throw new AssertionError("Unexpected fixture customization");
+        }
+      };
     }
   }
 
@@ -1141,8 +1423,14 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         "rejection_outbox_unique",
         "local_no_send_key",
         "maintenance_lock",
+        "finalized_at_default",
+        "evidence_snapshot_default",
+        "evidence_identity_default",
+        "evidence_digest_default",
+        "outbox_effect_identity",
         "outbox_dispatch",
         "weakened_outbox_dispatch",
+        "weakened_retry_provenance",
         "pending_dispatch_timestamp",
         "weakened_pending_dispatch_timestamp",
         "closure_primary_key",
@@ -1173,6 +1461,33 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         packaged.execute(
             "ALTER TABLE recovery_control.initial_gameplay_release_attempt_local_no_send"
                 + " DROP CONSTRAINT initial_gameplay_release_attempt_local_no_send_pkey");
+      } else if ("finalized_at_default".equals(drift)) {
+        packaged.execute(
+            "ALTER TABLE recovery_control.initial_gameplay_release_operation"
+                + " ALTER COLUMN finalized_at SET DEFAULT CURRENT_TIMESTAMP");
+      } else if (drift.startsWith("evidence_")) {
+        String column = drift.replace("_default", "");
+        String expression = column.equals("evidence_snapshot") ? "'{}'::jsonb" : "'fixture'";
+        packaged.execute(
+            "ALTER TABLE recovery_control.initial_gameplay_release_operation ALTER COLUMN "
+                + column
+                + " SET DEFAULT "
+                + expression);
+      } else if ("outbox_effect_identity".equals(drift)) {
+        String effectIdentityKey =
+            packaged
+                .fetchSingle(
+                    """
+                    SELECT conname FROM pg_catalog.pg_constraint
+                    WHERE conrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+                      AND contype = 'u'
+                      AND pg_get_constraintdef(oid) = 'UNIQUE (operation_id, effect_id)'
+                    """)
+                .get(0, String.class);
+        packaged
+            .alterTable(DSL.name(SCHEMA, "initial_gameplay_release_outbox"))
+            .dropConstraint(DSL.name(effectIdentityKey))
+            .execute();
       } else if ("outbox_dispatch".equals(drift)) {
         packaged.execute(
             "ALTER TABLE recovery_control.initial_gameplay_release_outbox"
@@ -1185,6 +1500,14 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               ADD CONSTRAINT ck_release_outbox_non_pending_attempt CHECK (true)
             """);
         assertValidatedDispatchAttemptConstraint(packaged);
+      } else if ("weakened_retry_provenance".equals(drift)) {
+        packaged.execute(
+            """
+            ALTER TABLE recovery_control.initial_gameplay_release_outbox
+              DROP CONSTRAINT ck_release_outbox_retry_provenance_shape,
+              ADD CONSTRAINT ck_release_outbox_retry_provenance_shape
+                CHECK (retry_provenance IS NULL)
+            """);
       } else if ("pending_dispatch_timestamp".equals(drift)) {
         packaged.execute(
             "ALTER TABLE recovery_control.initial_gameplay_release_outbox"
@@ -1291,14 +1614,18 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     "send_outcome_uncertain, TYPE recovery_control.fixture_uncertainty_flag",
     "retry_provenance, SET NOT NULL",
     "retry_provenance, TYPE varchar(1)",
+    "retry_provenance, SET DEFAULT 'local_no_send'",
     "last_outcome_code, SET NOT NULL",
     "last_outcome_code, TYPE varchar(63)",
+    "last_outcome_code, SET DEFAULT 'UNSENT'",
     "attempt_count, DROP NOT NULL",
     "last_attempt_id, SET NOT NULL",
     "last_attempt_id, SET DEFAULT gen_random_uuid()",
     "acknowledged_at, SET NOT NULL",
     "acknowledged_at, TYPE timestamptz(3)",
     "last_dispatched_at, TYPE timestamptz(3)",
+    "last_dispatched_at, SET DEFAULT CURRENT_TIMESTAMP",
+    "acknowledged_at, SET DEFAULT CURRENT_TIMESTAMP",
     "updated_at, TYPE timestamptz(3)",
     "updated_at, TYPE timestamptz(6)",
     "preparation_observation_payload, SET DEFAULT jsonb_build_object()",
@@ -1307,8 +1634,11 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     "effect_id, DROP NOT NULL",
     "effect_id, TYPE text USING effect_id::text",
     "readback_identity, TYPE varchar(4)",
+    "readback_identity, SET DEFAULT 'fixture-default'",
     "readback_digest, TYPE char(63)",
-    "readback_digest, SET NOT NULL"
+    "readback_digest, SET NOT NULL",
+    "readback_digest, SET DEFAULT 'fixture-default'",
+    "readback_payload, SET DEFAULT jsonb_build_object()"
   })
   @ResourceLock("packaged-recovery-control-fixture-database")
   void outboxColumnsMustHaveRequiredShapeForJournalReadiness(String column, String alteration)
@@ -1576,6 +1906,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         "transition_tuple_digest_nullability",
         "transition_missing_key",
         "transition_operation_only_key",
+        "transition_verb_only_key",
         "transition_equivalent_key",
         "outbox_operation_kind_key",
         "outbox_operation_only_key",
@@ -1636,6 +1967,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                   ON recovery_control.initial_gameplay_release_transition (operation_id)
                   INCLUDE (verb)
                 """;
+            case "transition_verb_only_key" ->
+                "CREATE UNIQUE INDEX fixture_transition_verb ON recovery_control.initial_gameplay_release_transition (verb)";
             case "transition_equivalent_key" ->
                 """
                 ALTER TABLE recovery_control.initial_gameplay_release_transition
@@ -1736,8 +2069,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               """
               INSERT INTO recovery_control.flyway_schema_history_recovery_control
                 (installed_rank, version, description, type, script, installed_by, execution_time, success)
-              SELECT max(installed_rank) + 1, '10', 'fixture newer migration', 'SQL',
-                'V10__fixture_newer_migration.sql', current_user, 0, true
+              SELECT max(installed_rank) + 1, '12', 'fixture newer migration', 'SQL',
+                'V12__fixture_newer_migration.sql', current_user, 0, true
               FROM recovery_control.flyway_schema_history_recovery_control
               """);
       var health = application.getBean(HealthEndpoint.class);
@@ -1997,7 +2330,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             scope.operationId(),
             pendingPrepare.effect().effectId(),
             prepareAttempt,
-            base.plusSeconds(5));
+            () -> base.plusSeconds(5));
     EffectReadback prepareReadback =
         new EffectReadback(
             scope.operationId(),
@@ -2158,7 +2491,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     UUID handoffAttempt = UUID.randomUUID();
     handoff =
         journal.claimEffect(
-            scope.operationId(), handoff.effect().effectId(), handoffAttempt, base.plusSeconds(8));
+            scope.operationId(),
+            handoff.effect().effectId(),
+            handoffAttempt,
+            () -> base.plusSeconds(8));
     EffectReadback handoffReadback =
         new EffectReadback(
             scope.operationId(),
@@ -2224,7 +2560,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(handoff.effect().kind()).isEqualTo(EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF);
     assertThat(
             journal
-                .claimEffect(operationId, handoff.effect().effectId(), UUID.randomUUID(), now)
+                .claimEffect(operationId, handoff.effect().effectId(), UUID.randomUUID(), () -> now)
                 .state())
         .isEqualTo(EffectOutboxState.DISPATCHED);
   }
@@ -2285,8 +2621,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     }
     UUID handoffId = pending.effect().effectId();
     UUID handoffAttempt = UUID.randomUUID();
-    assertThatThrownBy(
-            () -> journal.claimEffect(operationId, handoffId, handoffAttempt, base.plusSeconds(8)))
+    assertThatThrownBy(() ->
+            journal.claimEffect(operationId, handoffId, handoffAttempt, () -> base.plusSeconds(8)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("retained preparation readback has no exact historical identity");
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
@@ -2298,7 +2634,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 preparation.outboxId(),
                 latestIdentity))
         .isEqualTo(1);
-    var handoff = journal.claimEffect(operationId, handoffId, handoffAttempt, base.plusSeconds(8));
+    var handoff =
+        journal.claimEffect(operationId, handoffId, handoffAttempt, () -> base.plusSeconds(8));
     var applied =
         readbackFor(
             handoff,
@@ -2339,7 +2676,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isEqualTo(EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF);
     UUID handoffId = pendingHandoff.effect().effectId();
     OutboxEntry dispatchedHandoff =
-        journal.claimEffect(operationId, handoffId, UUID.randomUUID(), base.plusSeconds(6));
+        journal.claimEffect(operationId, handoffId, UUID.randomUUID(), () -> base.plusSeconds(6));
     assertThat(dispatchedHandoff.state()).isEqualTo(EffectOutboxState.DISPATCHED);
 
     EffectReadback partial =
@@ -2400,7 +2737,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             operationId,
             pendingHandoff.effect().effectId(),
             UUID.randomUUID(),
-            base.plusSeconds(6));
+            () -> base.plusSeconds(6));
     EffectReadback partial =
         readbackFor(
             preparation,
@@ -2568,7 +2905,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     UUID attemptId = UUID.randomUUID();
     OutboxEntry dispatched =
         journal.claimEffect(
-            scope.operationId(), prepare.effect().effectId(), attemptId, base.plusSeconds(5));
+            scope.operationId(), prepare.effect().effectId(), attemptId, () -> base.plusSeconds(5));
     assertThat(dispatched.state()).isEqualTo(EffectOutboxState.DISPATCHED);
     assertThat(
             journal.recordAmbiguousEffectForDispatch(
@@ -2576,7 +2913,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isTrue();
     assertThatThrownBy(() ->
             journal.claimEffect(
-                scope.operationId(), prepare.effect().effectId(), attemptId, base.plusSeconds(7)))
+                scope.operationId(),
+                prepare.effect().effectId(),
+                attemptId,
+                () -> base.plusSeconds(7)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("effect attempt is already claimed");
     OutboxEntry retryRead =
@@ -2584,7 +2924,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             scope.operationId(),
             prepare.effect().effectId(),
             UUID.randomUUID(),
-            base.plusSeconds(7));
+            () -> base.plusSeconds(7));
 
     assertThat(retryRead.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
     assertThat(retryRead.lastAttemptId()).isEqualTo(attemptId);
@@ -2606,7 +2946,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     UUID nextAttempt = UUID.randomUUID();
     OutboxEntry next =
         journal.claimEffect(
-            scope.operationId(), prepare.effect().effectId(), nextAttempt, base.plusSeconds(9));
+            scope.operationId(),
+            prepare.effect().effectId(),
+            nextAttempt,
+            () -> base.plusSeconds(9));
     assertThat(next.lastAttemptId()).isEqualTo(nextAttempt);
     assertThat(next.attemptCount()).isEqualTo(2);
   }
@@ -2829,7 +3172,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             .effectId();
     UUID firstAttempt = UUID.randomUUID();
     OutboxEntry dispatched =
-        journal.claimEffect(scope.operationId(), effectId, firstAttempt, base.plusSeconds(4));
+        journal.claimEffect(scope.operationId(), effectId, firstAttempt, () -> base.plusSeconds(4));
     EffectReadback terminal =
         readbackFor(
             dispatched,
@@ -2902,7 +3245,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(retained);
 
     assertThatThrownBy(() ->
-            journal.claimEffect(scope.operationId(), effectId, firstAttempt, base.plusSeconds(8)))
+            journal.claimEffect(
+                scope.operationId(), effectId, firstAttempt, () -> base.plusSeconds(8)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("a retry must use a new effect attempt identity");
     assertThat(storedOutbox(scope.operationId(), effectId)).isEqualTo(retained);
@@ -2910,7 +3254,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     UUID replacementAttempt = UUID.randomUUID();
     assertThat(
             journal
-                .claimEffect(scope.operationId(), effectId, replacementAttempt, base.plusSeconds(8))
+                .claimEffect(
+                    scope.operationId(), effectId, replacementAttempt, () -> base.plusSeconds(8))
                 .lastAttemptId())
         .isEqualTo(replacementAttempt);
     String replacement = storedOutbox(scope.operationId(), effectId);
@@ -3000,7 +3345,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     if (variant.equals("outbox-observation")) {
       UUID replacementAttempt = UUID.randomUUID();
       assertThatThrownBy(() ->
-              journal.claimEffect(operationId, effectId, replacementAttempt, base.plusSeconds(8)))
+              journal.claimEffect(
+                  operationId, effectId, replacementAttempt, () -> base.plusSeconds(8)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("retained effect readback does not match exact replay");
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(outboxBefore);
@@ -3093,7 +3439,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isEqualTo(beforeReplay);
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
     UUID nextAttempt = UUID.randomUUID();
-    journal.claimEffect(operationId, effectId, nextAttempt, base.plusSeconds(8));
+    journal.claimEffect(operationId, effectId, nextAttempt, () -> base.plusSeconds(8));
     String replaced = storedOutbox(operationId, effectId);
     assertThat(journal.recordEffectReadback(dispatched, closure, base.plusSeconds(9)))
         .isEqualTo(beforeReplay);
@@ -3239,7 +3585,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       UUID replacementAttempt = UUID.randomUUID();
       assertThat(
               journal
-                  .claimEffect(operationId, effectId, replacementAttempt, base.plusSeconds(7))
+                  .claimEffect(operationId, effectId, replacementAttempt, () -> base.plusSeconds(7))
                   .lastAttemptId())
           .isEqualTo(replacementAttempt);
       String replacement = storedOutbox(operationId, effectId);
@@ -3452,7 +3798,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining(error);
     assertThatThrownBy(() ->
-            journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(5)))
+            journal.claimEffect(
+                operationId, effectId, UUID.randomUUID(), () -> base.plusSeconds(5)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining(error);
   }
@@ -3561,7 +3908,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("pending effect has a dispatch timestamp");
       assertThatThrownBy(() ->
-              journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(4)))
+              journal.claimEffect(
+                  operationId, effectId, UUID.randomUUID(), () -> base.plusSeconds(4)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("pending effect has a dispatch timestamp");
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(malformed);
@@ -3572,7 +3920,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(journal.findNextEffect(operationId)).contains(pending);
     assertThat(
             journal
-                .claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(4))
+                .claimEffect(operationId, effectId, UUID.randomUUID(), () -> base.plusSeconds(4))
                 .attemptCount())
         .isEqualTo(1);
   }
@@ -3601,7 +3949,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               .hasMessageContaining("no dispatch timestamp");
           assertThatThrownBy(() ->
                   journal.claimEffect(
-                      operationId, handoffId, UUID.randomUUID(), base.plusSeconds(8)))
+                      operationId, handoffId, UUID.randomUUID(), () -> base.plusSeconds(8)))
               .isInstanceOf(InitialGameplayReleaseConflictException.class)
               .hasMessageContaining("no dispatch timestamp");
           assertThat(storedOutbox(operationId, handoffId)).isEqualTo(pendingHandoff);
@@ -3623,7 +3971,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               .hasMessageContaining("no dispatch timestamp");
           assertThatThrownBy(() ->
                   journal.claimEffect(
-                      operationId, effectId, UUID.randomUUID(), base.plusSeconds(8)))
+                      operationId, effectId, UUID.randomUUID(), () -> base.plusSeconds(8)))
               .isInstanceOf(InitialGameplayReleaseConflictException.class)
               .hasMessageContaining("no dispatch timestamp");
           assertThat(storedOutbox(operationId, effectId)).isEqualTo(malformed);
@@ -3690,7 +4038,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             + " WHERE outbox_id = ?",
         prepare.outboxId());
     assertThatThrownBy(() ->
-            journal.claimEffect(operationId, handoffId, UUID.randomUUID(), base.plusSeconds(8)))
+            journal.claimEffect(
+                operationId, handoffId, UUID.randomUUID(), () -> base.plusSeconds(8)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("preparation readback is incomplete");
     assertThat(storedOutbox(operationId, handoffId)).isEqualTo(pendingHandoff);
@@ -3706,7 +4055,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         prepare.outboxId());
     assertThat(
             journal
-                .claimEffect(operationId, handoffId, UUID.randomUUID(), base.plusSeconds(8))
+                .claimEffect(operationId, handoffId, UUID.randomUUID(), () -> base.plusSeconds(8))
                 .state())
         .isEqualTo(EffectOutboxState.DISPATCHED);
   }
@@ -3749,7 +4098,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     journal.recordEffectReadback(original, closure, base.minusSeconds(3));
     OutboxEntry prepare =
         journal.claimEffect(
-            operationId, original.effect().effectId(), UUID.randomUUID(), base.plusSeconds(4));
+            operationId,
+            original.effect().effectId(),
+            UUID.randomUUID(),
+            () -> base.plusSeconds(4));
     EffectReadback prepared =
         readbackFor(
             prepare,
@@ -3765,7 +4117,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             operationId,
             pendingHandoff.effect().effectId(),
             UUID.randomUUID(),
-            base.plusSeconds(6));
+            () -> base.plusSeconds(6));
     UUID effectId = handoff.effect().effectId();
     var receipt =
         readbackFor(
@@ -3880,14 +4232,15 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
     withSuppressedOutboxUpdate(() ->
         assertThatThrownBy(() ->
-                journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(4)))
+                journal.claimEffect(
+                    operationId, effectId, UUID.randomUUID(), () -> base.plusSeconds(4)))
             .isInstanceOf(InitialGameplayReleaseConflictException.class)
             .hasMessageContaining("effect dispatch claim was not recorded"));
 
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
     assertThat(
             journal
-                .claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(5))
+                .claimEffect(operationId, effectId, UUID.randomUUID(), () -> base.plusSeconds(5))
                 .state())
         .isEqualTo(EffectOutboxState.DISPATCHED);
   }
@@ -3912,7 +4265,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isEqualTo(1);
     String retained = storedOutbox(operationId, effectId);
     assertThatThrownBy(
-            () -> journal.claimEffect(operationId, effectId, attemptId, base.plusSeconds(4)))
+            () -> journal.claimEffect(operationId, effectId, attemptId, () -> base.plusSeconds(4)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("retained pending effect has readback evidence");
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
@@ -4167,13 +4520,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .extracting(OutboxEntry::state)
         .isEqualTo(EffectOutboxState.RETRYABLE);
     assertThat(storedOutbox(operationId, effectId)).contains("\"readback_payload\":null");
-    assertThatThrownBy(
-            () -> journal.claimEffect(operationId, effectId, rejectedAttempt, base.plusSeconds(6)))
+    assertThatThrownBy(() ->
+            journal.claimEffect(operationId, effectId, rejectedAttempt, () -> base.plusSeconds(6)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("a retry must use a new effect attempt identity");
     UUID freshAttempt = UUID.randomUUID();
     OutboxEntry retried =
-        journal.claimEffect(operationId, effectId, freshAttempt, base.plusSeconds(6));
+        journal.claimEffect(operationId, effectId, freshAttempt, () -> base.plusSeconds(6));
     assertThat(retried.state()).isEqualTo(EffectOutboxState.DISPATCHED);
     assertThat(retried.lastAttemptId()).isEqualTo(freshAttempt);
     assertThat(retried.attemptCount()).isEqualTo(dispatched.attemptCount() + 1);
@@ -4188,8 +4541,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isTrue();
     var reopened = new JooqInitialGameplayReleaseJournal(dsl, tupleCodec);
     String before = storedOutbox(operationId, effectId);
-    assertThatThrownBy(
-            () -> reopened.claimEffect(operationId, effectId, rejectedAttempt, base.plusSeconds(9)))
+    assertThatThrownBy(() ->
+            reopened.claimEffect(operationId, effectId, rejectedAttempt, () -> base.plusSeconds(9)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("a retry must use a new effect attempt identity");
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
@@ -4285,7 +4638,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     String outbox = storedOutbox(operationId, effectId);
 
     assertThatThrownBy(
-            () -> journal.claimEffect(operationId, effectId, attemptId, base.plusSeconds(5)))
+            () -> journal.claimEffect(operationId, effectId, attemptId, () -> base.plusSeconds(5)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("retained effect does not match the operation-owned tuple");
     assertThatThrownBy(
@@ -4314,7 +4667,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     journal.recordEffectReadback(a, closedAReadback, base.plusSeconds(5));
     String closedA = storedClosure(a);
     OutboxEntry b =
-        journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(6));
+        journal.claimEffect(operationId, effectId, UUID.randomUUID(), () -> base.plusSeconds(6));
     assertThat(storedClosure(a)).isEqualTo(closedA);
     String before = storedOutbox(operationId, effectId);
     Operation beforeReplay = journal.find(operationId).orElseThrow();
@@ -4367,7 +4720,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 a, RetrySource.OWNER_REJECTED, "DELAYED_NO_EFFECT", base.plusSeconds(7)))
         .isFalse();
     assertThatThrownBy(() ->
-            journal.claimEffect(operationId, effectId, a.lastAttemptId(), base.plusSeconds(7)))
+            journal.claimEffect(
+                operationId, effectId, a.lastAttemptId(), () -> base.plusSeconds(7)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
     journal.recordEffectReadback(
@@ -4381,11 +4735,12 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         base.plusSeconds(8));
     before = storedOutbox(operationId, effectId);
     assertThatThrownBy(() ->
-            journal.claimEffect(operationId, effectId, a.lastAttemptId(), base.plusSeconds(9)))
+            journal.claimEffect(
+                operationId, effectId, a.lastAttemptId(), () -> base.plusSeconds(9)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
     OutboxEntry c =
-        journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(10));
+        journal.claimEffect(operationId, effectId, UUID.randomUUID(), () -> base.plusSeconds(10));
     assertThat(c.state()).isEqualTo(EffectOutboxState.DISPATCHED);
     assertThat(c.lastAttemptId()).isNotIn(a.lastAttemptId(), b.lastAttemptId());
   }
@@ -4417,7 +4772,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(localNoSendReceipts(first)).isEqualTo(firstReceipt);
 
     OutboxEntry second =
-        reopened.claimEffect(operationId, effectId, attemptId, base.plusSeconds(7));
+        reopened.claimEffect(operationId, effectId, attemptId, () -> base.plusSeconds(7));
     assertThat(second.state()).isEqualTo(EffectOutboxState.DISPATCHED);
     assertThat(second.lastAttemptId()).isEqualTo(attemptId);
     assertThat(second.attemptCount()).isEqualTo(first.attemptCount() + 1);
@@ -4454,12 +4809,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 first, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(5)))
         .isTrue();
 
-    OutboxEntry second = journal.claimEffect(operationId, effectId, attemptId, base.plusSeconds(6));
+    OutboxEntry second =
+        journal.claimEffect(operationId, effectId, attemptId, () -> base.plusSeconds(6));
     assertThat(second.lastAttemptId()).isEqualTo(attemptId);
     assertThat(second.attemptCount()).isEqualTo(first.attemptCount() + 1);
     String retained = storedOutbox(operationId, effectId);
     assertThatThrownBy(
-            () -> journal.claimEffect(operationId, effectId, attemptId, base.plusSeconds(7)))
+            () -> journal.claimEffect(operationId, effectId, attemptId, () -> base.plusSeconds(7)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("already claimed");
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
@@ -4483,13 +4839,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           new JooqInitialGameplayReleaseJournal(DSL.using(configuration), tupleCodec);
       assertThatThrownBy(() ->
               transactionBoundJournal.claimEffect(
-                  operationId, effectId, newAttempt, base.plusSeconds(6)))
+                  operationId, effectId, newAttempt, () -> base.plusSeconds(6)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("requires its own transaction");
     });
 
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
-    assertThat(journal.claimEffect(operationId, effectId, newAttempt, base.plusSeconds(6)))
+    assertThat(journal.claimEffect(operationId, effectId, newAttempt, () -> base.plusSeconds(6)))
         .extracting(OutboxEntry::lastAttemptId)
         .isEqualTo(newAttempt);
   }
@@ -4518,7 +4874,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 dispatched.effect().operationId(),
                 dispatched.effect().effectId(),
                 replacementAttempt,
-                base.plusSeconds(5)))
+                () -> base.plusSeconds(5)))
         .extracting(OutboxEntry::lastAttemptId)
         .isEqualTo(replacementAttempt);
   }
@@ -4535,7 +4891,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 first, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(5)))
         .isTrue();
 
-    OutboxEntry next = journal.claimEffect(operationId, effectId, attemptId, base.plusSeconds(6));
+    OutboxEntry next =
+        journal.claimEffect(operationId, effectId, attemptId, () -> base.plusSeconds(6));
     assertThat(next.attemptCount()).isEqualTo(first.attemptCount() + 1);
     assertThat(localNoSendReceipts(first)).hasSize(1);
     var prepared =
@@ -4568,7 +4925,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
     String retained = storedOutbox(operationId, effectId);
     assertThatThrownBy(() ->
-            journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(6)))
+            journal.claimEffect(
+                operationId, effectId, UUID.randomUUID(), () -> base.plusSeconds(6)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("retained local no-send proof does not match");
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
@@ -4594,8 +4952,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isEqualTo(1);
     String before = storedOutbox(operationId, effectId);
     for (UUID candidate : List.of(dispatched.lastAttemptId(), UUID.randomUUID())) {
-      assertThatThrownBy(
-              () -> journal.claimEffect(operationId, effectId, candidate, base.plusSeconds(6)))
+      assertThatThrownBy(() ->
+              journal.claimEffect(operationId, effectId, candidate, () -> base.plusSeconds(6)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("retained local no-send proof does not match");
     }
@@ -4702,7 +5060,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
     assertThat(localNoSendReceipts(dispatch)).isEqualTo(noSendReceipts);
     var replacement =
-        journal.claimEffect(operationId, effectId, dispatch.lastAttemptId(), base.plusSeconds(10));
+        journal.claimEffect(
+            operationId, effectId, dispatch.lastAttemptId(), () -> base.plusSeconds(10));
     assertThat(replacement.attemptCount()).isEqualTo(dispatch.attemptCount() + 1);
     assertThat(replacement.state()).isEqualTo(EffectOutboxState.DISPATCHED);
   }
@@ -4849,11 +5208,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     UUID replacementAttempt = UUID.randomUUID();
     if (localNoSendFirst) {
       assertThatThrownBy(() ->
-              journal.claimEffect(operationId, effectId, replacementAttempt, base.plusSeconds(8)))
+              journal.claimEffect(
+                  operationId, effectId, replacementAttempt, () -> base.plusSeconds(8)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class);
     } else {
       assertThat(
-              journal.claimEffect(operationId, effectId, replacementAttempt, base.plusSeconds(8)))
+              journal.claimEffect(
+                  operationId, effectId, replacementAttempt, () -> base.plusSeconds(8)))
           .isEqualTo(held);
     }
 
@@ -4871,7 +5232,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isEqualTo(EffectOutboxState.RETRYABLE);
     assertThat(
             journal
-                .claimEffect(operationId, effectId, replacementAttempt, base.plusSeconds(11))
+                .claimEffect(operationId, effectId, replacementAttempt, () -> base.plusSeconds(11))
                 .attemptCount())
         .isEqualTo(dispatch.attemptCount() + 1);
   }
@@ -4920,7 +5281,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(journal.findNextEffect(operationId)).contains(next);
     if (heldUntyped) {
       assertThatThrownBy(() ->
-              journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(9)))
+              journal.claimEffect(
+                  operationId, effectId, UUID.randomUUID(), () -> base.plusSeconds(9)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("no exact durable provenance");
     }
@@ -4955,12 +5317,12 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             base.plusSeconds(9));
     journal.recordEffectReadback(reader, freshClosure, base.plusSeconds(10));
     assertThatThrownBy(
-            () -> journal.claimEffect(operationId, effectId, attemptId, base.plusSeconds(11)))
+            () -> journal.claimEffect(operationId, effectId, attemptId, () -> base.plusSeconds(11)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("new effect attempt identity");
     assertThat(
             journal
-                .claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(11))
+                .claimEffect(operationId, effectId, UUID.randomUUID(), () -> base.plusSeconds(11))
                 .attemptCount())
         .isEqualTo(2);
   }
@@ -5046,7 +5408,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     var pending = journal.findNextEffect(operationId).orElseThrow();
     var dispatch =
         journal.claimEffect(
-            operationId, pending.effect().effectId(), UUID.randomUUID(), base.plusSeconds(3));
+            operationId, pending.effect().effectId(), UUID.randomUUID(), () -> base.plusSeconds(3));
     var authorized = journal.find(operationId).orElseThrow();
     var before = storedOutbox(operationId, pending.effect().effectId());
     var prepared =
@@ -5075,6 +5437,152 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
+  void reconciliationRefusesMissingPreparationAfterCommittedResume() {
+    var pending = authorizedPending(journal, Instant.parse("2026-09-01T00:00:00Z"));
+    UUID operationId = pending.effect().operationId();
+    assertThat(journal.find(operationId).orElseThrow().phase()).isEqualTo(Phase.RESUME_AUTHORIZED);
+    assertThat(journal.findNextEffect(operationId)).contains(pending);
+    assertThat(
+            dsl.execute(
+                "DELETE FROM recovery_control.initial_gameplay_release_outbox WHERE outbox_id=?",
+                pending.outboxId()))
+        .isEqualTo(1);
+
+    assertThatThrownBy(() -> journal.findNextEffect(operationId))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("authorized resume has no retained preparation effect");
+    assertThat(journal.find(operationId).orElseThrow().phase()).isEqualTo(Phase.RESUME_AUTHORIZED);
+    assertThat(journal.findEffect(operationId, EffectKind.PREPARE_PLAYABLE_STATE_FENCED)).isEmpty();
+  }
+
+  @Test
+  void reconciliationRefusesMissingHandoffAfterPreparationReceipt() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    var dispatch = authorizedDispatch(base);
+    UUID operationId = dispatch.effect().operationId();
+    var prepared =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "prepared-for-handoff",
+            base.plusSeconds(5));
+    assertThat(journal.recordEffectReadback(dispatch, prepared, prepared.observedAt()).phase())
+        .isEqualTo(Phase.RELEASING);
+    var handoff = journal.findNextEffect(operationId).orElseThrow();
+    assertThat(
+            dsl.execute(
+                "DELETE FROM recovery_control.initial_gameplay_release_outbox WHERE outbox_id=?",
+                handoff.outboxId()))
+        .isEqualTo(1);
+
+    assertThatThrownBy(() -> journal.findNextEffect(operationId))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("releasing operation has no retained handoff effect");
+    assertThatThrownBy(() -> journal.findHeldPreparationForRefresh(operationId))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("releasing operation has no retained handoff effect");
+    assertThat(journal.findEffect(operationId, EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
+        .isEmpty();
+  }
+
+  @Test
+  void reconciliationRefusesAcknowledgedHandoffWithoutFinalization() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    var prepare = authorizedDispatch(base);
+    UUID operationId = prepare.effect().operationId();
+    var prepared =
+        readbackFor(
+            prepare,
+            prepare.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "prepared-before-handoff",
+            base.plusSeconds(5));
+    journal.recordEffectReadback(prepare, prepared, prepared.observedAt());
+    var pending = journal.findNextEffect(operationId).orElseThrow();
+    var handoff =
+        journal.claimEffect(
+            operationId, pending.effect().effectId(), UUID.randomUUID(), () -> base.plusSeconds(6));
+    var applied =
+        readbackFor(
+            handoff,
+            handoff.lastAttemptId(),
+            EffectReadbackState.OWNER_HANDOFF_APPLIED,
+            "applied-handoff",
+            base.plusSeconds(7));
+    assertThat(journal.recordEffectReadback(handoff, applied, applied.observedAt()).phase())
+        .isEqualTo(Phase.FINALIZED);
+    assertThat(journal.findNextEffect(operationId)).isEmpty();
+    String receipt = storedOutbox(operationId, handoff.effect().effectId());
+    // Model a mismatched restore without submitting any owner operation.
+    dsl.execute(
+        "UPDATE recovery_control.initial_gameplay_release_operation"
+            + " SET phase = 'releasing', finalized_at = NULL WHERE operation_id = ?",
+        operationId);
+
+    assertThatThrownBy(() -> journal.findNextEffect(operationId))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("acknowledged handoff without finalization");
+    assertThatThrownBy(() -> journal.findHeldPreparationForRefresh(operationId))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("acknowledged handoff without finalization");
+    assertThat(storedOutbox(operationId, handoff.effect().effectId())).isEqualTo(receipt);
+  }
+
+  @Test
+  void reconciliationKeepsReleasingPreparationHeldWhenAcknowledgementIsMissing() {
+    var base = Instant.parse("2026-09-01T00:00:00Z");
+    var dispatch = authorizedDispatch(base);
+    UUID operationId = dispatch.effect().operationId();
+    var acknowledgement =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "initial-acknowledgement",
+            base.plusSeconds(5));
+    assertThat(
+            journal
+                .recordEffectReadback(dispatch, acknowledgement, acknowledgement.observedAt())
+                .phase())
+        .isEqualTo(Phase.RELEASING);
+    var incomplete =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "partial-without-acknowledgement",
+            base.plusSeconds(6));
+    assertThat(
+            dsl.execute(
+                """
+                UPDATE recovery_control.initial_gameplay_release_outbox
+                SET state='ambiguous', last_outcome_code='UNKNOWN_OR_PARTIAL', acknowledged_at=NULL,
+                    readback_identity=?, readback_payload=CAST(? AS jsonb), readback_digest=?
+                WHERE outbox_id=?
+                """,
+                incomplete.readbackIdentity(),
+                tupleCodec.toJson(incomplete),
+                tupleCodec.digest(incomplete),
+                dispatch.outboxId()))
+        .isEqualTo(1);
+    var corrupt = storedOutbox(operationId, dispatch.effect().effectId());
+    var delayed =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            acknowledgement.readbackIdentity(),
+            base.plusSeconds(7));
+
+    assertThatThrownBy(() -> journal.recordEffectReadback(dispatch, delayed, delayed.observedAt()))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("releasing preparation has no retained acknowledgement");
+    assertThat(storedOutbox(operationId, dispatch.effect().effectId())).isEqualTo(corrupt);
+    assertThat(journal.find(operationId).orElseThrow().phase()).isEqualTo(Phase.RELEASING);
+  }
+
+  @Test
   void claimStorageFailureRollsBackWithoutDatabaseCause() {
     Instant base = Instant.parse("2026-09-01T00:00:00Z");
     var pending = authorizedPending(journal, base);
@@ -5088,8 +5596,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             + outbox
             + " ADD CONSTRAINT fixture_hold_dispatch CHECK (state <> 'dispatched') NOT VALID");
     try {
-      assertThatThrownBy(
-              () -> journal.claimEffect(operationId, effectId, attemptId, base.plusSeconds(4)))
+      assertThatThrownBy(() ->
+              journal.claimEffect(operationId, effectId, attemptId, () -> base.plusSeconds(4)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Unable to record recovery journal effect dispatch claim")
           .hasNoCause();
@@ -5099,7 +5607,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     }
     assertThat(
             journal
-                .claimEffect(operationId, effectId, attemptId, base.plusSeconds(4))
+                .claimEffect(operationId, effectId, attemptId, () -> base.plusSeconds(4))
                 .lastAttemptId())
         .isEqualTo(attemptId);
   }
@@ -5246,6 +5754,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("preparation observation compare-and-set lost");
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+      assertThat(
+              dsl.fetchCount(
+                  DSL.table("recovery_control.initial_gameplay_release_preparation_receipt"),
+                  DSL.field("outbox_id", UUID.class).eq(preparation.outboxId()),
+                  DSL.field("identity_digest", String.class)
+                      .eq(tupleCodec.digest(fresh.readbackIdentity()))))
+          .isZero();
     } finally {
       dsl.execute(
           "DROP TRIGGER IF EXISTS fixture_skip_preparation_observation"
@@ -5312,7 +5827,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     if (originalHandoff.isPresent()) {
       UUID handoffId = originalHandoff.orElseThrow().effect().effectId();
       assertThatThrownBy(() ->
-              journal.claimEffect(operationId, handoffId, UUID.randomUUID(), base.plusSeconds(9)))
+              journal.claimEffect(
+                  operationId, handoffId, UUID.randomUUID(), () -> base.plusSeconds(9)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("preparation acknowledgement is unavailable");
       EffectReadback contradictoryClosure =
@@ -5438,7 +5954,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       }
       assertThatThrownBy(() ->
               reopened.claimEffect(
-                  operationId, unclaimedHandoffId, UUID.randomUUID(), base.plusSeconds(11)))
+                  operationId, unclaimedHandoffId, UUID.randomUUID(), () -> base.plusSeconds(11)))
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("preparation acknowledgement is unavailable");
       EffectReadback afterSecondHold =
@@ -5459,7 +5975,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     UUID attemptId = UUID.randomUUID();
     OutboxEntry claimed =
         journal.claimEffect(
-            operationId, handoff.effect().effectId(), attemptId, base.plusSeconds(11));
+            operationId, handoff.effect().effectId(), attemptId, () -> base.plusSeconds(11));
     assertThat(claimed.state()).isEqualTo(EffectOutboxState.DISPATCHED);
     assertThat(claimed.lastAttemptId()).isEqualTo(attemptId);
     assertThat(claimed.attemptCount()).isEqualTo(1);
@@ -5527,8 +6043,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void newerPartialPreparationHoldsExactHandoffRetryUntilFreshProof(boolean ownerRejected) {
+  @CsvSource({"false,true,false", "true,true,false", "true,false,false", "true,false,true"})
+  void stalePreparationHoldsExactHandoffRetryUntilFreshProof(
+      boolean ownerRejected, boolean observePartial, boolean closeRejectedAttempt) {
     Instant base = Instant.parse("2026-09-01T00:00:00Z");
     OutboxEntry preparation = authorizedDispatch(base);
     UUID operationId = preparation.effect().operationId();
@@ -5544,15 +6061,17 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         base.plusSeconds(5));
     UUID handoffId = journal.findEffect(operationId, handoffKind).orElseThrow().effect().effectId();
     OutboxEntry claimed =
-        journal.claimEffect(operationId, handoffId, UUID.randomUUID(), base.plusSeconds(6));
-    EffectReadback partial =
-        readbackFor(
-            preparation,
-            preparation.lastAttemptId(),
-            EffectReadbackState.UNKNOWN_OR_PARTIAL,
-            "newer-partial",
-            base.plusSeconds(8));
-    journal.recordEffectReadback(preparation, partial, base.plusSeconds(8));
+        journal.claimEffect(operationId, handoffId, UUID.randomUUID(), () -> base.plusSeconds(6));
+    if (observePartial) {
+      EffectReadback partial =
+          readbackFor(
+              preparation,
+              preparation.lastAttemptId(),
+              EffectReadbackState.UNKNOWN_OR_PARTIAL,
+              "newer-partial",
+              base.plusSeconds(8));
+      journal.recordEffectReadback(preparation, partial, base.plusSeconds(8));
+    }
     assertThat(journal.findNextEffect(operationId)).contains(claimed);
     assertThat(
             journal.recordRetryableEffectForDispatch(
@@ -5561,16 +6080,42 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 "DEFINITIVE_NO_EFFECT",
                 base.plusSeconds(9)))
         .isTrue();
+    if (closeRejectedAttempt) {
+      var closure =
+          readbackFor(
+              claimed,
+              claimed.lastAttemptId(),
+              EffectReadbackState.PROVEN_NO_EFFECT,
+              "closed-rejected-handoff",
+              base.plusSeconds(9));
+      journal.recordEffectReadback(claimed, closure, closure.observedAt());
+    }
     String retry = storedOutbox(operationId, handoffId);
     OutboxEntry held = journal.findNextEffect(operationId).orElseThrow();
     assertThat(held.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
     assertThat(held.outboxId()).isEqualTo(preparation.outboxId());
     UUID retryAttemptId = UUID.randomUUID();
-    assertThatThrownBy(
-            () -> journal.claimEffect(operationId, handoffId, retryAttemptId, base.plusSeconds(9)))
+    assertThatThrownBy(() ->
+            journal.claimEffect(operationId, handoffId, retryAttemptId, () -> base.plusSeconds(9)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("preparation acknowledgement is unavailable");
     assertThat(storedOutbox(operationId, handoffId)).isEqualTo(retry);
+    if (ownerRejected) {
+      var sameMicrosecond =
+          readbackFor(
+              held,
+              held.lastAttemptId(),
+              EffectReadbackState.PREPARED_FENCED,
+              "same-microsecond-preparation",
+              base.plusSeconds(9).plusNanos(999));
+      journal.recordEffectReadback(held, sameMicrosecond, sameMicrosecond.observedAt());
+      assertThat(journal.findNextEffect(operationId)).contains(held);
+      assertThatThrownBy(() ->
+              journal.claimEffect(
+                  operationId, handoffId, retryAttemptId, () -> base.plusSeconds(10)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("preparation acknowledgement is unavailable");
+    }
 
     journal.recordEffectReadback(
         held,
@@ -5582,11 +6127,234 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             base.plusSeconds(10)),
         base.plusSeconds(10));
     assertThat(storedOutbox(operationId, handoffId)).isEqualTo(retry);
+    if (ownerRejected && !closeRejectedAttempt) {
+      var partial =
+          readbackFor(
+              claimed,
+              claimed.lastAttemptId(),
+              EffectReadbackState.UNKNOWN_OR_PARTIAL,
+              "later-partial-handoff",
+              base.plusSeconds(12));
+      journal.recordEffectReadback(claimed, partial, partial.observedAt());
+      assertThat(storedOutbox(operationId, handoffId)).contains(tupleCodec.digest(partial));
+    }
+    assertThat(journal.findNextEffect(operationId))
+        .hasValueSatisfying(next -> assertThat(next.effect().effectId()).isEqualTo(handoffId));
     OutboxEntry retried =
-        journal.claimEffect(operationId, handoffId, retryAttemptId, base.plusSeconds(11));
+        journal.claimEffect(operationId, handoffId, retryAttemptId, () -> base.plusSeconds(13));
     assertThat(retried.state()).isEqualTo(EffectOutboxState.DISPATCHED);
     assertThat(retried.lastAttemptId()).isEqualTo(retryAttemptId);
     assertThat(retried.attemptCount()).isEqualTo(claimed.attemptCount() + 1);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"backward-clock", "legacy-floor", "closure-only", "rejection-after-closure"})
+  void handoffRetryRefreshesPreparationAcrossDefinitiveOutcomes(String scenario) {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry preparation = authorizedDispatch(base);
+    UUID operationId = preparation.effect().operationId();
+    var originalPreparation =
+        readbackFor(
+            preparation,
+            preparation.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "preparation-before-handoff",
+            base.plusSeconds(5));
+    journal.recordEffectReadback(preparation, originalPreparation, base.plusSeconds(6));
+    var pending = journal.findNextEffect(operationId).orElseThrow();
+    UUID handoffId = pending.effect().effectId();
+    OutboxEntry original =
+        journal.claimEffect(operationId, handoffId, UUID.randomUUID(), () -> base.plusSeconds(7));
+
+    Instant floor;
+    if ("backward-clock".equals(scenario) || "legacy-floor".equals(scenario)) {
+      assertThat(
+              journal.recordRetryableEffectForDispatch(
+                  original, RetrySource.OWNER_REJECTED, "OWNER_REJECTED", base.plusSeconds(4)))
+          .isTrue();
+      floor = base.plusSeconds(7);
+      if ("legacy-floor".equals(scenario)) {
+        // Retained history can place its floor after observation but before acknowledgement.
+        floor = base.plusSeconds(5).plusMillis(500);
+        dsl.execute(
+            """
+            UPDATE recovery_control.initial_gameplay_release_attempt_rejection
+            SET preparation_refresh_after = CAST(? AS timestamptz)
+            WHERE outbox_id = ? AND attempt_id = ?
+            """,
+            floor.atOffset(ZoneOffset.UTC),
+            original.outboxId(),
+            original.lastAttemptId());
+      }
+    } else {
+      journal.recordAmbiguousEffectForDispatch(
+          original, "OBSERVATION_UNAVAILABLE", base.plusSeconds(8));
+      var closure =
+          readbackFor(
+              original,
+              original.lastAttemptId(),
+              EffectReadbackState.PROVEN_NO_EFFECT,
+              "durable-handoff-closure",
+              base.plusSeconds(9));
+      journal.recordEffectReadback(original, closure, closure.observedAt());
+      floor = base.plusSeconds(9);
+      if ("rejection-after-closure".equals(scenario)) {
+        assertThat(
+                journal.recordRetryableEffectForDispatch(
+                    original, RetrySource.OWNER_REJECTED, "OWNER_REJECTED", base.plusSeconds(10)))
+            .isFalse();
+        floor = base.plusSeconds(10);
+      }
+    }
+    if (!"closure-only".equals(scenario)) {
+      assertThat(
+              dsl.fetchSingle(
+                      """
+                      SELECT preparation_refresh_after
+                      FROM recovery_control.initial_gameplay_release_attempt_rejection
+                      WHERE outbox_id = ? AND attempt_id = ?
+                      """,
+                      original.outboxId(),
+                      original.lastAttemptId())
+                  .get(0, OffsetDateTime.class)
+                  .toInstant())
+          .isEqualTo(floor);
+    }
+    var held = journal.findNextEffect(operationId).orElseThrow();
+    assertThat(held.outboxId()).isEqualTo(preparation.outboxId());
+    assertThat(held.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
+
+    var stale =
+        readbackFor(
+            preparation,
+            preparation.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "same-floor-preparation",
+            floor);
+    journal.recordEffectReadback(preparation, stale, base.plusSeconds(11));
+    assertThat(journal.findNextEffect(operationId)).contains(held);
+    assertThatThrownBy(() ->
+            journal.claimEffect(
+                operationId, handoffId, UUID.randomUUID(), () -> base.plusSeconds(12)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("preparation acknowledgement is unavailable");
+
+    var fresh =
+        readbackFor(
+            preparation,
+            preparation.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "later-preparation",
+            base.plusSeconds(12));
+    journal.recordEffectReadback(preparation, fresh, fresh.observedAt());
+    assertThat(journal.findNextEffect(operationId))
+        .hasValueSatisfying(next -> assertThat(next.effect().effectId()).isEqualTo(handoffId));
+    UUID replacement = UUID.randomUUID();
+    assertThat(
+            journal
+                .claimEffect(operationId, handoffId, replacement, () -> base.plusSeconds(13))
+                .lastAttemptId())
+        .isEqualTo(replacement);
+  }
+
+  @Test
+  void migrationRefusesLegacyRejectionReceiptsWithoutRewritingTheirIdentity() throws Exception {
+    String database = "recovery_rejection_refresh_floor";
+    String sourceUrl = POSTGRES.getJdbcUrl();
+    String journalUrl = sourceUrl.substring(0, sourceUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try {
+      journalFlyway(journalUrl, "10").migrate();
+      try (var connection =
+          DriverManager.getConnection(journalUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        var fixture = DSL.using(connection, SQLDialect.POSTGRES);
+        seedImmutableV1Journal(fixture, true, Instant.parse("2026-09-01T00:00:00Z"));
+        fixture.execute(
+            """
+            INSERT INTO recovery_control.initial_gameplay_release_attempt_rejection
+                (outbox_id, attempt_id, attempt_ordinal)
+            VALUES (?, ?, 1)
+            """,
+            V1_OUTBOX_ID,
+            V1_PRIOR_ATTEMPT_ID);
+        var outbox = retainedOutboxRow(fixture);
+        assertThatThrownBy(() -> journalFlyway(journalUrl, null).migrate())
+            .hasStackTraceContaining("preparation_refresh_after")
+            .hasStackTraceContaining("contains null values");
+        var retained =
+            fixture.fetchSingle(
+                """
+                SELECT outbox_id, attempt_id, attempt_ordinal
+                FROM recovery_control.initial_gameplay_release_attempt_rejection
+                """);
+        assertThat(retained.get("outbox_id", UUID.class)).isEqualTo(V1_OUTBOX_ID);
+        assertThat(retained.get("attempt_id", UUID.class)).isEqualTo(V1_PRIOR_ATTEMPT_ID);
+        assertThat(retained.get("attempt_ordinal", Integer.class)).isEqualTo(1);
+        assertThat(retainedOutboxRow(fixture)).isEqualTo(outbox);
+        assertThat(
+                fixture
+                    .fetchSingle(
+                        """
+                        SELECT max(version::integer)
+                        FROM recovery_control.flyway_schema_history_recovery_control WHERE success
+                        """)
+                    .get(0, Integer.class))
+            .isEqualTo(10);
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  void pendingClaimAndStartupMigrationPreserveContradictoryAttemptHistory() throws Exception {
+    String database = "recovery_pending_attempt_history";
+    String sourceUrl = POSTGRES.getJdbcUrl();
+    String journalUrl = sourceUrl.substring(0, sourceUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try {
+      journalFlyway(journalUrl, "1").migrate();
+      try (var fixtureSession =
+          DriverManager.getConnection(journalUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        var fixture = DSL.using(fixtureSession, SQLDialect.POSTGRES);
+        Instant base = Instant.parse("2026-09-01T00:00:00Z");
+        seedImmutableV1Journal(fixture, false, base);
+        journalFlyway(journalUrl, "9").migrate();
+        var receipt = UUID.randomUUID();
+        fixture.execute(
+            """
+            INSERT INTO recovery_control.initial_gameplay_release_attempt_local_no_send
+                (outbox_id, attempt_id, attempt_ordinal, dispatched_at, recorded_at)
+            VALUES (?, ?, 1, CAST(? AS timestamptz), CAST(? AS timestamptz))
+            """,
+            V1_OUTBOX_ID,
+            receipt,
+            base.plusSeconds(3).atOffset(ZoneOffset.UTC),
+            base.plusSeconds(4).atOffset(ZoneOffset.UTC));
+        String retained = retainedOutboxRow(fixture);
+        var restoredJournal = new JooqInitialGameplayReleaseJournal(fixture, tupleCodec);
+        assertThatThrownBy(() ->
+                restoredJournal.claimEffect(
+                    V1_OPERATION_ID, V1_EFFECT_ID, UUID.randomUUID(), () -> base.plusSeconds(5)))
+            .isInstanceOf(InitialGameplayReleaseConflictException.class)
+            .hasMessageContaining("pending effect has retained attempt evidence");
+        var upgrade = journalFlyway(journalUrl, null);
+        assertThatThrownBy(upgrade::migrate)
+            .hasStackTraceContaining("Pending Recovery effect has retained attempt evidence");
+        assertThat(upgrade.info().current().getVersion().getVersion()).isEqualTo("9");
+        assertThat(retainedOutboxRow(fixture)).isEqualTo(retained);
+        assertThat(
+                fixture
+                    .fetchSingle(
+                        "SELECT attempt_id FROM recovery_control.initial_gameplay_release_attempt_local_no_send WHERE outbox_id = ?",
+                        V1_OUTBOX_ID)
+                    .get(0, UUID.class))
+            .isEqualTo(receipt);
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
   }
 
   @Test
@@ -5604,7 +6372,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     OutboxEntry held = journal.findNextEffect(operationId).orElseThrow();
     assertThat(held.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
     assertThatThrownBy(() ->
-            journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(5)))
+            journal.claimEffect(
+                operationId, effectId, UUID.randomUUID(), () -> base.plusSeconds(5)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class);
     EffectReadback delayed =
         readbackFor(
@@ -5668,7 +6437,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isEqualTo(1);
     var reopened = new JooqInitialGameplayReleaseJournal(dsl, tupleCodec);
     assertThatThrownBy(() ->
-            reopened.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(7)))
+            reopened.claimEffect(
+                operationId, effectId, UUID.randomUUID(), () -> base.plusSeconds(7)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("no exact durable provenance");
     OutboxEntry held = reopened.findNextEffect(operationId).orElseThrow();
@@ -5685,7 +6455,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(storedOutbox(operationId, effectId))
         .contains("\"retry_provenance\":\"owner_closure\"");
     OutboxEntry replacement =
-        reopened.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(9));
+        reopened.claimEffect(operationId, effectId, UUID.randomUUID(), () -> base.plusSeconds(9));
     assertThat(replacement.state()).isEqualTo(EffectOutboxState.DISPATCHED);
     assertThat(replacement.attemptCount()).isEqualTo(dispatched.attemptCount() + 1);
   }
@@ -5749,13 +6519,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isTrue();
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(rejected);
     assertThatThrownBy(
-            () -> reopened.claimEffect(operationId, effectId, attemptId, base.plusSeconds(7)))
+            () -> reopened.claimEffect(operationId, effectId, attemptId, () -> base.plusSeconds(7)))
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("a retry must use a new effect attempt identity");
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(rejected);
     UUID freshAttempt = UUID.randomUUID();
     OutboxEntry replacement =
-        reopened.claimEffect(operationId, effectId, freshAttempt, base.plusSeconds(8));
+        reopened.claimEffect(operationId, effectId, freshAttempt, () -> base.plusSeconds(8));
     assertThat(replacement.state()).isEqualTo(EffectOutboxState.DISPATCHED);
     assertThat(replacement.lastAttemptId()).isEqualTo(freshAttempt);
     assertThat(replacement.attemptCount()).isEqualTo(dispatched.attemptCount() + 1);
@@ -5773,7 +6543,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             journal.recordRetryableEffectForDispatch(
                 original, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", base.plusSeconds(5)))
         .isTrue();
-    OutboxEntry retry = journal.claimEffect(operationId, effectId, attemptId, base.plusSeconds(6));
+    OutboxEntry retry =
+        journal.claimEffect(operationId, effectId, attemptId, () -> base.plusSeconds(6));
     assertThat(retry.attemptCount()).isEqualTo(original.attemptCount() + 1);
     String before = storedOutbox(operationId, effectId);
     assertThatThrownBy(() ->
@@ -5821,7 +6592,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 firstDispatch.plusNanos(200)))
         .isTrue();
     OutboxEntry replacement =
-        journal.claimEffect(operationId, effectId, attemptId, firstDispatch.plusNanos(300));
+        journal.claimEffect(operationId, effectId, attemptId, () -> firstDispatch.plusNanos(300));
     assertThat(replacement.lastAttemptId()).isEqualTo(attemptId);
     assertThat(replacement.attemptCount()).isEqualTo(original.attemptCount() + 1);
     assertThat(dsl.fetchSingle(dispatchTimeQuery, replacement.outboxId()).get(0))
@@ -6102,13 +6873,16 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                       .get(0))
               .isNull();
           journalFlyway(legacyUrl, "6").migrate();
+          journalFlyway(legacyUrl, null).migrate();
           OutboxEntry reconcilable = upgradedJournal.findNextEffect(V1_OPERATION_ID).orElseThrow();
-          journalFlyway(legacyUrl, "7").migrate();
           if (retainedRetry) {
             assertThat(reconcilable.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
             assertThatThrownBy(() ->
                     upgradedJournal.claimEffect(
-                        V1_OPERATION_ID, V1_EFFECT_ID, UUID.randomUUID(), base.plusSeconds(1)))
+                        V1_OPERATION_ID,
+                        V1_EFFECT_ID,
+                        UUID.randomUUID(),
+                        () -> base.plusSeconds(1)))
                 .isInstanceOf(InitialGameplayReleaseConflictException.class)
                 .hasMessageContaining("no exact durable provenance");
           } else {
@@ -6134,7 +6908,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           upgradedJournal.recordEffectReadback(reconcilable, closure, base.plusSeconds(3));
           var replacement =
               upgradedJournal.claimEffect(
-                  V1_OPERATION_ID, V1_EFFECT_ID, UUID.randomUUID(), base.plusSeconds(4));
+                  V1_OPERATION_ID, V1_EFFECT_ID, UUID.randomUUID(), () -> base.plusSeconds(4));
           assertThat(replacement.attemptCount()).isEqualTo(2);
         }
       }
@@ -6200,7 +6974,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         var legacyJournal = new JooqInitialGameplayReleaseJournal(legacyDsl, tupleCodec);
         assertThatThrownBy(() ->
                 legacyJournal.claimEffect(
-                    V1_OPERATION_ID, V1_EFFECT_ID, UUID.randomUUID(), base.plusSeconds(1)))
+                    V1_OPERATION_ID, V1_EFFECT_ID, UUID.randomUUID(), () -> base.plusSeconds(1)))
             .isInstanceOf(InitialGameplayReleaseConflictException.class)
             .hasMessageContaining("retained pending effect has a dispatch outcome");
         assertThat(retainedOutboxRow(legacyDsl)).isEqualTo(before);
@@ -6320,6 +7094,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           upgrade.migrate();
           upgrade.validate();
           assertThat(upgrade.info().current().getVersion().getVersion()).isEqualTo("7");
+          journalFlyway(legacyUrl, null).migrate();
           OutboxEntry pendingHandoff = legacyJournal.findNextEffect(V1_OPERATION_ID).orElseThrow();
           assertThat(pendingHandoff.effect().kind())
               .isEqualTo(EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF);
@@ -6328,7 +7103,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                   V1_OPERATION_ID,
                   pendingHandoff.effect().effectId(),
                   UUID.randomUUID(),
-                  base.plusSeconds(4));
+                  () -> base.plusSeconds(4));
           assertThat(claimedHandoff.state()).isEqualTo(EffectOutboxState.DISPATCHED);
           assertThat(claimedHandoff.lastAttemptId()).isNotNull();
         }
@@ -6407,6 +7182,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           assertThat(retainedOutboxRow(legacyDsl)).isEqualTo(malformed);
         } else {
           pendingAttemptUpgrade.migrate();
+          assertThat(pendingAttemptUpgrade.info().current().getVersion().getVersion())
+              .isEqualTo("9");
+          journalFlyway(legacyUrl, null).migrate();
           assertCompletePackagedMigrationReceipts(legacyUrl);
           assertThat(retainedOutboxRow(legacyDsl)).isEqualTo(retained);
         }
@@ -6498,13 +7276,16 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                       V1_OUTBOX_ID))
               .isEqualTo(1);
         }
+        journalFlyway(legacyUrl, null).migrate();
         var held = legacyJournal.findNextEffect(V1_OPERATION_ID).orElseThrow();
         assertThat(held.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
         assertThat(held.lastAttemptId()).isEqualTo(attempt);
-        journalFlyway(legacyUrl, "7").migrate();
         assertThatThrownBy(() ->
                 legacyJournal.claimEffect(
-                    V1_OPERATION_ID, V1_EFFECT_ID, UUID.randomUUID(), dispatchTime.plusSeconds(2)))
+                    V1_OPERATION_ID,
+                    V1_EFFECT_ID,
+                    UUID.randomUUID(),
+                    () -> dispatchTime.plusSeconds(2)))
             .isInstanceOf(InitialGameplayReleaseConflictException.class)
             .hasMessageContaining(
                 missingProvenance
@@ -6555,12 +7336,15 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         assertThat(localNoSendReceipts(legacyDsl, prior)).isEqualTo(retainedReceipt);
         assertThatThrownBy(() ->
                 legacyJournal.claimEffect(
-                    V1_OPERATION_ID, V1_EFFECT_ID, attempt, dispatchTime.plusSeconds(4)))
+                    V1_OPERATION_ID, V1_EFFECT_ID, attempt, () -> dispatchTime.plusSeconds(4)))
             .isInstanceOf(InitialGameplayReleaseConflictException.class)
             .hasMessageContaining("new effect attempt identity");
         var replacement =
             legacyJournal.claimEffect(
-                V1_OPERATION_ID, V1_EFFECT_ID, UUID.randomUUID(), dispatchTime.plusSeconds(4));
+                V1_OPERATION_ID,
+                V1_EFFECT_ID,
+                UUID.randomUUID(),
+                () -> dispatchTime.plusSeconds(4));
         assertThat(replacement.attemptCount()).isEqualTo(2);
       }
     } finally {
@@ -6725,7 +7509,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         pending.effect().operationId(),
         pending.effect().effectId(),
         UUID.randomUUID(),
-        base.plusSeconds(4));
+        () -> base.plusSeconds(4));
   }
 
   private static OutboxEntry authorizedPending(
@@ -6760,7 +7544,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         handoff.effect().operationId(),
         handoff.effect().effectId(),
         UUID.randomUUID(),
-        base.plusSeconds(6));
+        () -> base.plusSeconds(6));
   }
 
   private static List<String> localNoSendReceipts(OutboxEntry dispatch) {

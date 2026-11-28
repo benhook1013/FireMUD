@@ -3,9 +3,9 @@ package net.firedevops.firemud.recovery.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.intThat;
-import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -30,55 +30,85 @@ import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.Status;
 import org.springframework.test.util.ReflectionTestUtils;
 
+@ResourceLock("postgresql-driver-protocol-logger")
 class RecoveryJournalHealthIndicatorTest {
+  private static final long CALLER_DEADLINE_NANOS = TimeUnit.SECONDS.toNanos(2);
+  private static final long CALLER_DEADLINE_SCHEDULING_ALLOWANCE_NANOS =
+      TimeUnit.MILLISECONDS.toNanos(750);
+  private static final long PROBE_WATCHDOG_SECONDS = 5;
+  private static final Logger DRIVER_PROTOCOL_LOGGER =
+      Logger.getLogger("org.postgresql.core.v3.QueryExecutorImpl");
+
   @ParameterizedTest
   @CsvSource({"0,2000,false", "5000,2000,true", "750,750,false"})
   void readinessBoundsTheProbeAndRestoresTheBorrowedConnection(
       int originalTimeout, int expectedTimeout, boolean queryFails) throws SQLException {
     DataSource source = mock(DataSource.class);
-    Connection connection = mock(Connection.class);
-    PreparedStatement statement = mock(PreparedStatement.class);
-    ResultSet rows = mock(ResultSet.class);
-    when(source.getConnection()).thenReturn(connection);
-    when(connection.getAutoCommit()).thenReturn(true);
-    when(connection.getNetworkTimeout()).thenReturn(originalTimeout);
-    when(connection.prepareStatement(anyString())).thenReturn(statement);
-    if (queryFails) {
-      when(statement.executeQuery()).thenThrow(new SQLException("fixture database unavailable"));
-    } else {
-      when(statement.executeQuery()).thenReturn(rows);
-      when(rows.next()).thenReturn(true);
-      when(rows.getBoolean(1)).thenReturn(true);
-    }
+    try (Connection connection = mock(Connection.class);
+        PreparedStatement canonicalDeparse = mock(PreparedStatement.class);
+        PreparedStatement statement = mock(PreparedStatement.class);
+        ResultSet rows = mock(ResultSet.class)) {
+      String canonicalSql = "SET LOCAL quote_all_identifiers = 'off'";
+      when(source.getConnection()).thenReturn(connection);
+      when(connection.getAutoCommit()).thenReturn(true);
+      when(connection.getNetworkTimeout()).thenReturn(originalTimeout);
+      when(connection.prepareStatement(anyString())).thenReturn(statement);
+      when(connection.prepareStatement(canonicalSql)).thenReturn(canonicalDeparse);
+      if (queryFails) {
+        when(statement.executeQuery()).thenThrow(new SQLException("fixture database unavailable"));
+      } else {
+        when(statement.executeQuery()).thenReturn(rows);
+        when(rows.next()).thenReturn(true);
+        when(rows.getBoolean(1)).thenReturn(true);
+      }
 
-    boolean preserveShorterTimeout = originalTimeout == expectedTimeout;
-    var indicator =
-        preserveShorterTimeout
-            ? new RecoveryJournalHealthIndicator(source, TimeUnit.SECONDS.toNanos(15))
-            : new RecoveryJournalHealthIndicator(source);
-    try {
-      var health = indicator.health();
+      boolean preserveShorterTimeout = originalTimeout == expectedTimeout;
+      var indicator =
+          preserveShorterTimeout
+              ? new RecoveryJournalHealthIndicator(source, TimeUnit.SECONDS.toNanos(15))
+              : new RecoveryJournalHealthIndicator(source);
+      try {
+        var health = indicator.health();
 
-      assertThat(health.getStatus()).isEqualTo(queryFails ? Status.DOWN : Status.UP);
-      var sequence = inOrder(connection, statement);
-      sequence
-          .verify(connection)
-          .setNetworkTimeout(
-              any(),
-              intThat(timeout ->
-                  preserveShorterTimeout
-                      ? timeout == expectedTimeout
-                      : timeout > 0 && timeout <= expectedTimeout));
-      sequence.verify(connection).prepareStatement(anyString());
-      sequence.verify(statement).setQueryTimeout(2);
-      sequence.verify(statement).executeQuery();
-      sequence.verify(connection).setNetworkTimeout(any(), eq(originalTimeout));
-      sequence.verify(connection).close();
-    } finally {
-      indicator.stopProbes();
+        assertThat(health.getStatus()).isEqualTo(queryFails ? Status.DOWN : Status.UP);
+        var sequence = inOrder(connection, canonicalDeparse, statement);
+        sequence
+            .verify(connection)
+            .setNetworkTimeout(
+                any(),
+                intThat(timeout ->
+                    preserveShorterTimeout
+                        ? timeout == expectedTimeout
+                        : timeout > 0 && timeout <= expectedTimeout));
+        sequence.verify(connection).setAutoCommit(false);
+        assertThat(sequence.verify(connection).prepareStatement(canonicalSql)).isNull();
+        assertThat(sequence.verify(canonicalDeparse).execute()).isFalse();
+        assertThat(
+                sequence
+                    .verify(connection)
+                    .prepareStatement(argThat(sql -> sql.contains("SELECT"))))
+            .isNull();
+        sequence.verify(statement).setQueryTimeout(2);
+        assertThat(sequence.verify(statement).executeQuery()).isNull();
+        if (queryFails) {
+          sequence.verify(connection).rollback();
+        } else {
+          sequence.verify(connection).commit();
+        }
+        sequence.verify(connection).setAutoCommit(true);
+        sequence.verify(connection).setNetworkTimeout(any(), eq(originalTimeout));
+        sequence.verify(connection).close();
+      } finally {
+        indicator.stopProbes();
+        rows.close();
+        statement.close();
+        canonicalDeparse.close();
+        connection.close();
+      }
     }
   }
 
@@ -88,171 +118,219 @@ class RecoveryJournalHealthIndicatorTest {
     var acquiring = new CountDownLatch(1);
     var release = new CountDownLatch(1);
     var borrowFinished = new CountDownLatch(1);
-    when(source.getConnection())
-        .thenAnswer(ignored -> {
-          acquiring.countDown();
-          try {
-            release.await(5, TimeUnit.SECONDS);
-          } finally {
-            borrowFinished.countDown();
-          }
-          throw new SQLException("fixture database unavailable");
-        });
+    try (Connection connection = mock(Connection.class)) {
+      when(source.getConnection())
+          .thenAnswer(ignored -> {
+            acquiring.countDown();
+            try {
+              release.await();
+            } finally {
+              borrowFinished.countDown();
+            }
+            return connection;
+          });
 
-    var indicator = new RecoveryJournalHealthIndicator(source, TimeUnit.MILLISECONDS.toNanos(100));
-    try {
-      var first = new FutureTask<>(indicator::health);
-      Thread.ofVirtual().start(first);
-      assertThat(acquiring.await(5, TimeUnit.SECONDS)).isTrue();
-      assertThat(first.get(2, TimeUnit.SECONDS).getStatus()).isEqualTo(Status.DOWN);
-      assertThat(borrowFinished.getCount()).isEqualTo(1);
-      assertThat(indicator.health().getStatus()).isEqualTo(Status.DOWN);
-      var probes = (ThreadPoolExecutor) ReflectionTestUtils.getField(indicator, "probes");
-      assertThat(probes).isNotNull();
-      assertThat(probes.getTaskCount()).isEqualTo(1);
-      verify(source, times(1)).getConnection();
-    } finally {
-      release.countDown();
-      indicator.stopProbes();
+      var indicator = new RecoveryJournalHealthIndicator(source);
+      try {
+        var first = startProbeThatMustReach(indicator, acquiring);
+        assertHealthDownWithinCallerDeadline(first);
+        assertThat(borrowFinished.getCount()).isEqualTo(1);
+        assertThat(boundedHealth(indicator).getStatus()).isEqualTo(Status.DOWN);
+        var probes = (ThreadPoolExecutor) ReflectionTestUtils.getField(indicator, "probes");
+        assertThat(probes).isNotNull();
+        assertThat(probes.getTaskCount()).isEqualTo(1);
+        assertThat(verify(source, times(1)).getConnection()).isNull();
+      } finally {
+        release.countDown();
+        indicator.stopProbes();
+        connection.close();
+      }
     }
   }
 
   @Test
   void overlappingHealthCallersAwaitOneSuccessfulProbe() throws Exception {
     DataSource source = mock(DataSource.class);
-    Connection connection = mock(Connection.class);
-    PreparedStatement statement = mock(PreparedStatement.class);
-    ResultSet rows = mock(ResultSet.class);
-    when(source.getConnection()).thenReturn(connection);
-    when(connection.getAutoCommit()).thenReturn(true);
-    when(connection.prepareStatement(anyString())).thenReturn(statement);
-    var queryStarted = new CountDownLatch(1);
-    var releaseQuery = new CountDownLatch(1);
-    when(statement.executeQuery())
-        .thenAnswer(ignored -> {
-          queryStarted.countDown();
-          releaseQuery.await();
-          return rows;
-        });
-    when(rows.next()).thenReturn(true);
-    when(rows.getBoolean(1)).thenReturn(true);
+    try (Connection connection = mock(Connection.class);
+        PreparedStatement statement = mock(PreparedStatement.class);
+        ResultSet rows = mock(ResultSet.class)) {
+      when(source.getConnection()).thenReturn(connection);
+      when(connection.getAutoCommit()).thenReturn(true);
+      when(connection.prepareStatement(anyString())).thenReturn(statement);
+      var queryStarted = new CountDownLatch(1);
+      var releaseQuery = new CountDownLatch(1);
+      when(statement.executeQuery())
+          .thenAnswer(ignored -> {
+            queryStarted.countDown();
+            releaseQuery.await();
+            return rows;
+          });
+      when(rows.next()).thenReturn(true);
+      when(rows.getBoolean(1)).thenReturn(true);
 
-    var indicator = new RecoveryJournalHealthIndicator(source, TimeUnit.SECONDS.toNanos(15));
-    try {
-      var first = new FutureTask<>(indicator::health);
-      Thread.ofVirtual().start(first);
-      assertThat(queryStarted.await(5, TimeUnit.SECONDS)).isTrue();
+      var indicator = new RecoveryJournalHealthIndicator(source, TimeUnit.SECONDS.toNanos(15));
+      try {
+        var first = new FutureTask<>(indicator::health);
+        Thread.ofVirtual().start(first);
+        assertThat(queryStarted.await(5, TimeUnit.SECONDS)).isTrue();
 
-      var second = new FutureTask<>(indicator::health);
-      Thread secondThread = Thread.ofVirtual().unstarted(second);
-      secondThread.start();
-      awaitTimedWaiting(secondThread);
-      verify(source, times(1)).getConnection();
+        var second = new FutureTask<>(indicator::health);
+        Thread secondThread = Thread.ofVirtual().unstarted(second);
+        secondThread.start();
+        awaitTimedWaiting(secondThread);
+        assertThat(verify(source, times(1)).getConnection()).isNull();
 
-      releaseQuery.countDown();
-      assertThat(first.get(5, TimeUnit.SECONDS).getStatus()).isEqualTo(Status.UP);
-      assertThat(second.get(5, TimeUnit.SECONDS).getStatus()).isEqualTo(Status.UP);
-      verify(source, times(1)).getConnection();
-    } finally {
-      releaseQuery.countDown();
-      indicator.stopProbes();
+        releaseQuery.countDown();
+        assertThat(first.get(5, TimeUnit.SECONDS).getStatus()).isEqualTo(Status.UP);
+        assertThat(second.get(5, TimeUnit.SECONDS).getStatus()).isEqualTo(Status.UP);
+        assertThat(verify(source, times(1)).getConnection()).isNull();
+      } finally {
+        releaseQuery.countDown();
+        indicator.stopProbes();
+        rows.close();
+        statement.close();
+        connection.close();
+      }
     }
   }
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  @ResourceLock("postgresql-driver-protocol-logger")
   void readinessChecksDriverTracingAgainAfterSuccessfulProbe(boolean enableTracingDuringProbe)
       throws SQLException {
     DataSource source = mock(DataSource.class);
-    Connection connection = mock(Connection.class);
-    PreparedStatement statement = mock(PreparedStatement.class);
-    ResultSet rows = mock(ResultSet.class);
-    var logger = Logger.getLogger("org.postgresql.core.v3.QueryExecutorImpl");
-    Level prior = logger.getLevel();
-    var enableTracing = new AtomicBoolean(enableTracingDuringProbe);
-    when(source.getConnection()).thenReturn(connection);
-    when(connection.getAutoCommit()).thenReturn(true);
-    when(connection.prepareStatement(anyString())).thenReturn(statement);
-    when(statement.executeQuery()).thenReturn(rows);
-    when(rows.next()).thenReturn(true);
-    when(rows.getBoolean(1))
-        .thenAnswer(ignored -> {
-          synchronized (enableTracing) {
-            if (enableTracing.get()) {
-              logger.setLevel(Level.FINEST);
+    try (Connection connection = mock(Connection.class);
+        PreparedStatement statement = mock(PreparedStatement.class);
+        ResultSet rows = mock(ResultSet.class)) {
+      Level prior = DRIVER_PROTOCOL_LOGGER.getLevel();
+      var enableTracing = new AtomicBoolean(enableTracingDuringProbe);
+      var tracingLock = new Object();
+      when(source.getConnection()).thenReturn(connection);
+      when(connection.getAutoCommit()).thenReturn(true);
+      when(connection.prepareStatement(anyString())).thenReturn(statement);
+      when(statement.executeQuery()).thenReturn(rows);
+      when(rows.next()).thenReturn(true);
+      when(rows.getBoolean(1))
+          .thenAnswer(ignored -> {
+            synchronized (tracingLock) {
+              if (enableTracing.get()) {
+                DRIVER_PROTOCOL_LOGGER.setLevel(Level.FINEST);
+              }
             }
-          }
-          return true;
-        });
+            return true;
+          });
 
-    var indicator = new RecoveryJournalHealthIndicator(source);
-    try {
-      logger.setLevel(Level.INFO);
-      assertThat(indicator.health().getStatus())
-          .isEqualTo(enableTracingDuringProbe ? Status.DOWN : Status.UP);
-      verify(connection).close();
-    } finally {
-      synchronized (enableTracing) {
-        enableTracing.set(false);
-        logger.setLevel(prior);
+      var indicator = new RecoveryJournalHealthIndicator(source);
+      try {
+        synchronized (tracingLock) {
+          DRIVER_PROTOCOL_LOGGER.setLevel(Level.INFO);
+        }
+        assertThat(indicator.health().getStatus())
+            .isEqualTo(enableTracingDuringProbe ? Status.DOWN : Status.UP);
+        verify(connection).close();
+      } finally {
+        synchronized (tracingLock) {
+          enableTracing.set(false);
+          DRIVER_PROTOCOL_LOGGER.setLevel(prior);
+        }
+        indicator.stopProbes();
+        rows.close();
+        statement.close();
+        connection.close();
       }
-      indicator.stopProbes();
     }
   }
 
   @Test
   void readinessRetainsBorrowThroughDelayedCleanupThenAcceptsFreshProbe() throws Exception {
     DataSource source = mock(DataSource.class);
-    Connection connection = mock(Connection.class);
-    PreparedStatement statement = mock(PreparedStatement.class);
-    ResultSet rows = mock(ResultSet.class);
-    when(source.getConnection()).thenReturn(connection);
-    when(connection.getAutoCommit()).thenReturn(true);
-    when(connection.prepareStatement(anyString())).thenReturn(statement);
-    when(statement.executeQuery()).thenReturn(rows);
-    when(rows.next()).thenReturn(true);
-    when(rows.getBoolean(1)).thenReturn(true);
+    try (Connection connection = mock(Connection.class);
+        PreparedStatement statement = mock(PreparedStatement.class);
+        ResultSet rows = mock(ResultSet.class)) {
+      when(source.getConnection()).thenReturn(connection);
+      when(connection.getAutoCommit()).thenReturn(true);
+      when(connection.prepareStatement(anyString())).thenReturn(statement);
+      when(statement.executeQuery()).thenReturn(rows);
+      when(rows.next()).thenReturn(true);
+      when(rows.getBoolean(1)).thenReturn(true);
 
-    var closing = new CountDownLatch(1);
-    var release = new CountDownLatch(1);
-    var closeFinished = new CountDownLatch(1);
-    doAnswer(
-            ignored -> {
-              closing.countDown();
-              if (!release.await(5, TimeUnit.SECONDS)) {
-                throw new SQLException("fixture cleanup was not released");
-              }
-              closeFinished.countDown();
-              return null;
-            })
-        .doNothing()
-        .when(connection)
-        .close();
+      var closing = new CountDownLatch(1);
+      var release = new CountDownLatch(1);
+      var closeFinished = new CountDownLatch(1);
+      doAnswer(
+              ignored -> {
+                closing.countDown();
+                release.await();
+                closeFinished.countDown();
+                return null;
+              })
+          .doNothing()
+          .when(connection)
+          .close();
 
-    var indicator = new RecoveryJournalHealthIndicator(source, TimeUnit.MILLISECONDS.toNanos(100));
-    try {
-      var first = new FutureTask<>(indicator::health);
-      Thread.ofVirtual().start(first);
-      assertThat(closing.await(5, TimeUnit.SECONDS)).isTrue();
-      assertThat(first.get(2, TimeUnit.SECONDS).getStatus()).isEqualTo(Status.DOWN);
-      assertThat(indicator.health().getStatus()).isEqualTo(Status.DOWN);
-      verify(source, times(1)).getConnection();
+      var indicator = new RecoveryJournalHealthIndicator(source);
+      try {
+        var first = startProbeThatMustReach(indicator, closing);
+        assertHealthDownWithinCallerDeadline(first);
+        assertThat(closeFinished.getCount()).isEqualTo(1);
+        // close() is still blocked. The successful readiness row must have been read first.
+        verify(rows).getBoolean(1);
+        assertThat(boundedHealth(indicator).getStatus()).isEqualTo(Status.DOWN);
+        var probes = (ThreadPoolExecutor) ReflectionTestUtils.getField(indicator, "probes");
+        assertThat(probes).isNotNull();
+        assertThat(probes.getTaskCount()).isEqualTo(1);
+        assertThat(verify(source, times(1)).getConnection()).isNull();
 
-      release.countDown();
-      assertThat(closeFinished.await(5, TimeUnit.SECONDS)).isTrue();
-      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-      Status status = indicator.health().getStatus();
-      while (!Status.UP.equals(status) && System.nanoTime() < deadline) {
-        Thread.sleep(10);
-        status = indicator.health().getStatus();
+        release.countDown();
+        assertThat(closeFinished.await(5, TimeUnit.SECONDS)).isTrue();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (probes.getCompletedTaskCount() == 0 && System.nanoTime() < deadline) {
+          Thread.sleep(10);
+        }
+        assertThat(probes.getCompletedTaskCount()).isEqualTo(1);
+        assertThat(boundedHealth(indicator).getStatus()).isEqualTo(Status.UP);
+        assertThat(verify(source, times(2)).getConnection()).isNull();
+      } finally {
+        release.countDown();
+        indicator.stopProbes();
+        rows.close();
+        statement.close();
+        connection.close();
       }
-      assertThat(status).isEqualTo(Status.UP);
-      verify(source, atLeast(2)).getConnection();
-    } finally {
-      release.countDown();
-      indicator.stopProbes();
     }
+  }
+
+  private record ProbeCompletion(Health health, long elapsedNanos) {}
+
+  private static FutureTask<ProbeCompletion> startProbeThatMustReach(
+      RecoveryJournalHealthIndicator indicator, CountDownLatch blocked) {
+    var result =
+        new FutureTask<>(() -> {
+          long started = System.nanoTime();
+          Health health = indicator.health();
+          long elapsed = System.nanoTime() - started;
+          assertThat(blocked.getCount())
+              .as("probe reached the blocked phase before return")
+              .isZero();
+          return new ProbeCompletion(health, elapsed);
+        });
+    Thread.ofVirtual().start(result);
+    return result;
+  }
+
+  private static void assertHealthDownWithinCallerDeadline(FutureTask<ProbeCompletion> result)
+      throws Exception {
+    var completion = result.get(PROBE_WATCHDOG_SECONDS, TimeUnit.SECONDS);
+    assertThat(completion.health().getStatus()).isEqualTo(Status.DOWN);
+    assertThat(completion.elapsedNanos())
+        .as("health() caller deadline elapsed nanos")
+        .isLessThanOrEqualTo(CALLER_DEADLINE_NANOS + CALLER_DEADLINE_SCHEDULING_ALLOWANCE_NANOS);
+  }
+
+  private static Health boundedHealth(RecoveryJournalHealthIndicator indicator) throws Exception {
+    var result = new FutureTask<>(indicator::health);
+    Thread.ofVirtual().start(result);
+    return result.get(5, TimeUnit.SECONDS);
   }
 
   private static void awaitTimedWaiting(Thread thread) {

@@ -409,10 +409,10 @@ classify_failure_body() {
         cache_cause++
         next
       }
-      if (line ~ /^Configuration cache state could not be cached: field `checkstyleClasspath` of task `:[[:alnum:]-]+:checkstyle(Main|Test|IntegrationTest|CrossServiceTest)` of type `org\.gradle\.api\.plugins\.quality\.Checkstyle`: error writing value of type \047org\.gradle\.api\.internal\.artifacts\.configurations\.DefaultLegacyConfiguration\047$/) {
+      if (line ~ /^Configuration cache state could not be cached: field `checkstyleClasspath` of task `:[[:alnum:]-]+:checkstyle(Main|Test|TestFixtures|IntegrationTest|CrossServiceTest)` of type `org\.gradle\.api\.plugins\.quality\.Checkstyle`: error writing value of type \047org\.gradle\.api\.internal\.artifacts\.configurations\.DefaultLegacyConfiguration\047$/) {
         module = line
         sub(/^.* of task `/, "", module)
-        sub(/:checkstyle(Main|Test|IntegrationTest|CrossServiceTest)`.*$/, "", module)
+        sub(/:checkstyle(Main|Test|TestFixtures|IntegrationTest|CrossServiceTest)`.*$/, "", module)
         expected_cache_jar_configuration = module ":checkstyle"
         checkstyle_configuration = 1
         cache_jar_cause++

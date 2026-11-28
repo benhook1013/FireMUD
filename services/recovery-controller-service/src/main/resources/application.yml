@@ -9,7 +9,7 @@ spring:
     # Do not point it at the shared business PostgreSQL instance: business restores must not rewind
     # the recovery journal. There is deliberately no shared-database fallback.
     # Extended query mode keeps protected journal values in protocol-level bind parameters.
-    url: jdbc:postgresql://${FIREMUD_RECOVERY_CONTROL_DB_HOST}:${FIREMUD_RECOVERY_CONTROL_DB_PORT:5432}/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended
+    url: jdbc:postgresql://${FIREMUD_RECOVERY_CONTROL_DB_HOST}:${FIREMUD_RECOVERY_CONTROL_DB_PORT:5432}/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended&options=-c%20lock_timeout%3D10s
     username: ${FIREMUD_RECOVERY_CONTROL_DB_USER}
     password: ${FIREMUD_RECOVERY_CONTROL_DB_PASSWORD}
   flyway:
