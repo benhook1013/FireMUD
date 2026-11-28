@@ -9,8 +9,7 @@ public record WorldsViewOutput(List<WorldEntry> worlds) implements PlayerOutputP
     worlds = List.copyOf(Objects.requireNonNull(worlds, "worlds must not be null"));
   }
 
-  public record WorldEntry(
-      String slug, String displayName, long gameInstanceId, boolean requiresCharacterSelection) {
+  public record WorldEntry(String slug, String displayName, boolean requiresCharacterSelection) {
     public WorldEntry {
       Objects.requireNonNull(slug, "slug must not be null");
       Objects.requireNonNull(displayName, "displayName must not be null");

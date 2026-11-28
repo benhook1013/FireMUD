@@ -140,7 +140,8 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
   @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
       value = "VA_PRIMITIVE_ARRAY_PASSED_TO_OBJECT_VARARG",
       justification =
-          "RedisCommands<byte[], byte[]> takes binary keys; byte[][] supplies exactly one owned fixture key for native Redis deletion.")
+          "RedisCommands<byte[], byte[]> takes binary keys; byte[][] supplies exactly one owned"
+              + " fixture key for native Redis deletion.")
   void cleanExactOwnedKeys() {
     if (adminConnection != null) {
       try {
@@ -253,7 +254,8 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
     assertThat(original).isNotEmpty();
     assertThat(expiry).isEqualTo(menu.expiresAt().toEpochMilli());
 
-    assertThat(selection.resolve(menu, "1")).isEmpty();
+    assertThatThrownBy(() -> selection.resolve(menu, "1"))
+        .isInstanceOf(DirectTextWorldSelectionService.StaleWorldSelectionException.class);
     assertThat(store.find(transport)).isEmpty();
     assertThat(store.reassert(transport, menu)).isFalse();
     var replacement =

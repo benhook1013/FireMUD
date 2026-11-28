@@ -6,6 +6,7 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.ExpiredWorldSelectionException;
+import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.StaleWorldSelectionException;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.UnknownWorldSelectorException;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog.AuthorityPointerUnavailableException;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
@@ -87,7 +88,8 @@ public final class AuthenticatedDirectTextCommandReceiver {
                     required(lobbies)
                         .realms(
                             original, result, connection, connection.menu, request.worldSelector());
-                return success(connection.selectedScope.publicTarget().realmDisplayName());
+                var realm = connection.selectedScope.publicTarget();
+                return success(realm.realmDisplayName() + " (" + realm.realmSlug() + ")");
               });
         }
         case JOIN -> {
@@ -126,6 +128,7 @@ public final class AuthenticatedDirectTextCommandReceiver {
                             BriefRenderPolicy.ALWAYS_SHOW)));
               });
         }
+        case HELP -> joinHelp(command);
         case PLAY -> play(connection, command);
         case LOOK -> look(connection, command);
         case LOGOUT -> success("Logged out");
@@ -136,6 +139,9 @@ public final class AuthenticatedDirectTextCommandReceiver {
     } catch (ExpiredWorldSelectionException expiredSelection) {
       return failure(
           "INVALID_ARGUMENT", "World menu expired. Run WORLDS and choose a listed selector again.");
+    } catch (StaleWorldSelectionException staleSelection) {
+      return failure(
+          "SELECTION_STALE", "World selection changed. Run WORLDS, then REALMS <world> again.");
     } catch (UnknownWorldSelectorException unknownSelector) {
       return failure(
           "INVALID_ARGUMENT",
@@ -232,6 +238,17 @@ public final class AuthenticatedDirectTextCommandReceiver {
             return failure("ROOM_UNAVAILABLE", "The current room is unavailable");
           }
         });
+  }
+
+  private static TextCommandInterpretationResult joinHelp(TextCommand command) {
+    if (command.args().size() != 1 || !"JOIN".equalsIgnoreCase(command.args().getFirst())) {
+      return failure("FEATURE_UNAVAILABLE", "Command unavailable");
+    }
+    return success(
+        "JOIN <world>\n"
+            + "After LOGIN, run WORLDS and REALMS <world>.\n"
+            + "Use JOIN <world> when the selected public-production realm requires membership"
+            + " before PLAY.");
   }
 
   private static TextCommandInterpretationResult admissionUnavailable() {

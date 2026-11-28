@@ -103,6 +103,26 @@ class AuthenticatedDirectTextCommandReceiverTest {
   }
 
   @Test
+  void joinHelpDescribesProtectedLobbyWithoutLookingUpAuthority() {
+    var fixture = fixture();
+    var command = new TextCommand(TextCommandType.HELP, List.of("join"), "HELP join");
+
+    var result = fixture.receiver.receive(fixture.socket, command);
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(
+            new TextPlayerOutputRenderer(new PresentationProperties())
+                .renderAll(command, result.commandResult(), result.outputs()))
+        .isEqualTo(
+            "OK HELP\n"
+                + "JOIN <world>\n"
+                + "After LOGIN, run WORLDS and REALMS <world>.\n"
+                + "Use JOIN <world> when the selected public-production realm requires membership"
+                + " before PLAY.\n\n");
+    verifyNoInteractions(fixture.connection, fixture.lobby, fixture.selections);
+  }
+
+  @Test
   void joinUsesOneFriendlyWorldSelectorButDispatchesOnlyTheRetainedScope() {
     var fixture = fixture();
     when(fixture.lobby.join(null, null, fixture.connection))
@@ -130,6 +150,45 @@ class AuthenticatedDirectTextCommandReceiverTest {
         .isEqualTo("OK JOIN\nJoined public production realm\n\n");
     verify(fixture.selections).resolve(fixture.connection.menu, "demo");
     verify(fixture.lobby).join(null, null, fixture.connection);
+  }
+
+  @Test
+  void successfulRealmsIncludesTheExactRealmSelector() {
+    var fixture = fixture();
+    var scope = fixture.connection.selectedScope;
+    var realm = scope.publicTarget();
+    when(realm.realmDisplayName()).thenReturn("Lantern District");
+    when(realm.realmSlug()).thenReturn("production");
+    when(fixture.lobby.realms(null, null, fixture.connection, fixture.connection.menu, "demo"))
+        .thenReturn(scope);
+    var command = new TextCommand(TextCommandType.REALMS, List.of("demo"), "REALMS demo");
+
+    var result = fixture.receiver.receive(fixture.socket, command);
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(
+            new TextPlayerOutputRenderer(new PresentationProperties())
+                .renderAll(command, result.commandResult(), result.outputs()))
+        .isEqualTo("OK REALMS\nLantern District (production)\n\n");
+  }
+
+  @Test
+  void staleJoinSelectionExplainsRefreshWithoutDispatchingOrChangingTheScope() {
+    var fixture = fixture();
+    var menu = fixture.connection.menu;
+    var scope = fixture.connection.selectedScope;
+    when(fixture.selections.resolve(menu, "demo"))
+        .thenThrow(new DirectTextWorldSelectionService.StaleWorldSelectionException());
+
+    var result =
+        fixture.receiver.receive(
+            fixture.socket, new TextCommand(TextCommandType.JOIN, List.of("demo"), "JOIN demo"));
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("SELECTION_STALE");
+    assertThat(result.commandResult().errorMessage()).contains("WORLDS, then REALMS");
+    assertThat(fixture.connection.menu).isSameAs(menu);
+    assertThat(fixture.connection.selectedScope).isSameAs(scope);
+    verifyNoInteractions(fixture.lobby);
   }
 
   @Test
