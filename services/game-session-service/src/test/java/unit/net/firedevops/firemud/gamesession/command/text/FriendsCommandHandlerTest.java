@@ -466,8 +466,7 @@ class FriendsCommandHandlerTest {
 
     TextCommandInterpretationResult result =
         handler.handle(
-            new TextCommand(
-                TextCommandType.FRIENDS, List.of(filter), "FRIENDS " + filter),
+            new TextCommand(TextCommandType.FRIENDS, List.of(filter), "FRIENDS " + filter),
             GAMEPLAY_CONTEXT);
 
     assertThat(result.commandResult().accepted()).isTrue();
