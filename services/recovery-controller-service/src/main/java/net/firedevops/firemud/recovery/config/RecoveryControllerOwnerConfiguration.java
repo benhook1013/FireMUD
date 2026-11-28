@@ -80,6 +80,13 @@ public class RecoveryControllerOwnerConfiguration {
     if (configuration.getConnectRetries() < 0) {
       throw new FlywayException("Recovery Flyway connect retries must be non-negative");
     }
+    Callback[] callbacks = configuration.getCallbacks();
+    if (callbacks == null
+        || callbacks.length != 1
+        || !(callbacks[0] instanceof RecoveryTransactionalMigrationCallback)) {
+      throw new FlywayException(
+          "Recovery Flyway requires only the transactional migration callback");
+    }
     PostgreSQLConfigurationExtension postgres =
         flyway.getConfigurationExtension(PostgreSQLConfigurationExtension.class);
     if (!MigrationVersion.LATEST.equals(configuration.getTarget())) {

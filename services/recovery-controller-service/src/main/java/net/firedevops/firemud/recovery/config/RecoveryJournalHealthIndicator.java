@@ -175,7 +175,8 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                 AND a.attname = required.column_name AND NOT a.attisdropped
                 AND a.atttypid = required.column_type AND a.atttypmod = required.type_modifier
                 AND a.attnotnull = required.required_not_null
-                AND (a.attname <> 'finalized_at' OR NOT a.atthasdef)
+                AND (a.attname NOT IN ('evidence_snapshot', 'evidence_identity', 'evidence_digest', 'finalized_at')
+                     OR NOT a.atthasdef)
               WHERE a.attnum IS NULL)
             AND (SELECT count(DISTINCT pg_catalog.pg_get_expr(c.conbin, c.conrelid)) = 3
               FROM pg_catalog.pg_constraint c

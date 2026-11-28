@@ -830,7 +830,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         + host
         + ":"
         + port
-        + "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended";
+        + "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended&options=-c%20lock_timeout%3D10s";
   }
 
   @Test

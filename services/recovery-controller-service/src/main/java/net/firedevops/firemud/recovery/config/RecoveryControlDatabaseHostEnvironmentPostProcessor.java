@@ -74,7 +74,7 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
               + host
               + ":"
               + port
-              + "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended";
+              + "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended&options=-c%20lock_timeout%3D10s";
       var primaryUrl = binder.bind("spring.datasource.url", String.class);
       if (!primaryUrl.isBound() || !Objects.equals(primaryUrl.get(), url)) {
         throw new SafeOverrideException(

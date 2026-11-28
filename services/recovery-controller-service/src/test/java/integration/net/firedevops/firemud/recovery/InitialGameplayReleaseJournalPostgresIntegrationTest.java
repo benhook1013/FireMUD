@@ -851,7 +851,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         try (var pooled = pool.getConnection()) {
           var session = DSL.using(pooled, SQLDialect.POSTGRES);
           backend = session.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
-          session.execute("SET lock_timeout TO '12s'");
+          session.execute("SET lock_timeout TO '0'");
         }
         inspection.setAutoCommit(false);
         var inspector = DSL.using(inspection, SQLDialect.POSTGRES);
@@ -865,7 +865,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             assertThat(session.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class))
                 .isEqualTo(backend);
             assertThat(session.fetchSingle("SHOW lock_timeout").get(0, String.class))
-                .isEqualTo("12s");
+                .isEqualTo("0");
           }
           assertThat(
                   inspector
@@ -886,8 +886,49 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                   DSL.using(pooledConnection, SQLDialect.POSTGRES)
                       .fetchSingle("SHOW lock_timeout")
                       .get(0, String.class))
-              .isEqualTo("0");
+              .isEqualTo("10s");
         }
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void packagedFlywayBoundsHistoryValidationLockAndRestartsAfterItClears() throws Exception {
+    String database = "firemud_recovery_control";
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try {
+      dsl.execute("ALTER DATABASE " + database + " SET statement_timeout TO '20s'");
+      try (var application = startPackagedApplication(true)) {
+        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      }
+      try (var inspection =
+          DriverManager.getConnection(
+              packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        inspection.setAutoCommit(false);
+        DSL.using(inspection, SQLDialect.POSTGRES)
+            .execute(
+                "LOCK TABLE recovery_control.flyway_schema_history_recovery_control"
+                    + " IN ACCESS EXCLUSIVE MODE");
+        try {
+          assertThatThrownBy(
+                  () -> {
+                    try (var unexpected = startPackagedApplication(true)) {
+                      throw new AssertionError("Startup should not complete with a locked history");
+                    }
+                  })
+              .hasStackTraceContaining("canceling statement due to lock timeout");
+        } finally {
+          inspection.rollback();
+        }
+      }
+      try (var application = startPackagedApplication(true)) {
+        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+        assertCompletePackagedMigrationReceipts(packagedUrl);
       }
     } finally {
       dsl.execute("DROP DATABASE " + database);
@@ -901,7 +942,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     "datasource, must use the journal datasource",
     "validate, must validate migrations before applying them",
     "skip, must execute migrations before recording them",
-    "lock, lock retries must be finite"
+    "lock, lock retries must be finite",
+    "callbacks, requires only the transactional migration callback"
   })
   @ResourceLock("packaged-recovery-control-fixture-database")
   void packagedFlywayRejectsDriftFromCustomizerBeforeMigration(String option, String diagnostic)
@@ -950,6 +992,23 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           case "validate" -> configuration.validateOnMigrate(false);
           case "skip" -> configuration.skipExecutingMigrations(true);
           case "lock" -> configuration.lockRetryCount(-1);
+          case "callbacks" ->
+              configuration.callbacks(
+                  new org.flywaydb.core.api.callback.BaseCallback() {
+                    @Override
+                    public boolean supports(
+                        org.flywaydb.core.api.callback.Event event,
+                        org.flywaydb.core.api.callback.Context context) {
+                      return false;
+                    }
+
+                    @Override
+                    public void handle(
+                        org.flywaydb.core.api.callback.Event event,
+                        org.flywaydb.core.api.callback.Context context) {
+                      throw new AssertionError("unexpected unqualified callback execution");
+                    }
+                  });
           default -> throw new AssertionError("Unexpected fixture customization");
         }
       };
@@ -1299,6 +1358,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         "local_no_send_key",
         "maintenance_lock",
         "finalized_at_default",
+        "evidence_snapshot_default",
+        "evidence_identity_default",
+        "evidence_digest_default",
         "outbox_effect_identity",
         "outbox_dispatch",
         "weakened_outbox_dispatch",
@@ -1336,6 +1398,14 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         packaged.execute(
             "ALTER TABLE recovery_control.initial_gameplay_release_operation"
                 + " ALTER COLUMN finalized_at SET DEFAULT CURRENT_TIMESTAMP");
+      } else if (drift.startsWith("evidence_")) {
+        String column = drift.replace("_default", "");
+        String expression = column.equals("evidence_snapshot") ? "'{}'::jsonb" : "'fixture'";
+        packaged.execute(
+            "ALTER TABLE recovery_control.initial_gameplay_release_operation ALTER COLUMN "
+                + column
+                + " SET DEFAULT "
+                + expression);
       } else if ("outbox_effect_identity".equals(drift)) {
         String effectIdentityKey =
             packaged
@@ -5342,6 +5412,49 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
+  void reconciliationRefusesAcknowledgedHandoffWithoutFinalization() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    var prepare = authorizedDispatch(base);
+    UUID operationId = prepare.effect().operationId();
+    var prepared =
+        readbackFor(
+            prepare,
+            prepare.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "prepared-before-handoff",
+            base.plusSeconds(5));
+    journal.recordEffectReadback(prepare, prepared, prepared.observedAt());
+    var pending = journal.findNextEffect(operationId).orElseThrow();
+    var handoff =
+        journal.claimEffect(
+            operationId, pending.effect().effectId(), UUID.randomUUID(), () -> base.plusSeconds(6));
+    var applied =
+        readbackFor(
+            handoff,
+            handoff.lastAttemptId(),
+            EffectReadbackState.OWNER_HANDOFF_APPLIED,
+            "applied-handoff",
+            base.plusSeconds(7));
+    assertThat(journal.recordEffectReadback(handoff, applied, applied.observedAt()).phase())
+        .isEqualTo(Phase.FINALIZED);
+    assertThat(journal.findNextEffect(operationId)).isEmpty();
+    String receipt = storedOutbox(operationId, handoff.effect().effectId());
+    // Model a mismatched restore without submitting any owner operation.
+    dsl.execute(
+        "UPDATE recovery_control.initial_gameplay_release_operation"
+            + " SET phase = 'releasing', finalized_at = NULL WHERE operation_id = ?",
+        operationId);
+
+    assertThatThrownBy(() -> journal.findNextEffect(operationId))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("acknowledged handoff without finalization");
+    assertThatThrownBy(() -> journal.findHeldPreparationForRefresh(operationId))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("acknowledged handoff without finalization");
+    assertThat(storedOutbox(operationId, handoff.effect().effectId())).isEqualTo(receipt);
+  }
+
+  @Test
   void reconciliationKeepsReleasingPreparationHeldWhenAcknowledgementIsMissing() {
     var base = Instant.parse("2026-09-01T00:00:00Z");
     var dispatch = authorizedDispatch(base);
@@ -5957,6 +6070,117 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(retried.state()).isEqualTo(EffectOutboxState.DISPATCHED);
     assertThat(retried.lastAttemptId()).isEqualTo(retryAttemptId);
     assertThat(retried.attemptCount()).isEqualTo(claimed.attemptCount() + 1);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"backward-clock", "legacy-floor", "closure-only", "rejection-after-closure"})
+  void handoffRetryRefreshesPreparationAcrossDefinitiveOutcomes(String scenario) {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry preparation = authorizedDispatch(base);
+    UUID operationId = preparation.effect().operationId();
+    var originalPreparation =
+        readbackFor(
+            preparation,
+            preparation.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "preparation-before-handoff",
+            base.plusSeconds(5));
+    journal.recordEffectReadback(preparation, originalPreparation, base.plusSeconds(6));
+    var pending = journal.findNextEffect(operationId).orElseThrow();
+    UUID handoffId = pending.effect().effectId();
+    OutboxEntry original =
+        journal.claimEffect(operationId, handoffId, UUID.randomUUID(), () -> base.plusSeconds(7));
+
+    Instant floor;
+    if ("backward-clock".equals(scenario) || "legacy-floor".equals(scenario)) {
+      assertThat(
+              journal.recordRetryableEffectForDispatch(
+                  original, RetrySource.OWNER_REJECTED, "OWNER_REJECTED", base.plusSeconds(4)))
+          .isTrue();
+      floor = base.plusSeconds(7);
+      if ("legacy-floor".equals(scenario)) {
+        // Retained history can place its floor after observation but before acknowledgement.
+        floor = base.plusSeconds(5).plusMillis(500);
+        dsl.execute(
+            """
+            UPDATE recovery_control.initial_gameplay_release_attempt_rejection
+            SET preparation_refresh_after = CAST(? AS timestamptz)
+            WHERE outbox_id = ? AND attempt_id = ?
+            """,
+            floor.atOffset(ZoneOffset.UTC),
+            original.outboxId(),
+            original.lastAttemptId());
+      }
+    } else {
+      journal.recordAmbiguousEffectForDispatch(
+          original, "OBSERVATION_UNAVAILABLE", base.plusSeconds(8));
+      var closure =
+          readbackFor(
+              original,
+              original.lastAttemptId(),
+              EffectReadbackState.PROVEN_NO_EFFECT,
+              "durable-handoff-closure",
+              base.plusSeconds(9));
+      journal.recordEffectReadback(original, closure, closure.observedAt());
+      floor = base.plusSeconds(9);
+      if ("rejection-after-closure".equals(scenario)) {
+        assertThat(
+                journal.recordRetryableEffectForDispatch(
+                    original, RetrySource.OWNER_REJECTED, "OWNER_REJECTED", base.plusSeconds(10)))
+            .isFalse();
+        floor = base.plusSeconds(10);
+      }
+    }
+    if (!"closure-only".equals(scenario)) {
+      assertThat(
+              dsl.fetchSingle(
+                      """
+                      SELECT preparation_refresh_after
+                      FROM recovery_control.initial_gameplay_release_attempt_rejection
+                      WHERE outbox_id = ? AND attempt_id = ?
+                      """,
+                      original.outboxId(),
+                      original.lastAttemptId())
+                  .get(0, OffsetDateTime.class)
+                  .toInstant())
+          .isEqualTo(floor);
+    }
+    var held = journal.findNextEffect(operationId).orElseThrow();
+    assertThat(held.outboxId()).isEqualTo(preparation.outboxId());
+    assertThat(held.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
+
+    var stale =
+        readbackFor(
+            preparation,
+            preparation.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "same-floor-preparation",
+            floor);
+    journal.recordEffectReadback(preparation, stale, base.plusSeconds(11));
+    assertThat(journal.findNextEffect(operationId)).contains(held);
+    assertThatThrownBy(() ->
+            journal.claimEffect(
+                operationId, handoffId, UUID.randomUUID(), () -> base.plusSeconds(12)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("preparation acknowledgement is unavailable");
+
+    var fresh =
+        readbackFor(
+            preparation,
+            preparation.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "later-preparation",
+            base.plusSeconds(12));
+    journal.recordEffectReadback(preparation, fresh, fresh.observedAt());
+    assertThat(journal.findNextEffect(operationId))
+        .hasValueSatisfying(next -> assertThat(next.effect().effectId()).isEqualTo(handoffId));
+    UUID replacement = UUID.randomUUID();
+    assertThat(
+            journal
+                .claimEffect(operationId, handoffId, replacement, () -> base.plusSeconds(13))
+                .lastAttemptId())
+        .isEqualTo(replacement);
   }
 
   @Test

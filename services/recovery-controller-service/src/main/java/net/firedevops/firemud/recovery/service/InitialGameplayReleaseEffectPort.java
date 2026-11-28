@@ -36,10 +36,11 @@ public interface InitialGameplayReleaseEffectPort {
    * after receiving the readback. If that clock relationship cannot be established, return
    * UNAVAILABLE. Do not replace the observation with an adapter or controller receipt timestamp.
    *
-   * <p>If a newer partial observation supersedes an older definitive receipt, advancing the
-   * transition requires a fresh exact observation with a distinct authenticated readback identity.
-   * The owner may repeat the same outcome in a new observation. Reusing a prior definitive identity
-   * with a new timestamp is insufficient.
+   * <p>If a newer partial observation supersedes an older definitive receipt, or the journal
+   * requires fresh preparation after a handoff rejection or closure, advancement requires a new
+   * exact definitive observation with a distinct authenticated readback identity. The owner may
+   * repeat the same outcome in a new observation. Reusing a prior definitive identity with a new
+   * timestamp is insufficient.
    */
   EffectReadbackResolution readback(TypedEffect effect, UUID attemptId, int attemptOrdinal);
 
