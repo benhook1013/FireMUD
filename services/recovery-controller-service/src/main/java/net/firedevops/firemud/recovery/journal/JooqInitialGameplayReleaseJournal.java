@@ -156,48 +156,53 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Objects.requireNonNull(evidence, "evidence must not be null");
     requiredDigest(evidenceDigest, "evidenceDigest");
     Objects.requireNonNull(now, "now must not be null");
+    requireIndependentTransaction("readiness evidence binding");
     evidence.validateFor(scope);
     if (!scopeDigest.equals(tupleCodec.digest(scope))
         || !evidenceDigest.equals(tupleCodec.digest(evidence))) {
       throw new InitialGameplayReleaseConflictException(
           "IDEMPOTENCY_CONFLICT: evidence tuple digest changed");
     }
-    return dsl.transactionResult(configuration -> {
-      DSLContext tx = DSL.using(configuration);
-      Operation current = selectOperation(tx, scope.operationId(), true);
-      requireSameScope(current.scope(), scope, scopeDigest);
-      if (current.evidence() != null) {
-        if (evidenceDigest.equals(tupleCodec.digest(current.evidence()))
-            && evidence.evidenceIdentity().equals(current.evidence().evidenceIdentity())) {
-          return requireFinalizedHandoff(tx, current);
+    try {
+      return dsl.transactionResult(configuration -> {
+        DSLContext tx = DSL.using(configuration);
+        Operation current = selectOperation(tx, scope.operationId(), true);
+        requireSameScope(current.scope(), scope, scopeDigest);
+        if (current.evidence() != null) {
+          if (evidenceDigest.equals(tupleCodec.digest(current.evidence()))
+              && evidence.evidenceIdentity().equals(current.evidence().evidenceIdentity())) {
+            return requireFinalizedHandoff(tx, current);
+          }
+          throw conflict("owner evidence changed after it was bound");
         }
-        throw conflict("owner evidence changed after it was bound");
-      }
-      if (current.phase() != Phase.COLLECTING) {
-        throw conflict("operation is not collecting owner evidence");
-      }
-      requireRedactedDatabaseLogging(tx);
-      int changed =
-          tx.execute(
-              """
-              UPDATE recovery_control.initial_gameplay_release_operation
-              SET phase = ?, evidence_snapshot = CAST(? AS jsonb), evidence_identity = ?, evidence_digest = ?,
-                  revision = revision + 1, updated_at = CAST(? AS timestamptz)
-              WHERE operation_id = ? AND phase = ? AND revision = ? AND evidence_snapshot IS NULL
-              """,
-              Phase.READY_TO_REOPEN.databaseValue(),
-              JSONB.valueOf(tupleCodec.toJson(evidence)),
-              evidence.evidenceIdentity(),
-              evidenceDigest,
-              toOffsetDateTime(now),
-              scope.operationId(),
-              Phase.COLLECTING.databaseValue(),
-              current.revision());
-      if (changed != 1) {
-        throw conflict("owner evidence compare-and-set lost");
-      }
-      return selectOperation(tx, scope.operationId(), false);
-    });
+        if (current.phase() != Phase.COLLECTING) {
+          throw conflict("operation is not collecting owner evidence");
+        }
+        requireRedactedDatabaseLogging(tx);
+        int changed =
+            tx.execute(
+                """
+                UPDATE recovery_control.initial_gameplay_release_operation
+                SET phase = ?, evidence_snapshot = CAST(? AS jsonb), evidence_identity = ?, evidence_digest = ?,
+                    revision = revision + 1, updated_at = CAST(? AS timestamptz)
+                WHERE operation_id = ? AND phase = ? AND revision = ? AND evidence_snapshot IS NULL
+                """,
+                Phase.READY_TO_REOPEN.databaseValue(),
+                JSONB.valueOf(tupleCodec.toJson(evidence)),
+                evidence.evidenceIdentity(),
+                evidenceDigest,
+                toOffsetDateTime(now),
+                scope.operationId(),
+                Phase.COLLECTING.databaseValue(),
+                current.revision());
+        if (changed != 1) {
+          throw conflict("owner evidence compare-and-set lost");
+        }
+        return selectOperation(tx, scope.operationId(), false);
+      });
+    } catch (DataAccessException | org.springframework.dao.DataAccessException failure) {
+      throw new IllegalStateException("Unable to bind recovery journal evidence");
+    }
   }
 
   @Override
@@ -448,10 +453,33 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         throw conflict("effect dispatch generation changed");
       }
       if (current.state() == EffectOutboxState.ACKNOWLEDGED
-          || isPreparationHeldBeforeHandoff(operation, current)
-          || (current.lastAttemptId() != null
-              && current.state() == EffectOutboxState.RETRYABLE
-              && resultState == EffectOutboxState.AMBIGUOUS)) {
+          || isPreparationHeldBeforeHandoff(operation, current)) {
+        return true;
+      }
+      if (current.state() == EffectOutboxState.RETRYABLE
+          && resultState == EffectOutboxState.AMBIGUOUS) {
+        // A transport uncertainty supersedes local no-send only. Exact owner closure
+        // and rejection remain authoritative, and the retained no-send row stays intact.
+        Record retained =
+            tx.fetchOne(
+                "SELECT retry_provenance, send_outcome_uncertain FROM "
+                    + OUTBOX_TABLE
+                    + " WHERE outbox_id = ?",
+                current.outboxId());
+        if (retained != null
+            && "local_no_send".equals(retained.get("retry_provenance", String.class))
+            && !Boolean.TRUE.equals(retained.get("send_outcome_uncertain", Boolean.class))) {
+          requireRedactedDatabaseLogging(tx);
+          int changed =
+              tx.execute(
+                  "UPDATE "
+                      + OUTBOX_TABLE
+                      + " SET send_outcome_uncertain = true WHERE outbox_id = ?",
+                  current.outboxId());
+          if (changed != 1) {
+            throw conflict("effect uncertainty compare-and-set lost");
+          }
+        }
         return true;
       }
       if (current.state() != resultState
@@ -971,27 +999,31 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       EffectOutboxState state,
       Instant now) {
     boolean acknowledged = state == EffectOutboxState.ACKNOWLEDGED;
-    tx.execute(
-        """
-        UPDATE recovery_control.initial_gameplay_release_outbox
-        SET state = ?, last_outcome_code = ?, retry_provenance = ?, readback_identity = ?,
-            readback_payload = CAST(? AS jsonb),
-            readback_digest = ?, acknowledged_at = CAST(? AS timestamptz), updated_at = CAST(? AS timestamptz)
-        WHERE operation_id = ? AND effect_id = ? AND last_attempt_id = ?
-        """,
-        state.databaseValue(),
-        readback.state().name(),
-        readback.state() == EffectReadbackState.PROVEN_NO_EFFECT ? "owner_closure" : null,
-        readback.readbackIdentity(),
-        JSONB.valueOf(tupleCodec.toJson(readback)),
-        readbackDigest,
-        acknowledged
-            ? toOffsetDateTime(now.truncatedTo(java.time.temporal.ChronoUnit.MICROS))
-            : null,
-        toOffsetDateTime(now),
-        readback.operationId(),
-        readback.effectId(),
-        current.lastAttemptId());
+    int changed =
+        tx.execute(
+            """
+            UPDATE recovery_control.initial_gameplay_release_outbox
+            SET state = ?, last_outcome_code = ?, retry_provenance = ?, readback_identity = ?,
+                readback_payload = CAST(? AS jsonb),
+                readback_digest = ?, acknowledged_at = CAST(? AS timestamptz), updated_at = CAST(? AS timestamptz)
+            WHERE operation_id = ? AND effect_id = ? AND last_attempt_id = ?
+            """,
+            state.databaseValue(),
+            readback.state().name(),
+            readback.state() == EffectReadbackState.PROVEN_NO_EFFECT ? "owner_closure" : null,
+            readback.readbackIdentity(),
+            JSONB.valueOf(tupleCodec.toJson(readback)),
+            readbackDigest,
+            acknowledged
+                ? toOffsetDateTime(now.truncatedTo(java.time.temporal.ChronoUnit.MICROS))
+                : null,
+            toOffsetDateTime(now),
+            readback.operationId(),
+            readback.effectId(),
+            current.lastAttemptId());
+    if (changed != 1) {
+      throw conflict("effect readback compare-and-set lost");
+    }
   }
 
   private void updatePhase(

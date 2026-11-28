@@ -578,6 +578,42 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   }
 
   @Test
+  void refusesEffectiveHikariConnectionInitSqlForEnabledFlyway() {
+    var environment =
+        fixtureEnvironment().withProperty("spring.datasource.hikari.connection-init-sql", "");
+    environment
+        .getPropertySources()
+        .addFirst(
+            new SystemEnvironmentPropertySource(
+                "test-systemEnvironment",
+                Map.of("SPRING_DATASOURCE_HIKARI_CONNECTIONINITSQL", "SELECT 1")));
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.datasource.hikari.connection-init-sql must be empty")
+        .hasMessageNotContaining("SELECT 1")
+        .hasNoCause();
+  }
+
+  @Test
+  void acceptsBlankHikariConnectionInitSqlForEnabledFlyway() {
+    var environment =
+        fixtureEnvironment().withProperty("spring.datasource.hikari.connection-init-sql", "  ");
+    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void acceptsHikariConnectionInitSqlForDisabledFlywayFixture() {
+    var environment =
+        fixtureEnvironment()
+            .withProperty("spring.flyway.enabled", "false")
+            .withProperty("spring.datasource.hikari.connection-init-sql", "SELECT 1");
+    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
   void acceptsExplicitUtf8FlywayEncoding() {
     var environment = fixtureEnvironment().withProperty("spring.flyway.encoding", "UTF-8");
     assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
