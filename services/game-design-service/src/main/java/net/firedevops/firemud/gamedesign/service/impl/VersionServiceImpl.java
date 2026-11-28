@@ -614,7 +614,8 @@ public class VersionServiceImpl implements VersionService {
       PublishedReleaseBundleDto baseBundle =
           publishedReleaseBundleService.getPublishedReleaseBundle(tenantId, baseVersionId);
       PublishedReleaseBundleContract.requireSupportedSchemaForRead(baseBundle);
-      String expectedAbilitySchemaDigest = requiredAutomationAbilitySchemaDigest(baseBundle);
+      String expectedAbilitySchemaDigest =
+          requireGameLogicAbilitySchemaDigest(baseBundle, tenantId, baseVersionId);
       if (!expectedAbilitySchemaDigest.equals(abilitySchemaDigest)) {
         throw new IllegalArgumentException(
             "VALIDATION_FAILED_DESIGN: abilitySchemaDigest does not match published release bundle");
@@ -941,18 +942,44 @@ public class VersionServiceImpl implements VersionService {
     }
   }
 
-  private String requiredAutomationAbilitySchemaDigest(PublishedReleaseBundleDto bundle) {
-    return bundle.participantDigests().stream()
-        .filter(
-            digest ->
-                PublishParticipantKey.AUTOMATION_SCRIPTING.name().equals(digest.participantKey()))
-        .map(PublishParticipantDigestDto::contentDigest)
-        .filter(digest -> digest != null && !digest.isBlank())
-        .findFirst()
-        .orElseThrow(
-            () ->
-                new IllegalArgumentException(
-                    "INVALID_ARGUMENT: published release bundle is missing the Automation ability-schema digest"));
+  private static String requireGameLogicAbilitySchemaDigest(
+      PublishedReleaseBundleDto bundle, String tenantId, long baseVersionId) {
+    String ownerKey = PublishParticipantKey.GAME_LOGIC.name();
+    List<PublishParticipantDigestDto> ownerEvidence =
+        bundle.participantDigests().stream()
+            .filter(participant -> ownerKey.equals(participant.participantKey()))
+            .toList();
+    if (bundle.scriptOnly()
+        || !tenantId.equals(bundle.tenantId())
+        || !Objects.equals(baseVersionId, bundle.versionId())
+        || ownerEvidence.size() != 1
+        || bundle.participantDigests().stream()
+            .anyMatch(
+                participant ->
+                    !ownerKey.equals(participant.participantKey())
+                        && participant.abilitySchemaDigest() != null)) {
+      throw missingGameLogicAbilitySchemaDigest();
+    }
+    var owner = ownerEvidence.getFirst();
+    if (!owner.succeeded()
+        || (owner.errorMessage() != null && !owner.errorMessage().isBlank())
+        || owner.baseVersionId() != null
+        || !Long.toString(baseVersionId).equals(owner.scopeValue())
+        || !Objects.equals(1, owner.digestSchemaVersion())
+        || owner.appliedCommitId() == null
+        || owner.appliedCommitId().isBlank()
+        || owner.contentDigest() == null
+        || !owner.contentDigest().matches("[0-9a-f]{64}")
+        || owner.abilitySchemaDigest() == null
+        || !owner.abilitySchemaDigest().matches("sha256:[0-9a-f]{64}")) {
+      throw missingGameLogicAbilitySchemaDigest();
+    }
+    return owner.abilitySchemaDigest();
+  }
+
+  private static IllegalArgumentException missingGameLogicAbilitySchemaDigest() {
+    return new IllegalArgumentException(
+        "INVALID_ARGUMENT: published base release lacks exact Game Logic ability-schema evidence");
   }
 
   private void markValidationFailed(PublishedPluginVersion entity, String statusReason) {
