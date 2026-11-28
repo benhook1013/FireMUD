@@ -276,7 +276,7 @@ class AccountTenantCapacityOwnerTest {
                 when(f.clock.instant()).thenReturn(f.request.evidence().expiresAt());
                 var observations = new AtomicInteger();
                 f.onDatabaseObservation =
-                    () -> f.databaseExpired = observations.incrementAndGet() == 2;
+                    () -> f.databaseExpired = observations.incrementAndGet() >= 2;
                 return Optional.of(scope);
               });
       case EXPIRES_DURING_SCOPE_QUALIFICATION ->

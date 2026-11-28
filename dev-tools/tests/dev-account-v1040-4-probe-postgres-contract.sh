@@ -18,38 +18,36 @@ for var in ${!PG@}; do
 done
 umask 077
 rig=$(mktemp -d /tmp/firemud-account-probe.XXXXXX)
-postgres_launch_owned=false
+postgres_pid=''
 cleanup() {
-  if [[ "$postgres_launch_owned" == true ]]; then
-    local postgres_status=0
-    "$bin/pg_ctl" -D "$rig/data" status >/dev/null 2>&1 || postgres_status=$?
-    if (( postgres_status == 0 )); then
-      "$bin/pg_ctl" -D "$rig/data" -m fast -w stop >/dev/null || true
-      postgres_status=0
-      "$bin/pg_ctl" -D "$rig/data" status >/dev/null 2>&1 || postgres_status=$?
-    fi
-    if (( postgres_status != 3 )); then
-      echo "could not confirm the owned PostgreSQL fixture stopped; retaining its data directory at $rig" >&2
-      return 1
-    fi
+  if [[ -n "$postgres_pid" ]]; then
+    # The direct child is known even before the server creates postmaster.pid.
+    kill -TERM "$postgres_pid" 2>/dev/null || true
+    wait "$postgres_pid" || true
   fi
   rm -rf -- "$rig"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 password="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
 printf '%s\n' "$password" >"$rig/password"
 "$bin/initdb" -L "$share" -D "$rig/data" --no-locale --encoding=UTF8 \
   -A scram-sha-256 --pwfile="$rig/password" -U local_fixture_user >"$rig/init.log"
 socket_dir="$rig/socket"
 mkdir "$socket_dir"
-postgres_launch_owned=true
-if ! "$bin/pg_ctl" -D "$rig/data" -l "$rig/postgres.log" \
-  -o "-c listen_addresses='' -c unix_socket_directories=$socket_dir -c port=5432" \
-  -w start >"$rig/start.log"; then
-  cat "$rig/postgres.log" >&2
-  exit 1
-fi
-test -S "$socket_dir/.s.PGSQL.5432"
+"$bin/postgres" -D "$rig/data" -c listen_addresses='' \
+  -c "unix_socket_directories=$socket_dir" -c port=5432 >"$rig/postgres.log" 2>&1 &
+postgres_pid=$!
+startup_deadline=$((SECONDS + 30))
+until [[ -S "$socket_dir/.s.PGSQL.5432" ]] &&
+  "$bin/pg_isready" -q -h "$socket_dir" -p 5432 -U local_fixture_user -d postgres -t 1; do
+  if (( SECONDS >= startup_deadline )) || ! kill -0 "$postgres_pid" 2>/dev/null; then
+    cat "$rig/postgres.log" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
 export PGHOST="$socket_dir" PGPORT=5432 PGUSER=local_fixture_user PGDATABASE=postgres PGPASSWORD="$password"
 "$bin/createdb" -- firemud
 export PGDATABASE=firemud

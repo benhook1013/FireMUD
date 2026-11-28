@@ -1341,6 +1341,25 @@ jobs:
           set -o pipefail
           gzip -dc "$PR_RUNTIME_ARTIFACT_DIR/pr-runtime-images.tar.gz" | docker load
 
+      - name: Confirm current source attempt before registry login
+        env:
+          CURRENT_REPOSITORY: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ fromJSON(needs.source.outputs.source).id }}
+          SOURCE_RUN_ATTEMPT: ${{ fromJSON(needs.source.outputs.source).run_attempt }}
+          SOURCE_WORKFLOW_ID: ${{ fromJSON(needs.source.outputs.source).workflow_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! timeout 20s gh api "repos/$CURRENT_REPOSITORY/actions/runs/$SOURCE_RUN_ID" |
+            jq -e --argjson id "$SOURCE_RUN_ID" --argjson attempt "$SOURCE_RUN_ATTEMPT" \
+              --argjson workflow "$SOURCE_WORKFLOW_ID" '
+                .id == $id and .run_attempt == $attempt and .workflow_id == $workflow
+                and .status == "completed" and .conclusion == "success"
+              ' >/dev/null; then
+            echo "Could not confirm the selected current successful source attempt before registry login." >&2
+            exit 1
+          fi
+
       - name: Login to GHCR
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:

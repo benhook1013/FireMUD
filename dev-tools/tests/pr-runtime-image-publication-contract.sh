@@ -85,8 +85,9 @@ dispatch_script="$fixture_dir/dispatch.js"
 smoke_scope_script="$fixture_dir/runtime-smoke-scope.js"
 refresh_selector_script="$fixture_dir/runtime-refresh-selector.js"
 failed_reconcile_script="$fixture_dir/failed-runtime-reconcile.js"
+source_fence_script="$fixture_dir/publisher-source-fence.sh"
 
-python3 - "$WORKFLOW" "$RUNTIME_WORKFLOW" "$validation_script" "$publisher_script" "$runtime_script" "$resolver_script" "$dispatch_script" "$smoke_scope_script" "$refresh_selector_script" "$failed_reconcile_script" <<'PY'
+python3 - "$WORKFLOW" "$RUNTIME_WORKFLOW" "$validation_script" "$publisher_script" "$runtime_script" "$resolver_script" "$dispatch_script" "$smoke_scope_script" "$refresh_selector_script" "$failed_reconcile_script" "$source_fence_script" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -107,6 +108,12 @@ login = workflow.index("- name: Login to GHCR")
 publish = workflow.index("- name: Publish fixed PR image tags")
 if not download < validate < login < publish:
     raise SystemExit("source/artifact validation must precede registry login and publication")
+login_index = next(i for i, step in enumerate(publisher_steps) if step.get("name") == "Login to GHCR")
+source_fence = publisher_steps[login_index - 1]
+if (source_fence.get("name") != "Confirm current source attempt before registry login" or "if" in source_fence
+        or publisher_steps[login_index - 2].get("name") != "Load fixed-tag images"):
+    raise SystemExit("the final source check must be unconditional and immediately before registry login, after image load")
+Path(sys.argv[11]).write_text(source_fence["run"], encoding="utf-8")
 if "github.event.workflow_run.head_repository.full_name == github.repository" not in workflow:
     raise SystemExit("publisher must reject fork-owned source runs")
 validation_section = workflow[validate:login]
@@ -1788,7 +1795,21 @@ path.write_text(json.dumps(payload), encoding="utf-8")
 PY
 }
 
+run_source_fence() {
+  PATH="$fake_bin:$PATH" FIXTURE_DIR="$fixture_dir" \
+    CURRENT_REPOSITORY="$repository" SOURCE_RUN_ID="$source_run_id" \
+    SOURCE_RUN_ATTEMPT=1 SOURCE_WORKFLOW_ID="$workflow_id" bash "$source_fence_script"
+}
+
 run_validation
+run_source_fence
+set_source_run_attempt 2
+if run_source_fence >"$fixture_dir/fence-output" 2>"$fixture_dir/fence-error"; then
+  echo "publisher accepted a new source attempt after artifact validation" >&2
+  exit 1
+fi
+grep -Fq 'Could not confirm the selected current successful source attempt' "$fixture_dir/fence-error"
+set_source_run_attempt 1
 run_validation pull_request feature/ci "$head_sha" pr-runtime-image-requalification
 if SOURCE_RUN_ATTEMPT=2 run_validation >/dev/null 2>"$fixture_dir/attempt-error"; then
   echo "publisher accepted an artifact after the resolved source attempt changed" >&2
@@ -2329,5 +2350,63 @@ if [[ -e "$fixture_dir/runtime-registry-marker" ]]; then
   echo "runtime publisher published after an unknown registry preflight failure" >&2
   exit 1
 fi
+
+waiter_bin="$fixture_dir/waiter-bin"
+mkdir "$waiter_bin"
+jq -n --arg repo "$repository" --arg title "$source_title" --arg sha "$head_sha" '
+  {id:4242, workflow_id:777, event:"pull_request", display_title:$title, head_sha:$sha,
+   created_at:"2025-01-01T00:00:00Z", html_url:"https://example.test/runs/4242",
+   status:"completed", conclusion:"success", run_attempt:1,
+   repository:{full_name:$repo}, head_repository:{full_name:$repo}}
+' >"$fixture_dir/waiter-source.json"
+jq -n --arg title "Publish PR Runtime Images $source_title source-run-4242 attempt-1" '
+  {total_count:2, workflow_runs:[
+    (6001,6002) | {id:., event:"workflow_run", display_title:$title, created_at:"2025-01-01T00:00:01Z"}
+  ]}
+' >"$fixture_dir/waiter-publishers.json"
+cat >"$waiter_bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${@: -1}" in
+  */actions/workflows/runtime-images.yml/runs\?*)
+    if [[ "$WAIT_SCENARIO" == superseded && -e "$WAIT_FIXTURE_DIR/waiter-native-read" ]]; then
+      jq '{workflow_runs:[. + {run_attempt:2, conclusion:"failure"}]}' "$WAIT_FIXTURE_DIR/waiter-source.json"
+    else
+      jq '{workflow_runs:[.]}' "$WAIT_FIXTURE_DIR/waiter-source.json"
+    fi
+    ;;
+  */actions/workflows/publish-pr-runtime-images.yml/runs\?event=workflow_run\&*)
+    cat "$WAIT_FIXTURE_DIR/waiter-publishers.json"
+    ;;
+  */actions/workflows/publish-pr-runtime-images.yml/runs\?event=repository_dispatch\&*)
+    printf '%s\n' '{"total_count":0,"workflow_runs":[]}'
+    ;;
+  */actions/runs/4242)
+    touch "$WAIT_FIXTURE_DIR/waiter-native-read"
+    if [[ "$WAIT_SCENARIO" == superseded ]]; then
+      jq '.run_attempt = 2' "$WAIT_FIXTURE_DIR/waiter-source.json"
+    else
+      cat "$WAIT_FIXTURE_DIR/waiter-source.json"
+    fi
+    ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod +x "$waiter_bin/gh"
+for scenario in stable superseded; do
+  rm -f "$fixture_dir/waiter-native-read"
+  waiter_status=0
+  PATH="$waiter_bin:$PATH" GH_TOKEN='test-token' GITHUB_REPOSITORY="$repository" \
+    WAIT_FIXTURE_DIR="$fixture_dir" WAIT_SCENARIO="$scenario" HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 \
+    HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0.1 bash "$ROOT_DIR/dev-tools/hosted/shared/wait-for-runtime-images.sh" \
+      "$merge_sha" "$base_sha" "$head_sha" >"$fixture_dir/waiter-output" 2>&1 || waiter_status=$?
+  [[ "$waiter_status" == 1 && -e "$fixture_dir/waiter-native-read" ]]
+  if [[ "$scenario" == superseded ]]; then
+    grep -Fq 'advanced from attempt 1 to 2' "$fixture_dir/waiter-output"
+    grep -Fq 'completed with failure' "$fixture_dir/waiter-output"
+  else
+    grep -Fq 'Publisher coverage unavailable at the wait deadline' "$fixture_dir/waiter-output"
+  fi
+done
 
 echo 'PR runtime image publication contract checks passed (live GitHub and registry operations are not run)'

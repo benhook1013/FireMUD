@@ -1043,6 +1043,10 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
       {name: "Require successful runtime smoke and authenticated cleanup", number: 7, status: "completed",
         conclusion: "success", started_at: "2026-09-01T00:30:00Z", completed_at: "2026-09-01T00:30:01Z"},
     ]};
+  if (kind.startsWith("replacement-omitted-job-attempt")) {
+    delete job.run_attempt;
+    if (kind.endsWith("-outside-interval")) job.started_at = source.created_at;
+  }
   if (kind === "marker-missing") job.steps = [];
   if (kind === "marker-success") job.steps[0].conclusion = "success";
   if (kind.startsWith("legacy")) job.name = "PR Full-Stack Smoke";
@@ -1071,9 +1075,9 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
   const github = {rest: {
     pulls: {get: async () => {
       reads += 1;
-      const afterFinalGet = finalGetDrift && qualifiedAttemptReads >= 3;
+      const afterFinalGet = finalGetDrift && qualifiedAttemptReads >= 2;
       if (afterFinalGet) postAttemptIdentityReads++;
-      if (kind === "ordinary-final-comparison-deadline" && qualifiedAttemptReads === 3) {
+      if (kind === "ordinary-final-comparison-deadline" && qualifiedAttemptReads === 2) {
         now += 90 * 60 * 1000;
       }
       const moved = kind === "ordinary-final-base-drift" && qualifiedAttemptReads > 0 ||
@@ -1087,7 +1091,7 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
         merge_commit_sha: moved ? movedMerge : merge}};
     }},
     git: {getRef: async () => {
-      observedBaseMove ||= kind === "ordinary-final-get-ref-drift" && qualifiedAttemptReads >= 3;
+      observedBaseMove ||= kind === "ordinary-final-get-ref-drift" && qualifiedAttemptReads >= 2;
       return {data: {ref: "refs/heads/develop", object: {sha: observedBaseMove ? movedBase : base}}};
     }},
     repos: {
@@ -1113,6 +1117,7 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
       getWorkflow: async () => ({data: {id: 7, path: source.path, name: "Build Runtime Images"}}),
       getWorkflowRun: async () => {
         if (refs.length) qualifiedAttemptReads++;
+        observedAttemptMove ||= kind === "ordinary-final-attempt-after-comparison-drift" && qualifiedAttemptReads >= 3;
         if (kind === "ordinary-final-attempt-deadline" && qualifiedAttemptReads === 3) {
           now += 90 * 60 * 1000;
         }
@@ -1178,7 +1183,7 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
       return [changed];
     }
     const mutations = {
-      "wrong-job": {id: 101}, "wrong-job-run": {run_id: 43}, "wrong-job-attempt": {run_attempt: 2},
+      "wrong-job-run": {run_id: 43}, "wrong-job-attempt": {run_attempt: 2},
       "wrong-job-head": {head_sha: "e".repeat(40)}, "wrong-check-url": {check_run_url: "https://example.com/check"},
       "failed-job": {conclusion: "failure"}, "pending-job": {status: "in_progress", conclusion: null},
     };
@@ -1236,7 +1241,7 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
   assert.deepEqual((await scenario("legacy-positive")).failures, []);
   for (const kind of ["marker-missing", "marker-success", "legacy-missing", "not-required", "step-skipped", "wrong-repository", "wrong-workflow",
      "wrong-path", "wrong-event", "wrong-head", "wrong-head-repository", "wrong-title", "wrong-source-attempt", "failed-smoke-step", "failed-run",
-     "changed-definition", "unavailable-definition", "wrong-job", "wrong-job-run", "wrong-job-attempt", "wrong-job-head",
+     "changed-definition", "unavailable-definition", "wrong-job-run", "wrong-job-head",
      "wrong-check-url", "failed-job", "pending-job", "duplicate-jobs", "duplicate-attempt-jobs", "newer-attempt", "bad-parents"]) {
     assert.equal((await scenario(kind, "repository_dispatch")).failures.length, 1,
       `${kind} must not supply successful current typed refresh proof`);
@@ -1257,6 +1262,16 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
     assert(result.snapshots >= 2 && result.waitedMillis > 0, `${kind} retries within the existing proof budget`);
     if (kind === "transient-exact-attempt") assert(result.exactAttemptReads >= 5);
     if (kind.startsWith("sparse-exact-attempt-")) assert(result.exactAttemptReads >= 3);
+  }
+  const omittedAttempt = await scenario("replacement-omitted-job-attempt", "repository_dispatch");
+  assert.deepEqual(omittedAttempt.failures, []);
+  assert.equal(omittedAttempt.waitedMillis, 0, "exact timestamps qualify an ordinary replacement with an omitted job attempt");
+  assert(omittedAttempt.snapshots >= 2, "the omitted attempt must reach the ordinary exact-attempt verifier");
+  for (const kind of ["replacement-omitted-job-attempt-outside-interval", "wrong-job-attempt"]) {
+    const result = await scenario(kind, "repository_dispatch");
+    assert.equal(result.waitedMillis, 0);
+    assert.equal(result.failures.length, 1);
+    assert.match(result.failures[0], /Cancelled runtime replacement has contradictory identity/, kind);
   }
   const changedJobId = await scenario("cross-snapshot-changed-job-id", "repository_dispatch");
   assert.equal(changedJobId.failures.length, 1,
@@ -1352,7 +1367,7 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
     assert.equal(invalid.snapshots, 0);
     assert.equal(invalid.exactAttemptReads, 0);
   }
-  for (const kind of ["ordinary-final-base-drift", "ordinary-final-attempt-drift"]) {
+  for (const kind of ["ordinary-final-base-drift", "ordinary-final-attempt-drift", "ordinary-final-attempt-after-comparison-drift"]) {
     const moved = await scenario(kind, "repository_dispatch");
     assert(kind.endsWith("base-drift") ? moved.observedBaseMove : moved.observedAttemptMove);
     assert.equal(moved.failures.length, 1);
@@ -1362,7 +1377,7 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
   assert(finalGetBase.observedBaseMove && finalGetBase.postAttemptIdentityReads > 0);
   assert.equal(finalGetBase.failures.length, 1);
   assert.match(finalGetBase.failures[0], /^Timed out waiting for the exact runtime-images/,
-    "base movement during the final GET cannot accept the old typed proof");
+    "base movement between source observations cannot accept the old typed proof");
   const finalGetRef = await scenario("ordinary-final-get-ref-drift", "repository_dispatch");
   assert(finalGetRef.observedBaseMove && finalGetRef.postAttemptIdentityReads > 0);
   assert.equal(finalGetRef.failures.length, 1);
@@ -4392,8 +4407,8 @@ async function selectedProducerFinalFence(event, moved = false, superseded = fal
 const legacyFailedStart = script.indexOf('if (matching.conclusion !== "success")');
 const legacyFailedEnd = script.indexOf("async function fenceCompletedRuntimeIdentity", legacyFailedStart);
 const legacyFailedBranch = script.slice(legacyFailedStart, legacyFailedEnd);
-// Both ordinary recovery and the unchanged exception must fence the PR again
-// after the final attempt GET, not merely before that awaited request.
+// Ordinary recovery brackets the final comparison with source reads.
+// The diagnostic exception keeps its separate final live label check.
 async function recoveredFinalFence(disposition, change = null) {
   let finalAttempts = 0, postAttemptFences = 0, resumedPolling = false;
   const outputs = [], failures = [];
@@ -4423,24 +4438,23 @@ async function recoveredFinalFence(disposition, change = null) {
       }
       return {...selectedIdentity, sourceEvent: "repository_dispatch",
         canonicalPlayEligible: change !== "label" || finalAttempts === 0,
-        ...(finalAttempts > 0 && change === "base" || finalAttempts === 2 && change === "base-at-final-comparison"
-          ? {baseSha: "e".repeat(40), mergeSha: "f".repeat(40)} : {})};
+        ...(finalAttempts > 0 && change === "base" ? {baseSha: "e".repeat(40), mergeSha: "f".repeat(40)} : {})};
     }, selected => JSON.stringify([selected.baseRef, selected.baseSha, selected.headSha, selected.mergeSha, selected.sourceEvent]),
     value => Number.isSafeInteger(value) && value > 0, async selected => {
       assert.deepEqual(selected, proofRun);
       finalAttempts++;
       return change !== "rerun-at-final-attempt" || finalAttempts < 2;
     }, resolve => resolve(), 0, () => {resumedPolling = true;}, {now: () => 0}, 0, 1000);
-  const reachedSecondAttempt = [null, "rerun-at-final-attempt", "base-at-final-comparison"].includes(change);
+  const reachedSecondAttempt = [null, "rerun-at-final-attempt"].includes(change);
   assert.equal(finalAttempts, disposition === "verified" ? 2 : 1 + Number(reachedSecondAttempt));
   const expectedFences = disposition === "verified"
     ? Number(change !== "rerun-at-final-attempt")
-    : 1 + Number([null, "base-at-final-comparison"].includes(change));
+    : 1;
   assert.equal(postAttemptFences, expectedFences);
   assert.deepEqual(failures, disposition === "verified" && change === "label"
     ? ["Canonical PLAY transition exception label is absent or no longer eligible."] : []);
   assert.deepEqual(outputs, disposition === "verified" && change === null ? [["known_play_exception", "true"]] : []);
-  assert.equal(resumedPolling, ["base", "unavailable", "rerun-at-final-attempt", "base-at-final-comparison"].includes(change),
+  assert.equal(resumedPolling, ["base", "unavailable", "rerun-at-final-attempt"].includes(change),
     "changed or unavailable final identity resumes polling; obsolete identity exits");
 }
 async function failedLegacyProof(stage, error, event = "pull_request") {
@@ -5487,7 +5501,7 @@ function markerAccepted(overrides = {}) {
   }
   for (const disposition of ["ordinary", "verified"]) {
     for (const change of [null, "base", "closed", "head", "retarget", "unavailable", "rerun-at-final-attempt",
-      ...(disposition === "verified" ? ["label"] : ["base-at-final-comparison"])]) {
+      ...(disposition === "verified" ? ["label"] : [])]) {
       await recoveredFinalFence(disposition, change);
     }
   }
@@ -5739,6 +5753,58 @@ assert.equal(admits("source", {eventName: "repository_dispatch", action: "pr-run
 assert.equal(admits("source", {eventName: "REPOSITORY_DISPATCH", action: "PR-RUNTIME-IMAGE-PUBLICATION", branch: "Main"}), true);
 const execute = new Function("github", "context", "core", "Date", "setTimeout",
   `return (async () => {${fs.readFileSync(process.argv[2], "utf8")}\n})()`);
+async function exactRerunChronology() {
+  const source = fs.readFileSync(process.argv[2], "utf8");
+  const declaration = source.slice(source.indexOf("const classifyTypedOutcome ="),
+    source.indexOf("// Bind both admission reads"));
+  const buildClassifier = new Function("github", "context", "fanoutOptions",
+    "expiredPublicationCanBeRebuilt", `${declaration}\nreturn classifyTypedOutcome;`);
+  const repository = {full_name: "example/firemud"};
+  const run = {
+    id: 100, workflow_id: 7, run_attempt: 2, path: runtimePath, display_title: "typed refresh",
+    event: "repository_dispatch", head_branch: "develop", head_sha: "d".repeat(40),
+    status: "completed", conclusion: "success", name: "Build Runtime Images",
+    repository, head_repository: repository, created_at: "2026-11-23T01:58:34Z",
+  };
+  const attempt = {
+    ...run, created_at: "2026-11-23T03:36:17Z", run_started_at: "2026-11-23T03:36:16Z",
+    updated_at: "2026-11-23T03:38:00Z",
+  };
+  const job = {
+    id: 101, name: "PR Full-Stack Smoke (runtime-required=false)", run_id: run.id,
+    run_attempt: run.run_attempt, head_sha: run.head_sha, workflow_name: run.name,
+    status: "completed", conclusion: "success",
+    started_at: "2026-11-23T03:36:18Z", completed_at: "2026-11-23T03:37:59Z",
+    steps: [
+      {name: "Known canonical transition PLAY failure with successful authenticated cleanup",
+        status: "completed", conclusion: "skipped"},
+      {name: "Upload preview image artifact", status: "completed", conclusion: "success",
+        started_at: "2026-11-23T03:37:53Z", completed_at: "2026-11-23T03:37:58Z"},
+    ],
+  };
+  let observed = attempt;
+  let latest = run;
+  let artifactChecks = 0;
+  const github = {rest: {actions: {
+    getWorkflowRunAttempt: async ({run_id, attempt_number}) => {
+      assert.equal(run_id, run.id);
+      assert.equal(attempt_number, run.run_attempt);
+      return {data: observed};
+    },
+    listJobsForWorkflowRunAttempt: async () => ({data: {jobs: [job], total_count: 1}}),
+    getWorkflowRun: async () => ({data: latest}),
+  }}};
+  const classify = buildClassifier(github, {repo: {owner: "example", repo: "firemud"}},
+    value => value, async () => {artifactChecks++; return true;});
+  assert.equal(await classify(run, run.name, {}), "expired-unpublished");
+  assert.equal(artifactChecks, 1);
+  observed = {...attempt, created_at: "2026-11-23T03:39:00Z"};
+  assert.equal(await classify(run, run.name, {}), false);
+  assert.equal(artifactChecks, 1);
+  observed = attempt;
+  latest = {...run, run_attempt: 3};
+  await assert.rejects(classify(run, run.name, {}), /changed during exact attempt proof/);
+}
 async function run(kind, shared = {visible: false, posts: 0}) {
   const base = "b".repeat(40), head = "a".repeat(40), merge = "c".repeat(40), repository = "example/firemud";
   const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
@@ -6035,6 +6101,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   return shared.posts;
 }
 (async () => {
+  await exactRerunChronology();
   const valid = {visible: false, posts: 0};
   assert.equal(await run("valid", valid), 1);
   assert.equal(valid.failure, undefined, "a completed exact handoff must not report workflow failure");

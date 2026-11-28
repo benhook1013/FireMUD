@@ -1431,8 +1431,14 @@ if ("steps.v2-migration-mode.outputs.activation == 'false'" not in clean_reset["
         '"$EXPECTED_NAMESPACE_UID" "$EXPECTED_DEPLOYED_HEAD"' not in clean_reset["run"]):
     raise SystemExit("automatic dev-demo reset must carry the classified UID and deployed head")
 deployed_head_step = deploy_by_name["Record exact deployed dev-demo head"]
-if deployed_head_step.get("env", {}).get("RETAINED_ACTIVATION") != "${{ steps.v2-migration-mode.outputs.activation }}":
-    raise SystemExit("deployed-head recording must receive the classifier's activation output")
+deployed_head_env = deployed_head_step.get("env", {})
+for variable, output in {
+    "RETAINED_ACTIVATION": "activation",
+    "NAMESPACE_UID": "namespace_uid",
+    "DEPLOYED_BASE_SHA": "deployed_base_sha",
+}.items():
+    if deployed_head_env.get(variable) != "${{ steps.v2-migration-mode.outputs." + output + " }}":
+        raise SystemExit(f"deployed-head recording must receive the classifier's {output} output as {variable}")
 if "steps.deploy-release.outcome == 'success'" not in deployed_head_step.get("if", ""):
     raise SystemExit("deployed-head evidence is not gated on successful Helm completion")
 if "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" not in deployed_head_step["run"]:
@@ -1518,7 +1524,9 @@ bootstrap_step = deploy_by_name["Create dev-demo smoke account"]
 intent_step = deploy_by_name["Capture dev-demo bootstrap intent"]
 retain_intent = deploy_by_name["Retain dev-demo bootstrap intent before sending"]
 retain_result = deploy_by_name["Retain successful dev-demo bootstrap result"]
+preserve_result = deploy_by_name["Preserve validated dev-demo receipt in its namespace hold on upload failure"]
 clear_bootstrap_hold = deploy_by_name["Clear dev-demo bootstrap hold after retained result"]
+cleanup_evidence = deploy_by_name["Clean local dev-demo bootstrap evidence"]
 if not (
     deploy_steps.index(deployed_head_step) < deploy_steps.index(intent_step)
     < deploy_steps.index(retain_intent) < deploy_steps.index(bootstrap_step)
@@ -1551,12 +1559,34 @@ if "firemud.dev/pending-dev-demo-bootstrap-" in bootstrap_step["run"]:
     raise SystemExit("dev-demo bootstrap must not clear its hold before result retention")
 if retain_result["if"] != "${{ always() && steps.bootstrap-smoke.outputs.result_ready == 'true' }}":
     raise SystemExit("validated bootstrap evidence must upload even when cleanup fails")
+if preserve_result["if"] != "${{ always() && steps.bootstrap-smoke.outputs.result_ready == 'true' && steps.retain-bootstrap-result.outcome != 'success' }}":
+    raise SystemExit("a failed result upload must attempt namespace-held receipt preservation")
+if preserve_result["env"]["KUBECONFIG"] != "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig":
+    raise SystemExit("the exact namespace manager must own receipt preservation")
+if not all(fragment in preserve_result["run"] for fragment in (
+    "pending-dev-demo-bootstrap-result",
+    "pending-dev-demo-bootstrap",
+    "last-dev-demo-head-sha",
+    "--resource-version=",
+    '"$BOOTSTRAP_EVIDENCE_DIR/result.json"',
+    '"${#receipt}" -le 8192',
+)):
+    raise SystemExit("namespace-held receipt must be bounded and fenced to the exact held deployment")
+if not all(fragment in cleanup_evidence["if"] for fragment in (
+    "steps.bootstrap-smoke.outputs.result_ready != 'true'",
+    "steps.retain-bootstrap-result.outcome == 'success'",
+    "steps.preserve-bootstrap-result.outcome == 'success'",
+)):
+    raise SystemExit("local verified receipt cleanup must follow one successful retention path")
 if not (
     bootstrap_step["run"].index("write-bootstrap-result.py")
     < bootstrap_step["run"].index('echo "result_ready=true"')
-    < bootstrap_step["run"].rindex('delete pod dev-demo-bootstrap')
+    and "trap cleanup_bootstrap_resources EXIT" in bootstrap_step["run"]
+    and "if ! cleanup_bootstrap_pod_and_script; then\n    status=1" in bootstrap_step["run"]
+    and "pod/dev-demo-bootstrap configmap/dev-demo-bootstrap-script" in bootstrap_step["run"]
+    and "--ignore-not-found --wait=true --timeout=15s" in bootstrap_step["run"]
 ):
-    raise SystemExit("dev-demo must validate and write the bootstrap result before resource cleanup")
+    raise SystemExit("dev-demo must capture the verified result and fail closed on resource cleanup")
 if "dev-demo-smoke-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" not in intent_step["run"]:
     raise SystemExit("dev-demo bootstrap intent must use a stable native run/attempt identity")
 for key in ("workflowSha", "headSha", "deployedBaseSha", "namespaceUid", "helmRevision",

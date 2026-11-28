@@ -9,7 +9,9 @@ module.exports = async function admitPrRuntimeRefresh({
   input,
   admissionAttempt = process.env.GITHUB_RUN_ATTEMPT,
   sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+  elapsed = () => performance.now(),
 }) {
+  const finalIdentityCutoff = elapsed() + 120_000;
   const runtimePath = '.github/workflows/runtime-images.yml';
   const admissionPath = '.github/workflows/admit-pr-runtime-refresh.yml';
   const requiredFields = ['pr_number', 'base_ref', 'base_sha', 'head_sha', 'merge_sha'];
@@ -64,10 +66,19 @@ module.exports = async function admitPrRuntimeRefresh({
   const defaultBranch = repository.default_branch;
   const pullNumber = Number(input.pr_number);
 
-  const observeIdentity = async () => {
+  const remainingIdentityMs = deadline => {
+    const remaining = Math.ceil(deadline - elapsed());
+    if (remaining <= 0) fail('Final runtime refresh identity read exceeded its time budget.');
+    return remaining;
+  };
+  const identityOptions = deadline => Number.isFinite(deadline)
+    ? {request: {signal: AbortSignal.timeout(remainingIdentityMs(deadline)), retries: 0}}
+    : {};
+
+  const observeIdentity = async deadline => {
     let pullResponse;
     try {
-      pullResponse = await github.rest.pulls.get({...contextRepo, pull_number: pullNumber});
+      pullResponse = await github.rest.pulls.get({...contextRepo, pull_number: pullNumber, ...identityOptions(deadline)});
     } catch (error) {
       if (isNotFound(error)) return false;
       return transientIdentityRead(error);
@@ -82,7 +93,7 @@ module.exports = async function admitPrRuntimeRefresh({
 
     let refResponse;
     try {
-      refResponse = await github.rest.git.getRef({...contextRepo, ref: `heads/${input.base_ref}`});
+      refResponse = await github.rest.git.getRef({...contextRepo, ref: `heads/${input.base_ref}`, ...identityOptions(deadline)});
     } catch (error) {
       if (isNotFound(error)) return false;
       return transientIdentityRead(error);
@@ -96,7 +107,7 @@ module.exports = async function admitPrRuntimeRefresh({
 
     let commitResponse;
     try {
-      commitResponse = await github.rest.repos.getCommit({...contextRepo, ref: reportedMerge});
+      commitResponse = await github.rest.repos.getCommit({...contextRepo, ref: reportedMerge, ...identityOptions(deadline)});
     } catch (error) {
       if (isNotFound(error)) return null;
       return transientIdentityRead(error);
@@ -116,7 +127,8 @@ module.exports = async function admitPrRuntimeRefresh({
         execFileSync('python3', [
           resolve(__dirname, '../../dev-tools/hosted/preview/preview-eligibility.py'), '--revalidate-deploy',
           '--expected-repository', fullName, '--expected-head-sha', input.head_sha,
-        ], {input: JSON.stringify(pull), encoding: 'utf8'});
+        ], {input: JSON.stringify(pull), encoding: 'utf8',
+          ...(Number.isFinite(deadline) ? {timeout: remainingIdentityMs(deadline)} : {})});
       } catch (error) {
         if (error.status !== 1) throw error;
         core.info('Canonical preview eligibility refused the current PR; no dispatch.');
@@ -126,12 +138,13 @@ module.exports = async function admitPrRuntimeRefresh({
     return true;
   };
 
-  const currentIdentity = async () => {
+  const currentIdentity = async (deadline = Infinity) => {
     for (let observation = 0; observation < 6; observation++) {
-      const result = await observeIdentity();
+      const result = await observeIdentity(deadline);
+      const remaining = remainingIdentityMs(deadline);
       if (typeof result === 'boolean') return result;
       if (result !== null && observation === 5) throw result.error;
-      if (observation < 5) await sleep(2000);
+      if (observation < 5) await sleep(Math.min(2000, remaining));
     }
     return false;
   };
@@ -639,6 +652,10 @@ module.exports = async function admitPrRuntimeRefresh({
     const date = secondsUtc(Date.now());
     if (!isPositiveInteger(generation) || (prior && date < prior.date)) fail('Invalid successor runtime claim.');
     if (!isTrustedAdmission()) fail('Runtime claim owner revision is unproven.');
+    if (finalIdentityCutoff - elapsed() < 15_000) {
+      core.info('Runtime admission has insufficient time to verify the claim and record its outcome.');
+      return 'deferred';
+    }
     // GitHub binds the native repository_dispatch SHA to its default branch.
     // The PR merge stays in the annotation and never becomes newly referenced.
     const ownerRevision = context.sha;
@@ -669,7 +686,8 @@ module.exports = async function admitPrRuntimeRefresh({
 
   let identityIsCurrent;
   try {
-    identityIsCurrent = await currentIdentity();
+    // Leave the remaining job window for the durable no-send receipt and its marker.
+    identityIsCurrent = await currentIdentity(Math.min(finalIdentityCutoff, elapsed() + 20_000));
   } catch {
     core.warning('Runtime refresh tuple could not be rechecked after claiming; no dispatch.');
     if (isTrustedReceiptOwner() && await recordOwnerReceipt(claim, preSendUnavailable)) {

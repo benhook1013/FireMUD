@@ -1291,6 +1291,35 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       assertThat(reservationRows(dsl, tenantId)).hasSize(2);
       assertThat(originRows(dsl, tenantId)).hasSize(2);
       assertTenantCapacityInventoryMatches(dsl, tenantId);
+
+      String recoverEvaluation =
+          "UPDATE account_tenant_capacity_reservations SET evaluation_identity = ? "
+              + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?";
+      transaction.executeWithoutResult(status ->
+          assertThat(
+                  dsl.execute(
+                      recoverEvaluation,
+                      retained.evaluationIdentity(),
+                      tenantId,
+                      retained.requestId(),
+                      retained.admissionId()))
+              .isOne());
+      var reservationsBeforeMismatch = reservationRows(dsl, tenantId);
+      assertThatThrownBy(() ->
+              transaction.executeWithoutResult(status ->
+                  dsl.execute(
+                      recoverEvaluation,
+                      fresh.evaluationIdentity(),
+                      tenantId,
+                      retained.requestId(),
+                      retained.admissionId())))
+          .rootCause()
+          .isInstanceOfSatisfying(
+              java.sql.SQLException.class,
+              failure -> assertThat(failure.getSQLState()).isEqualTo("23514"))
+          .hasMessageContaining("Changed capacity attempt is an idempotency conflict");
+      assertThat(reservationRows(dsl, tenantId)).isEqualTo(reservationsBeforeMismatch);
+      assertTenantCapacityInventoryMatches(dsl, tenantId);
     } finally {
       new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
     }

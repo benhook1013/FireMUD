@@ -633,10 +633,13 @@ wait_for_pr_publisher() {
   local publisher_deadline=$((SECONDS + publisher_timeout_seconds))
   if (( publisher_deadline > deadline )); then publisher_deadline="$deadline"; fi
   while (( SECONDS < publisher_deadline )); do
-    local publisher_state
+    local publisher_state source_status=0
     if ! publisher_state="$(select_pr_publisher "${source_run_id}" "${source_run_attempt}" \
       "${source_created_at}" "${source_event}" "${publisher_deadline}")"; then
       coverage_unavailable=true
+      check_current_source "${publisher_deadline}" "${source_run_id}" "${source_run_attempt}" \
+        "${source_created_at}" "${source_event}" "${source_workflow_id}" || source_status=$?
+      if (( source_status > 1 )); then return "${source_status}"; fi
       sleep "${sleep_seconds}"
       continue
     fi
@@ -647,7 +650,6 @@ wait_for_pr_publisher() {
       publisher_workflow_id publisher_event publisher_title selection_reason <<<"${publisher_state}"
 
     if [[ "${state}" == "missing" || "${run_status}" != "completed" || "${run_conclusion}" != "success" ]]; then
-      local source_status=0
       check_current_source "${publisher_deadline}" "${source_run_id}" "${source_run_attempt}" \
         "${source_created_at}" "${source_event}" "${source_workflow_id}" || source_status=$?
       if (( source_status > 1 )); then return "${source_status}"; fi

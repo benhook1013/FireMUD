@@ -243,10 +243,7 @@ write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exi
 run_case load-testing 0
 assert_call_count 2
 [[ "$(head -n 1 "$CASE_DIR/calls")" == "$(tail -n 1 "$CASE_DIR/calls")" ]] || fail "classpath rate limit changed the original command"
-delay="$(cat "$CASE_DIR/sleeps")"
-if [[ ! "$delay" =~ ^[0-9]+$ ]] || (( delay < 15 || delay > 30 )); then
-  fail "classpath rate limit missed the bounded delay"
-fi
+assert_rate_limit_delay
 
 # Preserve the c515-style pinned missing-artifact recovery path without
 # claiming the miss is stale: a passing refreshed full check is still required.

@@ -2,7 +2,12 @@ package net.firedevops.firemud.gamesession.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -123,7 +128,11 @@ class AccountTenantCapacityClientMtlsTest {
   @Test
   void explicitAccountEndpointIsPreserved() throws Exception {
     var endpoints = new ServiceEndpointsProperties();
-    var factory = new GrpcChannelFactory();
+    String target = "account.internal:7443";
+    endpoints.setAccountService(target);
+    var factory = mock(GrpcChannelFactory.class);
+    when(factory.buildChannelWithoutRetries(eq(target), anyInt(), any(), anyBoolean()))
+        .thenReturn(mock(ManagedChannel.class));
     try (var client =
         new AccountTenantCapacityClient(
             endpoints,
@@ -131,8 +140,8 @@ class AccountTenantCapacityClientMtlsTest {
             factory,
             "prod",
             Clock.fixed(CapacityAdmissionTestFixture.NOW, ZoneOffset.UTC))) {
-      endpoints.setAccountService("account.internal:7443");
-      assertThat(client.configuredTarget(endpoints)).isEqualTo("account.internal:7443");
+      client.init();
+      verify(factory).buildChannelWithoutRetries(eq(target), anyInt(), any(), anyBoolean());
     }
   }
 

@@ -925,12 +925,18 @@ jobs:
             echo "::error::Failed to remove dev-demo bootstrap credentials" >&2
             return 1
           }
+          cleanup_bootstrap_pod_and_script() {
+            kubectl -n "${PREVIEW_NAMESPACE}" --request-timeout=20s delete \
+              pod/dev-demo-bootstrap configmap/dev-demo-bootstrap-script \
+              --ignore-not-found --wait=true --timeout=15s >/dev/null
+          }
           cleanup_bootstrap_resources() {
             local status=$?
             set +e
             cleanup_bootstrap_port_forward
-            kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1
-            kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1
+            if ! cleanup_bootstrap_pod_and_script; then
+              status=1
+            fi
             rm -f -- "$BOOTSTRAP_POD_LOG" "$BOOTSTRAP_SCRIPT"
             if ! cleanup_bootstrap_account_id_file; then
               status=1
@@ -1071,9 +1077,7 @@ jobs:
           python3 ./dev-tools/hosted/dev-demo/write-bootstrap-result.py \
             "$BOOTSTRAP_EVIDENCE_DIR" "$BOOTSTRAP_ACCOUNT_ID_FILE" "$BOOTSTRAP_POD_LOG"
           echo "result_ready=true" >> "$GITHUB_OUTPUT"
-          kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
-          kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
-          cleanup_bootstrap_secret
+          # The EXIT trap verifies temporary resource cleanup before step success.
 
       - name: Retain successful dev-demo bootstrap result
         id: retain-bootstrap-result
@@ -1083,6 +1087,37 @@ jobs:
           name: dev-demo-bootstrap-result-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.bootstrap-intent.outputs.evidence_dir }}/result.json
           if-no-files-found: error
+
+      - name: Preserve validated dev-demo receipt in its namespace hold on upload failure
+        id: preserve-bootstrap-result
+        if: ${{ always() && steps.bootstrap-smoke.outputs.result_ready == 'true' && steps.retain-bootstrap-result.outcome != 'success' }}
+        env:
+          LC_ALL: C
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
+          BOOTSTRAP_EVIDENCE_DIR: ${{ steps.bootstrap-intent.outputs.evidence_dir }}
+          BOOTSTRAP_HOLD: ${{ steps.bootstrap-intent.outputs.bootstrap_hold }}
+          BOOTSTRAP_NAMESPACE_UID: ${{ steps.bootstrap-intent.outputs.namespace_uid }}
+          HEAD_SHA: ${{ needs.dev-demo-plan.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          receipt="$(jq -ce --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg head "$HEAD_SHA" --arg uid "$BOOTSTRAP_NAMESPACE_UID" \
+            'select(.schema == "dev-demo-bootstrap-result/v1" and .intent.runId == $run
+              and .intent.attempt == $attempt and .intent.headSha == $head and .intent.namespaceUid == $uid)' \
+            "$BOOTSTRAP_EVIDENCE_DIR/result.json")"
+          [[ "${#receipt}" -le 8192 ]]
+          resource_version="$(
+            kubectl --request-timeout=10s get namespace dev -o json |
+              jq -er --arg uid "$BOOTSTRAP_NAMESPACE_UID" --arg head "$HEAD_SHA" \
+                --arg hold "$BOOTSTRAP_HOLD" --arg receipt "$receipt" '
+                select(.kind == "Namespace" and .metadata.name == "dev" and .metadata.uid == $uid
+                  and .metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == $head
+                  and .metadata.annotations["firemud.dev/pending-dev-demo-bootstrap"] == $hold
+                  and ((.metadata.annotations["firemud.dev/pending-dev-demo-bootstrap-result"] // $receipt) == $receipt))
+                | .metadata.resourceVersion | select(type == "string" and length > 0)'
+          )"
+          kubectl --request-timeout=10s annotate namespace dev --resource-version="$resource_version" \
+            "firemud.dev/pending-dev-demo-bootstrap-result=$receipt" --overwrite >/dev/null
 
       - name: Clear dev-demo bootstrap hold after retained result
         id: clear-bootstrap-hold
@@ -1109,7 +1144,7 @@ jobs:
             "firemud.dev/pending-dev-demo-bootstrap-" --overwrite >/dev/null
 
       - name: Clean local dev-demo bootstrap evidence
-        if: ${{ always() && steps.bootstrap-intent.outcome == 'success' }}
+        if: ${{ always() && steps.bootstrap-intent.outcome == 'success' && (steps.bootstrap-smoke.outputs.result_ready != 'true' || steps.retain-bootstrap-result.outcome == 'success' || steps.preserve-bootstrap-result.outcome == 'success') }}
         env:
           BOOTSTRAP_EVIDENCE_DIR: ${{ steps.bootstrap-intent.outputs.evidence_dir }}
         run: |

@@ -359,9 +359,11 @@ test('completed producers still permit an exact repair', async () => {
 
 test('a newer failed exact producer keeps the tuple eligible despite an older active run', async () => {
   const f = admissionFixture();
-  f.runs.push(f.makeRun({id: 299, event: 'pull_request', head_sha: C,
-    pull_requests: [{number: 7, head: {sha: C}, base: {sha: B}}],
+  f.runs.push(f.makePullRequestRun({id: 299,
     created_at: new Date(Date.now() - 70 * 60 * 1000).toISOString()}));
+  assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
+  assert.equal(f.sent.length, 0);
+
   f.runs.push(f.makeRun({id: 300, status: 'completed', conclusion: 'failure',
     created_at: new Date(Date.now() - 60000).toISOString()}));
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
@@ -646,6 +648,26 @@ test('a thrown final identity read records a pre-send outcome in both request mo
       assert.match(f.outputs.get('pre-send-unavailable_claim'), /^generation 1 run 600 attempt 1 tag /);
     });
   }
+});
+
+test('a final identity response after its budget records a no-send receipt', async () => {
+  const f = admissionFixture();
+  let now = 0;
+  let claimed = false;
+  f.admission.elapsed = () => now;
+  f.state.afterClaim = () => { claimed = true; };
+  const exactPull = f.admission.github.rest.pulls.get;
+  f.admission.github.rest.pulls.get = async request => {
+    if (claimed) {
+      assert.ok(request.request.signal instanceof AbortSignal);
+      assert.equal(request.request.retries, 0);
+      now += 20_001;
+    }
+    return exactPull(request);
+  };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'pre-send-unavailable');
+  assert.equal(f.sent.length, 0);
+  assert.match(f.outputs.get('pre-send-unavailable_claim'), /^generation 1 run 600 attempt 1 tag /);
 });
 
 test('ambiguous dispatch responses never produce rejection or no-send receipts', async t => {

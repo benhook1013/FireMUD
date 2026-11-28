@@ -311,7 +311,7 @@ fi
 [[ ! -e "$PROBE_JOB_DELETED" ]]
 
 run_protected_probe() {
-  bash "$root_dir/dev-tools/deploy/run-dev-account-v1040-4-probe.sh" \
+  bash "${PROBE_SCRIPT:-$root_dir/dev-tools/deploy/run-dev-account-v1040-4-probe.sh}" \
     "$@" dev "$namespace_uid" "$deployed_sha" "$PROBE_FIXTURE_HEAD" 3
 }
 
@@ -352,8 +352,22 @@ run_protected_probe >"$temp_dir/receipt"
 grep -q 'checksum_comparison=verified-v1040-prefix' "$temp_dir/receipt"
 [[ -f "$PROBE_JOB_DELETED" ]]
 cmp -- "$PROBE_DRY_RUN" "$PROBE_JOB_MANIFEST"
+
+# A disposable checkout view shares the reviewed Git objects but has divergent helpers.
+# The job payload and both quiescence reads must still use those reviewed objects.
+copied_helpers="$temp_dir/copied-helpers"
+mkdir "$copied_helpers"
+cp "$root_dir/dev-tools/deploy/run-dev-account-v1040-4-probe.sh" "$copied_helpers/"
+printf '%s\n' 'exit 91' >"$copied_helpers/quiesce-v2-schema-migrations.sh"
+printf '%s\n' 'exit 92' >"$copied_helpers/probe-dev-account-v1040-4.sh"
+rm -f -- "$PROBE_JOB_DELETED" "$PROBE_JOB_READ" "$PROBE_JOB_MANIFEST"
+GIT_DIR="$(git -C "$root_dir" rev-parse --absolute-git-dir)" GIT_WORK_TREE="$copied_helpers" \
+  PROBE_SCRIPT="$copied_helpers/run-dev-account-v1040-4-probe.sh" run_protected_probe >"$temp_dir/receipt"
+grep -q 'checksum_comparison=verified-v1040-prefix' "$temp_dir/receipt"
+[[ -f "$PROBE_JOB_DELETED" ]]
+cmp -- "$PROBE_DRY_RUN" "$PROBE_JOB_MANIFEST"
 jq -e \
-  --arg probe "$(cat "$root_dir/dev-tools/deploy/probe-dev-account-v1040-4.sh")" \
+  --arg probe "$(git -C "$root_dir" show "$PROBE_FIXTURE_HEAD:dev-tools/deploy/probe-dev-account-v1040-4.sh")" \
   --arg namespace dev --arg uid "$namespace_uid" --arg base "$deployed_sha" \
   --arg head "$PROBE_FIXTURE_HEAD" --arg prefix 3 --arg image "$PROBE_FIXTURE_IMAGE" '
   .kind == "Job" and .metadata.namespace == "dev" and

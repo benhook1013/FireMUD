@@ -969,7 +969,7 @@ jobs:
               const {data: attempt} = await github.rest.actions.getWorkflowRunAttempt(fanoutOptions({
                 ...context.repo, run_id: run.id, attempt_number: run.run_attempt,
               }));
-              if (!matchesSelected(attempt) || successful && attempt.created_at !== run.created_at) {
+              if (!matchesSelected(attempt)) {
                 if (successful) throw new Error(`Successful typed runtime producer ${run.id} has inconsistent exact attempt identity`);
                 return false;
               }
@@ -999,8 +999,13 @@ jobs:
                 const wallMillis = Date.parse(wall);
                 return Number.isFinite(time) && Number.isFinite(wallMillis) && new Date(wallMillis).toISOString() === wall ? time : NaN;
               };
-              const [start, jobStart, jobEnd, end] = [attempt.run_started_at, job.started_at, job.completed_at, attempt.updated_at].map(timestamp);
-              if (![start, jobStart, jobEnd, end].every(Number.isFinite) || end < start ||
+              // A rerun's attempt endpoint can report attempt creation while the run
+              // endpoint retains first creation. Exact attempt identity and execution time
+              // establish attribution without making these two native timestamps equal.
+              const [runCreated, attemptCreated, start, jobStart, jobEnd, end] =
+                [run.created_at, attempt.created_at, attempt.run_started_at, job.started_at, job.completed_at, attempt.updated_at].map(timestamp);
+              if (![runCreated, attemptCreated, start, jobStart, jobEnd, end].every(Number.isFinite) ||
+                  attemptCreated < runCreated || attemptCreated > end || start < runCreated || end < start ||
                   jobStart < Math.floor(start / 1000) * 1000 || jobEnd < jobStart || jobEnd > Math.floor(end / 1000) * 1000 + 999) return false;
               // A skipped step normally has no execution timestamps. If supplied,
               // both timestamps must still agree with the actually attempted job.

@@ -64,7 +64,11 @@ verify_namespace() {
 
 verify_held_source() {
   verify_namespace || fail "the namespace identity or deployed head changed"
-  bash "$helper_dir/quiesce-v2-schema-migrations.sh" --verify-only "$namespace"
+  local quiescence_source
+  quiescence_source="$(git -C "$helper_dir" show "$target_sha:dev-tools/deploy/quiesce-v2-schema-migrations.sh")" ||
+    fail "cannot read the writer-quiescence helper from the reviewed target"
+  [[ -n "$quiescence_source" ]] || fail "the reviewed writer-quiescence helper is empty"
+  bash -s -- --verify-only "$namespace" <<<"$quiescence_source"
 }
 
 if [[ "$check_permissions" == true ]]; then
@@ -90,7 +94,9 @@ retained_image="$(kubectl --request-timeout=10s -n "$namespace" get deployment p
 [[ "$retained_image" == "$approved_image" ]] ||
   fail "the retained PostgreSQL image differs from the approved client image"
 
-probe_source="$(<"$helper_dir/probe-dev-account-v1040-4.sh")"
+probe_source="$(git -C "$helper_dir" show "$target_sha:dev-tools/deploy/probe-dev-account-v1040-4.sh")" ||
+  fail "cannot read the database probe from the reviewed target"
+[[ -n "$probe_source" ]] || fail "the reviewed database probe is empty"
 probe_id="$(openssl rand -hex 16)"
 [[ "$probe_id" =~ ^[0-9a-f]{32}$ ]] || fail "the probe job identity could not be generated"
 job_name="firemud-account-v1040-4-$probe_id"

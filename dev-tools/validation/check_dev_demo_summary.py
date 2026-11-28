@@ -130,13 +130,13 @@ BOOTSTRAP_TEMP_DIRECTORY_CLEANUP_SUCCESS = """if rm -rf "${BOOTSTRAP_SECRET_DIR}
     return 0"""
 BOOTSTRAP_TEMP_DIRECTORY_CLEANUP_FAILURE = """echo "::error::Failed to remove dev-demo bootstrap credential files" >&2
   return 1"""
-BOOTSTRAP_POST_LOG_CLEANUP = """kubectl -n "${PREVIEW_NAMESPACE}" logs dev-demo-bootstrap >"${BOOTSTRAP_POD_LOG}"
+BOOTSTRAP_RESULT_CAPTURE = """kubectl -n "${PREVIEW_NAMESPACE}" logs dev-demo-bootstrap >"${BOOTSTRAP_POD_LOG}"
   python3 ./dev-tools/hosted/dev-demo/write-bootstrap-result.py \\
     "$BOOTSTRAP_EVIDENCE_DIR" "$BOOTSTRAP_ACCOUNT_ID_FILE" "$BOOTSTRAP_POD_LOG"
-  echo "result_ready=true" >> "$GITHUB_OUTPUT"
-  kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
-  kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
-  cleanup_bootstrap_secret"""
+  echo "result_ready=true" >> "$GITHUB_OUTPUT" """
+BOOTSTRAP_REQUIRED_RESOURCE_CLEANUP = """if ! cleanup_bootstrap_pod_and_script; then
+  status=1
+fi"""
 BOOTSTRAP_MANIFEST_HEREDOC_OPENER = (
     "cat <<'EOF' | kubectl -n \"${PREVIEW_NAMESPACE}\" apply -f -\n"
 )
@@ -881,11 +881,13 @@ def _validate_bootstrap_manifest(bootstrap_manifest: str) -> None:
         raise AssertionError(
             "dev-demo bootstrap temp directory removal failure must return failure"
         )
-    post_log_cleanup = normalize_nonempty_lines(BOOTSTRAP_POST_LOG_CLEANUP)
-    if post_log_cleanup not in normalized_lines:
+    result_capture = normalize_nonempty_lines(BOOTSTRAP_RESULT_CAPTURE)
+    if result_capture not in normalized_lines:
         raise AssertionError(
-            "dev-demo bootstrap must produce the exact result before cleaning up its resources"
+            "dev-demo bootstrap must capture the exact result for retention"
         )
+    if normalize_nonempty_lines(BOOTSTRAP_REQUIRED_RESOURCE_CLEANUP) not in normalized_lines:
+        raise AssertionError("dev-demo bootstrap must report unconfirmed resource cleanup")
 
     player_bootstrap_requests = list(
         PLAYER_BOOTSTRAP_REQUEST_CALL.finditer(bootstrap_manifest)
