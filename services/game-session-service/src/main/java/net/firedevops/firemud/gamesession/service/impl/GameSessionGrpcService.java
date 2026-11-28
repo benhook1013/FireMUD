@@ -754,7 +754,7 @@ public final class GameSessionGrpcService
                   tenantId,
                   request.getWorldSlug(),
                   request.getRealmSlug(),
-                  gameplayAdmissionPointerAuthorityService.listPointersByTenant(tenantId))
+                  () -> gameplayAdmissionPointerAuthorityService.listPointersByTenant(tenantId))
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay realm selection"));
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()

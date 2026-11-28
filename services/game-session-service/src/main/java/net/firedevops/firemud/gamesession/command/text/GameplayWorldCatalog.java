@@ -23,6 +23,7 @@ import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
+import org.jooq.exception.DataAccessException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -49,8 +50,11 @@ public final class GameplayWorldCatalog {
   @Autowired
   public GameplayWorldCatalog(GameplayAdmissionPointerAuthorityService authorityService) {
     this(
-        () -> toWorlds(healthyTenantPointers(loadAuthorityPointers(authorityService))),
-        () -> loadAuthorityPointers(authorityService),
+        () -> {
+          var pointers = readAuthorityPointers(authorityService::listPointers);
+          return toWorlds(healthyTenantPointers(validateAuthoritySnapshot(pointers)));
+        },
+        authorityService::listPointers,
         authorityService::listPointersByTenant);
   }
 
@@ -493,9 +497,9 @@ public final class GameplayWorldCatalog {
       long tenantId,
       String worldSlug,
       String realmSlug,
-      List<GameplayAdmissionPointerSnapshot> pointerSnapshot) {
+      Supplier<List<GameplayAdmissionPointerSnapshot>> pointerReader) {
     List<GameplayAdmissionPointerSnapshot> pointers =
-        validateAuthorityPointersForTenant(pointerSnapshot, tenantId);
+        validateAuthorityPointersForTenant(readAuthorityPointers(pointerReader), tenantId);
     List<GameplayAdmissionPointerSnapshot> matches =
         pointers.stream()
             .filter(pointer -> Objects.equals(pointer.worldSlug(), worldSlug))
@@ -538,7 +542,7 @@ public final class GameplayWorldCatalog {
 
   private List<GameplayAdmissionPointerSnapshot> loadAuthorityPointersForTenant(long tenantId) {
     return validateAuthorityPointersForTenant(
-        tenantAuthorityPointerSupplier.apply(tenantId), tenantId);
+        readAuthorityPointers(() -> tenantAuthorityPointerSupplier.apply(tenantId)), tenantId);
   }
 
   private static List<GameplayAdmissionPointerSnapshot> validateAuthorityPointersForTenant(
@@ -836,11 +840,14 @@ public final class GameplayWorldCatalog {
     return visiblePublicRealmCount == 1L;
   }
 
-  private static List<GameplayAdmissionPointerSnapshot> loadAuthorityPointers(
-      GameplayAdmissionPointerAuthorityService authorityService) {
-    Objects.requireNonNull(authorityService, "authorityService must not be null");
-    List<GameplayAdmissionPointerSnapshot> pointers = authorityService.listPointers();
-    return validateAuthoritySnapshot(pointers);
+  private static List<GameplayAdmissionPointerSnapshot> readAuthorityPointers(
+      Supplier<List<GameplayAdmissionPointerSnapshot>> reader) {
+    try {
+      return reader.get();
+    } catch (DataAccessException | org.springframework.dao.DataAccessException failure) {
+      throw new AuthorityPointerUnavailableException(
+          "Authoritative gameplay pointer storage is unavailable", failure);
+    }
   }
 
   private List<GameplayAdmissionPointerSnapshot> loadAuthorityPointers() {
@@ -848,7 +855,7 @@ public final class GameplayWorldCatalog {
       throw new AuthorityPointerUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
     }
-    return validateAuthoritySnapshot(authorityPointerSupplier.get());
+    return validateAuthoritySnapshot(readAuthorityPointers(authorityPointerSupplier));
   }
 
   private static List<GameplayAdmissionPointerSnapshot> validateAuthoritySnapshot(
@@ -883,6 +890,10 @@ public final class GameplayWorldCatalog {
   public static final class AuthorityPointerUnavailableException extends RuntimeException {
     public AuthorityPointerUnavailableException(String message) {
       super(message);
+    }
+
+    private AuthorityPointerUnavailableException(String message, Throwable cause) {
+      super(message, cause);
     }
   }
 
