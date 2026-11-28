@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
@@ -17,7 +18,8 @@ class GameDesignStubServerTest {
     try (GameDesignStubServer server = new GameDesignStubServer(0)) {
       ManagedChannel channel =
           ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
-      try {
+      try (AutoCloseable stopChannel =
+          () -> assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue()) {
         GetPublishedReleaseBundleResponse response =
             GameDesignServiceGrpc.newBlockingStub(channel)
                 .getPublishedReleaseBundle(
@@ -31,8 +33,6 @@ class GameDesignStubServerTest {
         assertThat(response.getBundle().getVersionId()).isEqualTo(7L);
         assertThat(response.getBundle().getCommandDefinitionsList()).isEmpty();
         assertThat(server.publishedReleaseBundleRequests()).isEqualTo(1);
-      } finally {
-        channel.shutdownNow();
       }
     }
   }

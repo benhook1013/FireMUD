@@ -21,7 +21,7 @@ kubectl() {
 export -f kubectl
 
 namespace_for_head() {
-  FAKE_NAMESPACE_JSON="$(jq -cn --arg head "$1" '{metadata:{name:"dev",labels:{"firemud.dev/dev-demo":"true","firemud.dev/environment-class":"dev-demo-cluster"},annotations:{"firemud.dev/last-dev-demo-head-sha":$head}}}')"
+  FAKE_NAMESPACE_JSON="$(jq -cn --arg head "$1" '{metadata:{name:"dev",uid:"fixture-dev-uid",labels:{"firemud.dev/dev-demo":"true","firemud.dev/environment-class":"dev-demo-cluster"},annotations:{"firemud.dev/last-dev-demo-head-sha":$head}}}')"
   export FAKE_NAMESPACE_JSON
 }
 
@@ -37,20 +37,121 @@ assert_activation() {
 }
 
 assert_rejected() {
-  local output
-  if output="$(cd "$repo" && bash "$detector" "$@" dev 2>&1)"; then
+  local reason=""
+  if [[ "$1" == --reason ]]; then
+    reason="$2"
+    shift 2
+  fi
+  if (cd "$repo" && bash "$detector" "$@" dev) >"$fixture_dir/refused.stdout" 2>"$fixture_dir/refused.stderr"; then
     echo "expected migration-mode classification to fail closed: $*" >&2
     exit 1
   fi
-  if grep -q '^activation=' <<<"$output"; then
-    echo "rejected migration-mode classification emitted an activation decision: $output" >&2
+  if [[ -s "$fixture_dir/refused.stdout" ]]; then
+    echo "rejected migration-mode classification emitted deployment outputs" >&2
+    exit 1
+  fi
+  if [[ -n "$reason" ]] && ! grep -Fq "$reason" "$fixture_dir/refused.stderr"; then
+    echo "expected migration-mode refusal '$reason'" >&2
+    cat "$fixture_dir/refused.stderr" >&2
     exit 1
   fi
 }
 
+# The automatic reset must authorize deletion from the fresh owned snapshot.
+(
+  unset PREVIEW_EXPECTED_NAMESPACE_UID
+  delete_helper="$ROOT_DIR/dev-tools/hosted/shared/delete-hosted-namespace.sh"
+  delete_request="$fixture_dir/delete-request.json"
+  delete_attempt="$fixture_dir/delete-attempt"
+  delete_wait="$fixture_dir/delete-wait"
+  base_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  namespace_for_head "$base_sha"
+  RESET_NAMESPACE_JSON="$(jq -c '.metadata.resourceVersion = "7"' <<<"$FAKE_NAMESPACE_JSON")"
+  export RESET_NAMESPACE_JSON DELETE_REQUEST="$delete_request" DELETE_ATTEMPT="$delete_attempt" DELETE_WAIT="$delete_wait"
+  # shellcheck disable=SC2329 # Exported to the delete helper's child Bash as its kubectl mock.
+  kubectl() {
+    if [[ ${1:-} == delete ]]; then
+      printf '%s\n' attempted >>"$DELETE_ATTEMPT"
+    fi
+    case "$*" in
+      'get namespace dev --ignore-not-found -o json')
+        if [[ ! -s "$DELETE_REQUEST" ]]; then
+          printf '%s\n' "$RESET_NAMESPACE_JSON"
+        elif [[ ! -e "$DELETE_WAIT" ]]; then
+          case "${RESET_DELETE_OUTCOME:-success}" in
+            lost-response-active) printf '%s\n' "$RESET_NAMESPACE_JSON" ;;
+            lost-response-terminating)
+              jq -c '.metadata.deletionTimestamp = "2026-01-01T00:00:00Z"' <<<"$RESET_NAMESPACE_JSON" ;;
+            lost-response-replacement)
+              jq -c '.metadata.uid = "replacement" | .metadata.deletionTimestamp = "2026-01-01T00:00:00Z"' <<<"$RESET_NAMESPACE_JSON" ;;
+            lost-response-unavailable) return 1 ;;
+          esac
+        fi
+        ;;
+      'get namespace dev --ignore-not-found -o name')
+        case "${RESET_DELETE_OUTCOME:-success}" in
+          lost-response-original|lost-response-replacement) printf '%s\n' 'namespace/dev' ;;
+          lost-response-unavailable) return 1 ;;
+        esac ;;
+      'delete --raw /api/v1/namespaces/dev -f -')
+        cat >"$DELETE_REQUEST"
+        [[ "${RESET_DELETE_OUTCOME:-success}" == success ]] ;;
+      'wait --for=delete namespace/dev --timeout=180s') : >"$DELETE_WAIT" ;;
+      *) return 2 ;;
+    esac
+  }
+  export -f kubectl
+  clean_snapshot="$RESET_NAMESPACE_JSON"
+  for change in     '.metadata.uid = "replacement"'     '.metadata.annotations["firemud.dev/last-dev-demo-head-sha"] = "changed"'     '.metadata.annotations["firemud.dev/pending-dev-demo-deployment"] = ""'     '.metadata.annotations["firemud.dev/pending-dev-demo-bootstrap"] = "123:1"'     'del(.metadata.resourceVersion)'; do
+    RESET_NAMESPACE_JSON="$(jq -c "$change" <<<"$clean_snapshot")"
+    if bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" >"$fixture_dir/reset.stdout" 2>"$fixture_dir/reset.stderr" ||
+      [[ -e "$delete_attempt" ]]; then
+      echo "automatic reset did not refuse changed namespace evidence: $change" >&2
+      exit 1
+    fi
+  done
+  for hold in pending-dev-demo-deployment pending-dev-demo-bootstrap; do
+    RESET_NAMESPACE_JSON="$(jq -c --arg key "firemud.dev/$hold" '.metadata.annotations[$key] = ""' <<<"$clean_snapshot")"
+    if bash "$delete_helper" dev dev >"$fixture_dir/reset.stdout" 2>"$fixture_dir/reset.stderr" ||
+      [[ -e "$delete_attempt" ]]; then
+      echo "explicit destroy did not preserve the namespace with $hold" >&2
+      exit 1
+    fi
+  done
+  RESET_NAMESPACE_JSON="$clean_snapshot"
+  bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" >"$fixture_dir/reset.stdout"
+  jq -e '.preconditions == {uid:"fixture-dev-uid",resourceVersion:"7"}' "$delete_request" >/dev/null
+  for outcome in lost-response-absent lost-response-terminating lost-response-active lost-response-replacement lost-response-unavailable; do
+    rm -f -- "$delete_request" "$delete_wait"
+    prior_attempts="$(wc -l <"$delete_attempt")"
+    reset_status=0
+    RESET_DELETE_OUTCOME="$outcome" bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" \
+      >"$fixture_dir/reset.stdout" 2>"$fixture_dir/reset.stderr" || reset_status=$?
+    [[ "$(wc -l <"$delete_attempt")" -eq $((prior_attempts + 1)) ]]
+    jq -e '.preconditions == {uid:"fixture-dev-uid",resourceVersion:"7"}' "$delete_request" >/dev/null
+    if [[ "$outcome" == lost-response-absent || "$outcome" == lost-response-terminating ]]; then
+      test "$reset_status" -eq 0
+      grep -Fq 'Hosted namespace dev is absent.' "$fixture_dir/reset.stdout"
+    else
+      test "$reset_status" -ne 0
+    fi
+    if [[ "$outcome" == lost-response-terminating ]]; then
+      test -e "$delete_wait"
+    else
+      test ! -e "$delete_wait"
+    fi
+  done
+  rm "$delete_request"
+  bash "$delete_helper" dev dev >"$fixture_dir/reset.stdout"
+  jq -e '.preconditions == {uid:"fixture-dev-uid",resourceVersion:"7"}' "$delete_request" >/dev/null
+)
+
 mkdir -p "$repo/services/example/src/main/resources/db/migration"
 printf '%s\n' 'CREATE TABLE baseline (id integer PRIMARY KEY);' \
   >"$repo/services/example/src/main/resources/db/migration/V1__baseline.sql"
+mkdir -p "$repo/services/account-service/src/main/resources/db/migration"
+printf '%s\n' '-- deployed capacity baseline' \
+  >"$repo/services/account-service/src/main/resources/db/migration/V1040__account_tenant_capacity_owner.sql"
 git -C "$repo" add .
 git -C "$repo" commit -qm "baseline"
 baseline_sha="$(git -C "$repo" rev-parse HEAD)"
@@ -92,6 +193,22 @@ namespace_for_head "$game_session_v2_sha"
 assert_activation true push "$supported_v2_sha" "$later_push_sha"
 assert_activation true push "" "$later_push_sha"
 
+# An unresolved attempt holds its original target and later pushes at the same boundary.
+FAKE_NAMESPACE_JSON="$(jq -c --arg base "$game_session_v2_sha" --arg target "$supported_v2_sha" '
+  .metadata.annotations["firemud.dev/pending-dev-demo-deployment"] = ("123:1:" + $base + ":" + $target)
+' <<<"$FAKE_NAMESPACE_JSON")"
+for target in "$supported_v2_sha" "$later_push_sha"; do
+  assert_rejected --reason 'unresolved retained deployment or bootstrap requires owner verification' repository_dispatch "" "$target"
+done
+namespace_for_head "$game_session_v2_sha"
+FAKE_NAMESPACE_JSON="$(jq -c '.metadata.annotations["firemud.dev/pending-dev-demo-bootstrap"] = "123:1"' <<<"$FAKE_NAMESPACE_JSON")"
+for target in "$supported_v2_sha" "$later_push_sha"; do
+  assert_rejected --reason 'unresolved retained deployment or bootstrap requires owner verification' repository_dispatch "" "$target"
+done
+namespace_for_head "$supported_v2_sha"
+assert_rejected --reason 'the namespace already records the target SHA' repository_dispatch "" "$supported_v2_sha"
+assert_activation false repository_dispatch "" "$later_push_sha"
+
 echo 'retained migration edit' >>"$repo/services/game-session-service/src/main/resources/db/migration/V2__scope_gameplay_command_identity.sql"
 git -C "$repo" add .
 git -C "$repo" commit -qm "Edit existing Game Session V2 migration"
@@ -116,6 +233,84 @@ git -C "$repo" commit -qm "Account V25 migration"
 account_v25_sha="$(git -C "$repo" rev-parse HEAD)"
 assert_activation true push "$supported_v2_sha" "$account_v25_sha"
 
+git -C "$repo" switch -qc account-capacity-origin "$account_v25_sha"
+capacity_migration_dir="$repo/services/account-service/src/main/resources/db/migration"
+for migration in \
+  V1040.1__account_capacity_origin_decisions.sql \
+  V1040.2__bound_capacity_origin_refusals.sql \
+  V1040.3__validate_only_inserted_refusal_budgets.sql; do
+  printf '%s\n' '-- retained capacity origin migration fixture' >"$capacity_migration_dir/$migration"
+done
+git -C "$repo" add .
+git -C "$repo" commit -qm "Account capacity origin prefix"
+capacity_prefix_sha="$(git -C "$repo" rev-parse HEAD)"
+namespace_for_head "$account_v25_sha"
+assert_activation true push "$account_v25_sha" "$capacity_prefix_sha"
+
+printf '%s\n' '-- capacity origin uniqueness migration fixture' \
+  >"$capacity_migration_dir/V1040.4__unique_capacity_origin_attempt.sql"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Account capacity origin uniqueness migration"
+capacity_uniqueness_sha="$(git -C "$repo" rev-parse HEAD)"
+
+for migration in \
+  V1040.5__arbitrate_origin_identity_before_refusal_budget.sql \
+  V1040.6__index_retained_capacity_refusal_slots.sql; do
+  printf '%s\n' '-- capacity origin migration fixture' >"$capacity_migration_dir/$migration"
+done
+git -C "$repo" add .
+git -C "$repo" commit -qm "Account capacity origin migration series"
+capacity_origin_sha="$(git -C "$repo" rev-parse HEAD)"
+hold_uniqueness='Account V1040.4 retained activation is held pending an enforced writer fence through the diagnostic and Helm handoff'
+namespace_for_head "$capacity_prefix_sha"
+for target in "$capacity_uniqueness_sha" "$capacity_origin_sha"; do
+  assert_rejected --reason "$hold_uniqueness" push "$capacity_prefix_sha" "$target"
+  assert_rejected --reason "$hold_uniqueness" repository_dispatch "" "$target"
+done
+namespace_for_head "$account_v25_sha"
+assert_rejected --reason "$hold_uniqueness" push "$capacity_uniqueness_sha" "$capacity_origin_sha"
+
+namespace_for_head "$capacity_uniqueness_sha"
+assert_activation true push "$capacity_uniqueness_sha" "$capacity_origin_sha"
+assert_activation true repository_dispatch "" "$capacity_origin_sha"
+push_with_older_before_sha="$(cd "$repo" && bash "$detector" push "$account_v25_sha" "$capacity_origin_sha" dev)"
+grep -Fxq "deployed_base_sha=$capacity_uniqueness_sha" <<<"$push_with_older_before_sha" || {
+  echo "push before-SHA replaced the deployed annotation as the migration comparison base" >&2
+  exit 1
+}
+grep -Fxq 'activation=true' <<<"$push_with_older_before_sha" || {
+  echo "push before-SHA incorrectly changed the retained migration activation decision" >&2
+  exit 1
+}
+
+namespace_for_head "$capacity_origin_sha"
+assert_rejected workflow_dispatch "" "$capacity_origin_sha"
+assert_rejected push "$account_v25_sha" "$capacity_origin_sha"
+printf '%s\n' '-- held exact expired-denial migration' >"$capacity_migration_dir/V1040.7__retain_expired_original_capacity_denials.sql"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Account expired-denial migration"
+capacity_expired_sha="$(git -C "$repo" rev-parse HEAD)"
+hold_expired='Account V1040.7 retained activation is held pending an approved writer and consumer boundary'
+for deployed in "$capacity_origin_sha" "$capacity_prefix_sha"; do
+  namespace_for_head "$deployed"
+  assert_rejected --reason "$hold_expired" push "$deployed" "$capacity_expired_sha"
+  assert_rejected --reason "$hold_expired" repository_dispatch "" "$capacity_expired_sha"
+done
+
+git -C "$repo" switch -qc unsupported-capacity-origin "$capacity_origin_sha"
+namespace_for_head "$capacity_origin_sha"
+printf '%s\n' '-- unsupported later capacity migration' >"$capacity_migration_dir/V1040.7__unqualified.sql"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Unsupported later capacity origin migration"
+assert_rejected push "$capacity_origin_sha" "$(git -C "$repo" rev-parse HEAD)"
+
+git -C "$repo" switch -qc edited-capacity-origin "$capacity_origin_sha"
+printf '%s\n' '-- retained migration changed' >>"$capacity_migration_dir/V1040.4__unique_capacity_origin_attempt.sql"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Edit retained capacity uniqueness migration"
+assert_rejected push "$capacity_origin_sha" "$(git -C "$repo" rev-parse HEAD)"
+
+git -C "$repo" switch -q account-v25
 namespace_for_head "$account_v25_sha"
 echo '-- edited retained migration' >>"$repo/services/account-service/src/main/resources/db/migration/V25__scope_profile_identity.sql"
 git -C "$repo" add .

@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
@@ -47,9 +48,9 @@ class AccountRuntimeStubServerCompatibilityTest {
           "RequestEmailVerification",
           "VerifyEmail",
           "VerifyEmailLoginOtp");
-  // Private runtime mutations require their actual bounded mTLS owner, never fake authority.
+  // Private capacity RPCs require their actual bounded mTLS owner.
   private static final Set<String> UNIMPLEMENTED_RUNTIME_METHODS =
-      Set.of("CommitTenantCapacityAdmission");
+      Set.of("CommitTenantCapacityAdmission", "ReadTenantCapacityAdmissionDenial");
 
   @Test
   void accountServiceMethodSetIsFullyCategorized() {
@@ -72,17 +73,24 @@ class AccountRuntimeStubServerCompatibilityTest {
   }
 
   @Test
-  void privateCapacityMutationRemainsUnimplementedOnSharedFakeRuntimeServer() throws Exception {
+  void privateCapacityRpcsRemainUnimplementedOnSharedFakeRuntimeServer() throws Exception {
     assertThat(AccountRuntimeStubServer.implementedRuntimeMethodNames())
-        .doesNotContain("CommitTenantCapacityAdmission");
+        .doesNotContain("CommitTenantCapacityAdmission", "ReadTenantCapacityAdmissionDenial");
     try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
       ManagedChannel channel =
           ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
       try {
         var stub = AccountServiceGrpc.newBlockingStub(channel);
+        var request = CommitTenantCapacityAdmissionRequest.getDefaultInstance();
         assertThatThrownBy(() ->
-                stub.commitTenantCapacityAdmission(
-                    CommitTenantCapacityAdmissionRequest.getDefaultInstance()))
+                stub.withDeadlineAfter(2, TimeUnit.SECONDS).commitTenantCapacityAdmission(request))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
+        assertThatThrownBy(() ->
+                stub.withDeadlineAfter(2, TimeUnit.SECONDS)
+                    .readTenantCapacityAdmissionDenial(request))
             .isInstanceOfSatisfying(
                 StatusRuntimeException.class,
                 failure ->

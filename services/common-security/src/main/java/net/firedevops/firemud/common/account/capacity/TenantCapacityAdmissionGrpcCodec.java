@@ -9,11 +9,13 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.protobuf.StatusProto;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse;
 import net.firedevops.firemud.account.v1.TenantCapacityAdmissionAttempt;
 import net.firedevops.firemud.account.v1.TenantCapacityAdmissionCommitment;
+import net.firedevops.firemud.account.v1.TenantCapacityAdmissionRefusal;
 import net.firedevops.firemud.account.v1.TenantCapacityPlayerContext;
 import net.firedevops.firemud.account.v1.TenantCapacityShape;
 import net.firedevops.firemud.account.v1.TenantCapacityWorldContext;
@@ -47,12 +49,21 @@ public final class TenantCapacityAdmissionGrpcCodec {
     CAPACITY_ADMISSION_STALE(Status.Code.UNAVAILABLE),
     ENTITLEMENT_UNAVAILABLE(Status.Code.UNAVAILABLE),
     TENANT_BILLING_BLOCKED(Status.Code.RESOURCE_EXHAUSTED),
-    CAPACITY_QUOTA_EXCEEDED(Status.Code.RESOURCE_EXHAUSTED);
+    CAPACITY_QUOTA_EXCEEDED(Status.Code.RESOURCE_EXHAUSTED),
+    CAPACITY_EVALUATION_EXPIRED(Status.Code.FAILED_PRECONDITION);
 
     private final Status.Code code;
 
     Failure(Status.Code code) {
       this.code = code;
+    }
+
+    public boolean isDomainRefusal() {
+      return this == TENANT_BILLING_BLOCKED || supportsDurableDenial();
+    }
+
+    public boolean supportsDurableDenial() {
+      return this == CAPACITY_QUOTA_EXCEEDED || this == CAPACITY_EVALUATION_EXPIRED;
     }
 
     public StatusRuntimeException toStatusException() {
@@ -74,8 +85,21 @@ public final class TenantCapacityAdmissionGrpcCodec {
     }
 
     private boolean matches(Status.Code status) {
-      return status == code
-          || (this == ENTITLEMENT_UNAVAILABLE && status == Status.Code.FAILED_PRECONDITION);
+      return !isDomainRefusal()
+          && (status == code
+              || (this == ENTITLEMENT_UNAVAILABLE && status == Status.Code.FAILED_PRECONDITION));
+    }
+  }
+
+  /** Request-bound refusal content. A missing durable decision supplies no settlement proof. */
+  public record Refusal(Failure code, UUID durableDenialId) {
+    public Refusal {
+      if (code == null || !code.isDomainRefusal()) throw invalid();
+      if (code == Failure.CAPACITY_EVALUATION_EXPIRED && durableDenialId == null) throw invalid();
+      if (durableDenialId != null) {
+        if (!code.supportsDurableDenial()) throw invalid();
+        TenantCapacityAdmission.uuid(durableDenialId);
+      }
     }
   }
 
@@ -180,6 +204,7 @@ public final class TenantCapacityAdmissionGrpcCodec {
   public static Result requireResponse(
       Request request, CommitTenantCapacityAdmissionResponse wire) {
     clean(wire, MAX_RESPONSE_WIRE_BYTES);
+    if (wire.getRefusalCount() != 0) throw invalid();
     var result = one(wire.getCommitmentList());
     clean(result, MAX_RESPONSE_WIRE_BYTES);
     String expires = one(result.getExpiresAtList());
@@ -207,6 +232,86 @@ public final class TenantCapacityAdmissionGrpcCodec {
             one(result.getEvaluationIdentityList()));
     parsed.requireBinding(request);
     return parsed;
+  }
+
+  public static CommitTenantCapacityAdmissionResponse toRefusal(Request request, Failure failure) {
+    return toRefusal(request, failure, null);
+  }
+
+  public static CommitTenantCapacityAdmissionResponse toRefusal(
+      Request request, Failure failure, UUID durableDenialId) {
+    request.requireStructurallyValid();
+    var refusal = new Refusal(failure, durableDenialId);
+    requireRefusalAuthority(request, refusal);
+    var exact =
+        TenantCapacityAdmissionRefusal.newBuilder()
+            .addTenantId(request.identity().tenantId().toString())
+            .addRequestId(request.identity().requestId().toString())
+            .addAdmissionId(request.identity().admissionId().toString())
+            .addAdmissionAttemptId(request.admissionAttemptId().toString())
+            .addCapacityRearmFence(request.capacityRearmFence())
+            .addMutationDigest(request.mutationDigest())
+            .addSnapshotIdentity(request.evidence().snapshotIdentity())
+            .addEvaluationIdentity(request.evidence().evaluationIdentity())
+            .addCode(TenantCapacityAdmissionRefusal.Code.valueOf(refusal.code().name()));
+    if (refusal.durableDenialId() != null)
+      exact.addDurableDenialId(refusal.durableDenialId().toString());
+    var wire = CommitTenantCapacityAdmissionResponse.newBuilder().addRefusal(exact).build();
+    clean(wire, MAX_RESPONSE_WIRE_BYTES);
+    return wire;
+  }
+
+  /** Returns empty for the commitment envelope, which callers then verify with requireResponse. */
+  public static Optional<Failure> readRefusal(
+      Request request, CommitTenantCapacityAdmissionResponse wire) {
+    return readRefusalDetails(request, wire).map(Refusal::code);
+  }
+
+  /** Decodes the exact refusal, including the optional durable Account decision. */
+  public static Optional<Refusal> readRefusalDetails(
+      Request request, CommitTenantCapacityAdmissionResponse wire) {
+    clean(wire, MAX_RESPONSE_WIRE_BYTES);
+    if (wire.getRefusalCount() == 0) {
+      clean(one(wire.getCommitmentList()), MAX_RESPONSE_WIRE_BYTES);
+      return Optional.empty();
+    }
+    if (wire.getCommitmentCount() != 0) throw invalid();
+    var refusal = one(wire.getRefusalList());
+    clean(refusal, MAX_RESPONSE_WIRE_BYTES);
+    request.requireStructurallyValid();
+    if (!request.identity().tenantId().toString().equals(one(refusal.getTenantIdList()))
+        || !request.identity().requestId().toString().equals(one(refusal.getRequestIdList()))
+        || !request.identity().admissionId().toString().equals(one(refusal.getAdmissionIdList()))
+        || !request.admissionAttemptId().toString().equals(one(refusal.getAdmissionAttemptIdList()))
+        || request.capacityRearmFence() != one(refusal.getCapacityRearmFenceList())
+        || !request.mutationDigest().equals(one(refusal.getMutationDigestList()))
+        || !request.evidence().snapshotIdentity().equals(one(refusal.getSnapshotIdentityList()))
+        || !request
+            .evidence()
+            .evaluationIdentity()
+            .equals(one(refusal.getEvaluationIdentityList()))) throw invalid();
+    Failure code =
+        switch (one(refusal.getCodeList())) {
+          case TENANT_BILLING_BLOCKED -> Failure.TENANT_BILLING_BLOCKED;
+          case CAPACITY_QUOTA_EXCEEDED -> Failure.CAPACITY_QUOTA_EXCEEDED;
+          case CAPACITY_EVALUATION_EXPIRED -> Failure.CAPACITY_EVALUATION_EXPIRED;
+          default -> throw invalid();
+        };
+    UUID durableDenialId =
+        refusal.getDurableDenialIdCount() == 0 ? null : uuid(one(refusal.getDurableDenialIdList()));
+    var result = new Refusal(code, durableDenialId);
+    requireRefusalAuthority(request, result);
+    return Optional.of(result);
+  }
+
+  private static void requireRefusalAuthority(Request request, Refusal refusal) {
+    if (request.capacityRearmFence() != 1) throw invalid();
+    if (refusal.code() == Failure.TENANT_BILLING_BLOCKED
+        && (request.evidence().permitsCreation()
+            || request.operation() != Operation.CAPACITY_CREATING)) throw invalid();
+    if (refusal.code().supportsDurableDenial()
+        && (!request.evidence().permitsCreation()
+            || request.operation() != Operation.CAPACITY_CREATING)) throw invalid();
   }
 
   private static TenantCapacityShape shape(Shape value) {

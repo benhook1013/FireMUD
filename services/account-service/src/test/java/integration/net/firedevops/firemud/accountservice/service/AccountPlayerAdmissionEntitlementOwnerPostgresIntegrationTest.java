@@ -9,6 +9,7 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import integration.net.firedevops.firemud.accountservice.AccountTenantCreatorBootstrapIntegrationFixture;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -17,15 +18,22 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
@@ -37,6 +45,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountCapacityRefusalBudgetRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBinding;
@@ -50,6 +59,8 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -58,10 +69,13 @@ import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAsso
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner.Request;
 import net.firedevops.firemud.accountservice.service.impl.AccountPlayerAdmissionEntitlementGrpcService;
+import net.firedevops.firemud.accountservice.service.impl.AccountTenantCapacityGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier.VerifiedCaller;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner.AuthenticatedSignerCorrespondence;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -75,6 +89,7 @@ import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.client.AccountPlayerAdmissionEntitlementClient;
+import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
@@ -88,6 +103,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -331,7 +348,8 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     assertThat(value.membershipSource().gameplayAdmissionAllowed()).isTrue();
     var retained =
         f.dsl.fetchOne(
-            "SELECT canonical_evidence, snapshot_identity FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
+            "SELECT canonical_evidence, snapshot_identity FROM account_tenant_capacity_evaluations"
+                + " WHERE evaluation_identity = ?",
             value.fields().get("evaluationIdentity"));
     assertThat(retained).isNotNull();
     byte[] retainedEvidence = retained.get("canonical_evidence", byte[].class);
@@ -357,6 +375,456 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     assertThat(binding.get("catalogRevision")).isEqualTo("7");
     assertThat(binding.get("pointerVersion")).isEqualTo("3");
     assertThat(value.toString()).doesNotContain(f.scope.connectScopeId(), CONTROLLED_COMPACT_TOKEN);
+  }
+
+  @Test
+  void exactCapacityRefusalRemainsReadableAfterHeadroomReturnsAndEvaluationExpires()
+      throws Exception {
+    Fixture f = fixture(true, true);
+    var firstHold = capacityRequest(f);
+    long quota = firstHold.evidence().quota();
+    assertThat(quota).isBetween(1L, 10L);
+    var firstReservation = f.capacityOwner.commit(firstHold, PEER);
+    assertThat(firstReservation.state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
+    for (long used = 1; used < quota; used++) {
+      var occupying = capacityRequest(f);
+      assertThat(f.capacityOwner.commit(occupying, PEER).state())
+          .isEqualTo(TenantCapacityAdmission.State.RESERVED);
+    }
+    String readUsage =
+        "SELECT held_units, used_units, usage_revision FROM account_tenant_capacity_usage"
+            + " WHERE tenant_uuid=? AND owner_service='game-session-service'";
+    var usageBeforeDenial = f.dsl.fetchSingle(readUsage, f.tenantId).intoMap();
+    assertThat(usageBeforeDenial)
+        .containsEntry("held_units", quota)
+        .containsEntry("used_units", 0L);
+    var request = capacityRequest(f);
+    assertThat(request.evidence().quota()).isEqualTo(quota);
+    UUID requestId = request.identity().requestId();
+    var bothReadOriginal = new CountDownLatch(2);
+    doAnswer(
+            invocation -> {
+              // Both SERIALIZABLE snapshots miss the denial before either can lock the account.
+              bothReadOriginal.countDown();
+              assertThat(bothReadOriginal.await(5, TimeUnit.SECONDS)).isTrue();
+              return invocation.callRealMethod();
+            })
+        .when(f.capacityAccounts)
+        .findByAccountUuidForUpdate(f.account.getAccountUuid());
+    f.dataSource.getConnectionProperties().setProperty("socketTimeout", "8");
+    var executor = Executors.newFixedThreadPool(2, Thread.ofPlatform().daemon().factory());
+    var first = executor.submit(() -> requireQuotaDenial(f, request));
+    var second = executor.submit(() -> requireQuotaDenial(f, request));
+    UUID decision;
+    try (AutoCloseable stopWorkers =
+        () -> {
+          first.cancel(true);
+          second.cancel(true);
+          executor.shutdownNow();
+          assertThat(executor.awaitTermination(10, TimeUnit.SECONDS))
+              .as("quota test workers terminated")
+              .isTrue();
+        }) {
+      decision = first.get(10, TimeUnit.SECONDS);
+      assertThat(second.get(10, TimeUnit.SECONDS)).isEqualTo(decision);
+    }
+    assertThat(f.dsl.fetchSingle(readUsage, f.tenantId).intoMap()).isEqualTo(usageBeforeDenial);
+    String readDenial =
+        "SELECT *, xmin::text AS row_version FROM account_capacity_origin_decisions"
+            + " WHERE tenant_uuid=? AND request_id=? AND admission_id=?";
+    Object[] identity = {f.tenantId, requestId, request.identity().admissionId()};
+    var retained = f.dsl.fetchSingle(readDenial, identity).intoMap();
+    assertThat(retained)
+        .containsEntry("decision", "NO_ACCEPT")
+        .containsEntry("refusal_code", "CAPACITY_QUOTA_EXCEEDED")
+        .containsEntry("decision_id", decision);
+    String countDeniedReservations =
+        "SELECT count(*) AS n FROM account_tenant_capacity_reservations"
+            + " WHERE tenant_uuid=? AND request_id=? AND admission_id=?";
+    assertThat(f.dsl.fetchSingle(countDeniedReservations, identity).get("n", Long.class)).isZero();
+
+    // The external no-execution observation is controlled; all Account storage mutations are real.
+    var recovery =
+        new AccountTenantCapacityRecoveryWorker(
+            f.capacityOwner,
+            f.dsl,
+            (occupying, reservation, deadline) ->
+                new AccountTenantCapacityRecoveryWorker.Observation(
+                    PEER,
+                    reservation,
+                    net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.preimage(
+                        occupying),
+                    AccountTenantCapacityRecoveryWorker.Disposition
+                        .NOT_EXECUTED_AFTER_AUTHORIZATION,
+                    occupying.admissionAttemptId(),
+                    7,
+                    "sha256:" + "e".repeat(64),
+                    "controlled-owner-no-execution".getBytes(StandardCharsets.US_ASCII)),
+            databaseClock(f.dsl));
+    Instant evaluationExpiresAt = request.evidence().expiresAt();
+    assertThat(f.clock.instant()).isBefore(evaluationExpiresAt);
+    f.clock.setInstant(evaluationExpiresAt.plus(1, ChronoUnit.MICROS));
+    assertThat(f.clock.instant()).isAfter(evaluationExpiresAt);
+    awaitDatabaseExpiry(f.dsl, evaluationExpiresAt);
+    var heldWindow =
+        f.dsl.fetchSingle(
+            "SELECT clock_timestamp() AS observed_at, reconcile_deadline "
+                + "FROM account_tenant_capacity_reservations WHERE reservation_id = ?",
+            firstReservation.reservationId());
+    Instant observedAt = heldWindow.get("observed_at", OffsetDateTime.class).toInstant();
+    assertThat(observedAt).isAfterOrEqualTo(firstHold.evidence().expiresAt());
+    assertThat(observedAt)
+        .isBefore(heldWindow.get("reconcile_deadline", OffsetDateTime.class).toInstant());
+    assertThat(
+            recovery
+                .reconcile(firstHold, AccountTenantCapacityRecoveryWorker.NoCommitAction.RELEASE)
+                .state())
+        .isEqualTo(TenantCapacityAdmission.State.RELEASED);
+    var usageBeforeReplay = f.dsl.fetchSingle(readUsage, f.tenantId).intoMap();
+    assertThat(usageBeforeReplay)
+        .containsEntry("held_units", quota - 1)
+        .containsEntry("used_units", 0L);
+    // The exact durable refusal must win over both returned quota headroom and expired evidence.
+    var retainedReservations =
+        f.dsl
+            .fetch(
+                "SELECT *, xmin::text AS row_version FROM account_tenant_capacity_reservations "
+                    + "ORDER BY reservation_id")
+            .intoMaps();
+    var retainedSlots =
+        f.dsl
+            .fetch(
+                "SELECT tenant_uuid, slot, decision_id "
+                    + "FROM account_capacity_origin_refusal_slots WHERE tenant_uuid = ?",
+                f.tenantId)
+            .intoMaps();
+    assertThat(retainedSlots).hasSize(1);
+    assertThat(retainedSlots.get(0)).containsEntry("decision_id", decision);
+    var pki =
+        LoopbackMtlsTestPki.create(
+            certificateDirectory,
+            "Retained quota denial read",
+            new LoopbackMtlsTestPki.IdentitySpec("client", PEER, false),
+            new LoopbackMtlsTestPki.IdentitySpec(
+                "account", "spiffe://firemud/ns/" + NAMESPACE + "/sa/account-service", true));
+    var server =
+        new AccountTenantCapacityGrpcService(f.capacityOwner, NAMESPACE)
+            .createUnregisteredServer(
+                "127.0.0.1:0",
+                pki.keyManagerFactory(pki.identity("account")),
+                pki.trustManagerFactory())
+            .start();
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setAccountService("localhost:" + server.getPort());
+    try (var recovered =
+        new AccountTenantCapacityClient(
+            endpoints,
+            pki.clientProperties(certificateDirectory, pki.identity("client")),
+            new GrpcChannelFactory(),
+            NAMESPACE,
+            f.clock)) {
+      recovered.init();
+      var refusal = recovered.readRetainedAdmissionDenial(request, f.clock.millis() + 5_000L);
+      assertThat(refusal.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+      assertThat(refusal.durableDenialId()).isEqualTo(decision);
+    } finally {
+      server.shutdownNow();
+      assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
+    assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
+        .isInstanceOfSatisfying(
+            CapacityException.class,
+            error -> {
+              assertThat(error.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+              assertThat(error.durableDenialId()).isEqualTo(decision);
+            });
+    assertThat(f.dsl.fetchSingle(readUsage, f.tenantId).intoMap()).isEqualTo(usageBeforeReplay);
+    assertThat(f.dsl.fetchSingle(readDenial, identity).intoMap())
+        .usingRecursiveComparison()
+        .isEqualTo(retained);
+    assertThat(
+            f.dsl
+                .fetch(
+                    "SELECT *, xmin::text AS row_version FROM account_tenant_capacity_reservations "
+                        + "ORDER BY reservation_id")
+                .intoMaps())
+        .usingRecursiveComparison()
+        .isEqualTo(retainedReservations);
+    assertThat(
+            f.dsl
+                .fetch(
+                    "SELECT tenant_uuid, slot, decision_id "
+                        + "FROM account_capacity_origin_refusal_slots WHERE tenant_uuid = ?",
+                    f.tenantId)
+                .intoMaps())
+        .isEqualTo(retainedSlots);
+    assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_decisions")))
+        .isEqualTo(Math.toIntExact(quota + 1));
+    assertThat(f.dsl.fetchSingle(countDeniedReservations, identity).get("n", Long.class)).isZero();
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void expiredOriginalEvaluationRetainsOnlyTheExactDenial(boolean scopeElapsed) {
+    Fixture f = fixture(true, true);
+    var request = capacityRequest(f);
+    var expiry = request.evidence().expiresAt();
+    awaitDatabaseExpiry(f.dsl, expiry);
+    String usage =
+        "SELECT held_units, used_units, usage_revision FROM account_tenant_capacity_usage"
+            + " WHERE tenant_uuid=? AND owner_service='game-session-service'";
+    var originalUsage = f.dsl.fetchSingle(usage, f.tenantId).intoMap();
+    f.clock.setInstant(expiry.minus(1, ChronoUnit.MICROS));
+    assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
+        .isInstanceOfSatisfying(
+            CapacityException.class,
+            error -> {
+              assertThat(error.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE);
+              assertThat(error.durableDenialId()).isNull();
+            });
+    assertThat(f.dsl.fetchSingle(usage, f.tenantId).intoMap()).isEqualTo(originalUsage);
+    assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations"))).isZero();
+    assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isZero();
+    assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_refusal_slots"))).isZero();
+
+    var scope = (Map<?, ?>) request.evidence().fields().get("target");
+    var scopeExpiry = Instant.parse((String) scope.get("connectScopeExpiresAt"));
+    assertThat(scopeExpiry).isAfterOrEqualTo(expiry);
+    f.clock.setInstant(scopeElapsed ? scopeExpiry : expiry.plus(1, ChronoUnit.MICROS));
+    var decisionId = new AtomicReference<UUID>();
+    assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
+        .isInstanceOfSatisfying(
+            CapacityException.class,
+            error -> {
+              assertThat(error.code()).isEqualTo(Failure.CAPACITY_EVALUATION_EXPIRED);
+              assertThat(error.durableDenialId()).isNotNull();
+              decisionId.set(error.durableDenialId());
+            });
+
+    var retained = f.capacityOwner.readRetainedAdmissionDenial(request, PEER);
+    assertThat(retained.code()).isEqualTo(Failure.CAPACITY_EVALUATION_EXPIRED);
+    assertThat(retained.durableDenialId()).isEqualTo(decisionId.get());
+    assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
+        .isInstanceOfSatisfying(
+            CapacityException.class,
+            error -> {
+              assertThat(error.code()).isEqualTo(Failure.CAPACITY_EVALUATION_EXPIRED);
+              assertThat(error.durableDenialId()).isEqualTo(decisionId.get());
+            });
+    assertThat(f.dsl.fetchSingle(usage, f.tenantId).intoMap()).isEqualTo(originalUsage);
+    assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations"))).isZero();
+    assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_refusal_slots"))).isOne();
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void deferredEvaluationExpiryRollsBackAccountReservationOrRearm(boolean rearm) {
+    Fixture f = fixture(true, true);
+    var entitlementRequest = f.request();
+    var prior = capacityRequest(f, entitlementRequest);
+    var next = prior;
+    UUID reservationId = null;
+    UUID claimOwner = null;
+    long claimFence = 0;
+    var recovery =
+        new AccountTenantCapacityRecoveryWorker(
+            f.capacityOwner,
+            f.dsl,
+            (request, reservation, deadline) ->
+                new AccountTenantCapacityRecoveryWorker.Observation(
+                    PEER,
+                    reservation,
+                    net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.preimage(
+                        request),
+                    AccountTenantCapacityRecoveryWorker.Disposition
+                        .NOT_EXECUTED_AFTER_AUTHORIZATION,
+                    request.admissionAttemptId(),
+                    7,
+                    "sha256:" + "e".repeat(64),
+                    "controlled-owner-no-execution".getBytes(StandardCharsets.US_ASCII)),
+            databaseClock(f.dsl));
+    if (rearm) {
+      var reservation = f.capacityOwner.commit(prior, PEER);
+      assertThat(reservation.state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
+      reservationId = reservation.reservationId();
+      assertThat(
+              recovery
+                  .reconcile(
+                      prior, AccountTenantCapacityRecoveryWorker.NoCommitAction.RETAIN_FOR_REARM)
+                  .state())
+          .isEqualTo(TenantCapacityAdmission.State.RESERVED);
+      next = freshRearmRequest(f, entitlementRequest, prior);
+      assertThat(next.evidence().evaluationIdentity())
+          .isNotEqualTo(prior.evidence().evaluationIdentity());
+      var claim =
+          f.dsl.fetchSingle(
+              "SELECT recovery_owner, recovery_claim_fence FROM account_tenant_capacity_reservations");
+      claimOwner = claim.get("recovery_owner", UUID.class);
+      claimFence = claim.get("recovery_claim_fence", Long.class);
+    }
+    var attempt = next;
+    var recoveryOwner = claimOwner;
+    var recoveryFence = claimFence;
+    var original = capacityRows(f.dsl);
+    var beforeCommitReached = new AtomicBoolean();
+    f.onCapacitySourceRead.set(() ->
+        TransactionSynchronizationManager.registerSynchronization(
+            new TransactionSynchronization() {
+              @Override
+              public void beforeCommit(boolean readOnly) {
+                assertThat(readOnly).isFalse();
+                assertThat(
+                        f.dsl
+                            .fetchSingle(
+                                "SELECT admission_attempt_id FROM account_tenant_capacity_reservations")
+                            .get("admission_attempt_id", UUID.class))
+                    .isEqualTo(attempt.admissionAttemptId());
+                assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_decisions")))
+                    .isEqualTo(rearm ? 2 : 1);
+                assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_attempt_history")))
+                    .isEqualTo(rearm ? 1 : 0);
+                assertThat(databaseNow(f.dsl)).isBefore(attempt.evidence().expiresAt());
+                // Poll independently of the transaction-bound connection's JDBC statement budget.
+                awaitDatabaseExpiry(
+                    DSL.using(f.dataSource, SQLDialect.POSTGRES), attempt.evidence().expiresAt());
+                beforeCommitReached.set(true);
+              }
+            }));
+    assertThatThrownBy(
+            () -> {
+              if (rearm) f.capacityOwner.rearm(prior, attempt, recoveryOwner, recoveryFence);
+              else f.capacityOwner.commit(attempt, PEER);
+            })
+        .isInstanceOfSatisfying(
+            CapacityException.class,
+            error -> {
+              assertThat(error.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE);
+              assertThat(error.durableDenialId()).isNull();
+            });
+    assertThat(beforeCommitReached).isTrue();
+    assertThat(capacityRows(f.dsl)).usingRecursiveComparison().isEqualTo(original);
+
+    if (!rearm) {
+      f.clock.setInstant(attempt.evidence().expiresAt());
+      var decision = new AtomicReference<UUID>();
+      assertThatThrownBy(() -> f.capacityOwner.commit(attempt, PEER))
+          .isInstanceOfSatisfying(
+              CapacityException.class,
+              error -> {
+                assertThat(error.code()).isEqualTo(Failure.CAPACITY_EVALUATION_EXPIRED);
+                assertThat(error.durableDenialId()).isNotNull();
+                decision.set(error.durableDenialId());
+              });
+      assertThat(f.capacityOwner.readRetainedAdmissionDenial(attempt, PEER).durableDenialId())
+          .isEqualTo(decision.get());
+      assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_refusal_slots"))).isOne();
+    } else {
+      var fresh = freshRearmRequest(f, entitlementRequest, prior);
+      var committed = recovery.rearm(prior, fresh);
+      assertThat(committed.state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
+      assertThat(committed.reservationId()).isEqualTo(reservationId);
+      assertThat(committed.admissionAttemptId()).isEqualTo(fresh.admissionAttemptId());
+      assertThat(committed.capacityRearmFence()).isEqualTo(fresh.capacityRearmFence());
+      assertThat(f.capacityOwner.commit(fresh, PEER)).isEqualTo(committed);
+      assertThat(capacityRows(f.dsl).get("usage"))
+          .usingRecursiveComparison()
+          .isEqualTo(original.get("usage"));
+    }
+  }
+
+  private static TenantCapacityAdmission.Request freshRearmRequest(
+      Fixture f, Request entitlementRequest, TenantCapacityAdmission.Request prior) {
+    return new TenantCapacityAdmission.Request(
+            prior.identity(),
+            UUID.randomUUID(),
+            prior.capacityRearmFence() + 1,
+            prior.targetNamespace(),
+            prior.context(),
+            prior.operation(),
+            prior.priorShape(),
+            prior.requestedShape(),
+            capacityEvidence(f, entitlementRequest),
+            prior.capacityDelta(),
+            null)
+        .withDigest();
+  }
+
+  private static Map<String, List<Map<String, Object>>> capacityRows(DSLContext dsl) {
+    return Map.of(
+        "usage", dsl.fetch("SELECT * FROM account_tenant_capacity_usage").intoMaps(),
+        "reservations", dsl.fetch("SELECT * FROM account_tenant_capacity_reservations").intoMaps(),
+        "origins", dsl.fetch("SELECT * FROM account_capacity_origin_decisions").intoMaps(),
+        "attemptHistory",
+            dsl.fetch("SELECT * FROM account_tenant_capacity_attempt_history").intoMaps(),
+        "refusalSlots",
+            dsl.fetch("SELECT * FROM account_capacity_origin_refusal_slots").intoMaps());
+  }
+
+  private static UUID requireQuotaDenial(Fixture f, TenantCapacityAdmission.Request request) {
+    var denial =
+        org.assertj.core.api.Assertions.catchThrowableOfType(
+            CapacityException.class, () -> f.capacityOwner.commit(request, PEER));
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    assertThat(denial).isNotNull();
+    assertThat(denial.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+    assertThat(denial.durableDenialId()).isNotNull();
+    return denial.durableDenialId();
+  }
+
+  private static void awaitDatabaseExpiry(DSLContext dsl, Instant expiry) {
+    org.awaitility.Awaitility.await("PostgreSQL reaches the retained evaluation expiry")
+        .atMost(java.time.Duration.ofSeconds(20))
+        .until(() -> !databaseNow(dsl).isBefore(expiry));
+  }
+
+  private static Instant databaseNow(DSLContext dsl) {
+    return dsl.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class).toInstant();
+  }
+
+  private static Clock databaseClock(DSLContext dsl) {
+    // Recovery claim windows use PostgreSQL time independently of the controlled Account clock.
+    Clock clock = mock(Clock.class);
+    when(clock.instant()).thenAnswer(ignored -> databaseNow(dsl));
+    return clock;
+  }
+
+  private static TenantCapacityAdmission.Evidence capacityEvidence(Fixture f, Request request) {
+    f.clock.setInstant(databaseNow(f.dsl));
+    var entitlement = f.owner.evaluate(request, CONTROLLED_COMPACT_TOKEN);
+    return TenantCapacityAdmission.Evidence.parse(
+        entitlement.canonicalBytes(), TenantCapacityAdmission.Owner.GAME_SESSION);
+  }
+
+  private static TenantCapacityAdmission.Request capacityRequest(Fixture f) {
+    return capacityRequest(f, f.request());
+  }
+
+  private static TenantCapacityAdmission.Request capacityRequest(
+      Fixture f, Request entitlementRequest) {
+    var evidence = capacityEvidence(f, entitlementRequest);
+    UUID requestId = entitlementRequest.requestId();
+    return new TenantCapacityAdmission.Request(
+            new TenantCapacityAdmission.Identity(f.tenantId, requestId, UUID.randomUUID()),
+            UUID.randomUUID(),
+            1,
+            NAMESPACE,
+            new TenantCapacityAdmission.PlayerContext(
+                f.account.getAccountUuid(),
+                f.tenantId,
+                f.scope.playableStateNamespaceId(),
+                f.scope.gameInstanceId(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                f.scope.realmId(),
+                requestId,
+                f.scope.playableStateScope()),
+            TenantCapacityAdmission.Operation.CAPACITY_CREATING,
+            new TenantCapacityAdmission.Shape(0, 0, 0),
+            new TenantCapacityAdmission.Shape(1, 0, 0),
+            evidence,
+            1L,
+            null)
+        .withDigest();
   }
 
   @Test
@@ -438,6 +906,10 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   private Fixture fixture(boolean join) {
+    return fixture(join, false);
+  }
+
+  private Fixture fixture(boolean join, boolean initializeCapacity) {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     schemas.add(schema);
     DriverManagerDataSource dataSource = POSTGRES.dataSource(schema);
@@ -449,7 +921,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         .locations("classpath:db/migration")
         .load()
         .migrate();
-    return new Fixture(dataSource, join);
+    return new Fixture(dataSource, join, initializeCapacity);
   }
 
   /** Controlled protected-client double: no physical GS/World source provenance is claimed. */
@@ -537,6 +1009,8 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   private static final class Fixture {
     private final DriverManagerDataSource dataSource;
     private final DSLContext dsl;
+    private final Instant now;
+    private final MutableClock clock;
     private final TransactionTemplate transaction;
     private final AccountRepository accounts;
     private final AccountTenantMembershipRepository memberships;
@@ -545,10 +1019,15 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     private final UUID tenantId = UUID.randomUUID();
     private final CanonicalJoinScopeV2 scope;
     private final AccountPlayerAdmissionEntitlementOwner owner;
+    private final AccountTenantCapacityOwner capacityOwner;
+    private final AccountRepository capacityAccounts;
+    private final AtomicReference<Runnable> onCapacitySourceRead = new AtomicReference<>();
 
-    private Fixture(DriverManagerDataSource dataSource, boolean join) {
+    private Fixture(DriverManagerDataSource dataSource, boolean join, boolean initializeCapacity) {
       this.dataSource = dataSource;
       dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+      now = initializeCapacity ? databaseNow(dsl) : NOW;
+      clock = new MutableClock(now, ZoneOffset.UTC);
       var transactions = new DataSourceTransactionManager(dataSource);
       transaction = new TransactionTemplate(transactions);
       accounts = new AccountRepository(dsl);
@@ -635,12 +1114,21 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               UUID.randomUUID(),
               7,
               3,
-              NOW.minusSeconds(20).toString(),
-              NOW.plusSeconds(120).toString());
+              now.minusSeconds(20).toString(),
+              now.plusSeconds(120).toString());
       String joinRequestId = UUID.randomUUID().toString();
       String callerBinding = "controlled-join-caller";
       transaction.execute(status -> {
         tenants.importVerified(tenantSource);
+        if (initializeCapacity) {
+          var bootstrap = new AccountTenantCreationBootstrapOperationRepository(dsl);
+          var claim =
+              AccountTenantCreatorBootstrapIntegrationFixture.claimBootstrap(
+                  bootstrap, account, tenantSource);
+          bootstrap.complete(
+              claim.requestId(), AccountTenantCreatorBootstrapIntegrationFixture.completion(claim));
+          new AccountCapacityRefusalBudgetRepository(dsl).provision(tenantId, 1);
+        }
         sources.initializeIssuerIfAbsent(ISSUER);
         generations.initializeTenantIfAbsent(tenantId);
         generations.initialize(
@@ -695,9 +1183,9 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               mock(AccountGameplayCredentialRequestBinding.class),
               "a".repeat(64),
               UUID.randomUUID(),
-              NOW.minusSeconds(10).getEpochSecond(),
-              NOW.minusSeconds(10).getEpochSecond(),
-              NOW.plusSeconds(120).getEpochSecond());
+              now.minusSeconds(10).getEpochSecond(),
+              now.minusSeconds(10).getEpochSecond(),
+              now.plusSeconds(120).getEpochSecond());
       var candidate = mock(CommittedCandidateVerificationData.class);
       when(candidate.identity()).thenReturn(identity);
       when(candidate.authoritySnapshot())
@@ -725,8 +1213,14 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             dsl.connection(connection ->
                 assertThat(connection.getTransactionIsolation())
                     .isEqualTo(Connection.TRANSACTION_SERIALIZABLE));
+            Runnable onRead = onCapacitySourceRead.getAndSet(null);
+            if (onRead != null) onRead.run();
             return Optional.of(candidate);
           });
+      capacityAccounts = spy(new AccountRepository(dsl));
+      capacityOwner =
+          new AccountTenantCapacityOwner(
+              dsl, capacityAccounts, snapshots, issuances, scopes, transactions, clock, NAMESPACE);
       var targets = mock(CanonicalGameplayAdmissionDecisionReadClient.class);
       controlledTarget(targets);
       owner =
@@ -743,7 +1237,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               tenantEvents,
               targets,
               transactions,
-              Clock.fixed(NOW, ZoneOffset.UTC),
+              clock,
               NAMESPACE);
     }
 
@@ -765,6 +1259,39 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               scope.pointerVersion()),
           scope.connectScopeId(),
           PEER);
+    }
+  }
+
+  private static final class MutableClock extends Clock {
+    private final AtomicReference<Instant> current;
+    private final ZoneId zone;
+
+    private MutableClock(Instant instant, ZoneId zone) {
+      this(new AtomicReference<>(instant), zone);
+    }
+
+    private MutableClock(AtomicReference<Instant> current, ZoneId zone) {
+      this.current = current;
+      this.zone = zone;
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return zone;
+    }
+
+    @Override
+    public Clock withZone(ZoneId newZone) {
+      return zone.equals(newZone) ? this : new MutableClock(current, newZone);
+    }
+
+    @Override
+    public Instant instant() {
+      return current.get();
+    }
+
+    private void setInstant(Instant instant) {
+      current.set(instant);
     }
   }
 

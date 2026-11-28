@@ -29,19 +29,21 @@ new_case() {
   cat > "$CASE_DIR/dev-tools/validation/run-locked-gradle.sh" <<'LOCKED'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" >> "${FAKE_LOCK_CALL_LOG:?}"
+{ printf '%q ' "$@"; printf '\n'; } >> "${FAKE_LOCK_CALL_LOG:?}"
 exec ./gradlew "$@"
 LOCKED
   chmod +x "$CASE_DIR/dev-tools/validation/run-locked-gradle.sh"
   cat > "$CASE_DIR/bin/sleep" <<'SLEEP'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FAKE_SLEEP_LOG:?}"
+printf 'sleep %q\n' "$@" >> "${FAKE_SEQUENCE_LOG:?}"
 SLEEP
   chmod +x "$CASE_DIR/bin/sleep"
   : > "$CASE_DIR/calls"
   : > "$CASE_DIR/diagnostic-calls"
   : > "$CASE_DIR/locked-calls"
   : > "$CASE_DIR/sleeps"
+  : > "$CASE_DIR/sequence"
 }
 
 write_wrapper() {
@@ -54,7 +56,8 @@ if [[ " \$* " =~ [[:space:]]:[a-z0-9]+(-[a-z0-9]+)*:firemudCompileFailureFacts[[
   echo 'FIREMUD_COMPILE_FACTS={"attribution":"fixture-only"}'
   exit 0
 fi
-printf '%s\\n' "\$*" >> "\$FAKE_CALL_LOG"
+{ printf '%q ' "\$@"; printf '\\n'; } >> "\$FAKE_CALL_LOG"
+printf 'gradle\\n' >> "\$FAKE_SEQUENCE_LOG"
 call_count=\$(wc -l < "\$FAKE_CALL_LOG")
 $body
 EOF_WRAPPER
@@ -73,6 +76,7 @@ run_case() {
     export FAKE_DIAGNOSTIC_CALL_LOG="$CASE_DIR/diagnostic-calls"
     export FAKE_LOCK_CALL_LOG="$CASE_DIR/locked-calls"
     export FAKE_SLEEP_LOG="$CASE_DIR/sleeps"
+    export FAKE_SEQUENCE_LOG="$CASE_DIR/sequence"
     export PATH="$CASE_DIR/bin:$PATH"
     bash ./.github/scripts/run-gradle-module-checks.sh "$module" > "$CASE_DIR/output" 2>&1
   ); then
@@ -94,6 +98,7 @@ run_compose_case() {
     export FAKE_DIAGNOSTIC_CALL_LOG="$CASE_DIR/diagnostic-calls"
     export FAKE_LOCK_CALL_LOG="$CASE_DIR/locked-calls"
     export FAKE_SLEEP_LOG="$CASE_DIR/sleeps"
+    export FAKE_SEQUENCE_LOG="$CASE_DIR/sequence"
     export PATH="$CASE_DIR/bin:$PATH"
     bash ./dev-tools/build-compose-service-jars.sh > "$CASE_DIR/output" 2>&1
   ); then
@@ -115,6 +120,8 @@ assert_rate_limit_delay() {
   local delay
   delay="$(cat "$CASE_DIR/sleeps")"
   [[ "$delay" =~ ^(1[5-9]|2[0-9]|30)$ ]] || fail "expected a single 15-30 second HTTP 429 delay, got '$delay'"
+  [[ "$(<"$CASE_DIR/sequence")" == "$(printf 'gradle\nsleep %s\ngradle' "$delay")" ]] ||
+    fail "HTTP 429 must delay exactly once between the original Gradle call and retry"
 }
 
 assert_diagnostic_count() {
@@ -124,12 +131,16 @@ assert_diagnostic_count() {
   [[ "$actual" -eq "$expected" ]] || fail "$CASE_DIR expected $expected diagnostic facts invocation(s), got $actual"
 }
 
+assert_call_in_log() {
+  local log="$1" line="$2" expected actual
+  shift 2
+  printf -v expected '%q ' "$@"
+  actual="$(sed -n "${line}p" "$CASE_DIR/$log")"
+  [[ "$actual" == "$expected" ]] || fail "$CASE_DIR $log call $line differed: $actual"
+}
+
 assert_call() {
-  local line="$1"
-  local expected="$2"
-  local actual
-  actual="$(sed -n "${line}p" "$CASE_DIR/calls")"
-  [[ "$actual" == "$expected" ]] || fail "$CASE_DIR Gradle call $line differed: $actual"
+  assert_call_in_log calls "$@"
 }
 
 assert_output_contains() {
@@ -148,7 +159,7 @@ new_case normal-success
 write_wrapper 'echo "> Task :buildSrc:compileKotlin FROM-CACHE"; echo "normal-complete"; exit 0'
 run_case common-web-support 0
 assert_call_count 1
-assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-web-support:check -PfullCheck --profile --info --console=plain"
+assert_call 1 --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :common-web-support:check -PfullCheck --profile --info --console=plain
 [[ ! -s "$CASE_DIR/sleeps" ]] || fail "normal success slept"
 
 # Match the retained Netty failure shape: cached buildSrc compilation is not a
@@ -203,11 +214,38 @@ fi
 echo "refresh-complete"; exit 0'
 run_case load-testing 0
 assert_call_count 2
-assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :load-testing:check -PfullCheck --profile --info --console=plain"
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :load-testing:check -PfullCheck --profile --info --console=plain"
+assert_call 1 --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :load-testing:check -PfullCheck --profile --info --console=plain
+assert_call 2 --refresh-dependencies --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :load-testing:check -PfullCheck --profile --info --console=plain
 [[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "connection reset did not use one short delay"
 assert_output_contains "Connection reset"
 assert_output_contains "refresh-complete"
+
+# A Maven Central 429 during classpath serialization happens before Java
+# compilation. Retry the complete command once without refreshing warm inputs.
+new_case load-testing-gatling-pom-rate-limit
+{
+  printf '%s\n' 'FAILURE: Build failed with an exception.' '* What went wrong:'
+  printf '%s\n' "Configuration cache state could not be cached: field \`classpath\` of task \`:load-testing:compileJava\` of type \`org.gradle.api.tasks.compile.JavaCompile\`: error writing value of type 'org.gradle.api.internal.artifacts.configurations.DefaultResolvableConfiguration'"
+  printf '%s\n' "> Could not resolve all files for configuration ':load-testing:compileClasspath'."
+  for artifact in gatling-core gatling-http; do
+    pom="https://repo.maven.apache.org/maven2/io/gatling/$artifact/3.16.1/$artifact-3.16.1.pom"
+    printf '%s\n' "   > Could not resolve io.gatling:$artifact:3.16.1." \
+      '     Required by:' "         project ':load-testing'" \
+      "      > Could not resolve io.gatling:$artifact:3.16.1." \
+      "         > Could not get resource '$pom'." \
+      "            > Could not GET '$pom'." \
+      '               > Received status code 429 from server: Too Many Requests'
+  done
+  printf '%s\n' '' '* Try:' '> Run with --stacktrace option to get the stack trace.'
+} > "$CASE_DIR/cause.log"
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; exit 0'
+run_case load-testing 0
+assert_call_count 2
+for attempt in 1 2; do
+  assert_call "$attempt" --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :load-testing:check -PfullCheck --profile --info --console=plain
+done
+assert_rate_limit_delay
 
 # Preserve the c515-style pinned missing-artifact recovery path without
 # claiming the miss is stale: a passing refreshed full check is still required.
@@ -298,7 +336,7 @@ fi
 echo "refreshed-pinned-artifact-resolved"; exit 0'
 run_case account-service 0
 assert_call_count 2
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck --profile --info --console=plain"
+assert_call 2 --refresh-dependencies --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :account-service:check -PfullCheck --profile --info --console=plain
 [[ "$(cat "$CASE_DIR/sleeps")" == 0 ]] || fail "cached absence added a transient-error delay"
 assert_output_contains "Could not find spring-boot-starter-jdbc-4.1.1.jar (org.springframework.boot:spring-boot-starter-jdbc:4.1.1)."
 assert_output_contains "refreshed-pinned-artifact-resolved"
@@ -362,8 +400,8 @@ write_jooq_captured_cause
 write_jooq_wrapper ''
 run_case account-service 0
 assert_call_count 2
-assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck --profile --info --console=plain"
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck --profile --info --console=plain"
+assert_call 1 --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :account-service:check -PfullCheck --profile --info --console=plain
+assert_call 2 --refresh-dependencies --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :account-service:check -PfullCheck --profile --info --console=plain
 [[ "$(cat "$CASE_DIR/sleeps")" == 0 ]] || fail "captured jOOQ artifact miss added a transient-error delay"
 assert_output_contains "Configuration cache state could not be cached: field \`classpath\` of \`org.gradle.process.internal.DefaultJavaExecSpec_Decorated\`"
 assert_output_contains "refreshed-captured-jooq-resolution"
@@ -390,7 +428,7 @@ LOG
 write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-protobuf-include-proto; exit 0'
 run_case account-service 0
 assert_call_count 2
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck --profile --info --console=plain"
+assert_call 2 --refresh-dependencies --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :account-service:check -PfullCheck --profile --info --console=plain
 assert_output_contains "registered by plugin 'com.google.protobuf'"
 assert_output_contains "refreshed-protobuf-include-proto"
 
@@ -410,7 +448,7 @@ LOG
 write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-annotation-processors; exit 0'
 run_case common-platform-core 0
 assert_call_count 2
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-platform-core:check -PfullCheck --profile --info --console=plain"
+assert_call 2 --refresh-dependencies --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :common-platform-core:check -PfullCheck --profile --info --console=plain
 assert_output_contains "field \`annotationProcessorPath\`"
 assert_output_contains "refreshed-annotation-processors"
 
@@ -436,7 +474,7 @@ write_annotation_processor_429_cause
 write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-annotation-processors; exit 0'
 run_case common-platform-core 0
 assert_call_count 2
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-platform-core:check -PfullCheck --profile --info --console=plain"
+assert_call 2 --refresh-dependencies --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :common-platform-core:check -PfullCheck --profile --info --console=plain
 assert_rate_limit_delay
 
 for mutation in auth wrong-origin wrong-artifact truncated-chain extra-coordinate compile-started; do
@@ -502,8 +540,8 @@ for retry_after in absent 08; do
   write_test_fixtures_429_wrapper
   run_case common-test-support 0
   assert_call_count 2
-  assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-test-support:check -PfullCheck --profile --info --console=plain"
-  assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-test-support:check -PfullCheck --profile --info --console=plain"
+  assert_call 1 --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :common-test-support:check -PfullCheck --profile --info --console=plain
+  assert_call 2 --refresh-dependencies --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :common-test-support:check -PfullCheck --profile --info --console=plain
   if [[ "$retry_after" == absent ]]; then
     assert_rate_limit_delay
   else
@@ -592,7 +630,7 @@ write_jooq_protoc_timeout_cause
 write_jooq_wrapper ''
 run_case automation-scripting-service 0
 assert_call_count 2
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :automation-scripting-service:check -PfullCheck --profile --info --console=plain"
+assert_call 2 --refresh-dependencies --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :automation-scripting-service:check -PfullCheck --profile --info --console=plain
 [[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "protoc connect timeout did not use one short delay"
 assert_output_contains "Connect timed out"
 assert_output_contains "refreshed-captured-jooq-resolution"
@@ -619,7 +657,7 @@ write_jooq_handshake_cause
 write_jooq_wrapper ''
 run_case game-session-service 0
 assert_call_count 2
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :game-session-service:check -PfullCheck --profile --info --console=plain"
+assert_call 2 --refresh-dependencies --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :game-session-service:check -PfullCheck --profile --info --console=plain
 [[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "Maven handshake closure did not use one short delay"
 
 for mutation in wrong-host certificate-error generation-started; do
@@ -726,7 +764,7 @@ BUILD FAILED in 17s
 LOG
 }
 
-compose_expected="--no-configuration-cache --max-workers=1 --no-parallel -Dorg.gradle.jvmargs=-Xmx2560m -Dfile.encoding=UTF-8 -PincludeLoadTesting=false :account-service:bootJar :automation-scripting-service:bootJar :entity-management-service:bootJar :game-design-service:bootJar :game-logic-service:bootJar :game-session-service:bootJar :logging-admin-service:bootJar :social-groups-service:bootJar :spring-cloud-gateway:bootJar :tcp-proxy-service:bootJar :world-management-service:bootJar --info --console=plain"
+compose_expected=(--no-configuration-cache --max-workers=1 --no-parallel '-Dorg.gradle.jvmargs=-Xmx2560m -Dfile.encoding=UTF-8' -PincludeLoadTesting=false :account-service:bootJar :automation-scripting-service:bootJar :entity-management-service:bootJar :game-design-service:bootJar :game-logic-service:bootJar :game-session-service:bootJar :logging-admin-service:bootJar :social-groups-service:bootJar :spring-cloud-gateway:bootJar :tcp-proxy-service:bootJar :world-management-service:bootJar --info --console=plain)
 new_case runtime-jooq-classpath-resolution
 write_runtime_jooq_captured_cause
 # shellcheck disable=SC2016
@@ -738,11 +776,11 @@ echo refreshed-runtime-jooq-resolution
 exit 0'
 run_compose_case 0
 assert_call_count 2
-assert_call 1 "$compose_expected"
-assert_call 2 "--refresh-dependencies $compose_expected"
+assert_call 1 "${compose_expected[@]}"
+assert_call 2 --refresh-dependencies "${compose_expected[@]}"
 [[ "$(wc -l < "$CASE_DIR/locked-calls")" -eq 2 ]] || fail "runtime refresh did not retain locked execution"
-[[ "$(sed -n '1p' "$CASE_DIR/locked-calls")" == "$compose_expected" ]] || fail "initial runtime task list changed before lock wrapper"
-[[ "$(sed -n '2p' "$CASE_DIR/locked-calls")" == "--refresh-dependencies $compose_expected" ]] || fail "refreshed runtime task list changed before lock wrapper"
+assert_call_in_log locked-calls 1 "${compose_expected[@]}"
+assert_call_in_log locked-calls 2 --refresh-dependencies "${compose_expected[@]}"
 [[ "$(cat "$CASE_DIR/sleeps")" == 0 ]] || fail "missing runtime artifact added a transient-error delay"
 assert_output_contains "Could not resolve all files for configuration ':account-service:jooqCodegen'."
 assert_output_contains "refreshed-runtime-jooq-resolution"
@@ -900,8 +938,8 @@ write_buildsrc_429_cause
 write_buildsrc_wrapper
 run_case logging-admin-service 0
 assert_call_count 2
-assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
-assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck --profile --info --console=plain"
+assert_call 1 --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :logging-admin-service:check -PfullCheck --profile --info --console=plain
+assert_call 2 --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :logging-admin-service:check -PfullCheck --profile --info --console=plain
 assert_rate_limit_delay
 assert_output_contains "buildsrc-refresh-result"
 
@@ -956,6 +994,58 @@ assert_call_count 2
 assert_rate_limit_delay
 assert_output_contains "Received status code 429"
 assert_output_contains "buildsrc-refresh-result"
+
+# Gradle 9.9.2's pinned buildSrc classpath can fail on several JARs after the
+# Plugin Portal redirects each request to its matching Maven Central URL.
+write_buildsrc_jar_429_cause() {
+  # Native classpath download failures need not include dependency requester context.
+  cat > "$CASE_DIR/buildsrc-cause.log" <<'LOG'
+FAILURE: Build failed with an exception.
+* What went wrong:
+A problem occurred configuring project ':buildSrc'.
+> Could not resolve all artifacts for configuration 'classpath'.
+   > Could not download kotlin-stdlib-2.4.21.jar (org.jetbrains.kotlin:kotlin-stdlib:2.4.21)
+      > Could not get resource 'https://plugins.gradle.org/m2/org/jetbrains/kotlin/kotlin-stdlib/2.4.21/kotlin-stdlib-2.4.21.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.4.21/kotlin-stdlib-2.4.21.jar'.
+            > Received status code 429 from server: Too Many Requests
+   > Could not download kotlin-gradle-plugin-api-2.4.21-gradle96.jar (org.jetbrains.kotlin:kotlin-gradle-plugin-api:2.4.21)
+      > Could not get resource 'https://plugins.gradle.org/m2/org/jetbrains/kotlin/kotlin-gradle-plugin-api/2.4.21/kotlin-gradle-plugin-api-2.4.21-gradle96.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugin-api/2.4.21/kotlin-gradle-plugin-api-2.4.21-gradle96.jar'.
+            > Received status code 429 from server: Too Many Requests
+   > Could not download gson-2.11.0.jar (com.google.code.gson:gson:2.11.0)
+      > Could not get resource 'https://plugins.gradle.org/m2/com/google/code/gson/gson/2.11.0/gson-2.11.0.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/com/google/code/gson/gson/2.11.0/gson-2.11.0.jar'.
+            > Received status code 429 from server: Too Many Requests
+* Try:
+> Run with --stacktrace for details.
+LOG
+}
+
+new_case captured-buildsrc-multi-jar-429
+write_buildsrc_jar_429_cause
+write_buildsrc_wrapper
+run_case logging-admin-service 0
+assert_call_count 2
+assert_call 1 --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :logging-admin-service:check -PfullCheck --profile --info --console=plain
+assert_call 2 --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :logging-admin-service:check -PfullCheck --profile --info --console=plain
+assert_rate_limit_delay
+assert_output_contains "buildsrc-refresh-result"
+
+for mutation in url host mixed unpinned-root unsupported-variant compile-started; do
+  new_case "buildsrc-jar-invalid-$mutation"
+  write_buildsrc_jar_429_cause
+  case "$mutation" in
+    url) sed -i '/Could not get resource/s/kotlin-stdlib/annotations/' "$CASE_DIR/buildsrc-cause.log" ;;
+    host) sed -i '0,/plugins.gradle.org/s//example.invalid/' "$CASE_DIR/buildsrc-cause.log" ;;
+    mixed) sed -i '0,/status code 429/s//status code 403/' "$CASE_DIR/buildsrc-cause.log" ;;
+    unpinned-root) sed -i "s/configuration 'classpath'/configuration 'runtimeClasspath'/" "$CASE_DIR/buildsrc-cause.log" ;;
+    unsupported-variant) sed -i 's/-gradle96/-arbitrary-variant/g' "$CASE_DIR/buildsrc-cause.log" ;;
+    compile-started) sed -i '1i > Task :logging-admin-service:compileJava FAILED' "$CASE_DIR/buildsrc-cause.log" ;;
+  esac
+  write_buildsrc_wrapper
+  run_case logging-admin-service 1
+  assert_no_retry
+done
 
 # A Retry-After beyond the short retry budget fails closed without waiting.
 new_case long-retry-after
@@ -1146,6 +1236,44 @@ assert_no_retry
 
 # A compile task that failed while resolving its input classpath may retry;
 # compiler diagnostics with dependency-shaped text remain a final failure.
+for scenario in recovered mismatched-module http-status; do
+  new_case "cached-main-compile-$scenario"
+  cat >"$CASE_DIR/cause.log" <<'LOG'
+FAILURE: Build failed with an exception.
+* What went wrong:
+Configuration cache state could not be cached: field `classpath` of task `:common-web-support:compileJava` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type 'org.gradle.api.internal.artifacts.configurations.DefaultResolvableConfiguration'
+> Could not resolve all files for configuration ':common-web-support:compileClasspath'.
+   > Could not download jackson-annotations-2.21.0.jar (com.fasterxml.jackson.core:jackson-annotations:2.21.0)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-annotations/2.21.0/jackson-annotations-2.21.0.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-annotations/2.21.0/jackson-annotations-2.21.0.jar'.
+            > Received status code 429 from server: Too Many Requests
+   > Could not download slf4j-api-2.0.17.jar (org.slf4j:slf4j-api:2.0.17)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/2.0.17/slf4j-api-2.0.17.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/2.0.17/slf4j-api-2.0.17.jar'.
+            > Received status code 429 from server: Too Many Requests
+* Try:
+> Run with --stacktrace option for details.
+LOG
+  case "$scenario" in
+    mismatched-module) sed -i 's/:common-web-support:compileClasspath/:account-service:compileClasspath/' "$CASE_DIR/cause.log" ;;
+    http-status) sed -i '0,/429 from server: Too Many Requests/s//403 from server: Forbidden/' "$CASE_DIR/cause.log" ;;
+  esac
+  # shellcheck disable=SC2016
+  write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; exit 0'
+  if [[ "$scenario" == recovered ]]; then
+    run_case common-web-support 0
+    assert_call_count 2
+    for invocation in 1 2; do
+      assert_call "$invocation" --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :common-web-support:check -PfullCheck --profile --info --console=plain
+    done
+    assert_rate_limit_delay
+    assert_output_contains "without forcing dependency refresh"
+  else
+    run_case common-web-support 1
+    assert_no_retry
+  fi
+done
+
 new_case compile-input-resolution
 # shellcheck disable=SC2016
 write_wrapper 'if [[ "$call_count" -eq 1 ]]; then

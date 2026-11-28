@@ -8,9 +8,11 @@ import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Evidence;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Identity;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
@@ -60,7 +62,7 @@ public final class AccountTenantCapacityRepository {
     requireRetained(evidence);
   }
 
-  public void requireRetained(Evidence evidence) {
+  public Instant requireRetained(Evidence evidence) {
     transaction();
     Record row =
         dsl.fetchOne(
@@ -80,6 +82,18 @@ public final class AccountTenantCapacityRepository {
             .expiresAt()
             .truncatedTo(java.time.temporal.ChronoUnit.MICROS)
             .equals(time(row, "expires_at"))) throw unavailable();
+    return time(row, "expires_at");
+  }
+
+  /** Compare the exact retained deadline to the database clock after locking its evaluation. */
+  public boolean retainedEvaluationExpired(Instant retainedExpiry) {
+    transaction();
+    Record observation =
+        dsl.fetchOne("SELECT clock_timestamp() >= ?::timestamptz AS expired", at(retainedExpiry));
+    if (observation == null) throw unavailable();
+    Boolean expired = observation.get("expired", Boolean.class);
+    if (expired == null) throw unavailable();
+    return expired;
   }
 
   public Record find(Identity id) {
@@ -139,13 +153,21 @@ public final class AccountTenantCapacityRepository {
         || history.get("owner_readback", byte[].class) == null) throw conflict();
   }
 
-  public Result create(Request request, Instant expiresAt, Clock clock) {
+  /** Retains acceptance only after the locked quota check, in the same reservation transaction. */
+  public Optional<Result> createIfQuotaAvailable(Request request, Instant expiresAt, Clock clock) {
     Record usage = usage(request);
     requireCurrentLifetime(request.evidence(), clock.instant());
+    return createWithLockedUsageIfQuotaAvailable(request, usage, expiresAt, clock);
+  }
+
+  /** The caller holds the usage lock and has qualified freshness for this attempt. */
+  public Optional<Result> createWithLockedUsageIfQuotaAvailable(
+      Request request, Record usage, Instant expiresAt, Clock clock) {
     long delta = Objects.requireNonNull(request.capacityDelta());
     long occupied = Math.addExact(number(usage, "held_units"), number(usage, "used_units"));
-    if (delta > request.evidence().quota() - occupied)
-      throw new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED);
+    if (delta > request.evidence().quota() - occupied) return Optional.empty();
+    new AccountCapacityOriginDecisionRepository(dsl).accept(request);
+    requireCurrentLifetime(request.evidence(), clock.instant());
     long held = Math.addExact(number(usage, "held_units"), delta);
     updateUsage(request, usage, held, number(usage, "used_units"));
     int created =
@@ -168,7 +190,7 @@ public final class AccountTenantCapacityRepository {
             at(expiresAt),
             at(expiresAt.plusSeconds(60)));
     if (created != 1) throw unavailable();
-    return exact(request, Objects.requireNonNull(find(request.identity())));
+    return Optional.of(exact(request, Objects.requireNonNull(find(request.identity()))));
   }
 
   public static void requireCurrentLifetime(Evidence evidence, Instant now) {
@@ -249,14 +271,30 @@ public final class AccountTenantCapacityRepository {
 
   public static final class CapacityException extends IllegalStateException {
     private final Failure code;
+    private final UUID durableDenialId;
 
     public CapacityException(Failure code) {
       super(code.name());
+      if (code.supportsDurableDenial())
+        throw new IllegalArgumentException("This refusal requires a durable denial");
       this.code = code;
+      this.durableDenialId = null;
+    }
+
+    public CapacityException(Failure code, UUID durableDenialId) {
+      super(code.name());
+      if (!code.supportsDurableDenial())
+        throw new IllegalArgumentException("This refusal cannot carry a durable denial");
+      this.code = code;
+      this.durableDenialId = TenantCapacityAdmission.uuid(durableDenialId);
     }
 
     public Failure code() {
       return code;
+    }
+
+    public UUID durableDenialId() {
+      return durableDenialId;
     }
   }
 }

@@ -604,8 +604,7 @@ class CanonicalGameplayRosterReferenceGrpcMtlsTest {
   private record Channel(ManagedChannel channel) implements AutoCloseable {
     @Override
     public void close() throws Exception {
-      channel.shutdownNow();
-      assertThat(channel.awaitTermination(2L, TimeUnit.SECONDS)).isTrue();
+      assertThat(channel.shutdownNow().awaitTermination(2L, TimeUnit.SECONDS)).isTrue();
     }
   }
 

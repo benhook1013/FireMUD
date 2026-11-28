@@ -72,6 +72,7 @@ import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.ConnectionRunnable;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -784,7 +785,9 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
   }
 
   private static CapacityPersistenceFixture capacityPersistenceFixture(boolean expired) {
-    StorageContext c = storageContext();
+    StorageContext c =
+        storageContext(
+            300, 30, expired ? MigrationVersion.fromVersion("1040.7") : MigrationVersion.LATEST);
     var fixture = storageFixture(c);
     var assembled = assembleStoredOwner(c, fixture, new AccountAuditOutboxRepository(c.dsl));
     assembled.owner.complete(
@@ -796,8 +799,8 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     var base =
         net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture.worldRequest(
             17L);
-    // A retained historical reservation is inserted through the same controlled source fixture.
-    // No live producer accepts stale evidence, and no immutable row or database clock is changed.
+    // Seed an expired historical reservation on the predecessor schema before upgrading.
+    // No immutable row or database clock is changed.
     var now =
         java.time.Instant.now()
             .minusSeconds(expired ? 120 : 0)
@@ -858,9 +861,14 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
                   evidence.evaluatedAt()),
               net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.at(
                   evidence.expiresAt()));
-          return repository.create(
-              request, evidence.expiresAt(), Clock.fixed(evidence.evaluatedAt(), ZoneOffset.UTC));
+          return repository
+              .createIfQuotaAvailable(
+                  request,
+                  evidence.expiresAt(),
+                  Clock.fixed(evidence.evaluatedAt(), ZoneOffset.UTC))
+              .orElseThrow(() -> new AssertionError("Controlled fixture must have capacity"));
         });
+    if (expired) c.currentMigrations.migrate();
     var owner =
         new net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner(
             c.dsl,
@@ -1746,19 +1754,25 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
   }
 
   private static StorageContext storageContext(int recentAgeSeconds, int maxClockSkewSeconds) {
+    return storageContext(recentAgeSeconds, maxClockSkewSeconds, MigrationVersion.LATEST);
+  }
+
+  private static StorageContext storageContext(
+      int recentAgeSeconds, int maxClockSkewSeconds, MigrationVersion initialMigration) {
     String schema = "creation_source_order_" + UUID.randomUUID().toString().replace("-", "");
     var source =
         new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     source.setSchema(schema);
-    Flyway.configure()
-        .dataSource(source)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .load()
-        .migrate();
+    var migrations =
+        Flyway.configure()
+            .dataSource(source)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration");
+    var currentMigrations = migrations.load();
+    migrations.target(initialMigration).load().migrate();
     DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
     var manager = new DataSourceTransactionManager(source);
     var transaction = new TransactionTemplate(manager);
@@ -1824,7 +1838,8 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             manager,
             Clock.systemUTC(),
             reauthenticationCryptography(Clock.systemUTC()));
-    return new StorageContext(dsl, accounts, evidence, service, transaction, manager);
+    return new StorageContext(
+        dsl, accounts, evidence, service, transaction, manager, currentMigrations);
   }
 
   private static AccountControlUiResponseCryptography reauthenticationCryptography(Clock clock) {
@@ -1867,7 +1882,8 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
       AccountRecentReauthenticationRepository evidenceRepository,
       AccountRecentReauthenticationService service,
       TransactionTemplate transaction,
-      org.springframework.transaction.PlatformTransactionManager manager) {
+      org.springframework.transaction.PlatformTransactionManager manager,
+      Flyway currentMigrations) {
     <T> T tx(Supplier<T> action) {
       return transaction.execute(ignored -> action.get());
     }

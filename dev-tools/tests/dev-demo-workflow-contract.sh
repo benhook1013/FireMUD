@@ -18,6 +18,7 @@ python3 "$ROOT_DIR/dev-tools/validation/check_dev_demo_summary.py" "$ROOT_DIR"
 python3 "$ROOT_DIR/dev-tools/validation/test_check_dev_demo_summary.py"
 bash "$ROOT_DIR/dev-tools/tests/v2-schema-migration-quiescence-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/hosted-v2-migration-activation-contract.sh"
+bash "$ROOT_DIR/dev-tools/tests/dev-account-v1040-4-probe-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/standalone-grpc-certificates-contract.sh"
 bash "$ROOT_DIR/dev-tools/tests/ensure-grpc-tls-secret-contract.sh"
 
@@ -691,6 +692,7 @@ python3 - "$workflow" "$reconciler" "$requester" "$waiter" "$annotator" "$target
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -882,6 +884,49 @@ if (
     or "/tmp/dev-demo-values.yaml" not in workflow_deploy_run
 ):
     raise SystemExit("dev-demo must invoke the staged rollout script with namespace, release, and values path")
+if deploy_by_name["Deploy dev-demo release"]["env"].get("RETAINED_ACTIVATION") != (
+    "${{ steps.v2-migration-mode.outputs.activation }}"
+):
+    raise SystemExit("the final writer readback must be bound to retained activation")
+with tempfile.TemporaryDirectory() as directory:
+    rollout_calls = Path(directory) / "rollout-calls"
+    rollout_command = workflow_deploy_run.replace(
+        "${{ needs.dev-demo-plan.outputs.namespace }}", "dev",
+    ).replace("${{ needs.dev-demo-plan.outputs.release_name }}", "dev")
+    fake_bash = """
+bash() {
+  case "$*" in
+    './dev-tools/deploy/quiesce-v2-schema-migrations.sh --verify-only dev')
+      echo verify >>"$ROLLOUT_CALLS"
+      [[ "$WRITER_STATE" == quiescent ]]
+      ;;
+    './dev-tools/hosted/dev-demo/deploy-staged-dev-demo.sh dev dev /tmp/dev-demo-values.yaml')
+      echo helm >>"$ROLLOUT_CALLS"
+      ;;
+    *) return 2 ;;
+  esac
+}
+"""
+    for retained, writer_state, expected_status, expected_calls in (
+        ("true", "quiescent", 0, ["verify", "helm"]),
+        ("true", "rescaled", 1, ["verify"]),
+        ("false", "rescaled", 0, ["helm"]),
+    ):
+        rollout_calls.write_text("", encoding="utf-8")
+        result = subprocess.run(
+            ["bash", "-c", fake_bash + rollout_command],
+            env={
+                **os.environ, "RETAINED_ACTIVATION": retained, "RUNTIME_NAMESPACE": "dev",
+                "WRITER_STATE": writer_state, "ROLLOUT_CALLS": str(rollout_calls),
+            },
+            capture_output=True,
+            check=False,
+        )
+        if (
+            result.returncode != expected_status
+            or rollout_calls.read_text(encoding="utf-8").splitlines() != expected_calls
+        ):
+            raise SystemExit("retained activation must stop before Helm if a writer restarts")
 if deploy_run.count("helm upgrade --install") != 2:
     raise SystemExit("dev-demo must use separate participant-first and publication restore chart upgrades")
 if deploy_run.count("game_design_service_index=") != 1 or "previewStack.services[3].replicaCount=0" in deploy_run:
@@ -1301,21 +1346,89 @@ expected_deploy_kubeconfigs = {
 quiesce = deploy_by_name["Quiesce Account, Game Session, and Automation migration writers"]
 if quiesce.get("run") != 'bash ./dev-tools/deploy/quiesce-v2-schema-migrations.sh "$RUNTIME_NAMESPACE"':
     raise SystemExit("dev-demo must run the trusted V2 writer quiesce before Helm activation")
-if "steps.v2-migration-mode.outputs.activation != 'true'" not in deploy_by_name[
-    "Reset dev-demo namespace for clean deploy"
-].get("if", ""):
-    raise SystemExit("dev-demo must retain clean namespace reset for non-migration deploys")
-if "steps.v2-migration-mode.outputs.activation == 'true'" not in quiesce.get("if", ""):
-    raise SystemExit("dev-demo must quiesce only the trusted retained-database migration path")
-classifier = deploy_by_name["Classify trusted V2 migration activation"]
+classified_deployment = (
+    "${{ steps.cluster-access.outputs.available == 'true' && "
+    "steps.v2-migration-mode.outcome == 'success'"
+)
+classifier_name = "Classify trusted V2 migration activation"
+classifier = deploy_by_name[classifier_name]
 if classifier.get("run", "").count("detect-hosted-v2-migration-activation.sh") != 1:
     raise SystemExit("dev-demo must derive migration activation from the trusted event range")
-if deploy_names.index("Classify trusted V2 migration activation") > deploy_names.index(
-    "Reset dev-demo namespace for clean deploy"
+expected_classified_paths = {
+    "Reset dev-demo namespace for clean deploy":
+        " && steps.v2-migration-mode.outputs.activation == 'false'",
+    "Ensure dev-demo namespace exists": "",
+    "Record exact dev-demo runtime target": "",
+    "Bind scoped runtime and certificate roles": "",
+    "Verify migration writer inventory access": " && steps.v2-migration-mode.outputs.activation == 'true'",
+    "Retain dev-demo deployment intent":
+        " && steps.prepare-namespace.outcome == 'success' && "
+        "(steps.v2-migration-mode.outputs.activation == 'false' || "
+        "steps.migration-writer-access.outcome == 'success')",
+    quiesce["name"]: " && steps.v2-migration-mode.outputs.activation == 'true' && "
+        "steps.retain-deployment-intent.outcome == 'success'",
+    "Deploy dev-demo release":
+        " && steps.retain-deployment-intent.outcome == 'success' && "
+        "(steps.v2-migration-mode.outputs.activation == 'false' || "
+        "steps.quiesce-writers.outcome == 'success')",
+}
+for step_name, condition in expected_classified_paths.items():
+    if deploy_names.index(classifier_name) >= deploy_names.index(step_name):
+        raise SystemExit(f"migration classification must precede {step_name}")
+    if deploy_by_name[step_name].get("if") != classified_deployment + condition + " }}":
+        raise SystemExit(f"{step_name} must require successful migration classification and its activation guard")
+if not (
+    deploy_names.index("Verify migration writer inventory access")
+    < deploy_names.index("Retain dev-demo deployment intent") < deploy_names.index(quiesce["name"])
+    < deploy_names.index("Deploy dev-demo release")
 ):
-    raise SystemExit("migration status must be proven before any namespace mutation")
-if positions[ordered.index("Quiesce Account, Game Session, and Automation migration writers")] > positions[ordered.index("Deploy dev-demo release")]:
-    raise SystemExit("dev-demo migration writers must be quiesced before Helm activation")
+    raise SystemExit("dev-demo must retain its deployment intent and quiesce writers before Helm activation")
+inventory_access = deploy_by_name["Verify migration writer inventory access"]
+if (
+    inventory_access.get("id") != "migration-writer-access"
+    or inventory_access["env"].get("RUNTIME_NAMESPACE") != "${{ needs.dev-demo-plan.outputs.namespace }}"
+    or inventory_access["env"].get("KUBECONFIG") != "${{ runner.temp }}/dev-demo-runtime.kubeconfig"
+    or "auth can-i list replicasets.apps" not in inventory_access["run"]
+):
+    raise SystemExit("dev-demo must verify the actual writer inventory credentials before retaining intent")
+retain_deployment = deploy_by_name["Retain dev-demo deployment intent"]
+prepare_namespace = deploy_by_name["Ensure dev-demo namespace exists"]
+if retain_deployment["env"]["KUBECONFIG"] != (
+    "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig"
+):
+    raise SystemExit("retained deployment intent must use the scoped namespace manager")
+if not (
+    deploy_names.index("Reset dev-demo namespace for clean deploy")
+    < deploy_names.index(prepare_namespace["name"])
+    < deploy_names.index("Bind scoped runtime and certificate roles")
+    < deploy_names.index(retain_deployment["name"])
+    and prepare_namespace.get("id") == "prepare-namespace"
+    and retain_deployment["env"].get("NAMESPACE_UID") == "${{ steps.prepare-namespace.outputs.namespace_uid }}"
+):
+    raise SystemExit("dev-demo must fence the prepared namespace after authorization and before Helm")
+for permission, expected_status in (("yes", 0), ("no", 1)):
+    inventory_check = subprocess.run(
+        ["bash", "-e", "-c", """
+kubectl() {
+  [[ "$*" == '--request-timeout=10s -n dev auth can-i list replicasets.apps' ]] || return 2
+  echo "$INVENTORY_PERMISSION"
+  [[ "$INVENTORY_PERMISSION" == yes ]]
+}
+""" + inventory_access["run"]],
+        env={**os.environ, "RUNTIME_NAMESPACE": "dev", "INVENTORY_PERMISSION": permission},
+        capture_output=True,
+    )
+    if inventory_check.returncode != expected_status:
+        raise SystemExit("writer inventory access must preserve the authorization result")
+for obsolete in (
+    "dev-account-v1040-4-probe.sh",
+    "probe-dev-account-v1040-4.sh",
+    "account_origin_",
+    "account-probe-access",
+    "account-v1040-4-preflight",
+):
+    if obsolete in str(deploy_steps):
+        raise SystemExit("automatic dev-demo deployment must leave the held Account V1040.4 probe inactive")
 for step_name, expected_kubeconfig in expected_deploy_kubeconfigs.items():
     actual_env = deploy_by_name[step_name].get("env", {})
     if actual_env.get("KUBECONFIG") != expected_kubeconfig:
@@ -1386,11 +1499,550 @@ if "firemud.dev/requested-dev-demo-head-sha=${head_sha}" not in annotator:
     raise SystemExit("pre-Helm namespace preparation lacks requested-head evidence")
 if "firemud.dev/last-dev-demo-head-sha=${head_sha}" in annotator:
     raise SystemExit("pre-Helm namespace preparation falsely records deployed-head evidence")
+clean_reset = deploy_by_name["Reset dev-demo namespace for clean deploy"]
+if ("steps.v2-migration-mode.outputs.activation == 'false'" not in clean_reset["if"] or
+        clean_reset["env"].get("EXPECTED_NAMESPACE_UID") != "${{ steps.v2-migration-mode.outputs.namespace_uid }}" or
+        clean_reset["env"].get("EXPECTED_DEPLOYED_HEAD") != "${{ steps.v2-migration-mode.outputs.deployed_base_sha }}" or
+        '"$EXPECTED_NAMESPACE_UID" "$EXPECTED_DEPLOYED_HEAD"' not in clean_reset["run"]):
+    raise SystemExit("automatic dev-demo reset must carry the classified UID and deployed head")
 deployed_head_step = deploy_by_name["Record exact deployed dev-demo head"]
+deployed_head_env = deployed_head_step.get("env", {})
+for variable, output in {
+    "RETAINED_ACTIVATION": "activation",
+    "DEPLOYED_BASE_SHA": "deployed_base_sha",
+}.items():
+    if deployed_head_env.get(variable) != "${{ steps.v2-migration-mode.outputs." + output + " }}":
+        raise SystemExit(f"deployed-head recording must receive the classifier's {output} output as {variable}")
+if deployed_head_env.get("NAMESPACE_UID") != "${{ steps.prepare-namespace.outputs.namespace_uid }}":
+    raise SystemExit("deployed-head recording must use the same prepared namespace UID as the hold")
 if "steps.deploy-release.outcome == 'success'" not in deployed_head_step.get("if", ""):
     raise SystemExit("deployed-head evidence is not gated on successful Helm completion")
 if "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" not in deployed_head_step["run"]:
     raise SystemExit("successful Helm completion does not record exact deployed-head evidence")
+with tempfile.TemporaryDirectory() as directory:
+    fixture = Path(directory)
+    calls = fixture / "annotation-calls"
+    snapshot = fixture / "namespace.json"
+    base_sha = "b" * 40
+    target_sha = "a" * 40
+    pending_key = "firemud.dev/pending-dev-demo-deployment"
+    pending_value = f"123:2:{base_sha}:{target_sha}"
+    metadata = {
+        "name": "dev", "uid": "namespace-uid", "resourceVersion": "7",
+        "labels": {"firemud.dev/dev-demo": "true", "firemud.dev/environment-class": "dev-demo-cluster"},
+        "annotations": {
+            "firemud.dev/last-dev-demo-head-sha": base_sha,
+            "firemud.dev/requested-dev-demo-head-sha": target_sha,
+        },
+    }
+    fake_kubectl = """
+kubectl() {
+  case "$*" in
+    '--request-timeout=10s get namespace dev -o json') cat "$NAMESPACE_SNAPSHOT" ;;
+    '--request-timeout=10s create -f - -o json')
+      cat > "$NAMESPACE_CREATE"
+      [[ "$CREATE_ALLOWED" == true ]] || return 1
+      cat "$NAMESPACE_CREATED_SNAPSHOT"
+      ;;
+    *'annotate namespace dev'*)
+      printf '%s\\n' "$#" "$@" >> "$ANNOTATION_CALLS"
+      [[ "${5:-}" == --resource-version=* && "$ANNOTATION_ALLOWED" == true ]]
+      ;;
+    *) return 2 ;;
+  esac
+}
+"""
+
+    def run_namespace_step(
+        step, annotations, allowed=True, namespace_uid="namespace-uid", retained=True,
+        prepared_uid="namespace-uid", creating=True, created_uid=None,
+    ):
+        calls.write_text("", encoding="utf-8")
+        creation = fixture / "create"
+        output = fixture / "out"
+        creation.write_text("", encoding="utf-8")
+        output.write_text("", encoding="utf-8")
+        snapshot.write_text(json.dumps({
+            "kind": "Namespace",
+            "metadata": {
+                **metadata, "uid": namespace_uid, "annotations": {**metadata["annotations"], **annotations},
+            }
+        }), encoding="utf-8")
+        created_snapshot = fixture / "created-snapshot.json"
+        created_snapshot.write_text(json.dumps({
+            "kind": "Namespace",
+            "metadata": {**metadata, "uid": created_uid if created_uid is not None else namespace_uid},
+        }), encoding="utf-8")
+        result = subprocess.run(
+            ["bash", "-e", "-c", fake_kubectl + step["run"]],
+            env={
+                **os.environ, "GITHUB_ENV": str(fixture / "env"), "GITHUB_OUTPUT": str(output),
+                "GITHUB_RUN_ID": "123",
+                "GITHUB_RUN_ATTEMPT": "2", "RUNTIME_NAMESPACE": "dev", "NAMESPACE_UID": prepared_uid,
+                "PREVIOUS_NAMESPACE_UID": "namespace-uid", "NAMESPACE_CREATE": str(creation),
+                "CREATE_ALLOWED": str(creating).lower(),
+                "NAMESPACE_CREATED_SNAPSHOT": str(created_snapshot),
+                "RETAINED_ACTIVATION": str(retained).lower(), "DEPLOYED_BASE_SHA": base_sha, "HEAD_SHA": target_sha,
+                "ANNOTATION_CALLS": str(calls), "NAMESPACE_SNAPSHOT": str(snapshot),
+                "ANNOTATION_ALLOWED": str(allowed).lower(),
+            },
+            capture_output=True,
+        )
+        arguments = iter(calls.read_text(encoding="utf-8").splitlines())
+        mutations = [[next(arguments) for _ in range(int(count))] for count in arguments]
+        return result.returncode, mutations
+
+    fresh_uid = "fresh-namespace-uid"
+    if run_namespace_step(
+        prepare_namespace, {}, retained=False, namespace_uid="later-get-uid", created_uid=fresh_uid,
+    ) != (0, []):
+        raise SystemExit("a clean deploy must bind the UID returned by Namespace creation")
+    if (fixture / "out").read_text(encoding="utf-8") != f"namespace_uid={fresh_uid}\n":
+        raise SystemExit("the clean-deploy UID must come from the Namespace creation response")
+    created = json.loads((fixture / "create").read_text(encoding="utf-8"))
+    if created != {
+        "apiVersion": "v1", "kind": "Namespace",
+        "metadata": {"name": "dev", "labels": metadata["labels"]},
+    }:
+        raise SystemExit("the clean path must create the exact owned dev namespace")
+    for scenario in (
+        {"retained": False, "namespace_uid": fresh_uid, "creating": False},
+        {"retained": False, "namespace_uid": "namespace-uid"},
+        {"retained": True, "namespace_uid": fresh_uid},
+    ):
+        status, mutations = run_namespace_step(prepare_namespace, {}, **scenario)
+        if status == 0 or mutations or (fixture / "out").read_text(encoding="utf-8"):
+            raise SystemExit("unconfirmed creation or a replacement retained namespace cannot authorize deploy")
+
+    annotation_prefix = ["--request-timeout=10s", "annotate", "namespace", "dev", "--resource-version=7"]
+    retained_call = [*annotation_prefix, f"{pending_key}={pending_value}"]
+    if run_namespace_step(retain_deployment, {}) != (0, [retained_call]):
+        raise SystemExit("migration deployment intent must bind the exact namespace version and attempt before Helm")
+    for annotations, uid in (
+        ({pending_key: pending_value}, "namespace-uid"),
+        ({"firemud.dev/pending-dev-demo-bootstrap": "123:1"}, "namespace-uid"),
+        ({}, "different-uid"),
+    ):
+        status, mutations = run_namespace_step(retain_deployment, annotations, namespace_uid=uid)
+        if status == 0 or mutations:
+            raise SystemExit("migration deployment intent must preserve an existing hold and refuse namespace replacement")
+
+    bootstrap_annotation = f"firemud.dev/pending-dev-demo-bootstrap={pending_value}:dev-demo-smoke-bootstrap-123-2"
+    record_call = [
+        *annotation_prefix, f"firemud.dev/last-dev-demo-head-sha={target_sha}", bootstrap_annotation,
+        f"{pending_key}-", "--overwrite",
+    ]
+    if run_namespace_step(deployed_head_step, {pending_key: pending_value}) != (0, [record_call]):
+        raise SystemExit("recording the retained target must settle the exact hold in the same version-fenced request")
+    status, mutations = run_namespace_step(deployed_head_step, {pending_key: pending_value}, allowed=False)
+    if status == 0 or mutations != [record_call]:
+        raise SystemExit("ambiguous retained-head recording must fail without an unfenced follow-up write")
+    for annotations in ({}, {pending_key: "other-attempt"}, {
+        pending_key: pending_value, "firemud.dev/pending-dev-demo-bootstrap": "competing-attempt",
+    }):
+        status, mutations = run_namespace_step(deployed_head_step, annotations)
+        if status == 0 or mutations:
+            raise SystemExit("retained-head recording must require this attempt's exact deployment intent")
+    clean_snapshot = {"firemud.dev/last-dev-demo-head-sha": None}
+    clean = {"retained": False, "namespace_uid": fresh_uid, "prepared_uid": fresh_uid}
+    if run_namespace_step(retain_deployment, clean_snapshot, **clean) != (0, [retained_call]):
+        raise SystemExit("a clean deployment must retain its own intent before Helm")
+    clean_held = {**clean_snapshot, pending_key: pending_value}
+    if run_namespace_step(deployed_head_step, clean_held, **clean) != (0, [record_call]):
+        raise SystemExit("recording the clean target must transfer the exact hold in the same update")
+    for step, annotations, observed_uid in (
+        (retain_deployment, clean_snapshot, "replacement"),
+        (retain_deployment, clean_held, fresh_uid),
+        (deployed_head_step, clean_held, "replacement"),
+        (deployed_head_step, clean_snapshot, fresh_uid),
+        (deployed_head_step, {**clean_held, pending_key: "other-attempt"}, fresh_uid),
+    ):
+        status, mutations = run_namespace_step(
+            step, annotations, retained=False, namespace_uid=observed_uid, prepared_uid=fresh_uid,
+        )
+        if status == 0 or mutations:
+            raise SystemExit("clean-deploy hold transitions must refuse replacement or competing custody")
+bootstrap_step = deploy_by_name["Create dev-demo smoke account"]
+intent_step = deploy_by_name["Capture dev-demo bootstrap intent"]
+retain_intent = deploy_by_name["Retain dev-demo bootstrap intent before sending"]
+retain_result = deploy_by_name["Retain successful dev-demo bootstrap result"]
+preserve_result = deploy_by_name["Preserve validated dev-demo receipt in its namespace hold on upload failure"]
+clear_bootstrap_hold = deploy_by_name["Clear dev-demo bootstrap hold after retained result"]
+cleanup_evidence = deploy_by_name["Clean local dev-demo bootstrap evidence"]
+if not (
+    deploy_steps.index(deployed_head_step) < deploy_steps.index(intent_step)
+    < deploy_steps.index(retain_intent) < deploy_steps.index(bootstrap_step)
+    < deploy_steps.index(retain_result) < deploy_steps.index(preserve_result)
+    < deploy_steps.index(clear_bootstrap_hold) < deploy_steps.index(cleanup_evidence)
+):
+    raise SystemExit("dev-demo bootstrap custody ordering is incorrect")
+if intent_step["if"] != "${{ success() && steps.record-deployed-head.outcome == 'success' }}":
+    raise SystemExit("dev-demo bootstrap intent must follow successful deployment recording")
+if intent_step["env"].get("NAMESPACE_KUBECONFIG") != "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig":
+    raise SystemExit("dev-demo bootstrap intent must use the namespace-manager kubeconfig")
+if (intent_step["env"].get("BOOTSTRAP_HOLD") != "${{ steps.record-deployed-head.outputs.bootstrap_hold }}"
+        or intent_step["env"].get("EXPECTED_NAMESPACE_UID") != "${{ steps.record-deployed-head.outputs.namespace_uid }}"
+        or '["firemud.dev/pending-dev-demo-bootstrap"] == $hold' not in intent_step["run"]
+        or 'kubectl annotate' in intent_step["run"]):
+    raise SystemExit("dev-demo bootstrap intent must verify the same hold and namespace recorded with the target")
+if bootstrap_step["if"] != "${{ success() && steps.retain-bootstrap-intent.outcome == 'success' }}":
+    raise SystemExit("dev-demo bootstrap must wait for durable intent retention")
+if bootstrap_step["env"]["BOOTSTRAP_REQUEST_ID"] != "${{ steps.bootstrap-intent.outputs.request_id }}":
+    raise SystemExit("dev-demo bootstrap request must consume the captured attempt identity")
+if bootstrap_step["env"].get("BOOTSTRAP_HOLD") != "${{ steps.bootstrap-intent.outputs.bootstrap_hold }}":
+    raise SystemExit("dev-demo bootstrap must consume the exact durable namespace hold")
+if bootstrap_step["env"].get("NAMESPACE_KUBECONFIG") != "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig":
+    raise SystemExit("dev-demo bootstrap must use the namespace manager for hold custody")
+if clear_bootstrap_hold["if"] != "${{ success() && steps.retain-bootstrap-result.outcome == 'success' }}":
+    raise SystemExit("dev-demo bootstrap hold must clear only after durable result retention")
+if clear_bootstrap_hold["env"].get("NAMESPACE_KUBECONFIG") != "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig":
+    raise SystemExit("dev-demo bootstrap hold clear must use the namespace manager")
+if clear_bootstrap_hold["env"].get("BOOTSTRAP_HOLD") != "${{ steps.bootstrap-intent.outputs.bootstrap_hold }}":
+    raise SystemExit("dev-demo bootstrap hold clear must use the exact durable hold")
+if "firemud.dev/pending-dev-demo-bootstrap-" not in clear_bootstrap_hold["run"]:
+    raise SystemExit("dev-demo bootstrap hold must clear in the post-retention step")
+if "firemud.dev/pending-dev-demo-bootstrap-" in bootstrap_step["run"]:
+    raise SystemExit("dev-demo bootstrap must not clear its hold before result retention")
+if retain_result["if"] != "${{ always() && steps.bootstrap-smoke.outputs.result_ready == 'true' }}":
+    raise SystemExit("validated bootstrap evidence must upload even when cleanup fails")
+if preserve_result["if"] != "${{ always() && steps.bootstrap-smoke.outputs.result_ready == 'true' && steps.retain-bootstrap-result.outcome != 'success' }}":
+    raise SystemExit("a failed result upload must attempt namespace-held receipt preservation")
+if preserve_result["env"]["KUBECONFIG"] != "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig":
+    raise SystemExit("the exact namespace manager must own receipt preservation")
+if not all(fragment in preserve_result["run"] for fragment in (
+    "pending-dev-demo-bootstrap-result",
+    "pending-dev-demo-bootstrap",
+    "last-dev-demo-head-sha",
+    "--resource-version=",
+    '"$BOOTSTRAP_EVIDENCE_DIR/result.json"',
+    '"${#receipt}" -le 8192',
+)):
+    raise SystemExit("namespace-held receipt must be bounded and fenced to the exact held deployment")
+if cleanup_evidence["if"] != (
+    "${{ always() && steps.bootstrap-intent.outcome == 'success' && "
+    "(steps.bootstrap-smoke.outputs.result_ready != 'true' || "
+    "steps.retain-bootstrap-result.outcome == 'success' || "
+    "steps.preserve-bootstrap-result.outcome == 'success') }}"
+):
+    raise SystemExit("local verified receipt cleanup must follow one successful retention path")
+if not (
+    bootstrap_step["run"].index("write-bootstrap-result.py")
+    < bootstrap_step["run"].index('echo "result_ready=true"')
+    and "trap cleanup_bootstrap_resources EXIT" in bootstrap_step["run"]
+    and "if ! cleanup_bootstrap_pod_and_script; then\n    status=1" in bootstrap_step["run"]
+    and "pod/dev-demo-bootstrap configmap/dev-demo-bootstrap-script" in bootstrap_step["run"]
+    and "--ignore-not-found --wait=true --timeout=15s" in bootstrap_step["run"]
+):
+    raise SystemExit("dev-demo must capture the verified result and fail closed on resource cleanup")
+if "dev-demo-smoke-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" not in intent_step["run"]:
+    raise SystemExit("dev-demo bootstrap intent must use a stable native run/attempt identity")
+for key in ("workflowSha", "headSha", "deployedBaseSha", "namespaceUid", "helmRevision",
+            "renderedManifestSha256", "renderedValuesSha256", "controlPlaneRequestId"):
+    if key not in intent_step["run"]:
+        raise SystemExit(f"dev-demo bootstrap intent omitted {key}")
+for prefix, filename, step in (("intent", "intent.json", retain_intent), ("result", "result.json", retain_result)):
+    artifact = step["with"]
+    if artifact != {
+        "name": "dev-demo-bootstrap-" + prefix + "-${{ github.run_id }}-${{ github.run_attempt }}",
+        "path": "${{ steps.bootstrap-intent.outputs.evidence_dir }}/" + filename,
+        "if-no-files-found": "error",
+    }:
+        raise SystemExit("dev-demo must retain only the immutable attempt-qualified evidence file")
+if any(keyword in intent_step["run"] for keyword in ("DEMO_SMOKE_PASSWORD", "DEMO_SMOKE_EMAIL", "DEMO_SMOKE_USERNAME")):
+    raise SystemExit("dev-demo bootstrap intent must not consume smoke credentials")
+if (
+    '--from-literal=request-id="${BOOTSTRAP_REQUEST_ID}"' not in bootstrap_step["run"]
+    or '"controlPlaneRequestId": control_plane_request_id' not in bootstrap_step["run"]
+    or "write-bootstrap-result.py" not in bootstrap_step["run"]
+):
+    raise SystemExit("dev-demo bootstrap must carry the recorded identity into the request and receipt")
+bootstrap_python = bootstrap_step["run"].split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+compile(bootstrap_python, "dev-demo-bootstrap.py", "exec")
+if 'account_file.write(str(account_id))' not in bootstrap_python:
+    raise SystemExit("dev-demo Account UUID file must contain the canonical UUID without a line ending")
+session_function = "def bootstrap_session(" + bootstrap_python.split(
+    "def bootstrap_session(", 1
+)[1].split("\ndef ensure_demo_account(", 1)[0]
+for response_status in (200, 400, 503):
+    sends = []
+
+    def post_session(url, payload):
+        sends.append((url, payload))
+        return response_status, "response"
+
+    context = {
+        "post_json": post_session,
+        "tenant_id": 1,
+        "game_template_id": 2,
+        "control_plane_request_id": "original-attempt",
+    }
+    exec(session_function, context)
+    try:
+        result = context["bootstrap_session"]("account")
+    except SystemExit as failure:
+        if response_status == 200 or not str(failure).endswith(f"status {response_status}"):
+            raise SystemExit("dev-demo bootstrap must report the unsuccessful session status")
+    else:
+        if response_status != 200 or result != (200, "response"):
+            raise SystemExit("dev-demo bootstrap must return only a successful session response")
+    if sends != [("http://game-session-service:8080/sessions", {
+        "tenantId": 1,
+        "gameTemplateId": 2,
+        "controlPlaneRequestId": "original-attempt",
+        "ownerAccountId": "account",
+    })]:
+        raise SystemExit("dev-demo bootstrap must send the original session request exactly once")
+with tempfile.TemporaryDirectory() as directory:
+    evidence = Path(directory)
+    account_uuid = "12345678-1234-1234-1234-123456789abc"
+    request_id = "dev-demo-smoke-bootstrap-123-2"
+    intent = {
+        "schema": "dev-demo-bootstrap-intent/v1",
+        "repository": "benhook1013/FireMUD",
+        "runId": "123", "attempt": "2", "workflowSha": "b" * 40,
+        "headSha": "a" * 40, "deployedBaseSha": "c" * 40,
+        "namespace": "dev", "namespaceUid": "namespace-uid", "release": "dev",
+        "helmRevision": "7", "certificateProfile": "standalone", "imageTag": "image",
+        "renderedManifestSha256": "d" * 64, "renderedValuesSha256": "e" * 64,
+        "controlPlaneRequestId": request_id,
+        "tenantId": 1,
+        "gameTemplateId": 1,
+    }
+    session = {"id": 9007199254740993, "ownerAccountId": 5, "tenantId": 1, "gameTemplateId": 1}
+    result = {"accountUuid": account_uuid, "controlPlaneRequestId": request_id, "gameSession": session}
+    (evidence / "intent.json").write_text(json.dumps(intent), encoding="utf-8")
+    account_file = evidence / "account-id"
+    account_file.write_text(account_uuid, encoding="utf-8")
+    log = evidence / "bootstrap.log"
+    receipt = evidence / "result.json"
+    marker = "DEV_DEMO_BOOTSTRAP_RESULT="
+    command = ["python3", str(repository_root / "dev-tools/hosted/dev-demo/write-bootstrap-result.py"),
+               str(evidence), str(account_file), str(log)]
+    for contents in (
+        "session response missing",
+        marker + json.dumps({**result, "controlPlaneRequestId": "different-attempt"}),
+        marker + json.dumps({**result, "accountUuid": "different-account"}),
+        marker + json.dumps({**result, "gameSession": {**session, "gameTemplateId": 2}}),
+        "\n".join([marker + json.dumps(result)] * 2),
+    ):
+        log.write_text(contents, encoding="utf-8")
+        if subprocess.run(command, capture_output=True).returncode == 0 or receipt.exists():
+            raise SystemExit("dev-demo retained a missing, foreign, or ambiguous success result")
+    log.write_text("synthetic-password\n" + marker + json.dumps({
+        **result, "token": "synthetic-token", "gameSession": {**session, "token": "nested-token"}
+    }), encoding="utf-8")
+    subprocess.run(command, check=True, capture_output=True)
+    expected = {
+        "schema": "dev-demo-bootstrap-result/v1", "intent": intent,
+        "accountUuid": account_uuid, "gameSession": session,
+    }
+    if json.loads(receipt.read_text(encoding="utf-8")) != expected:
+        raise SystemExit("dev-demo result lost exact IDs or copied unapproved response material")
+    verify_command = [
+        "python3", str(repository_root / "dev-tools/hosted/dev-demo/write-bootstrap-result.py"),
+        "verify", str(evidence / "intent.json"), str(receipt),
+        "--run-id", "123", "--attempt", "2", "--target-sha", "a" * 40,
+        "--namespace-uid", "namespace-uid", "--helm-revision", "7",
+        "--account-uuid", account_uuid, "--game-session-id", str(session["id"]),
+    ]
+    verified = subprocess.run(verify_command, capture_output=True, text=True)
+    if verified.returncode != 0 or verified.stdout != "bootstrap receipt verified\n":
+        raise SystemExit("dev-demo offline receipt verification must accept the exact synthetic receipt")
+    hold = f"123:2:{intent['deployedBaseSha']}:{intent['headSha']}:{request_id}"
+    snapshot = evidence / "namespace.json"
+    snapshot.write_text(json.dumps({
+        "kind": "Namespace",
+        "metadata": {
+            "name": "dev", "uid": intent["namespaceUid"], "resourceVersion": "17",
+            "annotations": {
+                "firemud.dev/last-dev-demo-head-sha": intent["headSha"],
+                "firemud.dev/pending-dev-demo-bootstrap": hold,
+            },
+        },
+    }), encoding="utf-8")
+    stored = evidence / "namespace-result.json"
+    preserve_command = ["bash", "-e", "-c", """
+kubectl() {
+  case "$*" in
+    '--request-timeout=10s get namespace dev -o json') cat "$NAMESPACE_SNAPSHOT" ;;
+    '--request-timeout=10s annotate namespace dev --resource-version=17 firemud.dev/pending-dev-demo-bootstrap-result='*)
+      [[ "$#" == 7 && "$7" == --overwrite ]]
+      printf '%s' "${6#firemud.dev/pending-dev-demo-bootstrap-result=}" > "$NAMESPACE_RESULT"
+      ;;
+    *) return 2 ;;
+  esac
+}
+""" + preserve_result["run"]]
+    preserve_env = {
+        **os.environ, "NAMESPACE_SNAPSHOT": str(snapshot), "NAMESPACE_RESULT": str(stored),
+        "BOOTSTRAP_EVIDENCE_DIR": str(evidence), "BOOTSTRAP_HOLD": hold,
+        "BOOTSTRAP_NAMESPACE_UID": intent["namespaceUid"], "HEAD_SHA": intent["headSha"],
+        "GITHUB_RUN_ID": intent["runId"], "GITHUB_RUN_ATTEMPT": intent["attempt"], "LC_ALL": "C",
+    }
+    subprocess.run(preserve_command, cwd=repository_root, env=preserve_env, check=True, capture_output=True)
+    raw_stored = stored.read_bytes()
+    if b"\n" in raw_stored or len(raw_stored) > 8192 or json.loads(raw_stored) != expected:
+        raise SystemExit("namespace retention must preserve exact integers in a compact verified receipt")
+    stored_verify = [str(stored) if arg == str(receipt) else arg for arg in verify_command]
+    subprocess.run(stored_verify, check=True, capture_output=True)
+    stored.unlink()
+    for override in ({"GITHUB_RUN_ATTEMPT": "3"}, {"BOOTSTRAP_HOLD": "foreign-hold"}):
+        refused = subprocess.run(
+            preserve_command, cwd=repository_root, env={**preserve_env, **override}, capture_output=True,
+        )
+        if refused.returncode == 0 or stored.exists():
+            raise SystemExit("namespace retention must refuse a foreign deployment attempt or hold")
+
+    original_receipt = receipt.read_bytes()
+    if subprocess.run(command, capture_output=True).returncode == 0:
+        raise SystemExit("dev-demo result was allowed to overwrite its immutable receipt")
+    if receipt.read_bytes() != original_receipt:
+        raise SystemExit("dev-demo result changed the immutable receipt during a refused rewrite")
+    incomplete_write_intent = dict(intent)
+    incomplete_write_intent.pop("workflowSha")
+    (evidence / "intent.json").write_text(json.dumps(incomplete_write_intent), encoding="utf-8")
+    receipt.unlink()
+    if subprocess.run(command, capture_output=True).returncode == 0 or receipt.exists():
+        raise SystemExit("dev-demo result writer accepted an intent missing a required v1 field")
+    verify_intent = intent
+    verify_result = expected
+    intent_path = evidence / "downloaded-intent.json"
+    result_path = evidence / "downloaded-result.json"
+    verify_command[3:5] = [str(intent_path), str(result_path)]
+    incomplete_intent = dict(verify_intent)
+    incomplete_intent.pop("workflowSha")
+    intent_path.write_text(json.dumps(incomplete_intent), encoding="utf-8")
+    incomplete_result = dict(verify_result)
+    incomplete_result["intent"] = incomplete_intent
+    result_path.write_text(json.dumps(incomplete_result), encoding="utf-8")
+    incomplete = subprocess.run(verify_command, capture_output=True, text=True)
+    if incomplete.returncode == 0 or incomplete.stdout != "bootstrap receipt refused\n":
+        raise SystemExit("dev-demo offline receipt verification must reject a field omitted from both artifacts")
+    intent_path.write_text(json.dumps(verify_intent), encoding="utf-8")
+    for key in ("tenantId", "gameTemplateId"):
+        invalid_embedded_intent = {**verify_intent, key: True}
+        result_path.write_text(
+            json.dumps({**verify_result, "intent": invalid_embedded_intent}), encoding="utf-8"
+        )
+        invalid = subprocess.run(verify_command, capture_output=True, text=True)
+        if invalid.returncode == 0 or invalid.stdout != "bootstrap receipt refused\n":
+            raise SystemExit("embedded intent must independently satisfy the v1 schema")
+    result_path.write_text(json.dumps(verify_result), encoding="utf-8")
+    for option, mismatch in (("--run-id", "124"), ("--attempt", "3"),
+                             ("--target-sha", "b" * 40), ("--namespace-uid", "other-uid"),
+                             ("--helm-revision", "8"), ("--account-uuid", "12345678-1234-1234-1234-123456789abd"),
+                             ("--game-session-id", str(session["id"] + 1))):
+        mismatch_command = verify_command.copy()
+        index = mismatch_command.index(option)
+        mismatch_command[index + 1] = mismatch
+        refused = subprocess.run(mismatch_command, capture_output=True, text=True)
+        if refused.returncode == 0 or refused.stdout != "bootstrap receipt refused\n":
+            raise SystemExit("dev-demo offline receipt verification must refuse mismatched identities")
+    result_path.unlink()
+    missing = subprocess.run(verify_command, capture_output=True, text=True)
+    if missing.returncode == 0 or missing.stdout != "bootstrap receipt refused\n":
+        raise SystemExit("dev-demo offline receipt verification must refuse an absent result")
+failure_summary = deploy_by_name["Summarize dev-demo failure"]
+if failure_summary["env"] != {
+    "DEPLOY_OUTCOME": "${{ steps." + deploy_by_name["Deploy dev-demo release"]["id"] + ".outcome }}",
+    "RECORD_OUTCOME": "${{ steps." + deployed_head_step["id"] + ".outcome }}",
+    "BOOTSTRAP_OUTCOME": "${{ steps." + bootstrap_step["id"] + ".outcome }}",
+    "BOOTSTRAP_RESULT_READY": "${{ steps." + bootstrap_step["id"] + ".outputs.result_ready }}",
+    "BOOTSTRAP_RETENTION_OUTCOME": "${{ steps." + deploy_by_name["Retain successful dev-demo bootstrap result"]["id"] + ".outcome }}",
+    "BOOTSTRAP_NAMESPACE_RETENTION_OUTCOME": "${{ steps." + preserve_result["id"] + ".outcome }}",
+    "BOOTSTRAP_HOLD_CLEAR_OUTCOME": "${{ steps." + clear_bootstrap_hold["id"] + ".outcome }}",
+}:
+    raise SystemExit("recorded-target verification advice must use this attempt's native outcomes")
+failure_summary_run = failure_summary["run"]
+for name, value in {
+    "head_sha": "a" * 40,
+    "image_tag": "contract-image",
+    "hostname": "dev.example.invalid",
+    "telnet_port": "32016",
+}.items():
+    failure_summary_run = failure_summary_run.replace(
+        "${{ needs.dev-demo-plan.outputs." + name + " }}", value
+    )
+with tempfile.TemporaryDirectory() as directory:
+    summary = Path(directory) / "summary.md"
+    for deployed, recorded, bootstrap, ready, retention, hold_clear, stage, expected in (
+        ("failure", "skipped", "skipped", "", "skipped", "skipped", "deploy", None),
+        ("skipped", "skipped", "skipped", "", "skipped", "skipped", "unknown", None),
+        ("success", "failure", "skipped", "", "skipped", "skipped", "deploy", None),
+        ("success", "skipped", "skipped", "", "skipped", "skipped", "deploy", None),
+        ("success", "success", "failure", "", "skipped", "skipped", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "skipped", "", "skipped", "skipped", "runtime-readiness", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "cancelled", "", "skipped", "skipped", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "success", "true", "failure", "skipped", "bootstrap", "obtain owner readback of the original bootstrap"),
+        ("success", "success", "success", "true", "namespace", "skipped", "bootstrap", "exact verified receipt was retained on the held dev Namespace"),
+        ("success", "success", "success", "true", "success", "success", "smoke", "before repeating readiness or smoke"),
+        ("success", "success", "success", "true", "success", "failure", "bootstrap", "Verify the exact dev namespace UID and retained result"),
+        ("success", "success", "failure", "true", "success", "skipped", "bootstrap", "original smoke bootstrap result was retained"),
+        ("success", "success", "failure", "true", "failure", "skipped", "bootstrap", "obtain owner readback of the original bootstrap"),
+    ):
+        summary.write_text("", encoding="utf-8")
+        subprocess.run(
+            ["bash", "-e", "-c", failure_summary_run],
+            cwd=repository_root,
+            env={
+                **os.environ,
+                "GITHUB_STEP_SUMMARY": str(summary),
+                "GITHUB_SERVER_URL": "https://github.example.invalid",
+                "GITHUB_REPOSITORY": "example/FireMUD",
+                "GITHUB_WORKFLOW_SHA": "b" * 40,
+                "DEV_DEMO_STAGE": stage,
+                "DEPLOY_OUTCOME": deployed,
+                "RECORD_OUTCOME": recorded,
+                "BOOTSTRAP_OUTCOME": bootstrap,
+                "BOOTSTRAP_RESULT_READY": ready,
+                "BOOTSTRAP_RETENTION_OUTCOME": "failure" if retention == "namespace" else retention,
+                "BOOTSTRAP_NAMESPACE_RETENTION_OUTCOME": "success" if retention == "namespace" else "skipped",
+                "BOOTSTRAP_HOLD_CLEAR_OUTCOME": hold_clear,
+            },
+            check=True,
+        )
+        evidence = summary.read_text(encoding="utf-8")
+        guide = "/blob/" + "b" * 40 + "/design/architecture/"
+        unconfirmed_recording = deployed == "success" and recorded != "success"
+        expected_stage = "record-deployed-head" if unconfirmed_recording else stage
+        if ready == "true" and bootstrap == "failure":
+            expected_stage = "bootstrap-cleanup"
+            if "Bootstrap cleanup failed after producing the result" not in evidence:
+                raise SystemExit("dev-demo summary omitted the independent cleanup failure")
+        elif ready == "true" and retention != "success":
+            expected_stage = "retain-bootstrap-result"
+        elif hold_clear == "failure":
+            expected_stage = "clear-bootstrap-hold"
+        if f"Failed stage: `{expected_stage}`" not in evidence:
+            raise SystemExit("dev-demo failure summary misidentified the failed stage")
+        if unconfirmed_recording:
+            for detail in (
+                "Helm deployment succeeded, but recording the deployed head on the namespace failed or could not be confirmed",
+                "Do not retry the deployment, reset the namespace, or replay bootstrap",
+                "original Helm release and revision",
+                "owned dev namespace UID",
+                "retained Flyway version",
+            ):
+                if detail not in evidence:
+                    raise SystemExit(f"dev-demo unconfirmed recording summary lacks: {detail}")
+        elif "Helm deployment succeeded, but recording" in evidence:
+            raise SystemExit("dev-demo summary wrongly reported a successful Helm deploy with unconfirmed recording")
+        if expected is None:
+            if guide in evidence:
+                raise SystemExit("unrecorded target received recorded-target advice")
+        elif expected not in evidence or guide not in evidence or "Do not replay Helm or bootstrap" not in evidence:
+            raise SystemExit("recorded target lacks the correct verification boundary")
+        if deployed == "success" and recorded == "success":
+            if retention == "namespace" and (
+                "firemud.dev/pending-dev-demo-bootstrap-result" not in evidence
+                or "Keep the hold in place" not in evidence
+                or "result was not retained" in evidence
+            ):
+                raise SystemExit("dev-demo must distinguish the retained namespace receipt from missing evidence")
+            if (ready != "true" or retention != "success") and "before repeating readiness or smoke" in evidence:
+                raise SystemExit("incomplete original bootstrap must not receive smoke verification advice")
+            if ready == "true" and "refer bootstrap recovery to the affected owners" in evidence:
+                raise SystemExit("completed original bootstrap must not receive bootstrap replay advice")
 runtime_target_run = deploy_by_name["Record exact dev-demo runtime target"]["run"]
 target_validator_call = (
     "bash ./dev-tools/hosted/dev-demo/validate-dev-demo-target.sh \\\n"
@@ -1458,10 +2110,14 @@ if not (
     )
 game_design_warning_run = game_design_warning.get("run", "")
 for required_warning in (
+    "firemud.dev/pending-dev-demo-deployment",
+    "the original Helm release and revision",
+    "the exact dev Namespace UID",
+    "retained Flyway history",
+    "current writer state",
     "may have left Game Design unavailable",
     "scaled to zero",
     "publication endpoints drained",
-    "Inspect and repair",
     "Game Design Deployment, Pods, Service, and EndpointSlices",
 ):
     if required_warning not in game_design_warning_run:
@@ -1489,7 +2145,8 @@ if quiesced_writer_warning.get("if") != expected_quiesced_writer_warning_conditi
 quiesced_writer_warning_run = quiesced_writer_warning.get("run", "")
 for required_warning in (
     "Account, Game Session, and Automation writer Deployments may be partially quiesced",
-    "Inspect their current state before retrying",
+    "as part of deployment-owner reconciliation",
+    "keep the unresolved deployment intent in place",
     "writer quiescence fails",
     "Helm deploy fails partway through",
     "a partial deployment may have re-enabled some writers",
@@ -2426,13 +3083,16 @@ if [[ "$1" == -n && "$3" == get && "$4" == endpointslices.discovery.k8s.io ]]; t
   fi
   exit 0
 fi
-[[ $# -eq 5 ]]
-[[ "$1" == annotate ]]
-[[ "$2" == namespace ]]
-[[ "$3" == dev ]]
-[[ "$4" == "firemud.dev/last-dev-demo-head-sha=${TEST_EXPECTED_HEAD:?}" ]]
-[[ "$5" == --overwrite ]]
-printf 'kubectl-deployed-head=%s\n' "$4" >>"${TEST_DEPLOYMENT_LOG:?}"
+if [[ "$*" == '--request-timeout=10s get namespace dev -o json' ]]; then
+  jq -n --arg head "${TEST_EXPECTED_HEAD:?}" --arg base "${TEST_BASE_SHA:?}" '
+    {kind:"Namespace", metadata:{name:"dev", uid:"fresh-namespace", resourceVersion:"7",
+      labels:{"firemud.dev/dev-demo":"true", "firemud.dev/environment-class":"dev-demo-cluster"},
+      annotations:{"firemud.dev/requested-dev-demo-head-sha":$head,
+        "firemud.dev/pending-dev-demo-deployment":("123:2:" + $base + ":" + $head)}}}'
+  exit 0
+fi
+[[ "$*" == "--request-timeout=10s annotate namespace dev --resource-version=7 firemud.dev/last-dev-demo-head-sha=${TEST_EXPECTED_HEAD:?} firemud.dev/pending-dev-demo-bootstrap=123:2:${TEST_BASE_SHA:?}:${TEST_EXPECTED_HEAD}:dev-demo-smoke-bootstrap-123-2 firemud.dev/pending-dev-demo-deployment- --overwrite" ]]
+printf 'kubectl-deployed-head=%s\n' "$6" >>"${TEST_DEPLOYMENT_LOG:?}"
 SH
 chmod +x "$deployment_stub_dir/helm" "$deployment_stub_dir/kubectl"
 
@@ -2441,6 +3101,7 @@ run_deployment_evidence_fixture() {
   local deployment_log="$fixture_dir/deployment-${scenario}.log"
   local github_env="$fixture_dir/deployment-${scenario}.env"
   local head_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  local base_sha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   local deploy_status
   local deploy_script="$deploy_release_step"
 
@@ -2476,8 +3137,15 @@ run_deployment_evidence_fixture() {
         PATH="$deployment_stub_dir:$PATH" \
         RUNTIME_NAMESPACE=dev \
         HEAD_SHA="$head_sha" \
+        DEPLOYED_BASE_SHA="$base_sha" \
+        NAMESPACE_UID=fresh-namespace \
+        RETAINED_ACTIVATION=false \
+        GITHUB_RUN_ID=123 \
+        GITHUB_RUN_ATTEMPT=2 \
+        GITHUB_OUTPUT="$fixture_dir/deployment-${scenario}.output" \
         TEST_DEPLOYMENT_LOG="$deployment_log" \
         TEST_EXPECTED_HEAD="$head_sha" \
+        TEST_BASE_SHA="$base_sha" \
         bash "$record_deployed_head_step"
     )
   fi

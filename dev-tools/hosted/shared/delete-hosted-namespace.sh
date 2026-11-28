@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-  echo "usage: $0 <namespace> <release_name>" >&2
+if [[ $# -ne 2 && $# -ne 4 ]]; then
+  echo "usage: $0 <namespace> <release_name> [<classified_namespace_uid> <deployed_head_sha>]" >&2
   exit 1
 fi
 
@@ -24,6 +24,16 @@ elif [[ "$namespace" =~ ^pr-[1-9][0-9]{0,50}$ ]]; then
 else
   echo "hosted runtime namespace is not canonical: ${namespace}" >&2
   exit 2
+fi
+
+expected_deployed_head=""
+if [[ $# -eq 4 ]]; then
+  expected_namespace_uid="$3"
+  expected_deployed_head="$4"
+  if [[ "$namespace" != dev || -z "$expected_namespace_uid" || ! "$expected_deployed_head" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "automatic dev-demo reset requires the classified namespace UID and deployed head" >&2
+    exit 2
+  fi
 fi
 
 if ! [[ "$wait_seconds" =~ ^[1-9][0-9]*$ ]] ||
@@ -85,31 +95,63 @@ if [[ -n "$expected_namespace_uid" && "$namespace_uid" != "$expected_namespace_u
 fi
 delete_uid="${expected_namespace_uid:-$namespace_uid}"
 
+resource_version=""
+if [[ "$namespace" == dev ]]; then
+  if ! resource_version="$(jq -er --arg head "$expected_deployed_head" '
+    (.metadata.annotations // {}) as $annotations
+    | select($head == "" or (($annotations["firemud.dev/last-dev-demo-head-sha"] // "") | ascii_downcase) == $head)
+    | select($annotations | has("firemud.dev/pending-dev-demo-deployment") | not)
+    | select($annotations | has("firemud.dev/pending-dev-demo-bootstrap") | not)
+    | .metadata.resourceVersion | select(type == "string" and length > 0)
+  ' <<<"$namespace_json")"; then
+    echo "refusing dev-demo deletion: deployed head or namespace version changed, or a pending deployment/bootstrap hold exists" >&2
+    exit 1
+  fi
+fi
 delete_options="$(
   jq -cn \
     --arg uid "$delete_uid" \
-    '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}}'
+    --arg resource_version "$resource_version" '
+      {apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}}
+      | if $resource_version == "" then . else .preconditions.resourceVersion = $resource_version end
+    '
 )"
 delete_status=0
 printf '%s\n' "$delete_options" |
   kubectl delete --raw "/api/v1/namespaces/${namespace}" -f - >/dev/null || delete_status=$?
 if ((delete_status != 0)); then
-  if [[ -n "$expected_namespace_uid" ]]; then
+  if [[ -n "$expected_deployed_head" ]]; then
+    if ! namespace_lookup="$(kubectl get namespace "$namespace" --ignore-not-found -o json)"; then
+      echo "unable to verify failed deletion of hosted namespace ${namespace}" >&2
+      exit 1
+    fi
+    if [[ -z "$namespace_lookup" ]]; then
+      echo "Hosted namespace ${namespace} is absent."
+      exit 0
+    fi
+    if ! jq -es --arg name "$namespace" --arg uid "$delete_uid" '
+      length == 1 and (.[0] | .metadata.name == $name and .metadata.uid == $uid
+        and (.metadata.deletionTimestamp | type == "string" and length > 0))
+    ' <<<"$namespace_lookup" >/dev/null; then
+      echo "unable to verify termination of the classified hosted namespace ${namespace}" >&2
+      exit "$delete_status"
+    fi
+    echo "Waiting for the classified hosted namespace ${namespace} to finish terminating."
+  elif [[ -n "$expected_namespace_uid" ]]; then
     echo "unable to request UID-fenced deletion of hosted namespace ${namespace}" >&2
     exit "$delete_status"
+  else
+    if ! namespace_lookup="$(kubectl get namespace "$namespace" --ignore-not-found -o name)"; then
+      echo "unable to verify failed deletion of hosted namespace ${namespace}" >&2
+      exit 1
+    fi
+    if [[ -z "$namespace_lookup" ]]; then
+      echo "Hosted namespace ${namespace} is absent."
+      exit 0
+    fi
+    echo "unable to request deletion of hosted namespace ${namespace}" >&2
+    exit "$delete_status"
   fi
-  if ! namespace_lookup="$(
-    kubectl get namespace "$namespace" --ignore-not-found -o name
-  )"; then
-    echo "unable to verify failed deletion of hosted namespace ${namespace}" >&2
-    exit 1
-  fi
-  if [[ -z "$namespace_lookup" ]]; then
-    echo "Hosted namespace ${namespace} is absent."
-    exit 0
-  fi
-  echo "unable to request deletion of hosted namespace ${namespace}" >&2
-  exit "$delete_status"
 fi
 
 wait_status=0

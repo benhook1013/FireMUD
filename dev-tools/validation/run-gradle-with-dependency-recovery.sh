@@ -39,6 +39,7 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 
 GRADLE_EXIT=0
+RETRY_WITHOUT_REFRESH=false
 run_gradle_check() {
   local refresh="$1"
   local log_path="$2"
@@ -154,13 +155,18 @@ classify_failure_body() {
       # Require each pre-compile Maven Central JAR download to report the
       # complete matching 429 chain, not just a coordinate or status line.
       if (jar_download_step) {
-        if (jar_download_step == 1 && line == "> Could not get resource " quote jar_url quote ".") {
+        expected_resource_url = buildsrc_resolver ? jar_plugin_url : jar_url
+        if (jar_download_step == 1 && (line == "Required by:" || (line ~ /^buildscript of project/ && index(line, ":buildSrc") > 0))) {
+          if (line ~ /^buildscript of project/) buildsrc_context++
+        } else if (jar_download_step == 1 && line == "> Could not get resource " quote expected_resource_url quote ".") {
           jar_download_step = 2
         } else if (jar_download_step == 2 && line == "> Could not GET " quote jar_url quote ".") {
           jar_download_step = 3
         } else if (jar_download_step == 3 && line == "> Received status code 429 from server: Too Many Requests") {
           jar_download_step = 0
           jar_downloads++
+          if (buildsrc_resolver) buildsrc_jar_downloads++
+          if (cached_compile_resolver) cached_compile_http_429++
           coordinates++
           repository_requests += 2
           transient++
@@ -169,7 +175,8 @@ classify_failure_body() {
         }
         next
       }
-      if ((fixtures_resolver || (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration)) &&
+      if ((fixtures_resolver || buildsrc_resolver || cached_compile_resolver ||
+           (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration)) &&
           line ~ /^> Could not download [[:alnum:]_.-]+\.jar \([[:alnum:]_-]+(\.[[:alnum:]_-]+)*:[[:alnum:]_.-]+:[0-9][[:alnum:]_.-]*\)$/) {
         artifact_coordinate = line
         sub(/^.*\(/, "", artifact_coordinate)
@@ -191,12 +198,17 @@ classify_failure_body() {
         # Fixture classpaths can resolve platform-specific classifier JARs.
         classified_fixture_jar = fixtures_resolver && index(jar_name, jar_stem "-") == 1 &&
           substr(jar_name, length(jar_stem) + 2) ~ /^[[:alnum:]][[:alnum:]_.-]*\.jar$/
-        if ((jar_name != jar_stem ".jar" && !classified_fixture_jar) ||
-            (fixtures_resolver && (jar_coordinate[2] == "." || jar_coordinate[2] == ".."))) {
+        # Pinned Kotlin buildSrc plugin variants append their Gradle compatibility classifier.
+        classified_buildsrc_jar = buildsrc_resolver && jar_coordinate[1] == "org.jetbrains.kotlin" &&
+          index(jar_name, jar_stem "-") == 1 &&
+          substr(jar_name, length(jar_stem) + 2) ~ /^gradle[0-9]+\.jar$/
+        if ((jar_name != jar_stem ".jar" && !classified_fixture_jar && !classified_buildsrc_jar) ||
+            jar_coordinate[2] == "." || jar_coordinate[2] == "..") {
           invalid++
         }
         gsub(/\./, "/", jar_coordinate[1])
         jar_url = "https://repo.maven.apache.org/maven2/" jar_coordinate[1] "/" jar_coordinate[2] "/" jar_version "/" jar_name
+        jar_plugin_url = "https://plugins.gradle.org/m2/" jar_coordinate[1] "/" jar_coordinate[2] "/" jar_version "/" jar_name
         jar_download_step = 1
         next
       }
@@ -241,7 +253,8 @@ classify_failure_body() {
         next
       }
       if (line == "> Received status code 429 from server: Too Many Requests") {
-        buildsrc_http_429++
+        if (buildsrc_configuration) buildsrc_http_429++
+        else if (resolved_configuration ~ /^:[[:alnum:]-]+:compileClasspath$/) cached_compile_http_429++
         transient++
         next
       }
@@ -362,7 +375,15 @@ classify_failure_body() {
           configuration_name = substr(configuration_name, 2, length(configuration_name) - 2)
         }
         resolved_configuration = configuration_name
-        if (configuration_name == "classpath") buildsrc_classpath++
+        if (configuration_name ~ /^:[[:alnum:]-]+:compileClasspath$/) {
+          compile_owner = configuration_name
+          sub(/:compileClasspath$/, "", compile_owner)
+          cached_compile_resolver = cache_cause == 1 && cache_task == ("`" compile_owner ":compileJava`")
+        }
+        if (configuration_name == "classpath") {
+          buildsrc_classpath++
+          if (buildsrc_configuration) buildsrc_resolver = 1
+        }
         if (configuration_name ~ /^:[[:alnum:]-]+:jooqCodegen$/) {
           jooq_codegen_roots++
           root_module = configuration_name
@@ -448,10 +469,12 @@ classify_failure_body() {
              jooq_jar_resource != 1 || jooq_jar_get != 1 ||
              coordinates != 1 || repository_requests != 2 || searched ||
              jooq_wrapper_causes != 1)) ||
-          ((buildsrc_configuration || buildsrc_context || buildsrc_repository || buildsrc_pom || buildsrc_http_429) &&
-            (buildsrc_configuration != 1 || buildsrc_context == 0 ||
-             resolver_roots != 1 || buildsrc_classpath != 1 || buildsrc_http_429 == 0 ||
-             cache_cause || compile_task_failure || searched)) ||
+          ((buildsrc_configuration || buildsrc_context || buildsrc_repository || buildsrc_pom || buildsrc_http_429 || buildsrc_jar_downloads) &&
+            (buildsrc_configuration != 1 || (buildsrc_context == 0 && buildsrc_jar_downloads == 0) ||
+             resolver_roots != 1 || buildsrc_classpath != 1 ||
+             !((buildsrc_http_429 > 0 && buildsrc_jar_downloads == 0) ||
+               (buildsrc_jar_downloads > 0 && buildsrc_jar_downloads == jar_downloads)) ||
+             cache_cause || compile_task_failure || searched || repository_urls)) ||
           (cache_summary && (cache_cause == 0 || cache_cause > 2)) ||
           (compile_task_failure && compile_classpath_roots == 0) ||
           (wrapped_resolution_causes &&
@@ -469,7 +492,11 @@ classify_failure_body() {
           !((transient && repository_requests) || (searched && repository_urls))) {
         exit 1
       }
-      if (wrapped_resolution_causes || (fixtures_resolver && jar_downloads)) print "before-compile"
+      compile_module = resolved_configuration
+      sub(/:compileClasspath$/, "", compile_module)
+      if (buildsrc_jar_downloads || buildsrc_http_429 ||
+          (cached_compile_http_429 && resolver_roots == 1 && cache_task == ("`" compile_module ":compileJava`"))) print "before-compile-rate-limit"
+      else if (wrapped_resolution_causes || (fixtures_resolver && jar_downloads)) print "before-compile"
       exit 0
     }
   ' "$log_path"
@@ -489,6 +516,9 @@ is_dependency_resolution_failure() {
   if ! resolution_boundary="$(classify_failure_body "$body_path")"; then
     rm -f -- "$body_path"
     return 1
+  fi
+  if [[ "$resolution_boundary" == before-compile-rate-limit ]]; then
+    RETRY_WITHOUT_REFRESH=true
   fi
 
   jooq_execution_module="$(awk '
@@ -554,7 +584,7 @@ is_dependency_resolution_failure() {
   case "$substantive_status" in
     0) return 1 ;;
     1) return 0 ;;
-    2) [[ "$resolution_boundary" != before-compile ]] ;;
+    2) [[ "$resolution_boundary" != before-compile* ]] ;;
     *) return 1 ;;
   esac
 }
@@ -753,7 +783,12 @@ if ! RETRY_DELAY="$(retry_delay_seconds "$NORMAL_LOG")"; then
   exit "$GRADLE_EXIT"
 fi
 
-echo "Recognized Gradle dependency-resolution failure at the bounded pre-substantive boundary; retrying the complete Gradle command once with dependency metadata refresh after ${RETRY_DELAY}s."
 sleep "$RETRY_DELAY"
-run_gradle_check true "$REFRESH_LOG"
+if [[ "$RETRY_WITHOUT_REFRESH" == true ]]; then
+  echo "Recognized dependency rate limiting before compilation; retrying the original Gradle command once after ${RETRY_DELAY}s without forcing dependency refresh."
+  run_gradle_check false "$REFRESH_LOG"
+else
+  echo "Recognized Gradle dependency-resolution failure at the bounded pre-substantive boundary; retrying the complete Gradle command once with dependency metadata refresh after ${RETRY_DELAY}s."
+  run_gradle_check true "$REFRESH_LOG"
+fi
 exit "$GRADLE_EXIT"

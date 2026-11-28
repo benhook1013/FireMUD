@@ -3,15 +3,16 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: quiesce-v2-schema-migrations.sh <namespace>
+Usage: quiesce-v2-schema-migrations.sh [--verify-only] <namespace>
 
 Close service admission for Account, Game Session, and Automation, prove their
 EndpointSlices are empty, scale their schema writers to zero, and prove their
-Deployment and Pod state is quiescent. On failure after closure begins, the
+Deployment, ReplicaSet, and Pod state is quiescent. On failure after closure begins, the
 helper attempts to keep all canonical Services closed. If closure cannot be
 verified or reapplied, an operator must verify and repair admission before
 retrying a migration. On success, canonical selectors are restored while all
 writer Deployments stay at zero for the caller to apply the reviewed release.
+The --verify-only mode checks the existing zero-replica hold without writes.
 EOF
 }
 
@@ -19,6 +20,12 @@ fail() {
   echo "V2 schema migration preflight failed: $*" >&2
   exit 1
 }
+
+verify_only=false
+if [[ "${1:-}" == --verify-only ]]; then
+  verify_only=true
+  shift
+fi
 
 if [[ $# -ne 1 ]]; then
   usage >&2
@@ -55,7 +62,7 @@ trap leave_admission_closed_on_failure EXIT
 service_json() {
   local service="$1"
   local result
-  if ! result="$(kubectl -n "$namespace" get service "$service" --ignore-not-found -o json)"; then
+  if ! result="$(kubectl --request-timeout=10s -n "$namespace" get service "$service" --ignore-not-found -o json)"; then
     fail "cannot inspect Service/$service in namespace $namespace"
   fi
   [[ -n "$result" ]] || fail "Service/$service is absent in namespace $namespace"
@@ -72,12 +79,141 @@ patch_service_selector() {
 read_endpoint_slices() {
   local service="$1"
   local result
-  if ! result="$(kubectl -n "$namespace" get endpointslices.discovery.k8s.io \
+  if ! result="$(kubectl --request-timeout=10s -n "$namespace" get endpointslices.discovery.k8s.io \
     --selector "kubernetes.io/service-name=$service" -o json)"; then
     fail "cannot inspect EndpointSlices for Service/$service"
   fi
   printf '%s\n' "$result"
 }
+
+verify_writer_quiescence() {
+  local writer_deadline="$1"
+  local service deployment_json replicas deployment_observed replicasets_json active_replicasets
+  local unobserved_replicasets replicaset_status writer_replicasets pods_json pod_count
+  for service in "${services[@]}"; do
+    while :; do
+      if ! deployment_json="$(kubectl --request-timeout=10s -n "$namespace" get deployment "$service" --ignore-not-found -o json)"; then
+        fail "cannot verify Deployment/$service after quiesce"
+      fi
+      deployment_observed=true
+      if [[ -n "$deployment_json" ]]; then
+        replicas="$(jq -er '.spec.replicas | select(type == "number")' <<<"$deployment_json")" ||
+          fail "cannot read desired replicas for Deployment/$service"
+        [[ "$replicas" == 0 ]] ||
+          fail "Deployment/$service did not remain at zero replicas"
+        if ! jq -e '
+          (.metadata.generation | type == "number" and . >= 1)
+          and (.status.observedGeneration == .metadata.generation)
+        ' <<<"$deployment_json" >/dev/null; then
+          deployment_observed=false
+        fi
+      fi
+
+      if ! replicasets_json="$(kubectl --request-timeout=10s -n "$namespace" get replicasets -o json)"; then
+        fail "cannot verify ReplicaSets for Deployment/$service"
+      fi
+      if ! replicaset_status="$(jq -er --arg service "$service" '
+        if (.kind != "ReplicaSetList" and .kind != "List")
+          or (.items | type != "array")
+          or any(.items[]; .kind != "ReplicaSet")
+        then error("invalid ReplicaSet inventory")
+        else
+          [.items[]
+            | select(
+                any(.metadata.ownerReferences[]?;
+                  .kind == "Deployment" and .name == $service and .controller == true)
+                or .spec.template.metadata.labels.app == $service
+                or any(.spec.template.spec.containers[]?;
+                  .name == $service
+                  or ((.image // "") | split("@")[0] | split("/")[-1] | split(":")[0]) == $service))]
+          | {
+              active: [.[] | select(.spec.replicas != 0)] | length,
+              unobserved: [.[]
+                | select(.spec.replicas == 0)
+                | select((.metadata.generation | type) != "number"
+                    or .status.observedGeneration != .metadata.generation)]
+                | length,
+              owners: [.[].metadata
+                | if (.name | type == "string" and length > 0)
+                    and (.uid | type == "string" and length > 0)
+                  then {name, uid}
+                  else error("writer ReplicaSet identity is missing")
+                  end]
+            }
+          | "\(.active)\t\(.unobserved)\t\(.owners | tojson)"
+        end
+      ' <<<"$replicasets_json")"; then
+        fail "cannot parse ReplicaSets for Deployment/$service"
+      fi
+      IFS=$'\t' read -r active_replicasets unobserved_replicasets writer_replicasets <<<"$replicaset_status"
+
+      if ! pods_json="$(kubectl --request-timeout=10s -n "$namespace" get pods -o json)"; then
+        fail "cannot verify pods for Deployment/$service"
+      fi
+      if ! pod_count="$(jq -er --arg service "$service" --argjson writer_replicasets "$writer_replicasets" '
+        def valid_pod_list:
+          (.kind == "PodList" or .kind == "List")
+          and ((.items | type) == "array")
+          and (.kind != "List" or all(.items[]?; type == "object" and .kind == "Pod"));
+        if valid_pod_list | not then
+          error("invalid PodList")
+        else
+          [
+            .items[]?
+            | select(
+                any(.metadata.ownerReferences[]?;
+                  .apiVersion == "apps/v1" and .kind == "ReplicaSet" and .controller == true
+                  and ({name, uid} as $owner | any($writer_replicasets[]; . == $owner)))
+                or (.metadata.labels.app == $service)
+                or any(.spec.containers[]?;
+                  .name == $service
+                  or ((.image // "") | split("@")[0] | split("/")[-1] | split(":")[0]) == $service
+                )
+              )
+          ] | length
+        end
+      ' <<<"$pods_json")"; then
+        fail "cannot parse pods for Deployment/$service"
+      fi
+      if [[ "$deployment_observed" == true && "$active_replicasets" == 0 &&
+        "$unobserved_replicasets" == 0 && "$pod_count" == 0 ]]; then
+        break
+      fi
+      (( SECONDS < writer_deadline )) ||
+        fail "writer $service is not quiescent (Deployment observed: $deployment_observed, active ReplicaSets: $active_replicasets, unobserved zero ReplicaSets: $unobserved_replicasets, old writer pods: $pod_count)"
+      sleep 2
+    done
+  done
+}
+
+verify_writer_autoscaling_absent() {
+  local hpa_json matching_hpas
+  # An HPA can undo the scale-to-zero maintenance boundary. Do not proceed if
+  # another controller can re-admit a writer while the migration is applying.
+  if ! hpa_json="$(kubectl --request-timeout=10s -n "$namespace" get hpa -o json)"; then
+    fail "cannot inspect namespace HPAs"
+  fi
+  if ! matching_hpas="$(jq -er '
+    if (.items | type) != "array" then
+      error("invalid HPA inventory")
+    else
+      [.items[] | .spec.scaleTargetRef
+        | select(.kind == "Deployment" and
+          (.name == "account-service" or .name == "game-session-service" or .name == "automation-scripting-service"))]
+      | length
+    end
+  ' <<<"$hpa_json")"; then
+    fail "cannot parse namespace HPAs"
+  fi
+  [[ "$matching_hpas" == 0 ]] ||
+    fail "an HPA targets a migration writer; remove or suspend that controller before migration"
+}
+
+if [[ "$verify_only" == true ]]; then
+  verify_writer_autoscaling_absent
+  verify_writer_quiescence "$SECONDS"
+  exit 0
+fi
 
 # The in-scope Services must exist and use the exact canonical selector. If
 # selectors have drifted, the helper cannot prove which traffic they admit.
@@ -89,18 +225,9 @@ for service in "${services[@]}"; do
     fail "Service/$service does not have the canonical app=$service selector"
 done
 
-# An HPA can undo the scale-to-zero maintenance boundary. Do not proceed if
-# another controller can re-admit a writer while the migration is applying.
-if ! hpa_json="$(kubectl -n "$namespace" get hpa -o json)"; then
-  fail "cannot inspect namespace HPAs"
-fi
-if ! matching_hpas="$(jq -er '[.items[]? | select(.spec.scaleTargetRef.kind == "Deployment" and (.spec.scaleTargetRef.name == "account-service" or .spec.scaleTargetRef.name == "game-session-service" or .spec.scaleTargetRef.name == "automation-scripting-service"))] | length' <<<"$hpa_json")"; then
-  fail "cannot parse namespace HPAs"
-fi
-[[ "$matching_hpas" == 0 ]] ||
-  fail "an HPA targets a migration writer; remove or suspend that controller before migration"
+verify_writer_autoscaling_absent
 
-if ! pods_json="$(kubectl -n "$namespace" get pods -o json)"; then
+if ! pods_json="$(kubectl --request-timeout=10s -n "$namespace" get pods -o json)"; then
   fail "cannot inspect namespace Pods before closing Service selectors"
 fi
 if ! sentinel_pod_count="$(jq -er --arg selector "$closed_selector" '
@@ -160,11 +287,10 @@ for service in "${services[@]}"; do
   done
 done
 
-# An HPA or a concurrent controller can race the first observation. Scale all
-# owners before checking any Deployment or Pod so no writer can overlap apply.
+# Scale every writer before checking the first Deployment or Pod.
 deadline=$((SECONDS + 300))
 for service in "${services[@]}"; do
-  if ! deployment_name="$(kubectl -n "$namespace" get deployment "$service" --ignore-not-found -o name)"; then
+  if ! deployment_name="$(kubectl --request-timeout=10s -n "$namespace" get deployment "$service" --ignore-not-found -o name)"; then
     fail "cannot inspect Deployment/$service"
   fi
   if [[ -n "$deployment_name" ]]; then
@@ -173,51 +299,12 @@ for service in "${services[@]}"; do
   fi
 done
 
-for service in "${services[@]}"; do
-  while :; do
-    if ! deployment_json="$(kubectl -n "$namespace" get deployment "$service" --ignore-not-found -o json)"; then
-      fail "cannot verify Deployment/$service after quiesce"
-    fi
-    if [[ -n "$deployment_json" ]]; then
-      replicas="$(jq -er '.spec.replicas // 0' <<<"$deployment_json")" ||
-        fail "cannot read desired replicas for Deployment/$service"
-      [[ "$replicas" == 0 ]] ||
-        fail "Deployment/$service did not remain at zero replicas"
-    fi
+verify_writer_quiescence "$deadline"
 
-    if ! pods_json="$(kubectl -n "$namespace" get pods -o json)"; then
-      fail "cannot verify pods for Deployment/$service"
-    fi
-    if ! pod_count="$(jq -er --arg service "$service" '
-      def valid_pod_list:
-        (.kind == "PodList" or .kind == "List")
-        and ((.items | type) == "array")
-        and (.kind != "List" or all(.items[]?; type == "object" and .kind == "Pod"));
-      if valid_pod_list | not then
-        error("invalid PodList")
-      else
-        [
-          .items[]?
-          | select(
-              (.metadata.labels.app == $service)
-              or any(.spec.containers[]?;
-                .name == $service
-                or ((.image // "") | split("@")[0] | split(":")[0] | split("/")[-1]) == $service
-              )
-            )
-        ] | length
-      end
-    ' <<<"$pods_json")"; then
-      fail "cannot parse pods for Deployment/$service"
-    fi
-    if [[ "$pod_count" == 0 ]]; then
-      break
-    fi
-    (( SECONDS < deadline )) ||
-      fail "old writer pods for $service did not terminate within 300 seconds ($pod_count remain)"
-    sleep 2
-  done
-done
+# A writer may have changed while a later service was draining. Refuse to
+# reopen admission if the last readback cannot reestablish quiescence.
+verify_writer_autoscaling_absent
+verify_writer_quiescence "$SECONDS"
 
 # Restore only after every writer Deployment and Pod has been proven quiescent.
 # If any write/readback fails, the EXIT trap closes all three selectors again.

@@ -3,6 +3,7 @@ package unit.net.firedevops.firemud.gamesession.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -88,17 +89,96 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcMtlsTest {
 
   @AfterEach
   void stopTransportAndClearAuthContext() throws Exception {
-    if (noCertificateChannel != null) {
-      noCertificateChannel.shutdownNow();
-      assertThat(noCertificateChannel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
-      noCertificateChannel = null;
+    ManagedChannel channel = noCertificateChannel;
+    Server receiver = server;
+    noCertificateChannel = null;
+    server = null;
+    // Close in reverse order. A server failure is suppressed beneath the first channel failure.
+    try (AutoCloseable clearAuthContext = SessionContext::clear;
+        AutoCloseable stopServer =
+            () -> {
+              if (receiver != null) {
+                receiver.shutdownNow();
+                assertThat(receiver.awaitTermination(2, TimeUnit.SECONDS))
+                    .as("server termination")
+                    .isTrue();
+              }
+            };
+        AutoCloseable stopChannel =
+            () -> {
+              if (channel != null) {
+                channel.shutdownNow();
+                assertThat(channel.awaitTermination(2, TimeUnit.SECONDS))
+                    .as("channel termination")
+                    .isTrue();
+              }
+            }) {
+      // All cleanup is owned by the resources.
     }
-    if (server != null) {
-      server.shutdownNow();
-      assertThat(server.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
-      server = null;
-    }
-    SessionContext.clear();
+  }
+
+  @Test
+  void channelTerminationFailureStillStopsServerAndClearsAuthContext() throws Exception {
+    var channel = mock(ManagedChannel.class);
+    var receiver = mock(Server.class);
+    when(channel.shutdownNow()).thenReturn(channel);
+    when(channel.awaitTermination(2, TimeUnit.SECONDS)).thenReturn(false);
+    when(receiver.awaitTermination(2, TimeUnit.SECONDS)).thenReturn(true);
+    noCertificateChannel = channel;
+    server = receiver;
+    SessionContext.setContext("42", List.of("tenantAdmin"), java.util.Map.of());
+
+    assertThatThrownBy(this::stopTransportAndClearAuthContext).isInstanceOf(AssertionError.class);
+
+    verify(receiver).shutdownNow();
+    verify(receiver).awaitTermination(2, TimeUnit.SECONDS);
+    assertThat(noCertificateChannel).isNull();
+    assertThat(server).isNull();
+    assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+  }
+
+  @Test
+  void bothTerminationFailuresPreserveTheChannelFailureAndClearAuthContext() throws Exception {
+    var channel = mock(ManagedChannel.class);
+    var receiver = mock(Server.class);
+    when(channel.awaitTermination(2, TimeUnit.SECONDS)).thenReturn(false);
+    when(receiver.awaitTermination(2, TimeUnit.SECONDS)).thenReturn(false);
+    noCertificateChannel = channel;
+    server = receiver;
+    SessionContext.setContext("42", List.of("tenantAdmin"), java.util.Map.of());
+
+    assertThatThrownBy(this::stopTransportAndClearAuthContext)
+        .isInstanceOfSatisfying(
+            AssertionError.class,
+            failure -> {
+              assertThat(failure).hasMessageContaining("channel termination");
+              assertThat(failure.getSuppressed())
+                  .singleElement()
+                  .satisfies(suppressed ->
+                      assertThat(suppressed)
+                          .isInstanceOf(AssertionError.class)
+                          .hasMessageContaining("server termination"));
+            });
+
+    verify(channel).shutdownNow();
+    verify(receiver).shutdownNow();
+    assertThat(noCertificateChannel).isNull();
+    assertThat(server).isNull();
+    assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+  }
+
+  @Test
+  void serverTerminationFailureStillClearsAuthContext() throws Exception {
+    var receiver = mock(Server.class);
+    when(receiver.awaitTermination(2, TimeUnit.SECONDS)).thenReturn(false);
+    server = receiver;
+    SessionContext.setContext("42", List.of("tenantAdmin"), java.util.Map.of());
+
+    assertThatThrownBy(this::stopTransportAndClearAuthContext).isInstanceOf(AssertionError.class);
+
+    verify(receiver).shutdownNow();
+    assertThat(server).isNull();
+    assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
   }
 
   @Test

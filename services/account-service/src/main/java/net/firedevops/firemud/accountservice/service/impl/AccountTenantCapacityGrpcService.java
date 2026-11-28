@@ -16,6 +16,7 @@ import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
 import net.firedevops.firemud.accountservice.security.AccountTenantCapacityWorkloadGuard;
 import net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory;
@@ -66,7 +67,69 @@ public final class AccountTenantCapacityGrpcService
           Failure.ENTITLEMENT_UNAVAILABLE.toStatusException(Status.Code.FAILED_PRECONDITION));
       return;
     }
-    final net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request;
+    final Request request;
+    try {
+      request = TenantCapacityAdmissionGrpcCodec.parseRequest(wire);
+    } catch (IllegalArgumentException | ArithmeticException invalid) {
+      observer.onError(Failure.INVALID_ARGUMENT.toStatusException());
+      return;
+    }
+    if (!request.evidence().callerWorkload().equals(peer)) {
+      observer.onError(Failure.PERMISSION_DENIED.toStatusException());
+      return;
+    }
+    CommitTenantCapacityAdmissionResponse result;
+    try {
+      result = TenantCapacityAdmissionGrpcCodec.toResponse(request, owner.commit(request, peer));
+    } catch (CapacityException denied) {
+      if (!denied.code().isDomainRefusal()) {
+        observer.onError(denied.code().toStatusException());
+        return;
+      }
+      try {
+        result =
+            TenantCapacityAdmissionGrpcCodec.toRefusal(
+                request, denied.code(), denied.durableDenialId());
+      } catch (RuntimeException internal) {
+        observer.onError(Status.INTERNAL.asRuntimeException());
+        return;
+      }
+    } catch (org.jooq.exception.DataAccessException
+        | org.springframework.dao.DataAccessException
+        | org.springframework.transaction.TransactionException unavailable) {
+      observer.onError(Failure.ENTITLEMENT_UNAVAILABLE.toStatusException());
+      return;
+    } catch (RuntimeException internal) {
+      observer.onError(Status.INTERNAL.asRuntimeException());
+      return;
+    }
+    try {
+      observer.onNext(result);
+    } catch (RuntimeException callback) {
+      observer.onError(Status.INTERNAL.asRuntimeException());
+      return;
+    }
+    observer.onCompleted();
+  }
+
+  @Override
+  public void readTenantCapacityAdmissionDenial(
+      CommitTenantCapacityAdmissionRequest wire,
+      StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
+    Objects.requireNonNull(observer);
+    final String peer;
+    try {
+      peer = guard.requireAdmissionDenialReader();
+    } catch (StatusRuntimeException denied) {
+      observer.onError(Failure.AUTH_UNAVAILABLE.toStatusException());
+      return;
+    }
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      observer.onError(Failure.ENTITLEMENT_UNAVAILABLE.toStatusException());
+      return;
+    }
+    final Request request;
     try {
       request = TenantCapacityAdmissionGrpcCodec.parseRequest(wire);
     } catch (IllegalArgumentException | ArithmeticException invalid) {
@@ -79,9 +142,21 @@ public final class AccountTenantCapacityGrpcService
     }
     final CommitTenantCapacityAdmissionResponse result;
     try {
-      result = TenantCapacityAdmissionGrpcCodec.toResponse(request, owner.commit(request, peer));
+      var denial = owner.readRetainedAdmissionDenial(request, peer);
+      if (denial == null || denial.durableDenialId() == null) {
+        observer.onError(Failure.ENTITLEMENT_UNAVAILABLE.toStatusException());
+        return;
+      }
+      result =
+          TenantCapacityAdmissionGrpcCodec.toRefusal(
+              request, denial.code(), denial.durableDenialId());
     } catch (CapacityException denied) {
-      observer.onError(denied.code().toStatusException());
+      Failure code =
+          switch (denied.code()) {
+            case INVALID_ARGUMENT, PERMISSION_DENIED -> denied.code();
+            default -> Failure.ENTITLEMENT_UNAVAILABLE;
+          };
+      observer.onError(code.toStatusException());
       return;
     } catch (org.jooq.exception.DataAccessException
         | org.springframework.dao.DataAccessException
@@ -94,9 +169,10 @@ public final class AccountTenantCapacityGrpcService
     }
     try {
       observer.onNext(result);
-      observer.onCompleted();
     } catch (RuntimeException callback) {
       observer.onError(Status.INTERNAL.asRuntimeException());
+      return;
     }
+    observer.onCompleted();
   }
 }

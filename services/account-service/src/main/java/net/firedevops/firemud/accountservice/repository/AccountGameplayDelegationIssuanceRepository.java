@@ -601,8 +601,6 @@ public class AccountGameplayDelegationIssuanceRepository {
     if (!requestDigest(exactIntent).equals(identity.requestDigest())) {
       throw new IdempotencyConflictException();
     }
-    requireUnexpired(identity);
-
     AccountAuthEvidenceBundle bundle;
     try {
       bundle = evidenceBundles.readStoredNonAuthorizingValue(operationId);
@@ -634,25 +632,28 @@ public class AccountGameplayDelegationIssuanceRepository {
           case "EXACT_RETRY" -> PendingRegistrationOutcome.EXACT_RETRY;
           default -> throw new StorageUnavailableException();
         };
-
-    return new CommittedCandidateVerificationData(
-        identity,
-        authority,
-        evidenceBundleReference(bundle),
-        candidate.tokenHash(),
-        candidate.kid(),
-        candidate.signerGeneration(),
-        sha256(candidate.canonicalRecordBytes()),
-        proofSha256,
-        correspondence,
-        envelope.keyId(),
-        envelope.sha256(),
-        envelope.length(),
-        envelope.expiryMillis(),
-        registryExpiryMillis,
-        registrationLocalAofCount,
-        registrationReplicaAofCount,
-        registrationOutcome);
+    var verified =
+        new CommittedCandidateVerificationData(
+            identity,
+            authority,
+            evidenceBundleReference(bundle),
+            candidate.tokenHash(),
+            candidate.kid(),
+            candidate.signerGeneration(),
+            sha256(candidate.canonicalRecordBytes()),
+            proofSha256,
+            correspondence,
+            envelope.keyId(),
+            envelope.sha256(),
+            envelope.length(),
+            envelope.expiryMillis(),
+            registryExpiryMillis,
+            registrationLocalAofCount,
+            registrationReplicaAofCount,
+            registrationOutcome);
+    // Report elapsed time only after validating the exact retained issuance.
+    requireUnexpired(verified);
+    return verified;
   }
 
   /**
@@ -660,7 +661,9 @@ public class AccountGameplayDelegationIssuanceRepository {
    * runs the same full current-authority/commit-proof read used by the issuance owner. The JTI is a
    * lookup hint, never authentication or permission by itself.
    */
-  @Transactional(propagation = Propagation.MANDATORY)
+  @Transactional(
+      propagation = Propagation.MANDATORY,
+      noRollbackFor = CommittedCandidateExpiredException.class)
   public java.util.Optional<CommittedCandidateVerificationData> readCurrentCommittedCandidateByJti(
       UUID tokenJti) {
     requireWritableAccountTransaction();
@@ -682,23 +685,37 @@ public class AccountGameplayDelegationIssuanceRepository {
     if (requestId == null || requestId.equals(new UUID(0L, 0L))) {
       throw new StorageUnavailableException();
     }
-    CommittedCandidateVerificationData current = readCurrentCommittedCandidate(requestId);
+    CommittedCandidateVerificationData current;
+    try {
+      current = readCurrentCommittedCandidate(requestId);
+    } catch (CommittedCandidateExpiredException expired) {
+      requireExactCandidateLookup(expired.verifiedCandidate(), requestId, tokenJti);
+      throw expired;
+    }
+    requireExactCandidateLookup(current, requestId, tokenJti);
+    return java.util.Optional.of(current);
+  }
+
+  private static void requireExactCandidateLookup(
+      CommittedCandidateVerificationData current, UUID requestId, UUID tokenJti) {
     if (current == null
         || !requestId.equals(current.identity().requestId())
         || !tokenJti.equals(current.identity().tokenJti())) {
       throw new StorageUnavailableException();
     }
-    return java.util.Optional.of(current);
   }
 
-  private void requireUnexpired(AccountGameplayDelegationPendingIdentity identity) {
+  private void requireUnexpired(CommittedCandidateVerificationData candidate) {
+    var identity = candidate.identity();
     long now = Math.floorDiv(clock.millis(), 1_000L);
     long latestIssuedAt = now > Long.MAX_VALUE - 5L ? Long.MAX_VALUE : now + 5L;
     if (now <= 0L
         || identity.notBeforeEpochSecond() > now
-        || identity.issuedAtEpochSecond() > latestIssuedAt
-        || identity.expiresAtEpochSecond() <= now) {
+        || identity.issuedAtEpochSecond() > latestIssuedAt) {
       throw new StorageUnavailableException();
+    }
+    if (identity.expiresAtEpochSecond() <= now) {
+      throw new CommittedCandidateExpiredException(candidate);
     }
   }
 
@@ -2547,6 +2564,19 @@ public class AccountGameplayDelegationIssuanceRepository {
   public static class StorageUnavailableException extends IllegalStateException {
     public StorageUnavailableException() {
       super("Account gameplay delegation issuance storage is unavailable or ambiguous");
+    }
+  }
+
+  public static final class CommittedCandidateExpiredException extends StorageUnavailableException {
+    private final transient CommittedCandidateVerificationData verifiedCandidate;
+
+    public CommittedCandidateExpiredException(
+        CommittedCandidateVerificationData verifiedCandidate) {
+      this.verifiedCandidate = Objects.requireNonNull(verifiedCandidate);
+    }
+
+    public CommittedCandidateVerificationData verifiedCandidate() {
+      return verifiedCandidate;
     }
   }
 

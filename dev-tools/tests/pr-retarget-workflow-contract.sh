@@ -677,6 +677,12 @@ concurrency_group = runtime["concurrency"]["group"]
 if "&& 'metadata' || 'required'" not in concurrency_group:
     raise SystemExit("metadata-only runtime events can cancel substantive runtime builds")
 
+dispatch_queue = runtime_jobs["dispatch-pr-base-refreshes"]["concurrency"]
+assert dispatch_queue == {"group": "runtime-pr-refresh-dispatch", "queue": "max"}, "API dispatch callbacks must share the non-evicting queue"
+for name, job in runtime_jobs.items():
+    if name != "dispatch-pr-base-refreshes":
+        assert job.get("concurrency", {}).get("group") != dispatch_queue["group"], "runtime build jobs must not occupy the API dispatcher queue"
+
 dispatch_condition = runtime_jobs["dispatch-pr-base-refreshes"].get("if", "")
 if "github.event_name == 'workflow_run'" not in dispatch_condition:
     raise SystemExit("runtime refresh dispatch is not isolated from pull-request metadata events")
@@ -700,7 +706,8 @@ if "github.sha" in concurrency_group.split("github.event_name == 'repository_dis
     raise SystemExit("repository_dispatch concurrency must not use the default-branch github.sha")
 # Execute the workflow-level selector before its dispatcher can classify a CI
 # callback. A title/body CI completion must not evict substantive reconciliation.
-assert runtime["concurrency"]["cancel-in-progress"] == "true"
+assert runtime["concurrency"]["cancel-in-progress"] == "false"
+assert runtime["concurrency"]["queue"] == "max"
 
 def callback_group(branch, source_id, source_attempt, source_event="pull_request", head="a" * 40):
     values = {
@@ -728,8 +735,8 @@ for branch in ("main", "develop", "feature/parent"):
     metadata = callback_group(branch, 7002, 1)
     subsequent_attempt = callback_group(branch, 7001, 2)
     active = {}
-    # With cancel-in-progress enabled, assigning the same group evicts its
-    # earlier run. Interleave both callback orders to retain substantive work.
+    # Distinct groups keep the metadata callback out of the substantive queue.
+    # Interleave both callback orders to verify the separation.
     for callbacks in (((substantive, "substantive"), (metadata, "metadata")),
                       ((metadata, "metadata"), (substantive, "substantive"))):
         active.clear()
@@ -859,6 +866,8 @@ const titleFor = (tuple) =>
   `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
 const producer = (tuple, event, status, conclusion = null, overrides = {}) => ({
   id: Number(tuple.prNumber) * 100 + (event === "pull_request" ? 1 : 2),
+  workflow_id: 701,
+  run_attempt: 1,
   name: "Build Runtime Images",
   path: ".github/workflows/runtime-images.yml",
   event,
@@ -866,6 +875,7 @@ const producer = (tuple, event, status, conclusion = null, overrides = {}) => ({
   repository: { full_name: repository },
   head_repository: { full_name: repository },
   head_sha: event === "pull_request" ? tuple.headSha : baseSha,
+  head_branch: event === "pull_request" ? "feature/ci" : "develop",
   pull_requests: event === "pull_request"
     ? [{ number: Number(tuple.prNumber), head: { sha: tuple.headSha } }]
     : [],
@@ -884,27 +894,38 @@ const runsDescending = (event, firstCreatedAt) => Array.from({ length: 100 }, (_
   head_repository: { full_name: repository },
   created_at: new Date(Date.parse(firstCreatedAt) - index * 1000).toISOString(),
 }));
-const assertCompleteRefinementPreservesEligibleInitialRuns = (initialRuns, cutoff, refinedRuns, label) => {
-  const createdFloor = Date.parse(cutoff);
-  const eligibleIds = initialRuns
-    .filter((run) => typeof run?.created_at === "string" && Number.isFinite(Date.parse(run.created_at))
-      && Date.parse(run.created_at) >= createdFloor)
-    .map((run) => `${run.event}:${run.id}`);
-  const refinedIds = new Set(refinedRuns.map((run) => `${run.event}:${run.id}`));
-  assert(eligibleIds.every((id) => refinedIds.has(id)),
-    `${label} must retain every returned initial run at or after its refinement cutoff`);
-};
-
 async function runDispatcher({
   tuples, inventories = {}, apiFailure = null, sourceTuples = [], callback = {},
-  branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, ciEvidence = {},
+  branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, mergeReadFailures = {}, ciEvidence = {},
+  hideDispatchVisibility = false, admissionFails = false, filesByPr = {}, postFailurePr = null, previewFailurePr = null,
+  visibilityResponse = null, observedNativeProducer = null, filesFailurePr = null, postFailureVisible = false, postFailureStatus = null,
+  fanoutCutoffAfterInventory = false, fanoutCutoffAfterPreviewPr = null, expireAfterFirstApiRequest = false,
+  pullGetFailures = {}, lateProducer = null, runtimeWorkflowLookupFailures = [],
+  pullListResponse = null, apiRequestMillis = 0, runtimeRunOverrides = {}, runtimeAttemptJobs = {}, runtimeNativeAttempts = {},
+  runtimeClaimJobs = {},
+  initialTime = "2026-01-08T00:00:00Z", afterPreviewDispatch = null, publication = {},
 }) {
   const dispatches = [];
+  const postedRuns = [];
+  const pullReads = new Map();
+  const mergeReads = new Map();
   const errors = [];
   const infos = [];
   const warnings = [];
   const inventoryCalls = [];
-  const eventInventoryCalls = new Map();
+  const observationPostCounts = [];
+  const timerPostCounts = [];
+  const timerDelays = [];
+  const deadlineSignals = [];
+  const apiRequestRecords = [];
+  const lateProducers = [];
+  const runtimeRunReads = [];
+  const mockFailures = [];
+  let lateProducerAdded = false;
+  let runtimeWorkflowLookupCount = 0;
+  let waitedMillis = 0;
+  let fakeNow = Date.parse(initialTime);
+  let expireOnFirstRequest = expireAfterFirstApiRequest;
   const currentBaseSha = tuples[0]?.baseSha ?? baseSha;
   const allTuples = [...tuples, ...sourceTuples];
   const tupleByNumber = new Map(allTuples.map((tuple) => [tuple.prNumber, tuple]));
@@ -949,13 +970,50 @@ async function runDispatcher({
     error: (message) => errors.push(message),
     setFailed: (message) => errors.push(message),
   };
+  const recordApiRequest = (name, options, oneShot = false) => {
+    assert(options && typeof options === "object", `${name} must receive request options`);
+    assert(options.request && typeof options.request === "object", `${name} must receive a deadline request signal`);
+    assert.deepEqual(Object.keys(options.request).sort(), oneShot ? ["retries", "signal"] : ["signal"],
+      `${name} must preserve the exact normal/request option shape`);
+    if (oneShot) assert.equal(options.request.retries, 0, `${name} must disable transport retries`);
+    assert(deadlineSignals.includes(options.request.signal), `${name} must use the actual extracted deadline helper`);
+    assert(Number.isSafeInteger(options.request.signal.timeoutMs) && options.request.signal.timeoutMs > 0,
+      `${name} must receive a positive remaining wall-clock deadline`);
+    apiRequestRecords.push({name, options, issuedAt: fakeNow, abortedAtIssue: options.request.signal.aborted});
+    if (expireOnFirstRequest) {
+      expireOnFirstRequest = false;
+      fakeNow += options.request.signal.timeoutMs;
+      assert.equal(options.request.signal.aborted, true, `${name} mock must observe its wall-clock AbortSignal deadline`);
+      const error = new Error("mock request aborted at its wall-clock deadline");
+      error.name = "TimeoutError";
+      throw error;
+    }
+    fakeNow += apiRequestMillis;
+    return options.request.signal;
+  };
+  const inventoriedRuntimeRuns = () => [
+    ...Object.values(inventories).flatMap(inventory => Array.isArray(inventory)
+      ? inventory : [...(inventory.initial ?? inventory.runs ?? []), ...(inventory.refined ?? [])]),
+    ...lateProducers, ...postedRuns,
+  ];
+  const claimRefFor = tuple => {
+    const baseRefHash = require("node:crypto").createHash("sha256").update(tuple.baseRef).digest("hex");
+    return `tags/firemud-runtime-refresh-intent/v1/pr-${tuple.prNumber}/${tuple.mergeSha}/${baseRefHash}/g1`;
+  };
   const github = {
     rest: {
       git: {
-        getRef: async ({ ref }) => {
+        getRef: async (request) => {
+          recordApiRequest("git.getRef", request);
+          const {ref} = request;
           refRequests.push(ref);
-          if (branchErrors[ref]) throw Object.assign(new Error("fixture branch lookup failed"), { status: branchErrors[ref] });
-          return { data: { object: {
+          if (ref.startsWith("tags/firemud-runtime-refresh-intent/")) {
+            assert(allTuples.some(tuple => claimRefFor(tuple) === ref), "claim read must use an exact fixture comparison");
+            return {data: {ref: `refs/${ref}`, object: {type: "tag", sha: sha("9")}}};
+          }
+          const branchError = typeof branchErrors[ref] === "function" ? branchErrors[ref](refRequests.length) : branchErrors[ref];
+          if (branchError) throw Object.assign(new Error("fixture branch lookup failed"), { status: branchError });
+          return { data: { ref: `refs/${ref}`, object: {
             sha: branchHeads[ref] ?? allTuples.find((tuple) => `heads/${tuple.baseRef}` === ref)?.baseSha ??
               callback.head_sha ?? currentBaseSha,
           } } };
@@ -963,46 +1021,193 @@ async function runDispatcher({
       },
       pulls: {
         list: async (request) => {
+          recordApiRequest("pulls.list", request);
           pullListRequests.push(request);
-          return { data: (request.head ? sourceTuples : tuples)
+          const pulls = (request.head ? sourceTuples : tuples)
             .filter((tuple) => request.head || tuple.baseRef === request.base)
-            .map(pullRequestFor) };
+            .map(pullRequestFor);
+          return { data: pullListResponse ? pullListResponse(request, pulls)
+            : pulls.slice((request.page - 1) * 100, request.page * 100) };
         },
-        get: async ({ pull_number }) => ({ data: {
-          ...pullRequestFor(tupleByNumber.get(String(pull_number))),
-          ...(pullOverrides[String(pull_number)] ?? {}),
-        } }),
-        listFiles: async () => ({ data: [{ filename: "services/example/src/Main.java" }] }),
+        get: async (request) => {
+          recordApiRequest("pulls.get", request);
+          const {pull_number} = request;
+          const number = String(pull_number);
+          const reads = (pullReads.get(number) ?? 0) + 1;
+          pullReads.set(number, reads);
+          const pullGetFailure = typeof pullGetFailures[number] === "function"
+            ? pullGetFailures[number](reads)
+            : pullGetFailures[number];
+          if (pullGetFailure) {
+            throw Object.assign(new Error("fixture initial pull request lookup failed"), {status: pullGetFailure});
+          }
+          const override = pullOverrides[number];
+          return { data: {
+            ...pullRequestFor(tupleByNumber.get(number)),
+            ...(typeof override === "function" ? override(reads) : override ?? {}),
+          } };
+        },
+        listFiles: async (request) => {
+          recordApiRequest("pulls.listFiles", request);
+          const {pull_number} = request;
+          if (String(pull_number) === filesFailurePr) throw new Error("fixture changed-files lookup failed");
+          const files = filesByPr[String(pull_number)] ?? [{ filename: "services/example/src/Main.java" }];
+          return { data: files.slice((request.page - 1) * 100, request.page * 100) };
+        },
       },
       repos: {
-        getCommit: async ({ ref }) => {
+        getCommit: async (request) => {
+          recordApiRequest("repos.getCommit", request);
+          const {ref} = request;
+          const reads = (mergeReads.get(ref) ?? 0) + 1;
+          mergeReads.set(ref, reads);
+          if (mergeReadFailures[ref]?.(reads)) {
+            throw Object.assign(new Error("fixture exact merge commit lookup failed"), {status: 502});
+          }
           const tuple = allTuples.find((candidate) => candidate.mergeSha === ref);
           return { data: { sha: ref, parents: (mergeParents[ref] ?? [tuple.baseSha, tuple.headSha])
             .map((parent) => ({ sha: parent })) } };
         },
-        createDispatchEvent: async (request) => { dispatches.push(request); },
+        createDispatchEvent: async (request) => {
+          recordApiRequest("repos.createDispatchEvent", request, true);
+          dispatches.push(request);
+          if (request.event_type === "preview-deploy" && request.client_payload.pr_number === previewFailurePr) {
+            throw new Error("ambiguous preview POST timeout");
+          }
+          const ambiguousRuntimePost = request.event_type === "pr-runtime-base-refresh-request" &&
+            request.client_payload.pr_number === postFailurePr;
+          if (request.event_type === "pr-runtime-base-refresh-request" && !hideDispatchVisibility && !admissionFails &&
+              (!ambiguousRuntimePost || postFailureVisible)) {
+            const payload = request.client_payload;
+            postedRuns.push(producer({
+              prNumber: payload.pr_number, baseSha: payload.base_sha,
+              headSha: payload.head_sha, mergeSha: payload.merge_sha,
+            }, "repository_dispatch", "queued", null, {
+              id: 900000 + postedRuns.length,
+              created_at: new FakeDate(fakeNow + 1000).toISOString(),
+            }));
+          }
+          if (ambiguousRuntimePost) {
+            const error = new Error(postFailureStatus ? "fixture HTTP rejection" : "ambiguous POST timeout");
+            if (postFailureStatus) Object.assign(error, {status: postFailureStatus, response: {status: postFailureStatus}});
+            throw error;
+          }
+          if (request.event_type === "preview-deploy" && request.client_payload.pr_number === fanoutCutoffAfterPreviewPr) {
+            fakeNow += 12 * 60 * 1000;
+          }
+          if (request.event_type === "preview-deploy" && afterPreviewDispatch) afterPreviewDispatch(request);
+        },
       },
       actions: {
-        getWorkflow: async () => ({ data: {
-          id: ciRun.workflow_id, path: ".github/workflows/ci.yml", name: "CI — Validation", ...(ciEvidence.workflow ?? {}),
-        } }),
-        getWorkflowRun: async () => {
+        getWorkflow: async (request) => {
+          recordApiRequest("actions.getWorkflow", request);
+          const {workflow_id} = request;
+          if (workflow_id === "publish-pr-runtime-images.yml") return {data: {id: 702, path: ".github/workflows/publish-pr-runtime-images.yml", name: "Publish PR Runtime Images"}};
+          if (workflow_id === "runtime-images.yml") {
+            runtimeWorkflowLookupCount += 1;
+            const failure = runtimeWorkflowLookupFailures[runtimeWorkflowLookupCount - 1];
+            if (failure) throw Object.assign(new Error("fixture producer workflow lookup failed"),
+              typeof failure === "number" ? {status: failure} : failure);
+            return {data: {id: 701, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}};
+          }
+          return {data: {id: ciRun.workflow_id, path: ".github/workflows/ci.yml", name: "CI — Validation", ...(ciEvidence.workflow ?? {})}};
+        },
+        getWorkflowRun: async (request) => {
+          recordApiRequest("actions.getWorkflowRun", request);
+          if (request.run_id in (publication.additional ?? {})) {
+            const exactPublisher = publication.additional[request.run_id];
+            return {data: exactPublisher.latest ?? exactPublisher.run};
+          }
+          if (request.run_id === publication.run?.id) return {data: publication.latest ?? publication.run};
+          if (request.run_id !== ciRun.id) {
+            runtimeRunReads.push(request.run_id);
+            const reads = runtimeRunReads.filter(id => id === request.run_id).length;
+            const run = [...inventoriedRuntimeRuns(), observedNativeProducer].find(run => run?.id === request.run_id);
+            assert(run, "native runtime lookup must target an inventoried producer");
+            const override = runtimeRunOverrides[request.run_id];
+            return {data: {...run, ...(typeof override === "function" ? override(reads, run) : override ?? {})}};
+          }
           ciRunReads += 1;
           return { data: { ...ciRun, ...(ciEvidence.run ?? {}), ...(ciRunReads > 1 ? ciEvidence.latest ?? {} : {}) } };
         },
+        getWorkflowRunAttempt: async (request) => {
+          recordApiRequest("actions.getWorkflowRunAttempt", request);
+          const {request: requestOptions, ...normal} = request;
+          assert.deepEqual(normal, {owner: "owner", repo: "repo", run_id: request.run_id, attempt_number: request.attempt_number});
+          const run = inventoriedRuntimeRuns().find(run => run?.id === request.run_id);
+          assert(run, "native exact attempt must address an inventoried runtime producer");
+          assert.equal(request.attempt_number, run.run_attempt);
+          const attempt = Object.hasOwn(runtimeNativeAttempts, run.id) ? runtimeNativeAttempts[run.id] : run;
+          if (attempt instanceof Error) throw attempt;
+          return {data: attempt};
+        },
+        listJobsForWorkflowRunAttempt: async (request) => {
+          recordApiRequest("actions.listJobsForWorkflowRunAttempt", request);
+          if (request.run_id in (publication.additional ?? {})) {
+            const exactPublisher = publication.additional[request.run_id];
+            assert.equal(request.attempt_number, exactPublisher.run.run_attempt);
+            return {data: {total_count: exactPublisher.jobs.length, jobs: exactPublisher.jobs}};
+          }
+          if (request.run_id === publication.run?.id) {
+            assert.equal(request.attempt_number, publication.run.run_attempt);
+            const jobs = publication.jobs ?? [publication.job];
+            return {data: {total_count: jobs.length, jobs}};
+          }
+          if (request.run_id !== ciRun.id) {
+            const producer = inventoriedRuntimeRuns().find(run => run?.id === request.run_id);
+            assert(producer, "native job listing must address an inventoried producer");
+            assert.equal(request.attempt_number, producer.run_attempt, "native jobs must be read from the selected attempt");
+            const claimJobs = runtimeClaimJobs[producer.id] ?? (producer.event === "repository_dispatch" ? [{
+              id: producer.id + 1000000, run_id: producer.id, run_attempt: producer.run_attempt,
+              name: "Derive Runtime Image Metadata", head_sha: producer.head_sha, status: "completed", conclusion: "success",
+              steps: [{name: `Runtime refresh claim generation 1 attempt ${producer.run_attempt} tag ${sha("9")}`, status: "completed", conclusion: "success"}],
+            }] : []);
+            const proof = runtimeAttemptJobs[request.run_id] ?? {total_count: 0, jobs: []};
+            return {data: {total_count: proof.total_count + claimJobs.length, jobs: [...proof.jobs, ...claimJobs]}};
+          }
+          ciJobRequests.push(request);
+          const jobs = ciEvidence.jobs ?? [ciGate];
+          return {data: ciEvidence.jobPage ? ciEvidence.jobPage(request, jobs) : {
+            total_count: jobs.length,
+            jobs: jobs.slice((request.page - 1) * 100, request.page * 100),
+          }};
+        },
+        listWorkflowRunArtifacts: async (request) => {
+          recordApiRequest("actions.listWorkflowRunArtifacts", request);
+          assert.equal(request.run_id, publication.artifact?.workflow_run.id);
+          assert.equal(request.name, publication.artifact.name);
+          return {data: {total_count: 1, artifacts: [publication.artifact]}};
+        },
         listWorkflowRuns: async (request) => {
+          recordApiRequest("actions.listWorkflowRuns", request);
+          if (request.workflow_id === 702) {
+            const workflow_runs = (publication.inventory ?? [publication.run])
+              .filter(run => request.event === undefined || run?.event === request.event);
+            return {data: {total_count: publication.totalCount ?? workflow_runs.length, workflow_runs}};
+          }
           inventoryCalls.push(request);
-          if (apiFailure === request.event) throw new Error("fixture API unavailable");
-          const callNumber = (eventInventoryCalls.get(request.event) ?? 0) + 1;
-          eventInventoryCalls.set(request.event, callNumber);
+          observationPostCounts.push(dispatches.filter(item => item.event_type === "pr-runtime-base-refresh-request").length);
+          if (visibilityResponse && request.event === "repository_dispatch" && request.created === "2026-01-08T00:00:00.000Z..*") {
+            const response = visibilityResponse(request, postedRuns);
+            if (response) return {data: response};
+          }
+          if (apiFailure === request.event || (typeof apiFailure === "function" && apiFailure(request, inventoryCalls.length))) {
+            throw new Error("fixture API unavailable");
+          }
           const inventory = inventories[request.event] ?? [];
           if (!Array.isArray(inventory) && inventory.malformed) {
             return { data: { malformed: true } };
           }
-          const refinement = callNumber > 1 && !Array.isArray(inventory) && Array.isArray(inventory.refined);
-          const runs = Array.isArray(inventory)
+          const refinement = !Array.isArray(inventory) && Array.isArray(inventory.refined) &&
+            request.created === inventory.refinedCreated;
+          const suppliedRuns = Array.isArray(inventory)
             ? inventory
             : refinement ? inventory.refined : inventory.initial ?? inventory.runs ?? [];
+          const runs = [...suppliedRuns,
+            ...lateProducers.filter(run => run.event === request.event),
+            ...(request.event === "pull_request" && observedNativeProducer && dispatches.length > 0 &&
+              !suppliedRuns.some(run => run.id === observedNativeProducer.id) ? [observedNativeProducer] : []),
+            ...(request.event === "repository_dispatch" ? postedRuns : [])];
           const createdMatch = /^(.+)\.\.\*$/.exec(request.created ?? "");
           const createdFloor = createdMatch ? Date.parse(createdMatch[1]) : Number.NaN;
           const filteredRuns = Number.isFinite(createdFloor)
@@ -1018,20 +1223,34 @@ async function runDispatcher({
             ? filteredRuns.length
             : refinement
               ? inventory.refinedTotalCount ?? filteredRuns.length
-              : inventory.initialTotalCount ?? inventory.total_count ?? filteredRuns.length;
-          return { data: { total_count: filteredTotalCount, workflow_runs: filteredRuns.slice((request.page - 1) * 100, request.page * 100) } };
+              : inventory.initialPageTotals?.[request.page] ?? inventory.initialTotalCount ?? inventory.total_count ?? filteredRuns.length;
+          const response = { data: { total_count: filteredTotalCount, workflow_runs: filteredRuns.slice((request.page - 1) * 100, request.page * 100) } };
+          const broadRuntimeInventoryCalls = inventoryCalls.filter(call =>
+            call.created !== "2026-01-08T00:00:00.000Z..*"
+          ).length;
+          if (lateProducer && !lateProducerAdded && broadRuntimeInventoryCalls === 1) {
+            lateProducerAdded = true;
+            lateProducers.push(lateProducer);
+          }
+          if (fanoutCutoffAfterInventory && request.event === "repository_dispatch") {
+            fakeNow += 12 * 60 * 1000;
+          }
+          return response;
         },
       },
     },
-    paginate: async (endpoint, request, map) => {
-      if (typeof endpoint === "string") {
-        assert.equal(endpoint, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
-        ciJobRequests.push(request);
-        return ciEvidence.jobs ?? [ciGate];
-      }
-      return map(await endpoint(request));
-    },
   };
+  // Expected fail-closed results must come from production classification, not
+  // from request assertions swallowed by its conservative evidence catches.
+  for (const namespace of Object.values(github.rest)) {
+    for (const [name, method] of Object.entries(namespace)) namespace[name] = async (...args) => {
+      try { return await method(...args); }
+      catch (error) {
+        if (error.code === "ERR_ASSERTION") mockFailures.push(error.message);
+        throw error;
+      }
+    };
+  }
   const context = {
     repo: { owner: "owner", repo: "repo" },
     payload: {
@@ -1041,21 +1260,72 @@ async function runDispatcher({
   };
   const originalDateNow = Date.now;
   const originalSetTimeout = global.setTimeout;
-  global.setTimeout = (resolve) => { resolve(); };
-  Date.now = () => Date.parse("2026-01-08T00:00:00Z");
+  const FakeDate = class extends Date {
+    constructor(...args) { super(...(args.length ? args : [fakeNow])); }
+    static now() { return fakeNow; }
+  };
+  const DeadlineAbortSignal = {
+    timeout(milliseconds) {
+      assert(Number.isSafeInteger(milliseconds) && milliseconds > 0, "AbortSignal.timeout must receive positive remaining wall time");
+      const signal = {
+        timeoutMs: milliseconds,
+        deadline: fakeNow + milliseconds,
+        get aborted() { return fakeNow >= this.deadline; },
+      };
+      deadlineSignals.push(signal);
+      return signal;
+    },
+  };
+  global.setTimeout = (resolve, millis) => {
+    timerPostCounts.push(dispatches.filter(item => item.event_type === "pr-runtime-base-refresh-request").length);
+    timerDelays.push(millis);
+    waitedMillis += millis;
+    fakeNow += millis;
+    resolve();
+  };
+  Date.now = () => fakeNow;
+  let fatalError = null;
   try {
-    await new AsyncFunction("github", "context", "core", dispatcherScript)(github, context, core);
+    await new AsyncFunction("github", "context", "core", "Date", "AbortSignal", "setTimeout", dispatcherScript)(
+      github, context, core, FakeDate, DeadlineAbortSignal, global.setTimeout,
+    );
+  } catch (error) {
+    if (!expireAfterFirstApiRequest) throw error;
+    fatalError = error;
   } finally {
     Date.now = originalDateNow;
     global.setTimeout = originalSetTimeout;
   }
-  return { dispatches, errors, infos, warnings, inventoryCalls, ciJobRequests, pullListRequests, refRequests };
+  assert.deepEqual(mockFailures, [], "mock contract assertion failures never count as production refusals");
+  return { dispatches, errors, infos, warnings, inventoryCalls, observationPostCounts, timerPostCounts, waitedMillis,
+    ciJobRequests, pullListRequests, pullReads, refRequests, deadlineSignals, apiRequestRecords,
+    runtimeWorkflowLookupCount, runtimeRunReads, timerDelays, fatalError };
 }
 
 (async () => {
   const tuple = tupleFor(101, "a", "c");
-  const runtimeDispatches = (result) => result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh");
+  const runtimeDispatches = (result) => result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request");
   const previewDispatches = (result) => result.dispatches.filter((item) => item.event_type === "preview-deploy");
+  const assertRequestContracts = (result) => {
+    assert.equal(result.fatalError, null, "the mocked dispatcher must complete unless a deadline-abort fixture is selected");
+    assert.equal(new Set(result.apiRequestRecords.map(({options}) => options.request.signal)).size,
+      result.apiRequestRecords.length, "every direct API request must receive a fresh deadline signal");
+    for (const {name, options, issuedAt} of result.apiRequestRecords) {
+      const request = options.request;
+      const oneShot = name === "repos.createDispatchEvent";
+      assert.deepEqual(Object.keys(request).sort(), oneShot ? ["retries", "signal"] : ["signal"],
+        `${name} must retain its exact request-options shape`);
+      assert(oneShot ? request.retries === 0 : !Object.hasOwn(request, "retries"),
+        `${name} must be one-shot only for dispatch POSTs`);
+      assert(result.deadlineSignals.includes(request.signal), `${name} must use a source-derived AbortSignal timeout`);
+      assert(Number.isSafeInteger(request.signal.timeoutMs) && request.signal.timeoutMs > 0,
+        `${name} must receive a positive remaining wall-clock deadline`);
+      assert.equal(request.signal.timeoutMs, request.signal.deadline - issuedAt,
+        `${name} must refresh its timeout at the actual page request boundary`);
+      assert.equal(result.apiRequestRecords.find((call) => call.name === name && call.options === options).abortedAtIssue,
+        false, `${name} must not issue a request with an already-expired signal`);
+    }
+  };
   const source = { ...tuple, headRef: "feature/parent" };
   const child = { ...tupleFor(102, "d", "e", source.headSha), baseRef: source.headRef };
   const prCallback = { event: "pull_request", head_branch: source.headRef, head_sha: source.headSha };
@@ -1067,11 +1337,104 @@ async function runDispatcher({
     const payload = runtimeDispatches(reconcile).find((item) => item.client_payload.pr_number === candidate.prNumber).client_payload;
     assert.deepEqual(payload, {
       pr_number: candidate.prNumber, base_ref: candidate.baseRef, base_sha: candidate.baseSha,
-      head_sha: candidate.headSha, merge_sha: candidate.mergeSha,
+      head_sha: candidate.headSha, merge_sha: candidate.mergeSha, require_typed_proof: true,
     }, "CI callback may dispatch only the independently verified exact source or dependent tuple");
   }
-  assert.deepEqual(reconcile.ciJobRequests, [{ owner: "owner", repo: "repo", run_id: 7001, attempt_number: 1, per_page: 100 }],
-    "PR callbacks require exact current native CI attempt jobs");
+  assert.equal(reconcile.ciJobRequests.length, 1, "PR callbacks require one exact current native CI attempt jobs request");
+  const {request: ciJobRequestOptions, ...ciJobRequest} = reconcile.ciJobRequests[0];
+  assert.deepEqual(ciJobRequest, { owner: "owner", repo: "repo", run_id: 7001, attempt_number: 1, per_page: 100, page: 1 },
+    "PR callbacks require the exact current native CI attempt jobs request shape");
+  assert.deepEqual(Object.keys(ciJobRequestOptions).sort(), ["signal"], "CI job listing carries only its AbortSignal request option");
+  assert.equal(reconcile.deadlineSignals[0].timeoutMs, 12 * 60 * 1000, "the first fan-out API call receives the full wall-clock budget");
+  assertRequestContracts(reconcile);
+  const ciPath = ".github/workflows/ci.yml";
+  for (const [callbackPath, apiPath] of [[ciPath, `${ciPath}@refs/pull/101/merge`],
+    [`${ciPath}@refs/pull/101/merge`, ciPath]]) {
+    const equivalent = await runDispatcher({tuples: [child], sourceTuples: [source],
+      callback: {...prCallback, path: callbackPath}, ciEvidence: {run: {path: apiPath}}});
+    assert.deepEqual(runtimeDispatches(equivalent).map(item => item.client_payload.pr_number).sort(),
+      [source.prNumber, child.prNumber].sort(), "native CI callback/API paths may differ only by this exact PR's merge ref");
+    assert.deepEqual(equivalent.errors, []);
+  }
+  for (const suffix of ["refs/pull/102/merge", "refs/pull/0101/merge", "refs/pull/101/head", "refs/heads/develop"]) {
+    const drift = await runDispatcher({tuples: [child], sourceTuples: [source], callback: prCallback,
+      ciEvidence: {run: {path: `${ciPath}@${suffix}`}}});
+    assert.deepEqual(drift.dispatches, [], "another PR/ref cannot use native path equivalence");
+    assert(drift.warnings.some(message => message.includes("identity differs from callback")));
+  }
+  const pagedFiles = [...Array.from({length: 100}, (_, index) => ({filename: `docs/page-${index}.md`})),
+    {filename: "services/example/src/Main.java"}];
+  const pagedCiJobs = (request, jobs) => {
+    const completeJobs = [...Array.from({length: 100}, (_, index) => ({id: 8100 + index, name: "Other job"})), ...jobs];
+    return {total_count: completeJobs.length, jobs: completeJobs.slice((request.page - 1) * 100, request.page * 100)};
+  };
+  const pagedFanout = await runDispatcher({
+    tuples: [child], sourceTuples: [source], callback: prCallback, apiRequestMillis: 25,
+    pullListResponse: (request, pulls) => [
+      ...Array.from({length: 100}, (_, index) => ({number: 2000 + index, state: "closed"})), ...pulls,
+    ].slice((request.page - 1) * 100, request.page * 100),
+    filesByPr: {[source.prNumber]: pagedFiles},
+    pullOverrides: {[source.prNumber]: {changed_files: pagedFiles.length}},
+    ciEvidence: {jobPage: pagedCiJobs},
+  });
+  assert.deepEqual(runtimeDispatches(pagedFanout).map(item => item.client_payload.pr_number).sort(),
+    [source.prNumber, child.prNumber].sort(), "page-two source, dependent, CI gate and runtime file evidence must all be retained");
+  assert.deepEqual(pagedFanout.errors, []);
+  const assertFanoutPages = (requests, expectedScope) => {
+    assert.deepEqual(requests.map(({request, ...scope}) => scope), [1, 2].map(page => ({
+      owner: "owner", repo: "repo", ...expectedScope, per_page: 100, page,
+    })), "direct page requests must preserve their exact API scope");
+    assert(requests[1].request.signal.timeoutMs < requests[0].request.signal.timeoutMs,
+      "later pages must receive only the remaining fan-out budget, not a reused timeout");
+    assert.equal(requests[0].request.signal.deadline, requests[1].request.signal.deadline,
+      "pagination cannot extend the shared fan-out deadline");
+  };
+  assertFanoutPages(pagedFanout.ciJobRequests, {run_id: 7001, attempt_number: 1});
+  assertFanoutPages(pagedFanout.pullListRequests.filter(request => request.base), {state: "open", base: source.headRef});
+  assertFanoutPages(pagedFanout.pullListRequests.filter(request => request.head), {state: "open", head: `owner:${source.headRef}`});
+  assertFanoutPages(pagedFanout.apiRequestRecords.filter(({name, options}) =>
+    name === "pulls.listFiles" && String(options.pull_number) === source.prNumber).map(({options}) => options),
+  {pull_number: Number(source.prNumber)});
+  assertRequestContracts(pagedFanout);
+  // Model both windows independently of AbortSignal.timeout and of one another.
+  const fanoutStart = Date.parse("2026-01-08T00:00:00Z");
+  const lastPost = pagedFanout.apiRequestRecords.findLastIndex(({name}) => name === "repos.createDispatchEvent");
+  assert(lastPost >= 0 && lastPost < pagedFanout.apiRequestRecords.length - 1,
+    "exercise both fan-out and post-dispatch visibility requests");
+  const visibilityStart = pagedFanout.apiRequestRecords[lastPost].issuedAt + 25;
+  for (const [index, {name, options, issuedAt}] of pagedFanout.apiRequestRecords.entries()) {
+    const phaseDeadline = index <= lastPost ? fanoutStart + 12 * 60 * 1000 : visibilityStart + 120000;
+    assert.equal(options.request.signal.timeoutMs, phaseDeadline - issuedAt,
+      `${name} must use the remaining budget of its independently modeled phase`);
+  }
+  const samePageBoundary = await runDispatcher({
+    tuples: [tuple, tupleFor(102, "d", "e")],
+    pullListResponse: (request, pulls) => request.page === 1
+      ? [...Array.from({length: 99}, () => ({state: "closed"})), pulls[0]]
+      : pulls,
+  });
+  assert.deepEqual(runtimeDispatches(samePageBoundary).map(item => item.client_payload.pr_number).sort(),
+    ["101", "102"], "a duplicated page boundary must not dispatch one exact tuple twice");
+  assert.deepEqual(samePageBoundary.errors, []);
+  for (const jobPage of [
+    () => ({total_count: 1, jobs: []}),
+    () => ({total_count: 1, jobs: {}}),
+    (request, jobs) => request.page === 1 ? pagedCiJobs(request, jobs)
+      : {total_count: 102, jobs: [jobs[0], {id: 9999, name: "Other job"}]},
+  ]) {
+    await assert.rejects(runDispatcher({tuples: [child], sourceTuples: [source], callback: prCallback,
+      ciEvidence: {jobPage}}), /Exact source CI attempt job inventory is incomplete or inconsistent/,
+    "short, malformed or shifted exact-attempt job pages cannot authorize dispatch");
+  }
+  const cutoffJobPages = [];
+  await assert.rejects(runDispatcher({
+    tuples: [child], sourceTuples: [source], callback: prCallback, apiRequestMillis: 4 * 60 * 1000,
+    ciEvidence: {jobPage: (request, jobs) => {
+      cutoffJobPages.push(request.page);
+      return pagedCiJobs(request, jobs);
+    }},
+  }), /Runtime fan-out deadline reached; request not issued/);
+  assert.deepEqual(cutoffJobPages, [1], "a completed first page at the cutoff must not issue page two or reach a handoff");
   for (const branch of ["main", "develop", "feature/parent"]) {
     const branchSource = { ...source, headRef: branch, baseRef: branch === "develop" ? "main" : "develop" };
     const dependent = { ...child, baseRef: branch };
@@ -1209,27 +1572,32 @@ async function runDispatcher({
       tuples: [tuple],
       inventories: { [event]: [producer(tuple, event, status)] },
     });
-    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
-      `${event} ${status} exact producer must suppress duplicate runtime dispatch`);
+    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, event === "repository_dispatch" ? 0 : 1,
+      `${event} ${status} must satisfy only its matching producer proof policy`);
     assert.equal(result.dispatches.filter((item) => item.event_type === "preview-deploy").length, 1,
       "runtime deduplication must retain preview reconciliation");
-    assert.equal(result.inventoryCalls.length, 2, "complete initial inventories require one query per event kind");
+    assert.equal(result.inventoryCalls.length, event === "repository_dispatch" ? 1 : 3,
+      "only typed producer inventory is authoritative for fan-out");
     assert(result.inventoryCalls.every((request) =>
       request.workflow_id === "runtime-images.yml" &&
       request.per_page === 100 &&
       request.page === 1 &&
       typeof request.created === "string" &&
       !Number.isNaN(Date.parse(request.created.replace(/\.\.\*$/, "")) )
-    ), "the shared inventory must query only one bounded recent page per event");
+    ), "each target inventory must query only one bounded recent page per event when complete");
   }
 
   for (const event of ["pull_request", "repository_dispatch"]) {
     const completedSuccess = await runDispatcher({
       tuples: [tuple],
+      callback: {updated_at: "2026-01-02T00:00:00Z"},
       inventories: { [event]: [producer(tuple, event, "completed", "success")] },
     });
-    assert.equal(completedSuccess.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-      `${event} completed source success must preserve recovery dispatch for missing or expired publication`);
+    assert.equal(runtimeDispatches(completedSuccess).length, event === "pull_request" ? 1 : 0,
+      `${event} completed success must retain its event-specific recovery policy without proof of expired, unpublished artifacts`);
+    assert.equal(previewDispatches(completedSuccess).length, 1,
+      "runtime recovery policy must preserve independent preview reconciliation");
+    assert.deepEqual(completedSuccess.errors, []);
   }
 
   for (const validRef of [
@@ -1240,96 +1608,98 @@ async function runDispatcher({
   ]) {
     const refSuffixedPath = await runDispatcher({
       tuples: [tuple],
-      inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
+      inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "in_progress", null, {
         path: `.github/workflows/runtime-images.yml@${validRef}`,
       })] },
     });
-    assert.equal(refSuffixedPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
+    assert.equal(refSuffixedPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
       `the exact owning workflow path with valid Git ref ${validRef} must remain eligible`);
   }
-  for (const invalidRef of ["@", "refs/heads/trailing.", "refs/heads/feature[/test"]) {
+  for (const invalidRef of ["@", "refs/heads/trailing.", "refs/heads/feature/.hidden", "refs/heads/feature[/test"]) {
     const invalidRefPath = await runDispatcher({
       tuples: [tuple],
-      inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
+      inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "in_progress", null, {
         path: `.github/workflows/runtime-images.yml@${invalidRef}`,
       })] },
     });
-    assert.equal(invalidRefPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-      `an invalid Git ref ${invalidRef} must not suppress the required dispatch`);
+    assert.equal(invalidRefPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
+      `an invalid Git ref ${invalidRef} must not authorize another dispatch`);
+    assert(invalidRefPath.errors.some(message => message.includes("no dispatch issued")),
+      "invalid ref must be explicit rejection, not successful reuse");
   }
   const wrongWorkflowPath = await runDispatcher({
     tuples: [tuple],
-    inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
+    inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "in_progress", null, {
       path: ".github/workflows/other.yml@refs/heads/develop",
     })] },
   });
-  assert.equal(wrongWorkflowPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-    "an unrelated workflow path must not suppress the required dispatch");
-  assert(wrongWorkflowPath.warnings.some((message) => message.includes("falling back to the required refresh dispatch")),
-    "an exact-tuple producer with an unrelated workflow path must emit a fallback warning");
+  assert.equal(wrongWorkflowPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
+    "an unrelated workflow path must fail closed");
+  assert(wrongWorkflowPath.errors.some((message) => message.includes("no dispatch issued")),
+    "an exact-tuple producer with an unrelated workflow path must emit an error");
 
   for (const [status, conclusion] of [
-    ["completed", "failure"],
     ["completed", "cancelled"],
+    ["completed", "timed_out"],
   ]) {
     const result = await runDispatcher({
       tuples: [tuple],
-      inventories: { pull_request: [producer(tuple, "pull_request", status, conclusion)] },
+      inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", status, conclusion)] },
     });
-    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
       `${conclusion} producer must allow an exact-tuple retry`);
   }
 
   const orderedProducerInventory = async (older, newer, newerConclusion = null) => runDispatcher({
     tuples: [tuple],
-    inventories: { pull_request: [
-      producer(tuple, "pull_request", older[0], older[1], {
+    inventories: { repository_dispatch: [
+      producer(tuple, "repository_dispatch", older[0], older[1], {
         id: 10101,
         created_at: "2026-01-01T00:00:00Z",
       }),
-      producer(tuple, "pull_request", newer[0], newerConclusion, {
+      producer(tuple, "repository_dispatch", newer[0], newerConclusion, {
         id: 10102,
         created_at: "2026-01-02T00:00:00Z",
       }),
     ] },
   });
-  for (const conclusion of ["failure", "cancelled"]) {
+  for (const conclusion of ["timed_out", "cancelled"]) {
     const newestFailure = await orderedProducerInventory(
       ["completed", "success"], ["completed", conclusion], conclusion
     );
-    assert.equal(newestFailure.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-      `newer ${conclusion} producer must allow refresh despite an older success`);
+    assert.equal(newestFailure.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
+      `newer ${conclusion} producer cannot erase a still-unclassified older typed success`);
   }
   for (const [olderStatus, olderConclusion, newestStatus, newestConclusion, suppress] of [
     ["completed", "failure", "in_progress", null, true],
     ["completed", "success", "in_progress", null, true],
-    ["completed", "failure", "completed", "success", false],
+    ["completed", "failure", "completed", "success", true],
   ]) {
     const newestUsable = await orderedProducerInventory(
       [olderStatus, olderConclusion], [newestStatus, newestConclusion], newestConclusion
     );
-    assert.equal(newestUsable.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length,
+    assert.equal(newestUsable.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length,
       suppress ? 0 : 1,
       `newer ${newestStatus}/${newestConclusion} producer must determine whether runtime recovery dispatches`);
   }
   const ambiguousNewest = await runDispatcher({
     tuples: [tuple],
-    inventories: { pull_request: [
-      producer(tuple, "pull_request", "completed", "success", { id: 10103 }),
-      producer(tuple, "pull_request", "completed", "failure", { id: 10104 }),
+    inventories: { repository_dispatch: [
+      producer(tuple, "repository_dispatch", "completed", "success", { id: 10103 }),
+      producer(tuple, "repository_dispatch", "completed", "failure", { id: 10104 }),
     ] },
   });
-  assert.equal(ambiguousNewest.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-    "ambiguous equal-time exact producers must fall back to the required refresh dispatch");
-  assert(ambiguousNewest.warnings.some((message) => message.includes("ambiguous created_at timestamp")),
-    "ambiguous producer ordering must emit an explicit fallback diagnostic");
+  assert.equal(ambiguousNewest.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 0,
+    "ambiguous equal-time exact producers must fail closed");
+  assert(ambiguousNewest.errors.some((message) => message.includes("ambiguous created_at timestamp")),
+    "ambiguous producer ordering must emit an explicit error");
 
   const staleTuple = tupleFor(101, "a", "c", sha("d"));
   const stale = await runDispatcher({
     tuples: [tuple],
     inventories: { repository_dispatch: [producer(staleTuple, "repository_dispatch", "completed", "success")] },
   });
-  assert.equal(stale.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+  assert.equal(stale.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
     "stale base tuple must not suppress a current runtime refresh");
 
   const changedBaseTuple = tupleFor(101, "a", "c", sha("e"));
@@ -1337,218 +1707,865 @@ async function runDispatcher({
     tuples: [changedBaseTuple],
     inventories: { pull_request: [producer(tuple, "pull_request", "completed", "success")] },
   });
-  assert.equal(changedBase.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
+  assert.equal(changedBase.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request").length, 1,
     "a changed base requires a fresh exact tuple producer");
 
   const sibling = tupleFor(102, "f", "d");
-  const independent = await runDispatcher({
+  const numbers = (result) => runtimeDispatches(result).map(item => item.client_payload.pr_number);
+  const existingFirst = await runDispatcher({
     tuples: [tuple, sibling],
-    inventories: {
-      pull_request: [null, { id: "malformed-unrelated-record", display_title: "historical unrelated record" },
-        producer(tuple, "pull_request", "in_progress")],
-      repository_dispatch: [],
+    inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "in_progress")] },
+  });
+  assert.deepEqual(numbers(existingFirst), ["102"], "existing first PR must not starve second");
+  assert.equal(existingFirst.errors.length, 0, existingFirst.errors.join("\n"));
+  for (const event of ["repository_dispatch"]) {
+    for (const [status, conclusion, earlierActive] of [
+      ["completed", "cancelled", false],
+      ["completed", "timed_out", false],
+      ["in_progress", null, false],
+      ["completed", "cancelled", true],
+    ]) {
+      const laterProducer = producer(sibling, event, "queued", null, {created_at: "2026-01-03T00:00:00Z"});
+      const inventories = {
+        repository_dispatch: [producer(tuple, "repository_dispatch", "in_progress")],
+      };
+      inventories[event].push(laterProducer);
+      if (earlierActive) inventories.repository_dispatch.push(producer(sibling, "repository_dispatch", "in_progress", null, {
+        id: 90204, created_at: "2026-01-02T00:00:00Z",
+      }));
+      let transitions = 0;
+      const changedBetweenTargets = await runDispatcher({
+        tuples: [tuple, sibling], inventories,
+        afterPreviewDispatch: request => {
+          if (request.client_payload.pr_number !== tuple.prNumber) return;
+          transitions += 1;
+          // Replace the REST row; do not mutate the earlier snapshot in place.
+          inventories[event] = inventories[event].map(run => run.id === laterProducer.id
+            ? {...run, status, conclusion} : run);
+        },
+      });
+      const needsRefresh = status === "completed" && !earlierActive;
+      assert.equal(transitions, 1, "the later producer changes only after the first target's preview handoff");
+      assert.deepEqual(numbers(changedBetweenTargets), needsRefresh ? [sibling.prNumber] : [],
+        `${event} ${status}/${conclusion} must use target-fresh evidence without duplicating an earlier active exact producer`);
+      assert.equal(changedBetweenTargets.inventoryCalls.filter(request =>
+        request.created !== "2026-01-08T00:00:00.000Z..*"
+      ).length, needsRefresh ? 3 : 2,
+      "each target gets typed inventory, with another full snapshot only before a required runtime POST");
+      assert.equal(previewDispatches(changedBetweenTargets).length, 2,
+        "fresh producer classification must retain independent preview reconciliation for both targets");
+      assert.deepEqual(changedBetweenTargets.errors, [], "fresh terminal or active producer evidence is classifiable");
+      assertRequestContracts(changedBetweenTargets);
+    }
+  }
+  const unavailableLaterInventories = {repository_dispatch: [
+    producer(tuple, "repository_dispatch", "in_progress"), producer(sibling, "repository_dispatch", "queued"),
+  ]};
+  const unavailableLaterInventory = await runDispatcher({
+    tuples: [tuple, sibling], inventories: unavailableLaterInventories,
+    afterPreviewDispatch: request => {
+      if (request.client_payload.pr_number === tuple.prNumber) unavailableLaterInventories.repository_dispatch = {malformed: true};
     },
   });
-  const independentRefreshNumbers = independent.dispatches
-    .filter((item) => item.event_type === "pr-runtime-base-refresh")
-    .map((item) => item.client_payload.pr_number)
-    .sort();
-  assert.deepEqual(independentRefreshNumbers, ["102"],
-    "unrelated malformed history must not block an independent sibling refresh or prevent reuse of the valid active producer");
-  assert.equal(independent.inventoryCalls.length, 2, "multiple PRs must reuse one shared inventory");
+  assert.deepEqual(numbers(unavailableLaterInventory), [], "unavailable target-fresh evidence cannot authorize a runtime POST");
+  assert(unavailableLaterInventory.errors.some(message =>
+    message.includes("Cannot verify exact runtime producer inventory for PR #102") && message.includes("inventory is malformed")),
+  "an earlier queued snapshot cannot hide a later target's unknown producer evidence");
+  assert.equal(previewDispatches(unavailableLaterInventory).length, 2,
+    "unavailable runtime inventory must not suppress independent preview reconciliation");
+  const initialTargetReadFailure = await runDispatcher({
+    tuples: [tuple, sibling], pullGetFailures: {"101": 502},
+  });
+  assert.deepEqual(numbers(initialTargetReadFailure), ["102"],
+    "a failed first pulls.get while resolving listed PR #101 must not prevent PR #102 from progressing");
+  assert.equal(initialTargetReadFailure.pullReads.get("101"), 1,
+    "the isolated failure is the initial native PR lookup for listed PR #101");
+  assert(initialTargetReadFailure.pullReads.get("102") > 0,
+    "later exact target discovery continues after the initial PR #101 read fails");
+  assert(initialTargetReadFailure.errors.some(message =>
+    message.includes("Cannot verify runtime target tuple for PR #101") && message.includes("no dispatch issued")),
+  "the unavailable PR #101 tuple remains an explicit failed target rather than silent success");
+  const lateSiblingProducer = producer(sibling, "repository_dispatch", "in_progress", null, {
+    id: 90202, created_at: "2026-01-03T00:00:00Z",
+  });
+  const refreshedAfterEarlierTarget = await runDispatcher({
+    tuples: [tuple, sibling],
+    inventories: {repository_dispatch: [producer(tuple, "repository_dispatch", "in_progress")]},
+    lateProducer: lateSiblingProducer,
+  });
+  assert.deepEqual(numbers(refreshedAfterEarlierTarget), [],
+    "a full fresh inventory for the second target must find a producer absent during the earlier target's decision");
+  assert.equal(refreshedAfterEarlierTarget.inventoryCalls.filter(request =>
+    request.created !== "2026-01-08T00:00:00.000Z..*"
+  ).length, 2, "typed inventory must be refreshed even when the earlier target reused an existing producer");
+  assert.equal(previewDispatches(refreshedAfterEarlierTarget).length, 2,
+    "the later target's producer discovery must not suppress independent preview reconciliation");
+  assert.equal(refreshedAfterEarlierTarget.errors.length, 0, refreshedAfterEarlierTarget.errors.join("\n"));
+  const lateNative = await runDispatcher({
+    tuples: [tuple],
+    lateProducer: producer(tuple, "pull_request", "in_progress", null, {
+      id: 90203, created_at: "2026-01-03T00:00:00Z",
+    }),
+  });
+  assert.deepEqual(numbers(lateNative), [tuple.prNumber],
+    "a newly visible native producer cannot supply the required typed proof");
+  assert.equal(previewDispatches(lateNative).length, 1,
+    "a newly visible runtime producer leaves independent preview reconciliation available");
+  assert.equal(lateNative.errors.length, 0, lateNative.errors.join("\n"));
+  const skippedFirst = await runDispatcher({
+    tuples: [tuple, sibling], filesByPr: { "101": [{ filename: "README.md" }] },
+  });
+  assert.deepEqual(numbers(skippedFirst), ["102"], "non-runtime first PR must not starve second");
+  const requestDeadlineAbort = await runDispatcher({tuples: [tuple], expireAfterFirstApiRequest: true});
+  assert.equal(requestDeadlineAbort.fatalError?.name, "TimeoutError",
+    "a request crossing its actual AbortSignal deadline must surface the mocked timeout");
+  assert.equal(requestDeadlineAbort.apiRequestRecords.length, 1,
+    "wall-clock expiry must stop further GitHub API requests");
+  assert.equal(requestDeadlineAbort.apiRequestRecords[0].name, "git.getRef");
+  assert.equal(requestDeadlineAbort.apiRequestRecords[0].options.request.signal.timeoutMs, 12 * 60 * 1000);
+  assert.equal(requestDeadlineAbort.apiRequestRecords[0].options.request.signal.aborted, true,
+    "the API mock observes the signal expiring as its wall clock advances to the deadline");
+  assert.equal(requestDeadlineAbort.dispatches.length, 0, "deadline abort must fail closed before any handoff");
+  const failedPost = await runDispatcher({ tuples: [tuple, sibling], postFailurePr: "101" });
+  assert.deepEqual(numbers(failedPost), ["101", "102"], "ambiguous first POST must not retry or starve second");
+  assert(failedPost.warnings.some(message => message.includes("ambiguous POST timeout")),
+    "transport uncertainty is a warning while strict visibility observation continues");
+  assert(!failedPost.errors.some(message => message.includes("ambiguous POST timeout")),
+    "an uncertain POST response alone must not fail a handoff that can still become visible");
+  assert.equal(failedPost.waitedMillis, 120000, "observe unknown handoff through the same bounded shared window");
+  assert(failedPost.errors.some(message => message.includes("attempted but visibility is unknown for PRs 101")));
+  const deniedPost = await runDispatcher({tuples: [tuple, sibling], postFailurePr: "101", postFailureStatus: 422});
+  assert.deepEqual(numbers(deniedPost), ["101", "102"]);
+  assert.equal(deniedPost.waitedMillis, 0, "a documented rejection must not extend the shared observation");
+  assert(deniedPost.errors.some(error => error.includes("POST rejected for PR #101")));
+  const observedAmbiguousPost = await runDispatcher({
+    tuples: [{...tuple, labels: [{name: "preview"}]}, sibling], postFailurePr: "101", postFailureVisible: true,
+  });
+  assert.deepEqual(numbers(observedAmbiguousPost), ["101", "102"], "visible ambiguous handoff must not retransmit");
+  assert(previewDispatches(observedAmbiguousPost).some(item => item.client_payload.pr_number === "101"));
+  assert(observedAmbiguousPost.infos.some(message => message.includes("became visible after an unknown POST response")));
+  assert(observedAmbiguousPost.warnings.some(message => message.includes("ambiguous POST timeout")),
+    "the unknown transport result remains visible as a warning");
+  assert.deepEqual(observedAmbiguousPost.errors, [],
+    "strict native visibility resolves an uncertain handoff without failing the job");
+  assert(!observedAmbiguousPost.errors.some(message => message.includes("visibility is unknown")));
+  const cutoffBeforePost = await runDispatcher({tuples: [tuple], fanoutCutoffAfterInventory: true});
+  assert.deepEqual(numbers(cutoffBeforePost), [], "the twelve-minute reservation cutoff prevents a new runtime POST");
+  assert(cutoffBeforePost.errors.some(message => message.includes("fan-out cutoff") &&
+    message.includes("during runtime tuple proof") && message.includes("#101 remain incomplete")),
+  `a necessary target stopped before its POST is explicitly reported incomplete: ${cutoffBeforePost.errors.join("; ")}`);
+  assertRequestContracts(cutoffBeforePost);
+  assert(cutoffBeforePost.apiRequestRecords.some(({name}) => name === "actions.listWorkflowRuns"),
+    "deadline fixture must issue and observe its bounded inventory request before cutoff");
+  assert(!cutoffBeforePost.apiRequestRecords.some(({name}) => name === "repos.createDispatchEvent"),
+    "an expired fan-out deadline must prevent the runtime POST from reaching the API mock");
+  const cutoffAtBoundary = await runDispatcher({
+    tuples: [{...tuple, labels: [{name: "preview:priority"}]}, sibling],
+    fanoutCutoffAfterPreviewPr: "101",
+  });
+  assert.deepEqual(numbers(cutoffAtBoundary), ["101"], "the cutoff stops subsequent runtime fan-out at the next target boundary");
+  assert.equal(previewDispatches(cutoffAtBoundary).filter(item => item.client_payload.pr_number === "101").length, 1,
+    "preview dispatch remains independent for the target processed before cutoff");
+  assert(cutoffAtBoundary.errors.some(message => message.includes("fan-out cutoff") &&
+    message.includes("at a target boundary") && message.includes("#102 remain incomplete")));
+  assert(cutoffAtBoundary.inventoryCalls.some((request, index) =>
+    request.created === "2026-01-08T00:00:00.000Z..*" && cutoffAtBoundary.observationPostCounts[index] === 1),
+  "runtime handoffs sent before cutoff are still observed");
+  assert(!cutoffAtBoundary.errors.some(message => message.includes("visibility is unknown")));
+  const transientFirst = await runDispatcher({
+    tuples: [tuple, sibling], apiFailure: (_request, count) => count === 1,
+  });
+  assert.deepEqual(numbers(transientFirst), ["102"], "transient inventory error for first PR must not poison later independent targets");
+  assert(transientFirst.errors.some(message => message.includes("PR #101") && message.includes("no dispatch issued")));
+  const changedFirst = await runDispatcher({
+    tuples: [tuple, sibling],
+    pullOverrides: { "101": reads => reads > 1 ? { state: "closed" } : {} },
+  });
+  assert.deepEqual(numbers(changedFirst), ["102"], "changed first PR must not starve second");
+  assert(changedFirst.infos.some(message => message.includes("Skipping unverified runtime tuple for PR #101")));
+  assert(!previewDispatches(changedFirst).some(item => item.client_payload.pr_number === "101"),
+    "independent preview proof must still exclude a now-closed PR");
+  const vanishedBase = await runDispatcher({
+    tuples: [tuple, sibling], branchErrors: {"heads/develop": count => count === 2 ? 404 : null},
+  });
+  assert.deepEqual(numbers(vanishedBase), ["102"], "base disappearing at first target must not abort later targets");
+  assert(vanishedBase.errors.some(message => message.includes("Cannot read current base for PR #101")));
+  const unknownFirst = await runDispatcher({
+    tuples: [tuple, sibling],
+    inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "in_progress", null, {
+      repository: { full_name: "other/repo" },
+    })] },
+  });
+  assert.deepEqual(numbers(unknownFirst), ["102"], "invalid first PR evidence must not starve second");
+  assert(unknownFirst.errors.some(message => message.includes("PR #101") && message.includes("no dispatch issued")));
 
-  const partialSibling = tupleFor(103, "7", "8");
-  const recentRuns = runsDescending("pull_request", "2026-01-02T00:00:00Z");
-  recentRuns[0] = producer(tuple, "pull_request", "in_progress", null, {
+  const secondPageRuns = runsDescending("repository_dispatch", "2026-01-02T00:00:00Z");
+  secondPageRuns.push(producer(tuple, "repository_dispatch", "in_progress"));
+  const secondPage = await runDispatcher({ tuples: [tuple], inventories: { repository_dispatch: {
+      initial: secondPageRuns, refined: [], refinedCreated: "2026-01-02T00:00:00Z..*",
+    } } });
+  assert.deepEqual(numbers(secondPage), [], "exact page-two producer must suppress duplicate");
+  assert.equal(secondPage.errors.length, 0, "page two at the original cutoff must not be treated as malformed refinement");
+  assert(secondPage.inventoryCalls.some(request => request.event === "repository_dispatch" && request.page === 2));
+  assert(secondPage.inventoryCalls.every(request => request.page <= 10));
+
+  const overBoundPage = runsDescending("repository_dispatch", "2026-01-02T00:00:00Z");
+  overBoundPage[0] = producer(tuple, "repository_dispatch", "in_progress", null, {
     created_at: "2026-01-02T00:00:00Z",
   });
-  const recentRefinedRuns = [producer(tuple, "pull_request", "in_progress", null, {
-    created_at: "2026-01-02T00:00:00Z",
-  })];
-  assertCompleteRefinementPreservesEligibleInitialRuns(recentRuns, "2026-01-02T00:00:00Z", recentRefinedRuns,
-    "truncated positive refinement");
-  const truncatedPositive = await runDispatcher({
-    tuples: [tuple, partialSibling],
-    inventories: {
-      pull_request: {
-        total_count: 101,
-        runs: recentRuns,
-        refined: recentRefinedRuns,
-        refinedTotalCount: 1,
-      },
-      repository_dispatch: [],
-    },
+  const refinedBound = await runDispatcher({
+    tuples: [tuple], callback: {updated_at: "2026-01-03T00:00:00Z"}, inventories: { repository_dispatch: {
+      total_count: 1001, runs: overBoundPage, refinedCreated: "2026-01-02T00:00:00Z..*", refined: [overBoundPage[0]], refinedTotalCount: 1,
+    } },
   });
-  const truncatedRefreshNumbers = truncatedPositive.dispatches
-    .filter((item) => item.event_type === "pr-runtime-base-refresh")
-    .map((item) => item.client_payload.pr_number)
-    .sort();
-  assert.deepEqual(truncatedRefreshNumbers, ["103"],
-    "complete refinement must prove the exact candidate while an unmatched sibling uses required dispatch");
-  assert.equal(truncatedPositive.inventoryCalls.length, 4,
-    "truncated inventory must use at most one cached refinement pair for all siblings");
-  assert(truncatedPositive.inventoryCalls.slice(2).every((request) =>
-    request.created === "2026-01-02T00:00:00Z..*"
-  ), "the refinement pair must use the inclusive exact lower bound of returned in-flight candidates");
+  assert.deepEqual(numbers(refinedBound), [], "complete bounded refinement retains exact in-flight producer");
+  assert.equal(refinedBound.errors.length, 0);
+  assert(refinedBound.inventoryCalls.some(request => request.created === "2026-01-02T00:00:00Z..*"));
 
-  const refinedSiblings = [tupleFor(107, "5", "6"), tupleFor(108, "7", "9")];
-  const siblingPage = runsDescending("pull_request", "2026-01-04T00:00:00Z");
-  siblingPage[0] = producer(refinedSiblings[0], "pull_request", "in_progress", null, {
-    created_at: "2026-01-04T00:00:00Z",
+  const unrelatedInflight = producer(sibling, "repository_dispatch", "in_progress", null, {created_at: "2026-01-02T00:00:00Z"});
+  const completedRefresh = producer(tuple, "repository_dispatch", "completed", "success", {
+    created_at: "2026-01-01T12:00:00Z",
+    run_started_at: "2026-01-01T12:01:00Z", updated_at: "2026-01-01T12:10:00Z",
   });
-  siblingPage[1] = producer(refinedSiblings[1], "pull_request", "queued", null, {
-    created_at: "2026-01-03T23:59:59Z",
-  });
-  assertCompleteRefinementPreservesEligibleInitialRuns(siblingPage, "2026-01-03T23:59:59Z", siblingPage.slice(0, 2),
-    "shared sibling refinement");
-  const refinedSiblingReuse = await runDispatcher({
-    tuples: refinedSiblings,
+  const successfulJob = {id: 73, name: "PR Full-Stack Smoke (runtime-required=true)",
+    workflow_name: completedRefresh.display_title, run_id: completedRefresh.id, run_attempt: completedRefresh.run_attempt,
+    head_sha: completedRefresh.head_sha, status: "completed", conclusion: "success",
+    started_at: "2026-01-01T12:02:00Z", completed_at: "2026-01-01T12:09:00Z", steps: [
+      ...["Run credential-free full-stack smoke", "Stop smoke stack", "Require successful runtime smoke and authenticated cleanup"]
+        .map(name => ({name, status: "completed", conclusion: "success"})),
+      {name: "Known canonical transition PLAY failure with successful authenticated cleanup", status: "completed", conclusion: "skipped"},
+    ]};
+  const successfulJobs = {[completedRefresh.id]: {total_count: 1, jobs: [successfulJob]}};
+  const foreignBaseClaim = {
+    id: completedRefresh.id + 1000000, run_id: completedRefresh.id, run_attempt: completedRefresh.run_attempt,
+    name: "Derive Runtime Image Metadata", head_sha: completedRefresh.head_sha, status: "completed", conclusion: "success",
+    steps: [{name: `Runtime refresh claim generation 1 attempt 1 tag ${sha("8")}`,
+      status: "completed", conclusion: "success"}],
+  };
+  for (const claimJobs of [[], [foreignBaseClaim]]) {
+    const unboundSuccess = await runDispatcher({tuples: [tuple], inventories: {repository_dispatch: [completedRefresh]},
+      runtimeAttemptJobs: successfulJobs, runtimeClaimJobs: {[completedRefresh.id]: claimJobs}});
+    assert.deepEqual(numbers(unboundSuccess), ["101"],
+      "an exact successful same-tip run cannot suppress a different or unproven base-ref claim");
+    assert.deepEqual(unboundSuccess.errors, []);
+  }
+  const refinedCompleted = await runDispatcher({
+    tuples: [tuple], callback: {updated_at: "2026-01-01T06:00:00Z"},
     inventories: {
-      pull_request: {
-        total_count: 101,
-        runs: siblingPage,
-        refined: siblingPage.slice(0, 2),
-        refinedTotalCount: 2,
-      },
-      repository_dispatch: [],
+      repository_dispatch: {total_count: 1001, runs: [unrelatedInflight, completedRefresh], refinedCreated: "2026-01-01T06:00:00Z..*",
+        refined: [unrelatedInflight, completedRefresh], refinedTotalCount: 2},
     },
+    runtimeAttemptJobs: successfulJobs,
   });
-  assert.equal(refinedSiblingReuse.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
-    "the shared refined inventory must cover each initially observed in-flight sibling");
-  assert.equal(refinedSiblingReuse.inventoryCalls.length, 4,
-    "all sibling decisions must reuse one refinement pair rather than scan per PR");
-  assert(refinedSiblingReuse.inventoryCalls.slice(2).every((request) =>
-    request.created === "2026-01-03T23:59:59Z..*"
-  ), "the shared sibling refinement must start at the earliest returned in-flight timestamp");
+  assert.deepEqual(numbers(refinedCompleted), [], "refinement must retain completed refresh between CI completion and sampled inflight floor");
+  assert(refinedCompleted.inventoryCalls.some(request => request.created === "2026-01-01T06:00:00Z..*"));
+  assert.deepEqual(refinedCompleted.errors, [], "refinement must reuse proof rather than fail closed");
+  assert(refinedCompleted.infos.some(message => message.includes(
+    `Skipping duplicate PR runtime refresh for #101: exact tuple producer ${completedRefresh.id} remains completed.`
+  )), "refinement must report reuse of the completed producer");
 
-  const truncatedRefinementTuple = tupleFor(109, "a", "e");
-  const truncatedRefinementPage = runsDescending("pull_request", "2026-01-05T00:03:00Z");
-  truncatedRefinementPage[0] = producer(truncatedRefinementTuple, "pull_request", "in_progress", null, {
-    created_at: "2026-01-05T00:00:00Z",
+  const narrowedAbsence = await runDispatcher({
+    tuples: [tuple], callback: {updated_at: "2026-01-03T00:00:00Z"},
+    inventories: {repository_dispatch: {total_count: 1001, runs: [unrelatedInflight], refinedCreated: "2026-01-02T00:00:00Z..*",
+      refined: [unrelatedInflight], refinedTotalCount: 1}},
   });
-  const truncatedRefinement = await runDispatcher({
-    tuples: [truncatedRefinementTuple],
-    inventories: {
-      pull_request: {
-        total_count: 101,
-        runs: truncatedRefinementPage,
-        refined: truncatedRefinementPage,
-        refinedTotalCount: 101,
-      },
-      repository_dispatch: [],
-    },
-  });
-  assert.equal(truncatedRefinement.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-    "a still-truncated refinement must use baseline dispatch");
-  assert(truncatedRefinement.warnings.some((message) => message.includes("falling back to the required refresh dispatch")),
-    "a truncated refinement must report its required-dispatch fallback");
-  assert.equal(truncatedRefinement.inventoryCalls.length, 4,
-    "a failed refinement must stop after the single bounded shared refinement pair");
+  assert.deepEqual(numbers(narrowedAbsence), [], "narrowed empty exact-producer slice cannot exclude older omitted producers");
+  assert(narrowedAbsence.errors.some(message => message.includes("truncated initial inventory")));
 
-  const completedTruncatedTuple = tupleFor(110, "b", "f");
-  const completedTruncatedPage = runsDescending("pull_request", "2026-01-06T00:00:00Z");
-  completedTruncatedPage[0] = producer(completedTruncatedTuple, "pull_request", "completed", "success", {
-    created_at: "2026-01-06T00:00:00Z",
-  });
-  const completedTruncated = await runDispatcher({
-    tuples: [completedTruncatedTuple],
-    inventories: {
-      pull_request: { total_count: 101, runs: completedTruncatedPage },
-      repository_dispatch: [],
-    },
-  });
-  assert.equal(completedTruncated.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-    "completed source results must preserve required recovery dispatch");
-  assert.equal(completedTruncated.inventoryCalls.length, 2,
-    "completed-only truncated inventories need no refinement because they never suppress dispatch");
-
-  const hiddenNewerFailureTuple = tupleFor(105, "1", "2");
-  const crossEventHiddenNewer = await runDispatcher({
-    tuples: [hiddenNewerFailureTuple],
-    inventories: {
-      pull_request: [producer(hiddenNewerFailureTuple, "pull_request", "in_progress", null, {
-        created_at: "2026-01-01T10:00:00Z",
-      })],
-      // The initial dispatch page omits this newer exact terminal producer; bounded refinement must reveal it.
-      repository_dispatch: {
-        total_count: 101,
-        runs: runsDescending("repository_dispatch", "2026-01-01T09:00:00Z"),
-        refined: [producer(hiddenNewerFailureTuple, "repository_dispatch", "completed", "failure", {
-          created_at: "2026-01-01T10:30:00Z",
-        })],
-        refinedTotalCount: 1,
-      },
-    },
-  });
-  assert.equal(crossEventHiddenNewer.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-    "refinement must reveal the newer cross-event terminal producer and preserve required dispatch");
-  assert.equal(crossEventHiddenNewer.inventoryCalls.length, 4,
-    "one refinement pair must cover both event types when another event could contain a newer terminal run");
-
-  const safeOlderOmittedTuple = tupleFor(106, "3", "4");
-  const safelyOlderOmitted = await runDispatcher({
-    tuples: [safeOlderOmittedTuple],
-    inventories: {
-      pull_request: [producer(safeOlderOmittedTuple, "pull_request", "in_progress", null, {
-        created_at: "2026-01-03T10:00:00Z",
-      })],
-      repository_dispatch: {
-        total_count: 101,
-        runs: runsDescending("repository_dispatch", "2026-01-02T10:00:00Z"),
-        refined: [],
-        refinedTotalCount: 0,
-      },
-    },
-  });
-  assert.equal(safelyOlderOmitted.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
-    "complete refinement from the candidate creation time proves apparently older omissions cannot mask it");
-  assert.equal(safelyOlderOmitted.inventoryCalls.length, 4,
-    "complete refinement must stay within the one additional shared pair");
-
-  const validSibling = tupleFor(104, "9", "0");
-  const relevantMalformed = await runDispatcher({
-    tuples: [tuple, validSibling],
-    inventories: {
-      pull_request: [
-        producer(tuple, "pull_request", "in_progress", null, { repository: { full_name: "other/repo" } }),
-        producer(validSibling, "pull_request", "in_progress"),
-      ],
-      repository_dispatch: [],
-    },
-  });
-  const relevantMalformedRefreshNumbers = relevantMalformed.dispatches
-    .filter((item) => item.event_type === "pr-runtime-base-refresh")
-    .map((item) => item.client_payload.pr_number)
-    .sort();
-  assert.deepEqual(relevantMalformedRefreshNumbers, ["101"],
-    "relevant malformed evidence must fall back for its own tuple while a valid active sibling producer remains reusable");
-
-  for (const uncertain of [
-    await runDispatcher({ tuples: [tuple], inventories: { pull_request: { total_count: 101, runs: [] } } }),
-    await runDispatcher({ tuples: [tuple], inventories: { pull_request: { total_count: 1, runs: [] } } }),
-    await runDispatcher({ tuples: [tuple], apiFailure: "pull_request" }),
-    await runDispatcher({ tuples: [tuple], inventories: { pull_request: { malformed: true } } }),
-    await runDispatcher({
-      tuples: [tuple],
-      inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
-        repository: { full_name: "other/repo" },
-      })] },
-    }),
-    await runDispatcher({
-      tuples: [tuple],
-      inventories: { pull_request: [producer(tuple, "pull_request", "completed", "success", {
-        created_at: "not-a-workflow-run-timestamp",
-      })] },
-    }),
+  for (const args of [
+    { inventories: { repository_dispatch: {
+      total_count: 1001, runs: overBoundPage, refinedCreated: "2026-01-02T00:00:00Z..*", refined: overBoundPage, refinedTotalCount: 1001,
+    } } },
+    { inventories: { repository_dispatch: {
+      total_count: 1001, runs: overBoundPage, refinedCreated: "2026-01-02T00:00:00Z..*", refined: [], refinedTotalCount: 0,
+    } } },
+    { inventories: { repository_dispatch: {
+      initial: secondPageRuns, initialPageTotals: {1: 101, 2: 102},
+    } } },
+    { inventories: { repository_dispatch: { total_count: 1000, runs: [] } } },
+    { inventories: { repository_dispatch: { total_count: 101, runs: [] } } },
+    { inventories: { repository_dispatch: { total_count: 1, runs: [] } } },
+    { apiFailure: "repository_dispatch" },
+    { inventories: { repository_dispatch: { malformed: true } } },
+    { inventories: { repository_dispatch: [null] } },
+    { inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "completed", "success", {
+      created_at: "not-a-workflow-run-timestamp",
+    })] } },
+    { inventories: { repository_dispatch: [producer(tuple, "repository_dispatch", "queued"), producer(tuple, "repository_dispatch", "queued")] } },
+    { inventories: { repository_dispatch: { total_count: 1001, runs: runsDescending("repository_dispatch", "2026-01-02T00:00:00Z") } } },
   ]) {
-    assert.equal(uncertain.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-      "incomplete, unavailable, or relevant malformed evidence must fall back to required dispatch");
-    assert.equal(uncertain.dispatches.filter((item) => item.event_type === "preview-deploy").length, 1,
-      "inventory uncertainty must not block independent preview reconciliation");
-    assert(uncertain.warnings.some((message) => message.includes("falling back to the required refresh dispatch")),
-      "inventory uncertainty must produce a concrete fallback diagnostic");
+    const uncertain = await runDispatcher({ tuples: [tuple], ...args });
+    assert.deepEqual(numbers(uncertain), [], "unknown inventory must never dispatch runtime work");
+    assert(uncertain.errors.some(message => message.includes("no dispatch issued")),
+      "unknown inventory must be an explicit error, not apparent success");
   }
 
+  for (const signalAt of ["2026-01-01T06:00:00Z", "2026-01-01T12:00:00.200Z", "2026-01-04T00:00:00Z"]) {
+    const result = await runDispatcher({
+      tuples: [tuple], callback: { updated_at: signalAt },
+      inventories: {repository_dispatch: [completedRefresh]}, runtimeAttemptJobs: successfulJobs,
+    });
+    assert.deepEqual(numbers(result), [], "a usable exact completed refresh suppresses a duplicate even if it completed before Validation");
+    assert.deepEqual(result.errors, []);
+    assert.deepEqual(result.runtimeRunReads, [completedRefresh.id, completedRefresh.id, completedRefresh.id],
+      "reuse verifies the same-base claim plus the final current source attempt");
+  }
+  const upload = {name: "Upload preview image artifact", status: "completed", conclusion: "success",
+    started_at: "2026-01-01T12:02:30Z", completed_at: "2026-01-01T12:02:40Z"};
+  const artifact = {id: 404, name: `pr-runtime-images-pr-merge-${tuple.mergeSha}`, expired: true,
+    workflow_run: {id: completedRefresh.id, head_sha: completedRefresh.head_sha},
+    digest: `sha256:${"b".repeat(64)}`, created_at: "2026-01-01T12:02:35Z"};
+  const publisher = {id: 991, workflow_id: 702, run_attempt: 1, name: "Publish PR Runtime Images",
+    path: ".github/workflows/publish-pr-runtime-images.yml", event: "repository_dispatch",
+    display_title: `Publish PR Runtime Images source-run-${completedRefresh.id} attempt-${completedRefresh.run_attempt}`,
+    head_branch: "develop", head_sha: sha("e"), status: "completed", conclusion: "failure",
+    created_at: "2026-01-01T12:12:00Z", repository: {full_name: repository}, head_repository: {full_name: repository}};
+  const noWrite = {name: "Publish fixed PR image tags", status: "completed", conclusion: "skipped"};
+  const publisherJob = {id: 992, run_id: publisher.id, run_attempt: 1, name: "Publish Fixed PR Merge Image Tags",
+    head_sha: publisher.head_sha, status: "completed", conclusion: "failure", steps: [noWrite]};
+  const expiredBeforeWrite = [
+    {...publisherJob, conclusion: "skipped", steps: []},
+    {...publisherJob, id: 993, name: "Resolve Exact Runtime Publication Source", steps: [
+      {name: "Resolve successful exact source run", status: "completed", conclusion: "success"},
+      {name: `Exact runtime artifact expired source-${completedRefresh.id}-${completedRefresh.run_attempt} artifact-${artifact.id} ${artifact.digest}`,
+        status: "completed", conclusion: "failure"},
+    ]},
+  ];
+  const callbackPublisher = {...publisher, id: 997, event: "workflow_run",
+    display_title: `Publish PR Runtime Images ${completedRefresh.display_title} source-run-${completedRefresh.id} attempt-${completedRefresh.run_attempt}`};
+  const callbackJob = {...publisherJob, id: 998, run_id: callbackPublisher.id};
+  for (const [disposition, overrides, expected] of [
+    ["expiry rejected by the exact resolver before any tag writer", {jobs: expiredBeforeWrite}, ["101"]],
+    ["resolver failure lacks a typed expiry marker", {jobs: [expiredBeforeWrite[0],
+      {...expiredBeforeWrite[1], steps: [{...expiredBeforeWrite[1].steps[0], conclusion: "failure"}]}]}, []],
+    ["rerun might follow an earlier tag write", {run: {...publisher, run_attempt: 2},
+      jobs: expiredBeforeWrite.map(job => ({...job, run_attempt: 2}))}, []],
+    ["proven expired artifact and pre-write failure", {}, ["101"]],
+    ["publisher may still be running", {run: {...publisher, status: "in_progress", conclusion: null}}, []],
+    ["publisher already succeeded", {run: {...publisher, conclusion: "success"}}, []],
+    ["publisher could have written some tags", {job: {...publisherJob, steps: [{...noWrite, conclusion: "failure"}]}}, []],
+    ["sole callback proves failure before writing tags", {run: callbackPublisher, job: callbackJob}, ["101"]],
+    ["sole callback may have written tags", {run: callbackPublisher,
+      job: {...callbackJob, steps: [{...noWrite, started_at: "2026-01-01T12:12:12Z"}]}}, []],
+    ["artifact is still retained", {artifact: {...artifact, expired: false}}, []],
+    ["artifact is from a different upload window", {artifact: {...artifact, created_at: "2026-01-01T11:58:00Z"}}, []],
+    ["two exact publishers cannot prove a unique pre-write failure", {inventory: [publisher, callbackPublisher],
+      additional: {[callbackPublisher.id]: {run: callbackPublisher, jobs: [callbackJob]}}}, []],
+    ["one wake path could have written tags", {inventory: [publisher, callbackPublisher],
+      additional: {[callbackPublisher.id]: {run: callbackPublisher,
+        jobs: [{...callbackJob, steps: [{...noWrite, started_at: "2026-01-01T12:12:12Z"}]}]}}}, []],
+    ["other exact publisher for the same wake exists", {inventory: [publisher, {...publisher, id: 999}]}, []],
+    ["publisher inventory is incomplete", {totalCount: 101}, []],
+    ["publisher rerun became current", {latest: {...publisher, run_attempt: 4}}, []],
+    ["legacy publisher cannot be tied to the selected attempt", {run: {...publisher,
+      display_title: `Publish PR Runtime Images source-run-${completedRefresh.id}`}}, []],
+  ]) {
+    const result = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-04T00:00:00Z"},
+      inventories: {repository_dispatch: [completedRefresh]},
+      runtimeAttemptJobs: {[completedRefresh.id]: {total_count: 1, jobs: [{...successfulJob, steps: [...successfulJob.steps, upload]}]}},
+      publication: {run: publisher, artifact, job: publisherJob, ...overrides}});
+    assert.deepEqual(numbers(result), expected, disposition);
+    assert.deepEqual(result.errors, []);
+    if (overrides.run === callbackPublisher) {
+      assert(result.apiRequestRecords.some(({name, options}) => name === "actions.listJobsForWorkflowRunAttempt" &&
+        options.run_id === callbackPublisher.id && options.attempt_number === callbackPublisher.run_attempt), disposition);
+    }
+  }
+  const artifactOnly = {...successfulJob, name: "PR Full-Stack Smoke (runtime-required=false)",
+    steps: successfulJob.steps.filter(step => !["Run credential-free full-stack smoke", "Stop smoke stack",
+      "Require successful runtime smoke and authenticated cleanup"].includes(step.name)).concat(upload)};
+  const recoveredArtifactOnly = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-04T00:00:00Z"},
+    inventories: {repository_dispatch: [completedRefresh]},
+    runtimeAttemptJobs: {[completedRefresh.id]: {total_count: 1, jobs: [artifactOnly]}},
+    publication: {run: publisher, artifact, job: publisherJob}});
+  assert.deepEqual(numbers(recoveredArtifactOnly), ["101"],
+    "an expired, positively identified artifact-only producer can be replaced without smoke proof");
+  assert.deepEqual(recoveredArtifactOnly.errors, []);
+  for (const job of [
+    {...successfulJob, name: "PR Full-Stack Smoke (runtime-required=false)"},
+    {...successfulJob, steps: successfulJob.steps.filter(step => step.name !== "Stop smoke stack")},
+    {...successfulJob, steps: [...successfulJob.steps, successfulJob.steps[0]]},
+    {...successfulJob, started_at: "2026-01-01T12:00:59Z"},
+  ]) {
+    const result = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-04T00:00:00Z"},
+      inventories: {repository_dispatch: [completedRefresh]}, runtimeAttemptJobs: {[completedRefresh.id]: {total_count: 1, jobs: [job]}}});
+    assert.deepEqual(numbers(result), [], "a green exact attempt with unusable proof leaves publication unresolved");
+    assert.deepEqual(result.errors, []);
+  }
+  const recentTransition = await runDispatcher({
+    tuples: [tuple], callback: {updated_at: "2026-01-04T00:00:00Z"},
+    inventories: {repository_dispatch: [completedRefresh]},
+    runtimeAttemptJobs: {[completedRefresh.id]: {total_count: 1, jobs: [{...successfulJob,
+      steps: successfulJob.steps.map(step => ({...step, conclusion:
+        step.name.startsWith("Known canonical transition") ? "success" : "skipped"})),
+    }]}},
+  });
+  assert.deepEqual(numbers(recentTransition), [], "an exact successful PLAY diagnostic retains its hold after later Validation");
+  assert.deepEqual(recentTransition.errors, []);
+  const staleSuccess = await runDispatcher({tuples: [tuple], inventories: {repository_dispatch: [completedRefresh]},
+    runtimeAttemptJobs: successfulJobs, runtimeRunOverrides: {[completedRefresh.id]: reads => reads > 1 ? {run_attempt: 2} : {}}});
+  assert.deepEqual(numbers(staleSuccess), [], "a concurrent rerun leaves inventory uncertain, not duplicate suppression or dispatch authority");
+  assert(staleSuccess.errors.some(message => message.includes("changed during exact attempt proof")));
+  const terminalTyped = conclusion => producer(tuple, "repository_dispatch", "completed", conclusion, {
+    created_at: "2026-01-03T00:00:00Z",
+  });
+  for (const conclusion of ["cancelled", "timed_out"]) {
+    const existing = terminalTyped(conclusion);
+    for (const signalAt of ["2026-01-02T00:00:00Z", "2026-01-03T00:00:00.200Z", "2026-01-04T00:00:00Z"]) {
+      const replaced = await runDispatcher({tuples: [tuple], callback: {updated_at: signalAt},
+        inventories: {repository_dispatch: [existing]},
+      });
+      assert.deepEqual(numbers(replaced), ["101"], `${conclusion} exact typed producer permits only one replacement`);
+      assert.deepEqual(replaced.runtimeRunReads.slice(0, 2), [existing.id, existing.id],
+        "both initial selection and the final pre-POST fence require fresh native terminal-attempt proof");
+      assert.equal(replaced.runtimeRunReads.length, 3);
+      assert.notEqual(replaced.runtimeRunReads[2], existing.id, "post-POST proof reads the replacement, not the old terminal run");
+      assert.equal(previewDispatches(replaced).length, 1, "terminal runtime recovery retains independent preview handoff");
+      assert.deepEqual(replaced.errors, []);
+      assertRequestContracts(replaced);
+    }
+    const unresolved = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-02T00:00:00Z"},
+      inventories: {repository_dispatch: [existing]}, postFailurePr: "101",
+    });
+    assert.deepEqual(numbers(unresolved), ["101"], "an unresolved replacement POST is never issued a second time");
+    assert.equal(unresolved.waitedMillis, 120000);
+    assert(unresolved.errors.some(message => message.includes("attempted but visibility is unknown")),
+      "the old terminal run cannot confirm receipt of its replacement");
+  }
+  for (const conclusion of ["failure", null]) {
+    const held = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-02T00:00:00Z"},
+      inventories: {repository_dispatch: [terminalTyped(conclusion)]},
+    });
+    assert.deepEqual(numbers(held), [],
+      "legacy failure/PLAY and unknown dispositions keep the existing typed refresh hold");
+    if (conclusion !== "failure") assert.deepEqual(held.runtimeRunReads, [terminalTyped(conclusion).id],
+      "unrelated conclusions still need exact base-ref custody");
+    assert.deepEqual(held.errors, []);
+  }
+  const failedTyped = {...terminalTyped("failure"), run_started_at: "2026-01-03T00:01:00Z", updated_at: "2026-01-03T00:04:00Z"};
+  const diagnosticMarker = {name: "Known canonical transition PLAY failure with successful authenticated cleanup", status: "completed",
+    conclusion: "skipped", started_at: "2026-01-03T00:02:00Z", completed_at: "2026-01-03T00:02:00Z"};
+  const failedJob = {id: 72, name: "PR Full-Stack Smoke (runtime-required=true)", workflow_name: failedTyped.display_title,
+    run_id: failedTyped.id, run_attempt: failedTyped.run_attempt, head_sha: failedTyped.head_sha, status: "completed", conclusion: "failure",
+    started_at: "2026-01-03T00:01:01Z", completed_at: "2026-01-03T00:03:00Z", steps: [diagnosticMarker]};
+  const attemptScopedJob = {...failedJob};
+  delete attemptScopedJob.run_attempt;
+  const producerCompletedDuringInventory = await runDispatcher({
+    tuples: [tuple],
+    callback: {updated_at: "2026-01-02T00:00:00Z"},
+    inventories: {repository_dispatch: [{...failedTyped, status: "in_progress", conclusion: null}]},
+    runtimeRunOverrides: {[failedTyped.id]: failedTyped},
+    runtimeNativeAttempts: {[failedTyped.id]: failedTyped},
+    runtimeAttemptJobs: {[failedTyped.id]: {total_count: 1, jobs: [attemptScopedJob]}},
+  });
+  assert.deepEqual(numbers(producerCompletedDuringInventory), ["101"],
+    "a fresh native terminal result releases a stale inventory hold after exact attempt proof");
+  assert.deepEqual(producerCompletedDuringInventory.errors, []);
+  for (const [jobs, total, expected] of [
+    [[failedJob], 1, ["101"]],
+    [[attemptScopedJob], 1, ["101"]],
+    [[{...failedJob, run_attempt: null}], 1, []],
+    [[{...failedJob, steps: [{...diagnosticMarker, started_at: null, completed_at: null}]}], 1, ["101"]],
+    [[{...failedJob, steps: [{name: diagnosticMarker.name, status: "completed", conclusion: "skipped"}]}], 1, ["101"]],
+    [[{...failedJob, steps: [{...diagnosticMarker, conclusion: "success"}]}], 1, []],
+    [[{...failedJob, steps: [{...diagnosticMarker, conclusion: null}]}], 1, []],
+    [[{...failedJob, steps: [diagnosticMarker, diagnosticMarker]}], 1, []],
+    [[{...failedJob, steps: [{...diagnosticMarker, started_at: null}]}], 1, []],
+    [[{...failedJob, steps: []}], 1, []],
+    [[{...failedJob, completed_at: undefined}], 1, []],
+    [[{...failedJob, started_at: "2026-02-30T00:00:00Z"}], 1, []],
+    [[{...failedJob, started_at: "2026-01-03T00:01:01+00:00", completed_at: "2026-01-02T20:03:00-04:00"}], 1, ["101"]],
+    [[{...failedJob, started_at: "2026-01-03T00:00:59Z"}], 1, []],
+    [[failedJob], 2, []],
+  ]) {
+    const result = await runDispatcher({tuples:[tuple], callback:{updated_at: "2026-01-02T00:00:00Z"},
+      inventories: {repository_dispatch:[failedTyped]}, runtimeAttemptJobs: {[failedTyped.id]: {total_count: total, jobs}}});
+    assert.deepEqual(numbers(result), expected);
+    if (total !== jobs.length) {
+      assert(result.errors.some(message => message.includes("incomplete claim job evidence")));
+    } else {
+      assert.deepEqual(result.errors, []);
+    }
+  }
+  for (const attempt of [{...failedTyped, run_started_at: "2026-01-03T01:00:00Z", updated_at: "2026-01-03T01:04:00Z"},
+    {...failedTyped, run_attempt: 2}, {...failedTyped, repository: {full_name: "other/repo"}},
+    {...failedTyped, head_repository: {full_name: "fork/repo"}},
+    {...failedTyped, path: `${failedTyped.path}@refs/heads/develop`}, null]) {
+    const held = await runDispatcher({tuples: [tuple], inventories: {repository_dispatch: [failedTyped]},
+      runtimeNativeAttempts: {[failedTyped.id]: attempt}, runtimeAttemptJobs: {[failedTyped.id]: {total_count: 1, jobs: [failedJob]}}});
+    assert.deepEqual(numbers(held), [], "wrong native attempt identity or copied execution cannot authorize replacement");
+    assert.deepEqual(held.errors, []);
+  }
+  const supersededFailure = await runDispatcher({tuples: [tuple], inventories: {repository_dispatch: [failedTyped]},
+    runtimeRunOverrides: {[failedTyped.id]: reads => reads > 1 ? {run_attempt: 2} : {}},
+    runtimeAttemptJobs: {[failedTyped.id]: {total_count: 1, jobs: [failedJob]}}});
+  assert.deepEqual(numbers(supersededFailure), [], "a rerun beginning during native attempt/job proof must retain the failed refresh hold");
+  assert.deepEqual(supersededFailure.runtimeRunReads, [failedTyped.id, failedTyped.id]);
+  assert(supersededFailure.errors.some(message => message.includes("changed during exact attempt proof")));
+  const validRerun = {...failedTyped, run_attempt: 2};
+  const validRerunJob = {...failedJob, run_attempt: 2, started_at: "2026-01-03T01:00:01Z", completed_at: "2026-01-03T01:03:00Z",
+    steps: [{name: diagnosticMarker.name, status: "completed", conclusion: "skipped", started_at: null, completed_at: null}]};
+  const rerunRecovery = await runDispatcher({tuples: [tuple], inventories: {repository_dispatch: [validRerun]},
+    runtimeNativeAttempts: {[validRerun.id]: {...validRerun, run_started_at: "2026-01-03T01:00:00Z", updated_at: "2026-01-03T01:04:00Z"}},
+    runtimeAttemptJobs: {[validRerun.id]: {total_count: 1, jobs: [validRerunJob]}}});
+  assert.deepEqual(numbers(rerunRecovery), ["101"], "a genuinely executed exact rerun is not constrained by stale run-wide timestamps");
+  assert.deepEqual(rerunRecovery.errors, []);
+  const earlierRunning = producer(tuple, "repository_dispatch", "in_progress", null, {
+    id: 10101, created_at: "2026-01-02T00:00:00Z",
+  });
+  for (const conclusion of ["cancelled", "timed_out", "failure"]) {
+    const unusable = conclusion === "failure" ? failedTyped : terminalTyped(conclusion);
+    const retained = await runDispatcher({tuples: [tuple],
+      inventories: {repository_dispatch: [earlierRunning, unusable]},
+      runtimeAttemptJobs: {[unusable.id]: {total_count: 1, jobs: [failedJob]}}});
+    assert.deepEqual(numbers(retained), [], "discarding a terminal typed replacement must reveal an earlier viable exact producer, not dispatch again");
+    assert(retained.infos.some(message => message.includes(`exact tuple producer ${earlierRunning.id} remains in_progress`)));
+    assert.equal(previewDispatches(retained).length, 1, "earlier producer reuse does not suppress preview reconciliation");
+    assert.deepEqual(retained.errors, []);
+  }
+  const cancelledTyped = terminalTyped("cancelled");
+  for (const changed of [
+    {run_attempt: 2}, {run_attempt: 0}, {run_attempt: null}, {id: cancelledTyped.id + 1},
+    {repository: {full_name: "other/repo"}}, {head_repository: {full_name: "fork/repo"}},
+    {workflow_id: 999}, {path: ".github/workflows/other.yml"}, {event: "pull_request"},
+    {name: "Other workflow"}, {display_title: "different tuple"}, {head_branch: "feature/ci"},
+    {head_sha: sha("f")}, {created_at: "2026-01-03T00:00:01Z"},
+    {status: "in_progress", conclusion: null}, {conclusion: "timed_out"}, {conclusion: "failure"},
+  ]) {
+    for (const failedRead of [1, 2]) {
+      const changedNative = await runDispatcher({tuples: [tuple], callback: {updated_at: "2026-01-02T00:00:00Z"},
+        inventories: {repository_dispatch: [cancelledTyped]},
+        runtimeRunOverrides: {[cancelledTyped.id]: reads => reads === failedRead ? changed : {}},
+      });
+      assert.deepEqual(numbers(changedNative), [], "changed native evidence at either admission read prevents replacement");
+      assert.equal(changedNative.runtimeRunReads.length, failedRead);
+      assert(changedNative.errors.some(message => message.includes("same trusted terminal attempt")));
+      assertRequestContracts(changedNative);
+    }
+  }
+  for (const failedRead of [1, 2]) {
+    const unavailableNative = await runDispatcher({tuples: [tuple],
+      inventories: {repository_dispatch: [cancelledTyped]},
+      runtimeRunOverrides: {[cancelledTyped.id]: reads => {
+        if (reads === failedRead) throw Object.assign(new Error("terminal native lookup unavailable"), {status: 503});
+        return {};
+      }},
+    });
+    assert.deepEqual(numbers(unavailableNative), [], "unavailable native evidence is not replacement authority");
+    assert(unavailableNative.errors.some(message => message.includes("terminal native lookup unavailable")));
+    const unavailableWorkflow = await runDispatcher({tuples: [tuple],
+      inventories: {repository_dispatch: [cancelledTyped]},
+      runtimeWorkflowLookupFailures: failedRead === 1 ? [503] : [null, 503],
+    });
+    assert.deepEqual(numbers(unavailableWorkflow), [], "canonical workflow lookup must succeed at both admission fences");
+    assert(unavailableWorkflow.errors.some(message => message.includes("fixture producer workflow lookup failed")));
+  }
+  const shiftingTerminalInventory = [cancelledTyped];
+  const shiftedTerminalAttempt = await runDispatcher({tuples: [tuple],
+    inventories: {repository_dispatch: shiftingTerminalInventory},
+    runtimeRunOverrides: {[cancelledTyped.id]: reads => {
+      if (reads === 1) shiftingTerminalInventory[0] = {...cancelledTyped, run_attempt: 2};
+      return {};
+    }},
+  });
+  assert.deepEqual(numbers(shiftedTerminalAttempt), [],
+    "a newly listed terminal attempt cannot replace the attempt bound by the first admission read in this callback");
+  assert(shiftedTerminalAttempt.errors.some(message => message.includes("incomplete or changed attempt identity")));
+  const missingTerminalAttempt = await runDispatcher({tuples: [tuple],
+    inventories: {repository_dispatch: [{...cancelledTyped, run_attempt: null}]},
+  });
+  assert.deepEqual(numbers(missingTerminalAttempt), [], "the inventory must identify a positive attempt before native proof lookup");
+  assert.deepEqual(missingTerminalAttempt.runtimeRunReads, []);
+  // GitHub accepts the admission wake, but an unavailable final admission
+  // never creates a runtime producer row. The dispatcher must not retry.
+  const invisible = await runDispatcher({ tuples: [tuple], admissionFails: true });
+  assert.deepEqual(numbers(invisible), ["101"], "accepted invisible POST must never be repeated");
+  assert(invisible.errors.some(message => message.includes("visibility is unknown")));
+  const many = Array.from({length: 12}, (_, index) => tupleFor(201 + index, "a", "c"));
+  const manyInvisible = await runDispatcher({tuples: many, hideDispatchVisibility: true});
+  assert.deepEqual(numbers(manyInvisible), many.map(item => item.prNumber),
+    "all eligible targets receive one handoff before the single shared visibility wait");
+  assert.deepEqual(manyInvisible.errors.filter(message => message.includes("visibility is unknown")), [
+    `Refresh dispatch accepted but visibility is unknown for PRs ${many.map(item => item.prNumber).join(", ")}; no retry issued`,
+  ], "one timeout must identify every invisible handoff");
+  assert.equal(manyInvisible.timerPostCounts[0], 12, "all runtime POSTs precede the first visibility wait");
+  assert.equal(manyInvisible.waitedMillis, 120000, "fan-out shares exactly one visibility window");
+  const visibilityFloor = "2026-01-08T00:00:00.000Z..*";
+  const nativeFloor = "2026-01-01T00:00:00.000Z..*";
+  for (const [event, floor] of [["repository_dispatch", visibilityFloor], ["pull_request", nativeFloor]]) {
+    const perEvent = manyInvisible.inventoryCalls.filter(request => request.event === event && request.created === floor);
+    assert.equal(perEvent.length, 24, "each interval checks both progress paths within the shared window");
+    assert(perEvent.every(request => request.page === 1 && request.per_page === 100));
+  }
+  const nativeProducer = producer(tuple, "pull_request", "in_progress", null, {
+    created_at: "2026-01-07T23:59:59Z",
+    pull_requests: [{number: Number(tuple.prNumber), head: {sha: tuple.headSha}, base: {sha: tuple.baseSha, ref: "develop"}}],
+  });
+  const nativeProgress = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true, observedNativeProducer: nativeProducer,
+    inventories: {pull_request: [nativeProducer]}});
+  assert.deepEqual(numbers(nativeProgress), ["101"], "native progress cannot suppress the typed admission request");
+  assert.deepEqual(nativeProgress.errors, []);
+  assert.deepEqual(nativeProgress.runtimeRunReads, [nativeProducer.id]);
+  assert.equal(nativeProgress.waitedMillis, 0);
+  assert(nativeProgress.infos.some(message => message.includes("typed admission remains separate and unconfirmed")));
+  assert(!nativeProgress.infos.some(message => message.includes("became visible after")),
+    "native activity is neither typed visibility nor attribution to the POST");
+  for (const override of [
+    {run_attempt: 2}, {status: "completed", conclusion: "failure"},
+    {pull_requests: [{number: Number(tuple.prNumber), head: {sha: tuple.headSha},
+      base: {sha: tuple.baseSha, ref: "same-tip-other-ref"}}]},
+  ]) {
+    const heldNative = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true, observedNativeProducer: nativeProducer,
+      runtimeRunOverrides: {[nativeProducer.id]: override}});
+    assert.deepEqual(numbers(heldNative), ["101"]);
+    assert(heldNative.errors.some(message => message.includes("visibility is unknown")));
+  }
+  assert(manyInvisible.inventoryCalls.every((request, index) => request.event === "repository_dispatch" ||
+    manyInvisible.observationPostCounts[index] === 12), "native progress queries never replace typed-only admission proof");
+  let earlierProofAvailable = false;
+  const earlierBound = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true,
+    inventories: {repository_dispatch: [earlierRunning]},
+    runtimeClaimJobs: {get [earlierRunning.id]() {
+      return earlierProofAvailable ? undefined : [];
+    }},
+    afterPreviewDispatch: () => { earlierProofAvailable = true; },
+  });
+  assert.deepEqual(numbers(earlierBound), ["101"], "the unbound pre-POST producer cannot suppress admission");
+  assert.deepEqual(earlierBound.errors, []);
+  assert(earlierBound.infos.some(message => message.includes(`Existing exact typed runtime producer ${earlierRunning.id}/1 is active`)));
+  assert(!earlierBound.infos.some(message => message.includes("became visible after")),
+    "existing work must not be credited as new post-POST visibility");
+  const sameSecond = await runDispatcher({tuples: [tuple], initialTime: "2026-01-08T00:00:00.200Z",
+    visibilityResponse: (_request, [posted]) => {
+      posted.created_at = "2026-01-08T00:00:00Z";
+      return {total_count: 1, workflow_runs: [posted]};
+    },
+  });
+  assert.deepEqual(numbers(sameSecond), ["101"]);
+  assert.deepEqual(sameSecond.errors, [], "a unique new exact run in the POST's timestamp second is visible");
+  assert.equal(sameSecond.waitedMillis, 0);
+  const ambiguousSameSecond = await runDispatcher({tuples: [tuple], initialTime: "2026-01-08T00:00:00.200Z",
+    visibilityResponse: (_request, [posted]) => ({total_count: 2, workflow_runs: [
+      {...posted, created_at: "2026-01-08T00:00:00Z"},
+      {...posted, id: posted.id + 1, created_at: "2026-01-08T00:00:00Z"},
+    ]}),
+  });
+  assert.deepEqual(numbers(ambiguousSameSecond), ["101"], "ambiguous handoff never repeats the POST");
+  assert(ambiguousSameSecond.errors.some(error => error.includes("multiple new exact runtime handoffs")));
+  const transientTuples = [tuple, tupleFor(102, "a", "c")];
+  let transientReads = 0;
+  const transient = await runDispatcher({tuples: transientTuples, visibilityResponse: (_request, posted) => {
+    if (++transientReads === 1) throw Object.assign(new Error("temporarily unavailable"), {status: 502});
+    return {total_count: posted.length, workflow_runs: posted};
+  }});
+  assert.deepEqual(numbers(transient), ["101", "102"], "retry visibility only, never either accepted POST");
+  assert.equal(transientReads, 2);
+  assert.equal(transient.waitedMillis, 5000);
+  assert.deepEqual(transient.errors, []);
+  const transientProducerIdentity = await runDispatcher({
+    tuples: [tuple], runtimeWorkflowLookupFailures: [503],
+  });
+  assert.deepEqual(numbers(transientProducerIdentity), ["101"],
+    "a transient post-dispatch producer identity lookup retries observation, never the handoff");
+  assert.equal(transientProducerIdentity.runtimeWorkflowLookupCount, 2);
+  assert.equal(transientProducerIdentity.waitedMillis, 5000);
+  assert.equal(transientProducerIdentity.errors.length, 0, transientProducerIdentity.errors.join("\n"));
+  assertRequestContracts(transientProducerIdentity);
+  const deniedProducerIdentity = await runDispatcher({
+    tuples: [tuple], runtimeWorkflowLookupFailures: [403],
+  });
+  assert.deepEqual(numbers(deniedProducerIdentity), ["101"],
+    "a non-transient producer identity lookup failure cannot retransmit the one-shot handoff");
+  assert.equal(deniedProducerIdentity.runtimeWorkflowLookupCount, 1,
+    "only transient producer identity lookup failures are retried");
+  assert.equal(deniedProducerIdentity.waitedMillis, 0);
+  assert(deniedProducerIdentity.errors.some(message => message.includes("producer workflow identity could not be trusted")));
+  const expiredProducerIdentity = await runDispatcher({
+    tuples: [tuple], runtimeWorkflowLookupFailures: Array(30).fill(503),
+  });
+  assert.deepEqual(numbers(expiredProducerIdentity), ["101"]);
+  assert.equal(expiredProducerIdentity.runtimeWorkflowLookupCount, 24,
+    "transient producer identity lookup retries stop at the existing two-minute observation deadline");
+  assert.equal(expiredProducerIdentity.waitedMillis, 120000);
+  assert(expiredProducerIdentity.errors.some(message => message.includes("visibility deadline")));
+  assertRequestContracts(expiredProducerIdentity);
+  const visibilityEpoch = Date.parse("2026-01-08T00:00:00Z");
+  const rateLimitError = (status, headers = {}, message = "fixture read refusal") => ({
+    status, message, response: {status, headers, data: {message}},
+  });
+  for (const [label, failure, expectedDelay] of [
+    ["Retry-After seconds overrides primary reset", rateLimitError(403, {"retry-after": "7",
+      "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(visibilityEpoch / 1000 + 90)}), 7000],
+    ["Retry-After HTTP date", rateLimitError(429, {"retry-after": new Date(visibilityEpoch + 12000).toUTCString()}), 12000],
+    ["exhausted primary reset", rateLimitError(403, {"x-ratelimit-remaining": "0",
+      "x-ratelimit-reset": String(visibilityEpoch / 1000 + 90)}), 90000],
+    ["malformed Retry-After falls back to primary reset", rateLimitError(403, {"retry-after": "tomorrow",
+      "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(visibilityEpoch / 1000 + 10)}), 10000],
+    ["429 without guidance", rateLimitError(429), 60000],
+    ["secondary limit without guidance", rateLimitError(403, {}, "You have exceeded a secondary rate limit."), 60000],
+    ["abuse limit without guidance", rateLimitError(403, {}, "abuse detection mechanism"), 60000],
+    ["primary limit with unusable reset", rateLimitError(403, {"x-ratelimit-remaining": "0",
+      "x-ratelimit-reset": "invalid"}), 60000],
+  ]) {
+    for (const phase of ["identity", "inventory"]) {
+      let reads = 0;
+      const recovered = await runDispatcher({tuples: [tuple],
+        ...(phase === "identity" ? {runtimeWorkflowLookupFailures: [failure]} : {
+          visibilityResponse: (_request, posted) => {
+            if (++reads === 1) throw failure;
+            return {total_count: posted.length, workflow_runs: posted};
+          },
+        }),
+      });
+      assert.deepEqual(numbers(recovered), ["101"], `${phase}: ${label} must retry only GET observation`);
+      assert.deepEqual(recovered.timerDelays, [expectedDelay], `${phase}: ${label} must honor GitHub REST delay guidance`);
+      assert.equal(phase === "identity" ? recovered.runtimeWorkflowLookupCount : reads, 2);
+      assert.deepEqual(recovered.errors, [], `${phase}: ${label} can confirm the one handoff after waiting`);
+      assertRequestContracts(recovered);
+    }
+  }
+  for (const phase of ["identity", "inventory"]) {
+    let reads = 0;
+    const beyondDeadline = rateLimitError(429, {"retry-after": "300"});
+    const exhausted = await runDispatcher({tuples: [tuple],
+      ...(phase === "identity" ? {runtimeWorkflowLookupFailures: [beyondDeadline]} : {
+        visibilityResponse: () => { reads += 1; throw beyondDeadline; },
+      }),
+    });
+    assert.deepEqual(numbers(exhausted), ["101"], "a rate limit cannot repeat the accepted POST");
+    assert.deepEqual(exhausted.timerDelays, [120000], "rate-limit waiting cannot extend the shared visibility deadline");
+    assert.equal(phase === "identity" ? exhausted.runtimeWorkflowLookupCount : reads, 1,
+      "a Retry-After beyond the remaining budget must not issue another GET");
+    assert(exhausted.errors.some(message => message.includes(phase === "identity" ? "visibility deadline" : "visibility is unknown")));
+  }
+  let sharedQuotaReads = 0;
+  const sharedQuotaDeadline = await runDispatcher({tuples: [tuple],
+    runtimeWorkflowLookupFailures: [rateLimitError(403, {}, "secondary rate limit")],
+    visibilityResponse: () => { sharedQuotaReads += 1; throw rateLimitError(429); },
+  });
+  assert.deepEqual(numbers(sharedQuotaDeadline), ["101"]);
+  assert.deepEqual(sharedQuotaDeadline.timerDelays, [60000, 60000],
+    "rate-limit waits are capped by the same deadline across identity and inventory GETs");
+  assert.equal(sharedQuotaReads, 1);
+  assert(sharedQuotaDeadline.errors.some(message => message.includes("visibility is unknown")));
+  for (const [failure, reason] of [
+    [() => { throw Object.assign(new Error("visibility forbidden"), {status: 403}); }, "visibility forbidden"],
+    [() => { throw rateLimitError(403, {"retry-after": "invalid", "x-ratelimit-remaining": "1",
+      "x-ratelimit-reset": String(visibilityEpoch / 1000 + 10)}, "permission denied"); }, "permission denied"],
+    [() => ({total_count: 1, workflow_runs: []}), "recent run inventory is incomplete"],
+  ]) {
+    const terminal = await runDispatcher({tuples: transientTuples, visibilityResponse: failure});
+    assert.deepEqual(numbers(terminal), ["101", "102"]);
+    assert.equal(terminal.waitedMillis, 0, "untrusted or unauthorized snapshot is terminal");
+    assert(terminal.errors.some(message => message.includes(reason)));
+  }
+  const multiPageObservation = await runDispatcher({tuples: [tuple], visibilityResponse: ({page}, [posted]) => ({
+    total_count: 101,
+    workflow_runs: page === 1 ? Array.from({length: 100}, (_, index) => ({
+      ...posted, id: 700000 + index, display_title: "unrelated"
+    })) : [posted],
+  })});
+  assert.deepEqual(multiPageObservation.inventoryCalls.filter(request => request.created === visibilityFloor).map(request => request.page), [1, 2]);
+  assert.equal(multiPageObservation.errors.length, 0, "an exact newly visible dispatch on the second page is accepted");
+  for (const invalidIdentity of [
+    {head_branch: "feature/ci"}, {workflow_id: 703}, {path: ".github/workflows/ci.yml"},
+    {repository: {full_name: "other/repo"}}, {head_repository: {full_name: "fork/repo"}},
+  ]) {
+    const conflicting = await runDispatcher({tuples: [tuple], visibilityResponse: (_request, [posted]) => ({
+      total_count: 1, workflow_runs: [{...posted, ...invalidIdentity}],
+    })});
+    assert.deepEqual(numbers(conflicting), ["101"], "a conflicting native identity never retries the POST");
+    assert(conflicting.errors.some(error => error.includes("untrusted native workflow identity")));
+  }
+  let shiftedObservationReads = 0;
+  const shiftedObservation = await runDispatcher({tuples: [tuple], visibilityResponse: ({page}, [posted]) => ({
+    total_count: ++shiftedObservationReads === 1 ? 101 : 102,
+    workflow_runs: page === 1 ? Array.from({length: 100}, (_, index) => ({
+      ...posted, id: 700000 + index, display_title: "unrelated"
+    })) : [posted, {...posted, id: 800000, display_title: "new unrelated run"}],
+  })});
+  assert.deepEqual(numbers(shiftedObservation), ["101"], "a shifting observation inventory never retries the accepted POST");
+  assert.deepEqual(shiftedObservation.inventoryCalls.filter(request => request.created === visibilityFloor).map(request => request.page),
+    [1, 2, 1, 2], "discard shifted pages, reread from page one, then confirm the complete stable two-page inventory");
+  assert.equal(shiftedObservation.waitedMillis, 5000);
+  assert.deepEqual(shiftedObservation.errors, [], "a consistent complete reread confirms visibility without another POST");
+  const shortPageObservation = await runDispatcher({tuples: [tuple], visibilityResponse: ({page}, [posted]) => ({
+    total_count: 102,
+    workflow_runs: page === 1 ? Array.from({length: 100}, (_, index) => ({
+      ...posted, id: 700000 + index, display_title: "unrelated"
+    })) : [posted],
+  })});
+  assert.deepEqual(numbers(shortPageObservation), ["101"], "a short second page never retries the accepted POST");
+  assert.deepEqual(shortPageObservation.inventoryCalls.filter(request => request.created === visibilityFloor).map(request => request.page), [1, 2]);
+  assert.equal(shortPageObservation.waitedMillis, 0, "a short page for its own total is terminal, not pagination drift");
+  assert(shortPageObservation.errors.some(error => error.includes("recent run inventory is incomplete")));
+  const staleObservation = await runDispatcher({tuples: [tuple], visibilityResponse: (_request, [posted]) => ({
+    total_count: 1, workflow_runs: [{...posted, created_at: "2026-01-07T23:59:58Z"}],
+  })});
+  assert.deepEqual(numbers(staleObservation), ["101"], "an out-of-window row cannot confirm or retry an accepted dispatch");
+  assert(staleObservation.errors.some(error => error.includes("visibility is unknown")));
+  const previewTuple = {...tuple, labels: [{name: "preview"}]};
+  const changedFilesFailure = await runDispatcher({
+    tuples: [tuple, {...sibling, labels: [{name: "preview"}]}, tupleFor(103, "d", "e")],
+    filesFailurePr: "102",
+  });
+  assert.deepEqual(numbers(changedFilesFailure), ["101", "103"],
+    "a changed-file lookup failure denies only the unproven runtime target");
+  assert(previewDispatches(changedFilesFailure).some(item => item.client_payload.pr_number === "102"),
+    "the failed runtime target still permits independent eligible preview reconciliation");
+  assert(changedFilesFailure.inventoryCalls.some((request, index) =>
+    request.created === visibilityFloor && changedFilesFailure.observationPostCounts[index] === 2),
+    "accepted handoffs before and after the failed target are still observed");
+  assert(changedFilesFailure.errors.some(error => error.includes("Cannot verify runtime changed files for PR #102")));
+  assert(!changedFilesFailure.errors.some(error => error.includes("visibility is unknown")));
+  const previewUnknown = await runDispatcher({tuples: [previewTuple], apiFailure: "repository_dispatch"});
+  assert.equal(runtimeDispatches(previewUnknown).length, 0);
+  assert.equal(previewDispatches(previewUnknown).length, 1, "uncertain runtime inventory must not suppress independent preview reconciliation");
+  const previewFailed = await runDispatcher({tuples: [previewTuple, sibling], previewFailurePr: "101"});
+  assert.deepEqual(numbers(previewFailed), ["101", "102"], "preview POST uncertainty must preserve later runtime targets");
+  assert(previewFailed.errors.some(message => message.includes("ambiguous preview POST timeout")));
+  assert.equal(previewDispatches(previewFailed).filter(item => item.client_payload.pr_number === "101").length, 1,
+    "uncertain preview POST is attempted exactly once, never retried");
+  assert(previewFailed.observationPostCounts.includes(2), "visibility observation runs after the final runtime POST");
+  assert(!previewFailed.errors.some(message => message.includes("visibility is unknown")), "accepted runtime handoffs still observed after preview failure");
+  const runtimeBaseFailure = await runDispatcher({
+    tuples: [previewTuple, sibling], branchErrors: {"heads/develop": count => count === 2 ? 502 : null},
+  });
+  assert.deepEqual(numbers(runtimeBaseFailure), ["102"], "runtime base read failure suppresses only its runtime handoff");
+  assert.deepEqual(previewDispatches(runtimeBaseFailure).filter(item => item.client_payload.pr_number === "101").map(item => item.client_payload.pr_number), ["101"],
+    "preview independently revalidates after runtime-only base failure");
+  assert(runtimeBaseFailure.errors.some(message => message.includes("Cannot read current base")));
+  for (const failedRead of [2, 3]) {
+    const lookupFailure = await runDispatcher({
+      tuples: [previewTuple, sibling], pullOverrides: {"101": reads => {
+        if (reads === failedRead) throw new Error("fixture tuple lookup 502");
+        return {};
+      }},
+    });
+    assert.deepEqual(numbers(lookupFailure), failedRead === 2 ? ["102"] : ["101", "102"],
+      "each runtime/preview lookup failure preserves later targets");
+    assert.equal(previewDispatches(lookupFailure).filter(item => item.client_payload.pr_number === "101").length, failedRead === 2 ? 1 : 0);
+    assert(lookupFailure.errors.some(message => message.includes("fixture tuple lookup 502")));
+    assert(lookupFailure.observationPostCounts.includes(failedRead === 2 ? 1 : 2),
+      "accepted handoffs are observed after target lookup failure");
+    assert(!lookupFailure.errors.some(message => message.includes("visibility is unknown")));
+  }
+  for (const previewHeadMoved of [false, true]) {
+    const runtimeMergeUnavailable = await runDispatcher({
+      tuples: [previewTuple],
+      mergeReadFailures: {[previewTuple.mergeSha]: reads => reads >= 2 && reads <= 6},
+      pullOverrides: {"101": reads => previewHeadMoved && reads > 6
+        ? {head: {sha: sha("f"), repo: {full_name: repository}}}
+        : {}},
+    });
+    assert.equal(runtimeDispatches(runtimeMergeUnavailable).length, 0);
+    assert(runtimeMergeUnavailable.warnings.some(message => message.includes("exact merge commit could not be read")));
+    assert.deepEqual(previewDispatches(runtimeMergeUnavailable).map(item => item.client_payload.merge_sha),
+      previewHeadMoved ? [] : [previewTuple.mergeSha],
+      "the independent preview lookup must verify the exact tuple after all runtime merge reads fail");
+  }
+  const previewInvisible = await runDispatcher({tuples: [previewTuple], hideDispatchVisibility: true});
+  assert.equal(previewDispatches(previewInvisible).length, 1, "invisible accepted runtime handoff must preserve preview reconciliation");
   process.stdout.write("runtime refresh deduplication fixtures passed\n");
 })().catch((error) => {
   process.stderr.write(`${error.stack || error}\n`);
@@ -1560,7 +2577,7 @@ require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, 
 require_contains "$runtime_images_path" 'types: [pr-runtime-base-refresh]'
 require_contains "$runtime_images_path" 'repository_dispatch:'
 require_contains "$runtime_images_path" "&& 'metadata' || 'required' }}"
-require_contains "$runtime_images_path" '  cancel-in-progress: true'
+require_contains "$runtime_images_path" '  cancel-in-progress: false'
 require_contains "$runtime_images_path" 'run-name: Build Runtime Images '
 require_contains "$runtime_images_path" "format('secure-pr-artifact pr-{0}"
 require_contains "$runtime_images_path" 'github.event.pull_request.base.sha'
@@ -1591,13 +2608,15 @@ assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.a
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'actions: read'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'runtimeRunPageSize = 100'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'runtimeRunLookbackMilliseconds'
-assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'falling back to the required refresh dispatch'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'no dispatch issued:'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'queue: max'
+assert_job_excludes runtime-images.yml dispatch-pr-base-refreshes 'cancel-in-progress: true'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'Skipping duplicate PR runtime refresh'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'currentBaseRef !== baseBranch'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents.length !== 2'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents[0] !== baseSha'
 assert_job_excludes runtime-images.yml dispatch-pr-base-refreshes '.base.sha'
-assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'event_type: "pr-runtime-base-refresh"'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'event_type: "pr-runtime-base-refresh-request"'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'pr_number: tuple.prNumber'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'base_sha: tuple.baseSha'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'head_sha: tuple.headSha'
@@ -1617,15 +2636,15 @@ require_contains "$image_wait_path" 'display_title = run.get("display_title", ""
 require_contains "$image_wait_path" 'display_title.startswith("Build Runtime Images trusted-branch ")'
 require_contains "$image_wait_path" 'and f"sha-{head_sha}" in tokens'
 require_contains "$image_wait_path" 'and "branch-develop" in tokens'
-require_contains "$image_wait_path" 'and f"base-{base_sha}" in tokens'
-require_contains "$image_wait_path" 'and f"merge-{merge_sha}" in tokens'
+require_contains "$image_wait_path" 'rf"Build Runtime Images secure-pr-artifact pr-[1-9][0-9]* base-{base_sha}"'
+require_contains "$image_wait_path" 'rf" head-{head_sha} merge-{merge_sha} mode-required", display_title'
 require_contains "$image_wait_path" 'run.get("event") == "workflow_run"'
 require_contains "$image_wait_path" 'gh api --paginate --slurp'
 require_contains "$image_wait_path" 'GitHub API poll failed while %s; retrying within the existing wait deadline.'
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$image_wait_path" 'if ! workflow_payload="$('
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
-require_contains "$image_wait_path" 'if ! event_payload="$('
+require_contains "$image_wait_path" 'event_payload="$(fetch_publisher_runs'
 if grep -Eq '^concurrency:' "$preview_path"; then
   echo "Preview workflow must not cancel an active lifecycle from workflow-level concurrency" >&2
   exit 1
@@ -1930,7 +2949,8 @@ done
 require_contains "$pr_image_publisher_path" 'workflow_run:'
 require_exact_line "$pr_image_publisher_path" 'permissions: {}'
 # shellcheck disable=SC2016 # This assertion intentionally matches a literal GitHub expression.
-require_contains "$pr_image_publisher_path" "run-name: Publish PR Runtime Images \${{ github.event.workflow_run.display_title || format('source-run-{0}', github.event.client_payload.source_run_id) }}"
+require_contains "$pr_image_publisher_path" "format('{0} source-run-{1} attempt-{2}', github.event.workflow_run.display_title, github.event.workflow_run.id, github.event.workflow_run.run_attempt)"
+require_contains "$pr_image_publisher_path" "format('source-run-{0} attempt-{1}', github.event.client_payload.source_run_id, github.event.client_payload.source_run_attempt)"
 require_contains "$pr_image_publisher_path" "github.event.workflow_run.event == 'pull_request'"
 require_contains "$pr_image_publisher_path" "github.event.workflow_run.conclusion == 'success'"
 require_contains "$pr_image_publisher_path" 'github.event.workflow_run.head_repository.full_name == github.repository'
@@ -1943,6 +2963,7 @@ require_contains "$pr_image_publisher_path" 'GitHub displays this run in the def
 require_contains "$pr_image_publisher_path" 'markdown_code(os.environ['
 require_contains "$pr_image_publisher_path" 'from html import escape'
 require_contains "$pr_image_publisher_path" '<code>{markdown_code(os.environ['
+
 assert_job_contains publish-pr-runtime-images.yml publish 'contents: read'
 # shellcheck disable=SC2016 # These are literal GitHub expression and shell source contracts.
 require_contains "$pr_image_publisher_path" 'pr-runtime-images-{image_tag}'
@@ -1979,6 +3000,9 @@ with tempfile.NamedTemporaryFile(mode="r+", encoding="utf-8") as summary_file:
         "GITHUB_STEP_SUMMARY": summary_file.name,
         "SOURCE_RUN_ID": "123",
         "SOURCE_RUN_URL": "https://github.example/runs/123",
+        "SOURCE_RUN_ATTEMPT": "2",
+        "SOURCE_ARTIFACT_ID": "456",
+        "SOURCE_ARTIFACT_DIGEST": "sha256:" + "a" * 64,
         "SOURCE_RUN_TITLE": "build `title` <script>&\nnext",
         "SOURCE_HEAD_BRANCH": "feature/`branch` <b>&",
         "SOURCE_HEAD_SHA": "abc123",
@@ -2004,7 +3028,10 @@ if "<script>" in summary:
     raise SystemExit("trusted PR image publisher emitted unescaped HTML")
 PY
 
-require_contains "$image_wait_path" 'publish-pr-runtime-images.yml/runs?event={event}&created={lower_text}..{upper_text}&per_page=100'
+# shellcheck disable=SC2016 # This assertion intentionally matches the unevaluated workflow default.
+require_contains "$image_wait_path" '"${5:-publish-pr-runtime-images.yml}"'
+require_contains "$image_wait_path" '{workflow}/runs?event={event}&created={lower_text}..{upper_text}&per_page=100'
+require_contains "$image_wait_path" 'for publisher_event in workflow_run repository_dispatch; do'
 require_contains "$image_wait_path" '"Publish", "PR", "Runtime", "Images", "Build", "Runtime", "Images"'
 require_contains "$image_wait_path" 're.fullmatch(r"pr-[1-9][0-9]{0,50}", tokens[8])'
 require_contains "$image_wait_path" 'tokens[9] == f"base-{base_sha}"'
@@ -2152,6 +3179,43 @@ if [[ -n "${CONTRACT_GH_STATE_FILE:-}" ]]; then
   fi
 fi
 
+if [[ "$*" == *'/actions/runs/101' ]]; then
+  if [[ -n "${CONTRACT_CURRENT_SOURCE_READ:-}" ]]; then
+    printf '%s\n' "${CONTRACT_CURRENT_SOURCE_ATTEMPT:-2}" >>"$CONTRACT_CURRENT_SOURCE_READ"
+  fi
+  printf '{"id":101,"workflow_id":501,"repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"},"run_attempt":%s,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}' "${CONTRACT_CURRENT_SOURCE_ATTEMPT:-2}"
+  exit 0
+fi
+if [[ "$*" == *'/attempts/1/jobs?per_page=100&page=1' ]]; then
+  if [[ -n "${CONTRACT_PUBLISHER_MOVE_FILE:-}" ]]; then
+    touch "$CONTRACT_PUBLISHER_MOVE_FILE"
+  fi
+  if [[ -n "${CONTRACT_JOB_PAYLOAD:-}" ]]; then
+    cat "$CONTRACT_JOB_PAYLOAD"
+    exit 0
+  fi
+  case "$*" in
+    *'/actions/runs/201/'*) run=201 ;;
+    *'/actions/runs/202/'*) run=202 ;;
+    *) exit 1 ;;
+  esac
+  printf '{"total_count":1,"jobs":[{"id":1001,"run_id":%s,"run_attempt":1,"head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","name":"Publish Fixed PR Merge Image Tags","status":"completed","conclusion":"success","steps":[{"name":"Download successful PR image artifacts","number":5,"status":"completed","conclusion":"success"},{"name":"Validate exact PR source and artifact before registry login","number":6,"status":"completed","conclusion":"success"},{"name":"Publish fixed PR image tags","number":8,"status":"completed","conclusion":"success"},{"name":"PR runtime publication receipt v1 source-101-2 publisher-%s-1 artifact-9001 sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","number":9,"status":"completed","conclusion":"success"}]}]}\n' "$run" "$run"
+  exit 0
+fi
+if [[ "$*" == *'/actions/runs/201/attempts/1' || "$*" == *'/actions/runs/202/attempts/1' ]]; then
+  if [[ "$*" == *'/actions/runs/201/attempts/1' ]]; then
+    run=201
+    event=workflow_run
+    title='Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required source-run-101 attempt-2'
+  else
+    run=202
+    event=repository_dispatch
+    title='Publish PR Runtime Images requalification source-run-101 attempt-2'
+  fi
+  printf '{"id":%s,"workflow_id":502,"path":".github/workflows/publish-pr-runtime-images.yml","head_branch":"main","head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","run_attempt":1,"name":"Publish PR Runtime Images","event":"%s","status":"completed","conclusion":"success","display_title":"%s","repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"}}' \
+    "$run" "$event" "$title"
+  exit 0
+fi
 if [[ "$*" == *"publish-pr-runtime-images.yml"* ]]; then
   [[ "$*" != *"--paginate"* ]] || { echo 'publisher inventory must be bounded' >&2; exit 1; }
   if [[ -n "${CONTRACT_PUBLISHER_PAYLOAD:-}" ]]; then
@@ -2176,8 +3240,14 @@ PY_PAGE
     printf '%s' '{"total_count":0,"workflow_runs":[]}'
     exit 0
   fi
-  cat <<'JSON'
-{"total_count":1,"workflow_runs":[{"id":201,"event":"workflow_run","status":"completed","conclusion":"success","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:03:00Z"}]}
+  attempt=1
+  conclusion=success
+  if [[ -n "${CONTRACT_PUBLISHER_MOVE_FILE:-}" && -f "$CONTRACT_PUBLISHER_MOVE_FILE" ]]; then
+    attempt=2
+    conclusion=failure
+  fi
+  cat <<JSON
+{"total_count":1,"workflow_runs":[{"id":201,"workflow_id":502,"run_attempt":$attempt,"event":"workflow_run","status":"completed","conclusion":"$conclusion","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required source-run-101 attempt-2","created_at":"2026-07-24T00:03:00Z"}]}
 JSON
 else
   if [[ -n "${CONTRACT_SOURCE_PAYLOAD:-}" ]]; then
@@ -2185,7 +3255,7 @@ else
     exit 0
   fi
   cat <<'JSON'
-[{"workflow_runs":[{"id":102,"status":"completed","conclusion":"skipped","html_url":"https://example.test/runtime/102","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-metadata","created_at":"2026-07-24T00:02:00Z"}]},{"workflow_runs":[{"id":101,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}]}]
+[{"workflow_runs":[{"id":102,"status":"completed","conclusion":"skipped","html_url":"https://example.test/runtime/102","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-metadata","created_at":"2026-07-24T00:02:00Z"}]},{"workflow_runs":[{"id":101,"workflow_id":501,"run_attempt":2,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}]}]
 JSON
 fi
 EOF
@@ -2201,6 +3271,29 @@ bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
   >"$contract_fixture_dir/output"
 require_contains "$contract_fixture_dir/output" 'Matching runtime-images workflow 101 succeeded'
 require_contains "$contract_fixture_dir/output" 'Trusted PR image publisher 201 succeeded'
+
+cat >"$contract_fixture_dir/proof-clock.sh" <<'EOF'
+# Keep the clock fixed through the proof reads. Stop on the first poll sleep.
+unset SECONDS
+SECONDS=0
+sleep() { SECONDS=$((SECONDS + $1)); }
+EOF
+if CONTRACT_PUBLISHER_MOVE_FILE="$contract_fixture_dir/publisher-moved" \
+  BASH_ENV="$contract_fixture_dir/proof-clock.sh" \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=60 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=60 \
+  bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/publisher-moved.output" 2>"$contract_fixture_dir/publisher-moved.error"; then
+  echo "superseded publisher proof unexpectedly qualified" >&2
+  exit 1
+fi
+require_contains "$contract_fixture_dir/publisher-moved.output" 'publisher selection changed'
+require_contains "$contract_fixture_dir/publisher-moved.error" 'publisher 201 completed with failure'
+if rg -Fq 'publisher 201 succeeded' "$contract_fixture_dir/publisher-moved.output"; then
+  echo "superseded publisher must not report success" >&2
+  exit 1
+fi
 
 CONTRACT_GH_STATE_FILE="$contract_fixture_dir/gh-state" \
 PATH="$contract_fixture_dir:$PATH" \
@@ -2226,17 +3319,17 @@ from pathlib import Path
 root = Path(sys.argv[1])
 waiter = Path(sys.argv[2]).read_text()
 source_parser = waiter.split("read_run_state() {\n  python3 -c '\n", 1)[1].split("\n' \"${wait_mode}\"", 1)[0]
-source = {"id": 101, "event": "pull_request", "status": "completed", "conclusion": "success", "head_sha": "a" * 40, "html_url": "https://example.test/runtime/101", "display_title": "Build Runtime Images secure-pr-artifact pr-1 base-" + "b" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required", "created_at": "2026-07-24T00:01:00Z"}
+source = {"id": 101, "workflow_id": 501, "run_attempt": 2, "event": "pull_request", "status": "completed", "conclusion": "success", "head_sha": "a" * 40, "html_url": "https://example.test/runtime/101", "display_title": "Build Runtime Images secure-pr-artifact pr-1 base-" + "b" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required", "created_at": "2026-07-24T00:01:00Z"}
 for created_at in [source["created_at"], "2026-02-31T00:01:00Z", "2026-07-24T00:01:00+00:00", "not-a-date", None]:
     result = subprocess.run([sys.executable, "-c", source_parser, "pull-request", "pr-merge-" + "c" * 40, "c" * 40, "b" * 40, "a" * 40], input=json.dumps({"workflow_runs": [{**source, "created_at": created_at}]}), capture_output=True, text=True)
     if created_at == source["created_at"]:
-        assert result.returncode == 0 and result.stdout.rstrip().endswith("\tpull_request\t" + created_at)
+        assert result.returncode == 0 and result.stdout.rstrip().endswith("\tpull_request\t" + created_at + "\t2\t501")
     else:
         assert result.returncode != 0, "source creation time must be a real UTC timestamp"
 def parse_source(run):
     return subprocess.run([sys.executable, "-c", source_parser, "pull-request", "pr-merge-" + "c" * 40, "c" * 40, "b" * 40, "a" * 40], input=json.dumps({"workflow_runs": [run]}), capture_output=True, text=True)
 
-for field, values in {"id": [None, 0, True, "101"], "status": [None, "", "completed\t"], "html_url": [None, "", "https://example.test/\t101"], "conclusion": [None, "", "success\n"]}.items():
+for field, values in {"id": [None, 0, True, "101"], "run_attempt": [None, 0, True, "2"], "status": [None, "", "completed\t"], "html_url": [None, "", "https://example.test/\t101"], "conclusion": [None, "", "success\n"]}.items():
     for value in values:
         assert parse_source({**source, field: value}).returncode != 0, f"malformed source {field} must be rejected"
 for name, run in {"missing-url": {key: value for key, value in source.items() if key != "html_url"}, "empty-url": {**source, "html_url": ""}}.items():
@@ -2245,22 +3338,26 @@ for name, run in {"missing-url": {key: value for key, value in source.items() if
 for conclusion in [None, ""]:
     result = parse_source({**source, "status": "in_progress", "conclusion": conclusion})
     assert result.returncode == 0
-    split = subprocess.run(["bash", "-c", "IFS=$'\\t' read -r state id status conclusion url event created; printf '%s\\n' \"$state\" \"$id\" \"$status\" \"$conclusion\" \"$url\" \"$event\" \"$created\""], input=result.stdout, capture_output=True, text=True)
-    assert split.stdout.splitlines() == ["found", "101", "in_progress", "pending", source["html_url"], source["event"], source["created_at"]], "optional conclusion must preserve Bash field positions"
+    split = subprocess.run(["bash", "-c", "IFS=$'\\t' read -r state id status conclusion url event created attempt workflow; printf '%s\\n' \"$state\" \"$id\" \"$status\" \"$conclusion\" \"$url\" \"$event\" \"$created\" \"$attempt\" \"$workflow\""], input=result.stdout, capture_output=True, text=True)
+    assert split.stdout.splitlines() == ["found", "101", "in_progress", "pending", source["html_url"], source["event"], source["created_at"], "2", "501"], "optional conclusion must preserve Bash field positions"
 
-base = {"id": 202, "event": "repository_dispatch", "status": "completed", "conclusion": "success", "html_url": "https://example.test/publisher/202", "display_title": "Publish PR Runtime Images source-run-101", "created_at": "2026-07-24T00:04:00Z"}
+base = {"id": 202, "workflow_id": 502, "run_attempt": 1, "event": "repository_dispatch", "status": "completed", "conclusion": "success", "html_url": "https://example.test/publisher/202", "display_title": "Publish PR Runtime Images requalification source-run-101 attempt-2", "created_at": "2026-07-24T00:04:00Z"}
 fixtures = {
     "dispatch-success": base,
-    "dispatch-wrong-source": {**base, "display_title": "Publish PR Runtime Images source-run-999"},
+    "dispatch-earlier-attempt": {**base, "display_title": "Publish PR Runtime Images requalification source-run-101 attempt-1"},
+    "dispatch-legacy": {**base, "display_title": "Publish PR Runtime Images source-run-101"},
+    "callback-earlier-attempt": {**base, "event": "workflow_run",
+        "display_title": "Publish PR Runtime Images " + source["display_title"] + " source-run-101 attempt-1"},
+    "dispatch-wrong-source": {**base, "display_title": "Publish PR Runtime Images requalification source-run-999 attempt-2"},
     "dispatch-wrong-event": {**base, "event": "push"},
     "dispatch-malformed-title": {**base, "display_title": "Publish PR Runtime Images source-run-101 extra"},
     "dispatch-failure": {**base, "conclusion": "failure"},
-    "callback-wrong-tuple": {**base, "event": "workflow_run", "display_title": "Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-" + "d" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required"},
+    "callback-wrong-tuple": {**base, "event": "workflow_run", "display_title": "Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-" + "d" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required source-run-101 attempt-2"},
 }
 for name, run in fixtures.items():
-    (root / (name + ".json")).write_text(json.dumps({"total_count": 1, "fixture_event": "workflow_run" if name == "callback-wrong-tuple" else "repository_dispatch", "workflow_runs": [run]}))
+    (root / (name + ".json")).write_text(json.dumps({"total_count": 1, "fixture_event": "workflow_run" if name.startswith("callback-") else "repository_dispatch", "workflow_runs": [run]}))
 # Matching publication remains discoverable beyond the first page.
-many = [{**base, "id": 300 + index, "display_title": f"Publish PR Runtime Images source-run-{500 + index}"} for index in range(100)] + [base]
+many = [{**base, "id": 300 + index, "display_title": f"Publish PR Runtime Images requalification source-run-{500 + index} attempt-2"} for index in range(100)] + [base]
 (root / "dispatch-second-page.json").write_text(json.dumps([{"total_count": 101, "workflow_runs": many[:100]}, {"total_count": 101, "workflow_runs": many[100:]}]))
 (root / "dispatch-overflow.json").write_text(json.dumps({"total_count": 1001, "workflow_runs": many[:100]}))
 (root / "dispatch-incomplete.json").write_text(json.dumps([{"total_count": 101, "workflow_runs": many[:100]}, {"total_count": 101, "workflow_runs": []}]))
@@ -2284,7 +3381,7 @@ for fixture in missing-url empty-url; do
     exit 1
   fi
 done
-for fixture in dispatch-success dispatch-wrong-source dispatch-wrong-event dispatch-malformed-title dispatch-failure callback-wrong-tuple dispatch-second-page dispatch-overflow dispatch-incomplete dispatch-unstable dispatch-outside-window dispatch-invalid-date; do
+for fixture in dispatch-success dispatch-earlier-attempt dispatch-legacy callback-earlier-attempt dispatch-wrong-source dispatch-wrong-event dispatch-malformed-title dispatch-failure callback-wrong-tuple dispatch-second-page dispatch-overflow dispatch-incomplete dispatch-unstable dispatch-outside-window dispatch-invalid-date; do
   if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/$fixture.json" \
     PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
@@ -2308,6 +3405,42 @@ for fixture in dispatch-success dispatch-wrong-source dispatch-wrong-event dispa
       require_contains "$contract_fixture_dir/$fixture.error" 'No trusted PR image publisher appeared'
     fi
   fi
+done
+if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+  CONTRACT_CURRENT_SOURCE_ATTEMPT=3 \
+  CONTRACT_CURRENT_SOURCE_READ="$contract_fixture_dir/stale-current-attempt.reads" \
+  BASH_ENV="$contract_fixture_dir/proof-clock.sh" \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=60 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=60 \
+  bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/stale-current-attempt.output" 2>"$contract_fixture_dir/stale-current-attempt.error"; then
+  echo "A superseded producer must not pass even after exact publisher job success" >&2
+  exit 1
+fi
+[[ "$(<"$contract_fixture_dir/stale-current-attempt.reads")" == 3 ]]
+require_contains "$contract_fixture_dir/stale-current-attempt.error" 'Runtime-image producer 101 advanced from attempt 2 to 3; selecting fresh proof.'
+
+for job_proof in skipped missing-step wrong-attempt incomplete; do
+  case "$job_proof" in
+    skipped) job_filter='.jobs[0].conclusion = "skipped"' ;;
+    missing-step) job_filter='.jobs[0].steps |= .[:2]' ;;
+    wrong-attempt) job_filter='.jobs[0].run_attempt = 2' ;;
+    incomplete) job_filter='.total_count = 2' ;;
+  esac
+  PATH="$contract_fixture_dir:$PATH" gh api 'repos/example/FireMUD/actions/runs/202/attempts/1/jobs?per_page=100&page=1' |
+    jq "$job_filter" >"$contract_fixture_dir/publisher-jobs-$job_proof.json"
+  if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+    CONTRACT_JOB_PAYLOAD="$contract_fixture_dir/publisher-jobs-$job_proof.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/$job_proof.output" 2>"$contract_fixture_dir/$job_proof.error"; then
+    echo "Publisher job proof $job_proof unexpectedly admitted workflow success" >&2
+    exit 1
+  fi
+  require_contains "$contract_fixture_dir/$job_proof.error" 'Exact PR image publication and artifact proof is unavailable'
 done
 
 assert_job_excludes runtime-images.yml smoke-full 'pull-requests: write'
@@ -2379,7 +3512,7 @@ require_contains "$smoke_path" 'fullSmokeStep?.conclusion !== "success"'
 require_contains "$smoke_path" 'credential-free full-stack smoke step did not pass'
 require_ordered_sequence \
   "$smoke_path" \
-  'if (fullSmokeJob?.status === "completed") {' \
+  'if (fullSmokeJob?.status === "completed" && !attemptIdentityPending) {' \
   'if (fullSmokeJob?.conclusion !== "success") {' \
   'PR Full-Stack Smoke job did not complete successfully:'
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
@@ -2856,9 +3989,10 @@ const quota = (reset, remaining = "0") => ({ status: 403, response: { headers: {
 });
 NODE
 
-node - "$smoke_gate_script" <<'NODE'
+node - "$smoke_gate_script" "$runtime_images_path" <<'NODE'
 const fs = require("node:fs");
 const script = fs.readFileSync(process.argv[2], "utf8");
+const runtimeImagesPath = process.argv[3];
 const headSha = "a".repeat(40);
 const baseSha = "b".repeat(40);
 const mergeSha = "c".repeat(40);
@@ -2872,7 +4006,7 @@ let eventMergeParents = [{ sha: baseSha }, { sha: headSha }];
 let currentMergeParents = [{ sha: baseSha }, { sha: headSha }];
 let availableRuns = [];
 let requestedCommitRefs = [];
-let forbiddenCurrentBaseLookups = 0;
+let currentBaseLookups = 0;
 let fakeNow = 1000;
 let onSmokeSleep = null;
 Date.now = () => fakeNow;
@@ -2908,6 +4042,13 @@ function dispatchRun(id, base, head, merge) {
   return {
     ...runtimeRun(id, runtimeTitle(base, head, merge)),
     event: "repository_dispatch",
+    run_attempt: 1,
+    head_sha: base,
+    head_branch: "develop",
+    workflow_id: 7,
+    path: id === 602 ? ".github/workflows/runtime-images.yml@develop" : ".github/workflows/runtime-images.yml",
+    repository: {full_name: "owner/repo"},
+    head_repository: {full_name: "owner/repo"},
   };
 }
 
@@ -2922,6 +4063,7 @@ const context = {
   repo: { owner: "owner", repo: "repo" },
   sha: mergeSha,
   payload: {
+    repository: {full_name: "owner/repo", default_branch: "develop"},
     pull_request: {
       number: 42,
       created_at: "2026-09-01T00:00:00Z",
@@ -2938,6 +4080,12 @@ const jobQueries = [];
 let repositoryDispatchQueryCount = 0;
 let onRepositoryDispatchQuery = null;
 const github = {
+  request: async (route, {run_id, attempt_number}) => {
+    if (route !== "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}") throw new Error("unexpected exact run lookup");
+    const result = availableRuns.find(row => row.id === run_id && row.run_attempt === attempt_number);
+    if (!result) throw new Error("missing exact run attempt");
+    return {data: result};
+  },
   rest: {
     pulls: {
       get: async () => ({
@@ -2950,12 +4098,26 @@ const github = {
       }),
     },
     git: {
-      getRef: async () => {
-        forbiddenCurrentBaseLookups += 1;
-        return { data: { object: { sha: liveBaseSha } } };
+      getRef: async ({ref}) => {
+        if (ref.startsWith("tags/")) {
+          const baseRefHash = require("node:crypto").createHash("sha256").update(currentBaseRef).digest("hex");
+          if (ref !== `tags/firemud-runtime-refresh-intent/v1/pr-42/${currentMergeSha}/${baseRefHash}/g1`) {
+            throw Object.assign(new Error("unexpected fixture claim ref"), {status: 404});
+          }
+          return {data: {ref: `refs/${ref}`, object: {type: "tag", sha: "f".repeat(40)}}};
+        }
+        currentBaseLookups += 1;
+        return { data: { ref: `refs/${ref}`, object: { sha: liveBaseSha } } };
       },
     },
     repos: {
+      getContent: async ({path, ref}) => {
+        if (path !== ".github/workflows/runtime-images.yml" || !availableRuns.some(row => row.event === "repository_dispatch" && row.head_sha === ref)) {
+          throw new Error("typed runtime proof must pin its executed workflow definition");
+        }
+        const bytes = fs.readFileSync(runtimeImagesPath);
+        return {data: {type: "file", path, size: bytes.length, encoding: "base64", content: bytes.toString("base64")}};
+      },
       getCommit: async ({ ref }) => {
         requestedCommitRefs.push(ref);
         return {
@@ -2966,21 +4128,41 @@ const github = {
         };
       },
     },
-    actions: { listWorkflowRuns, listJobsForWorkflowRun },
+    actions: { listWorkflowRuns, listJobsForWorkflowRun,
+      getWorkflow: async ({workflow_id}) => ({data: {id: workflow_id, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}}),
+      getWorkflowRun: async ({run_id}) => ({data: availableRuns.find(run => run.id === run_id)}),
+    },
   },
   paginate: async (method, input) => {
-    if (method === listJobsForWorkflowRun) {
+    if (method === listJobsForWorkflowRun ||
+        method === "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs") {
       jobQueries.push(input);
+      const run = availableRuns.find(row => row.id === input.run_id);
+      const typed = run?.event === "repository_dispatch";
       return [{
-        name: "PR Full-Stack Smoke",
+        id: 881,
+        name: typed ? "PR Full-Stack Smoke (runtime-required=true)" : "PR Full-Stack Smoke",
+        check_run_url: "https://api.github.com/repos/owner/repo/check-runs/881",
+        run_id: run?.id,
+        run_attempt: run?.run_attempt,
+        head_sha: run?.head_sha,
         status: "completed",
         conclusion: "success",
         steps: [{
           name: "Run credential-free full-stack smoke",
           status: "completed",
           conclusion: smokeStepConclusion,
-        }],
-      }];
+        }, ...(typed ? [
+          {name: "Known canonical transition PLAY failure with successful authenticated cleanup", status: "completed", conclusion: "skipped"},
+          {name: "Stop smoke stack", status: "completed", conclusion: "success"},
+          {name: "Require successful runtime smoke and authenticated cleanup", status: "completed", conclusion: "success"},
+        ] : [])],
+      }, ...(typed ? [{
+        id: 882, name: "Derive Runtime Image Metadata", run_id: run.id, run_attempt: run.run_attempt,
+        head_sha: run.head_sha, status: "completed", conclusion: "success",
+        steps: [{name: `Runtime refresh claim generation 1 attempt ${run.run_attempt} tag ${"f".repeat(40)}`,
+          status: "completed", conclusion: "success"}],
+      }] : [])];
     }
     throw new Error("unexpected paginated method");
   },
@@ -3093,7 +4275,140 @@ async function checkIdentityQuotaFailures() {
     onSmokeSleep = originalSleep;
   }
 }
-checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
+
+async function checkSparseReplacementUsesOverallBudget() {
+  const priorRuns = availableRuns, priorHook = onRepositoryDispatchQuery;
+  const event = {...runtimeRun(610, runtimeTitle(baseSha, headSha, mergeSha)), conclusion: "cancelled"};
+  const replacement = {...dispatchRun(611, baseSha, headSha, mergeSha), status: null, conclusion: null};
+  const start = repositoryDispatchQueryCount;
+  let listedAt = null, runningAt = null, completedAt = null;
+  const jobs = jobQueries.length;
+  availableRuns = [event];
+  onRepositoryDispatchQuery = (count) => {
+    if (count === start + 2) {
+      listedAt = fakeNow;
+      availableRuns = [event, replacement];
+    } else if (listedAt !== null && runningAt === null && fakeNow > listedAt) {
+      runningAt = fakeNow;
+      replacement.status = "in_progress";
+    } else if (runningAt !== null && completedAt === null && fakeNow - runningAt >= 150000) {
+      completedAt = fakeNow;
+      replacement.status = "completed";
+      replacement.conclusion = "success";
+    }
+  };
+  try {
+    await check("success", false);
+    if (listedAt === null || runningAt === null || completedAt === null ||
+        runningAt - listedAt >= 120000 || completedAt - runningAt < 150000 ||
+        !jobQueries.slice(jobs).some(({run_id, attempt_number}) => run_id === 611 && attempt_number === 1)) {
+      throw new Error("sparse replacement must leave the snapshot allowance and finish under the original execution deadline");
+    }
+  } finally {
+    availableRuns = priorRuns;
+    onRepositoryDispatchQuery = priorHook;
+  }
+}
+async function checkTypedFailureProofTemporaryRefusal() {
+  const priorRuns = availableRuns, priorRequest = github.request, priorEventSha = context.sha;
+  const priorWorkflow = github.rest.actions.getWorkflow;
+  const event = {...runtimeRun(620, runtimeTitle(baseSha, headSha, mergeSha)), conclusion: "cancelled"};
+  for (const cancelledOriginal of [false, true]) {
+    for (const status of [503, 403]) {
+      const failed = {...dispatchRun(621, baseSha, headSha, mergeSha), name: "Build Runtime Images", conclusion: "failure"};
+      const successor = dispatchRun(622, baseSha, headSha, mergeSha);
+      context.sha = cancelledOriginal ? priorEventSha : undefined;
+      const originals = cancelledOriginal ? [event] : [];
+      availableRuns = [...originals, failed];
+      let reads = 0, warnings = 0, inventoryAtRefusal;
+      const jobs = jobQueries.length;
+      const refusal = Object.assign(new Error("injected exact typed attempt lookup failure"), {status});
+      github.rest.actions.getWorkflow = async (input) => {
+        if (input.workflow_id === "runtime-images.yml") return {data: {
+          id: failed.workflow_id, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images",
+        }};
+        return priorWorkflow(input);
+      };
+      github.request = async (route, input) => {
+        if (input.run_id === failed.id) {
+          reads++;
+          inventoryAtRefusal = workflowRunQueries.length;
+          throw refusal;
+        }
+        return priorRequest(route, input);
+      };
+      smokeStepConclusion = "success";
+      const core = {
+        info: () => {},
+        warning: (message) => {
+          if (message.startsWith("Exact typed failure proof temporarily unavailable:")) {
+            warnings++;
+            availableRuns = [...originals, successor];
+          }
+        },
+        setFailed: (message) => {throw new Error(message);},
+      };
+      let caught;
+      try { await run(github, context, core); } catch (error) { caught = error; }
+      finally {
+        availableRuns = priorRuns;
+        github.request = priorRequest;
+        github.rest.actions.getWorkflow = priorWorkflow;
+        context.sha = priorEventSha;
+      }
+      if (status === 503 && (caught || reads !== 4 || warnings !== 1 ||
+          !jobQueries.slice(jobs).some(({run_id, attempt_number}) => run_id === 622 && attempt_number === 1))) {
+        throw new Error(`exhausted transient proof lookups must keep polling for exact successor: ${cancelledOriginal}/${reads}/${warnings}`, {cause: caught});
+      }
+      if (status === 403 && (caught?.cause !== refusal ||
+          !caught.message.includes("injected exact typed attempt lookup failure") ||
+          reads !== 1 || warnings !== 0 || workflowRunQueries.length !== inventoryAtRefusal)) {
+        throw new Error("terminal proof refusal must stop without polling", {cause: caught});
+      }
+    }
+  }
+}
+
+async function checkSparseSuccessfulAttemptSupersession() {
+  const originalGetRun = github.rest.actions.getWorkflowRun;
+  const originalPaginate = github.paginate;
+  const priorRuns = availableRuns, priorEventSha = context.sha;
+  const first = {...dispatchRun(623, baseSha, headSha, mergeSha), name: "Build Runtime Images"};
+  const second = {...first, run_attempt: 2};
+  const jobStart = jobQueries.length;
+  let readLatest = false;
+  context.sha = undefined;
+  availableRuns = [first];
+  github.rest.actions.getWorkflowRun = async input => {
+    if (input.run_id === first.id) {
+      availableRuns = [second];
+      readLatest = true;
+    }
+    return originalGetRun(input);
+  };
+  github.paginate = async (route, input) => {
+    const jobs = await originalPaginate(route, input);
+    if (input.run_id === first.id && input.attempt_number === 1) delete jobs[0].run_attempt;
+    return jobs;
+  };
+  github.paginate.iterator = originalPaginate.iterator;
+  try {
+    await check("success", false);
+    const attempts = jobQueries.slice(jobStart).filter(job => job.run_id === first.id).map(job => job.attempt_number);
+    if (!readLatest || attempts[0] !== 1 || attempts.filter(attempt => attempt === 1).length !== 1 || !attempts.includes(2)) {
+      throw new Error("Sparse typed producer must reselect its new attempt before retrying old job proof.");
+    }
+  } finally {
+    github.paginate = originalPaginate;
+    github.rest.actions.getWorkflowRun = originalGetRun;
+    availableRuns = priorRuns;
+    context.sha = priorEventSha;
+  }
+}
+
+checkPartialPaginationRetry().then(checkIdentityQuotaFailures)
+  .then(checkSparseReplacementUsesOverallBudget).then(checkTypedFailureProofTemporaryRefusal)
+  .then(checkSparseSuccessfulAttemptSupersession).then(() => {
   setExactEventRun(101);
   return check("skipped", true, "credential-free full-stack smoke step did not pass");
 })
@@ -3112,6 +4427,7 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
     const queryStart = workflowRunQueries.length;
     const jobStart = jobQueries.length;
     const dispatchQueryStart = repositoryDispatchQueryCount;
+    const currentBaseLookupStart = currentBaseLookups;
     availableRuns = [eventRun];
     onRepositoryDispatchQuery = (queryCount) => {
       const replacementPoll = queryCount - dispatchQueryStart;
@@ -3133,8 +4449,11 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
       if (dispatchQuery.created !== "2026-09-01T00:00:00Z..*" || Object.hasOwn(dispatchQuery, "head_sha")) {
         throw new Error("same-anchor replacement lookup must be bounded to PR-created dispatch runs without head-SHA assumptions");
       }
-      if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 602) {
+      if (jobQueries.length !== jobStart + 2 || !jobQueries.slice(jobStart).every(query => query.run_id === 602 && query.attempt_number === 1)) {
         throw new Error("Smoke Gate must wait for and validate the exact dispatch replacement smoke job");
+      }
+      if (currentBaseLookups <= currentBaseLookupStart) {
+        throw new Error("Smoke Gate must verify the live base before accepting a typed replacement");
       }
     });
   })
@@ -3203,6 +4522,7 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
     eventMergeParents = [{ sha: baseSha }, { sha: headSha }];
     const queryStart = workflowRunQueries.length;
     const jobStart = jobQueries.length;
+    const currentBaseLookupStart = currentBaseLookups;
     availableRuns = [
       runtimeRun(303, runtimeTitle(currentBaseSha, headSha, currentMergeSha)),
       runtimeRun(304, `Build Runtime Images secure-pr-artifact pr-42 head-${headSha} mode-required`),
@@ -3222,7 +4542,7 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
       if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 202) {
         throw new Error("Smoke Gate must select the exact successful event base/head/merge tuple");
       }
-      if (forbiddenCurrentBaseLookups !== 0) {
+      if (currentBaseLookups !== currentBaseLookupStart) {
         throw new Error("Smoke Gate must not require the live base SHA to accept event-tuple smoke");
       }
     });
@@ -3274,7 +4594,7 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
       if (requestedCommitRefs.at(-1) !== currentMergeSha) {
         throw new Error("dispatch fallback must verify the exact current PR merge commit");
       }
-      if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 501) {
+      if (jobQueries.length !== jobStart + 2 || !jobQueries.slice(jobStart).every(query => query.run_id === 501 && query.attempt_number === 1)) {
         throw new Error("Smoke Gate must accept only the successful smoke run for the current tuple");
       }
     });
@@ -3289,12 +4609,12 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
       availableRuns = [dispatchRun(506, liveBaseSha, headSha, currentMergeSha)];
       const jobStart = jobQueries.length;
       await check("success", false);
-      if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 506) {
+      if (jobQueries.length !== jobStart + 2 || !jobQueries.slice(jobStart).every(query => query.run_id === 506 && query.attempt_number === 1)) {
         throw new Error("missing event merge must require exact current typed refresh proof");
       }
       currentMergeParents = [{ sha: headSha }, { sha: liveBaseSha }];
       await check("success", true, "Timed out waiting for the exact runtime-images/full-smoke run");
-      if (jobQueries.length !== jobStart + 1) {
+      if (jobQueries.length !== jobStart + 2) {
         throw new Error("missing event merge must reject reversed current parents");
       }
       currentMergeParents = [{ sha: liveBaseSha }, { sha: headSha }];

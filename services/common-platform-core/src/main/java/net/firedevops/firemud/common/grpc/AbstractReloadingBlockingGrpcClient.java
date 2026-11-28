@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.function.Function;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -20,11 +21,13 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   private final BlockingGrpcStubCustomizer stubCustomizer;
   private final Logger logger;
 
-  private ManagedChannel channel;
+  // TLS channel construction uses the client monitor and must not delay call selection.
+  private final Object generationLock = new Object();
+  private ChannelGeneration generation;
   private volatile TStub stub;
   private TlsCertificateWatcher watcher;
-  private boolean closed;
-  private boolean explicitlyInitialized;
+  private volatile boolean closed;
+  private volatile boolean explicitlyInitialized;
 
   protected AbstractReloadingBlockingGrpcClient(
       ServiceEndpointsProperties endpoints,
@@ -132,10 +135,45 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   }
 
   protected final synchronized TStub requireInitializedStub(String unavailableMessage) {
-    if (closed || !explicitlyInitialized || stub == null) {
+    return requirePublishedInitializedStub(unavailableMessage);
+  }
+
+  /** Takes the last published stub without waiting for a TLS reload. */
+  private TStub requirePublishedInitializedStub(String unavailableMessage) {
+    TStub current = stub;
+    if (closed || !explicitlyInitialized || current == null) {
       throw new IllegalStateException(unavailableMessage);
     }
-    return stub;
+    return current;
+  }
+
+  /**
+   * Keeps the selected TLS channel available for one bounded blocking callback. Reload and close
+   * allow an already selected callback to finish, including one that has yet to start its RPC.
+   * Close prevents further selections.
+   */
+  protected final <R> R withPublishedInitializedStub(
+      String unavailableMessage, Function<TStub, R> call) {
+    ChannelGeneration selected;
+    TStub selectedStub;
+    synchronized (generationLock) {
+      selectedStub = requirePublishedInitializedStub(unavailableMessage);
+      selected = generation;
+      if (selected == null) {
+        throw new IllegalStateException(unavailableMessage);
+      }
+      selected.activeCalls++;
+    }
+    try {
+      return call.apply(selectedStub);
+    } finally {
+      boolean shutdown;
+      synchronized (generationLock) {
+        selected.activeCalls--;
+        shutdown = selected.retired && selected.activeCalls == 0;
+      }
+      if (shutdown) shutdownRetired(selected);
+    }
   }
 
   protected final synchronized void reloadChannel() throws SSLException {
@@ -147,7 +185,10 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       target = defaultTarget();
     }
     ManagedChannel newChannel =
-        channelFactory.buildChannel(target, defaultPort(), tlsProps, keepAliveEnabled());
+        channelRetriesEnabled()
+            ? channelFactory.buildChannel(target, defaultPort(), tlsProps, keepAliveEnabled())
+            : channelFactory.buildChannelWithoutRetries(
+                target, defaultPort(), tlsProps, keepAliveEnabled());
     TStub newStub;
     try {
       newStub = buildStub(newChannel);
@@ -155,11 +196,17 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       newChannel.shutdown();
       throw e;
     }
-    if (channel != null) {
-      channel.shutdown();
+    retire(publishGeneration(new ChannelGeneration(newChannel), newStub));
+  }
+
+  private ChannelGeneration publishGeneration(
+      ChannelGeneration replacement, TStub replacementStub) {
+    synchronized (generationLock) {
+      ChannelGeneration previous = generation;
+      generation = replacement;
+      stub = replacementStub;
+      return previous;
     }
-    channel = newChannel;
-    stub = newStub;
   }
 
   protected final TStub stub() {
@@ -171,6 +218,11 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   }
 
   protected boolean keepAliveEnabled() {
+    return true;
+  }
+
+  /** Retains standard channel behavior unless a dedicated client owns explicit mutation replay. */
+  protected boolean channelRetriesEnabled() {
     return true;
   }
 
@@ -191,25 +243,20 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   @Override
   public void close() throws IOException {
     TlsCertificateWatcher watcherToClose;
+    ChannelGeneration generationToRetire;
     synchronized (this) {
       closed = true;
       explicitlyInitialized = false;
       watcherToClose = watcher;
       watcher = null;
+      generationToRetire = publishGeneration(null, stub);
     }
     try {
       if (watcherToClose != null) {
         watcherToClose.close();
       }
     } finally {
-      ManagedChannel channelToShutdown;
-      synchronized (this) {
-        channelToShutdown = channel;
-        channel = null;
-      }
-      if (channelToShutdown != null) {
-        channelToShutdown.shutdown();
-      }
+      retire(generationToRetire);
     }
   }
 
@@ -233,19 +280,48 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       }
     }
 
-    ManagedChannel initialChannel;
+    ChannelGeneration initialGeneration;
     synchronized (this) {
       closed = true;
-      initialChannel = channel;
-      channel = null;
-      stub = null;
+      initialGeneration = publishGeneration(null, null);
     }
-    if (initialChannel != null) {
+    if (markRetiredAndReadyToShutdown(initialGeneration)) {
       try {
-        initialChannel.shutdown();
+        initialGeneration.channel.shutdown();
       } catch (RuntimeException cleanupFailure) {
-        failure.addSuppressed(cleanupFailure);
+        if (cleanupFailure != failure) failure.addSuppressed(cleanupFailure);
       }
+    }
+  }
+
+  private void retire(ChannelGeneration previous) {
+    if (markRetiredAndReadyToShutdown(previous)) shutdownRetired(previous);
+  }
+
+  private boolean markRetiredAndReadyToShutdown(ChannelGeneration previous) {
+    synchronized (generationLock) {
+      if (previous == null || previous.retired) return false;
+      previous.retired = true;
+      return previous.activeCalls == 0;
+    }
+  }
+
+  private void shutdownRetired(ChannelGeneration retired) {
+    try {
+      retired.channel.shutdown();
+    } catch (RuntimeException shutdownFailure) {
+      // Cleanup cannot invalidate a published replacement or replace an RPC outcome.
+      logger.warn("Failed to shut down retired gRPC channel", shutdownFailure);
+    }
+  }
+
+  private static final class ChannelGeneration {
+    private final ManagedChannel channel;
+    private int activeCalls;
+    private boolean retired;
+
+    private ChannelGeneration(ManagedChannel channel) {
+      this.channel = channel;
     }
   }
 }
