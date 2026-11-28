@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -36,7 +37,10 @@ import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal.Ret
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseTupleCodec;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.ContinueRecovery;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.Resume;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.CommitOwnerAuthorizedHandoffEffect;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectKind;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.InitialGameplayReleaseEvidence;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry;
@@ -51,6 +55,7 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TransitionVerb;
 import net.firedevops.firemud.recovery.model.MaintenanceLockCredential;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEffectPort.EffectApplyResult;
+import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEffectPort.EffectReadbackResolution;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider.EvidenceResolution;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider.ResolutionStatus;
 import org.junit.jupiter.api.Test;
@@ -131,10 +136,12 @@ class InitialGameplayReleaseControllerTest {
             journal, codec, provider, port, Clock.fixed(now, ZoneOffset.UTC));
 
     assertThat(controller.refreshReadiness(operationId, lock)).isSameAs(ready);
-    var order = inOrder(journal, provider, evidence);
+    var order = inOrder(journal, provider, evidence, codec);
     order.verify(journal).find(operationId);
     order.verify(provider).read(scope);
     order.verify(evidence).validateFor(scope);
+    order.verify(codec).requireBoundedEvidence(evidence);
+    order.verify(codec).digest(evidence);
     order.verify(journal).bindVerifiedEvidence(scope, DIGEST, evidence, evidenceDigest, now);
     verifyNoInteractions(port);
   }
@@ -333,6 +340,99 @@ class InitialGameplayReleaseControllerTest {
     order.verify(port).readback(effect, attempt.get(), 1);
     order.verify(journal).recordEffectReadback(dispatched, readback, now);
     org.mockito.Mockito.verifyNoMoreInteractions(port);
+  }
+
+  @ParameterizedTest(name = "preparation conflicts while releasing: {0}")
+  @ValueSource(booleans = {false, true})
+  void newlyDispatchedHandoffRefreshesHeldPreparationAfterUnavailableReadback(
+      boolean preparationConflicts) {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var codec = mock(InitialGameplayReleaseTupleCodec.class);
+    var operation = mock(Operation.class);
+    var scope = mock(Scope.class);
+    var handoffEffect = mock(CommitOwnerAuthorizedHandoffEffect.class);
+    var preparationEffect = mock(PreparePlayableStateFencedEffect.class);
+    var pending = mock(OutboxEntry.class);
+    var preparation = mock(OutboxEntry.class);
+    var refreshed = mock(Operation.class);
+    var readback = mock(EffectReadback.class);
+    var operationId = UUID.randomUUID();
+    var handoffId = UUID.randomUUID();
+    var preparationAttempt = UUID.randomUUID();
+    var handoffAttempt = new AtomicReference<UUID>();
+    var now = Instant.parse("2026-09-01T00:00:00Z");
+    when(operation.scope()).thenReturn(scope);
+    when(scope.operationId()).thenReturn(operationId);
+    when(operation.phase()).thenReturn(Phase.RELEASING);
+    when(handoffEffect.effectId()).thenReturn(handoffId);
+    when(handoffEffect.kind()).thenReturn(EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF);
+    when(pending.effect()).thenReturn(handoffEffect);
+    when(pending.state()).thenReturn(EffectOutboxState.PENDING);
+    when(preparation.effect()).thenReturn(preparationEffect);
+    when(preparation.lastAttemptId()).thenReturn(preparationAttempt);
+    when(preparation.attemptCount()).thenReturn(1);
+    when(readback.observedAt()).thenReturn(now);
+    when(journal.find(operationId)).thenReturn(Optional.of(operation));
+    when(journal.findNextEffect(operationId)).thenReturn(Optional.of(pending));
+    when(journal.claimEffect(
+            eq(operationId),
+            eq(handoffId),
+            any(),
+            org.mockito.ArgumentMatchers.<Supplier<Instant>>any()))
+        .thenAnswer(invocation -> {
+          UUID attempt = invocation.getArgument(2);
+          handoffAttempt.set(attempt);
+          return new OutboxEntry(
+              UUID.randomUUID(),
+              handoffEffect,
+              DIGEST,
+              EffectOutboxState.DISPATCHED,
+              1,
+              attempt,
+              null,
+              null);
+        });
+    when(port.apply(eq(handoffEffect), any(), eq(1))).thenReturn(EffectApplyResult.applied());
+    when(port.readback(eq(handoffEffect), any(), eq(1)))
+        .thenReturn(EffectReadbackResolution.unavailable());
+    when(journal.findHeldPreparationForRefresh(operationId)).thenReturn(Optional.of(preparation));
+    var observedPreparation = EffectReadbackResolution.available(readback);
+    when(port.readback(preparationEffect, preparationAttempt, 1)).thenReturn(observedPreparation);
+    var conflict = new InitialGameplayReleaseConflictException("preparation readback conflict");
+    if (preparationConflicts) {
+      when(journal.recordEffectReadback(preparation, readback, now)).thenThrow(conflict);
+    } else {
+      when(journal.recordEffectReadback(preparation, readback, now)).thenReturn(refreshed);
+    }
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            codec,
+            mock(InitialGameplayReleaseEvidenceProvider.class),
+            port,
+            Clock.fixed(now, ZoneOffset.UTC));
+
+    if (preparationConflicts) {
+      assertThatThrownBy(() -> controller.reconcileNextEffect(operationId)).isSameAs(conflict);
+    } else {
+      assertThat(controller.reconcileNextEffect(operationId)).isSameAs(refreshed);
+    }
+
+    var order = inOrder(journal, port);
+    order
+        .verify(journal)
+        .claimEffect(
+            eq(operationId),
+            eq(handoffId),
+            eq(handoffAttempt.get()),
+            org.mockito.ArgumentMatchers.<Supplier<Instant>>any());
+    order.verify(port).apply(handoffEffect, handoffAttempt.get(), 1);
+    order.verify(port).readback(handoffEffect, handoffAttempt.get(), 1);
+    order.verify(journal).findHeldPreparationForRefresh(operationId);
+    order.verify(port).readback(preparationEffect, preparationAttempt, 1);
+    order.verify(journal).recordEffectReadback(preparation, readback, now);
+    verifyNoMoreInteractions(port);
   }
 
   @Test
@@ -584,6 +684,7 @@ class InitialGameplayReleaseControllerTest {
     order.verify(journal).findTransition(tuple);
     order.verify(provider).read(scope);
     order.verify(ownerEvidence).validateFor(scope);
+    order.verify(codec).requireBoundedEvidence(ownerEvidence);
     order.verify(codec).digest(ownerEvidence);
     order.verify(journal).transition(tuple, now);
     verifyNoInteractions(effectPort);
