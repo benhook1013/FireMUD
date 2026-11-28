@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -14,6 +15,10 @@ import static org.mockito.Mockito.when;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.sql.DataSource;
@@ -58,7 +63,8 @@ class InitialGameplayReleaseControllerTest {
   private static final String DIGEST = "c".repeat(64);
 
   @Test
-  void reconcileRefusesCallerTransactionBeforeClaimOrOwnerInteraction() throws SQLException {
+  void readinessAndReconciliationRefuseCallerTransactionBeforeJournalOrOwnerInteraction()
+      throws SQLException {
     DataSource dataSource = mock(DataSource.class);
     Connection connection = mock(Connection.class);
     when(dataSource.getConnection()).thenReturn(connection);
@@ -70,16 +76,56 @@ class InitialGameplayReleaseControllerTest {
     var controller =
         new InitialGameplayReleaseController(
             journal, new InitialGameplayReleaseTupleCodec(), evidence, port);
+    var operationId = UUID.randomUUID();
+    var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
 
     caller.executeWithoutResult(status -> {
       assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-      assertThatThrownBy(() -> controller.reconcileNextEffect(UUID.randomUUID()))
+      assertThatThrownBy(() -> controller.refreshReadiness(operationId, lock))
+          .isInstanceOf(OwnerBoundaryUnavailableException.class)
+          .hasMessage("INITIAL_GAMEPLAY_RELEASE_READINESS_REQUIRES_NO_CALLER_TRANSACTION");
+      assertThatThrownBy(() -> controller.reconcileNextEffect(operationId))
           .isInstanceOf(OwnerBoundaryUnavailableException.class)
           .hasMessage("INITIAL_GAMEPLAY_RELEASE_RECONCILIATION_REQUIRES_NO_CALLER_TRANSACTION");
       status.setRollbackOnly();
     });
     verify(connection).rollback();
     verifyNoInteractions(journal, evidence, port);
+  }
+
+  @Test
+  void readinessBindsValidatedOwnerEvidenceOutsideCallerTransaction() {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var codec = mock(InitialGameplayReleaseTupleCodec.class);
+    var provider = mock(InitialGameplayReleaseEvidenceProvider.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var scope = mock(Scope.class);
+    var operation = mock(Operation.class);
+    var evidence = mock(InitialGameplayReleaseEvidence.class);
+    var ready = mock(Operation.class);
+    var operationId = UUID.randomUUID();
+    var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
+    var now = Instant.parse("2026-11-18T12:00:00Z");
+    var evidenceDigest = "d".repeat(64);
+    when(journal.find(operationId)).thenReturn(Optional.of(operation));
+    when(operation.scope()).thenReturn(scope);
+    when(operation.maintenanceLockIdentity()).thenReturn(lock.identity());
+    when(provider.read(scope)).thenReturn(EvidenceResolution.available(evidence));
+    when(codec.digest(scope)).thenReturn(DIGEST);
+    when(codec.digest(evidence)).thenReturn(evidenceDigest);
+    when(journal.bindVerifiedEvidence(scope, DIGEST, evidence, evidenceDigest, now))
+        .thenReturn(ready);
+    var controller =
+        new InitialGameplayReleaseController(
+            journal, codec, provider, port, Clock.fixed(now, ZoneOffset.UTC));
+
+    assertThat(controller.refreshReadiness(operationId, lock)).isSameAs(ready);
+    var order = inOrder(journal, provider, evidence);
+    order.verify(journal).find(operationId);
+    order.verify(provider).read(scope);
+    order.verify(evidence).validateFor(scope);
+    order.verify(journal).bindVerifiedEvidence(scope, DIGEST, evidence, evidenceDigest, now);
+    verifyNoInteractions(port);
   }
 
   @Test

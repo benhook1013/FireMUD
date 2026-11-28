@@ -151,6 +151,11 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
             AND atttypid = 'pg_catalog.bpchar'::regtype AND atttypmod = 68)
         AND EXISTS (
           SELECT 1 FROM pg_catalog.pg_attribute
+          WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+            AND attname = 'readback_digest' AND NOT attisdropped AND NOT attnotnull
+            AND atttypid = 'pg_catalog.bpchar'::regtype AND atttypmod = 68)
+        AND EXISTS (
+          SELECT 1 FROM pg_catalog.pg_attribute
           WHERE attrelid = 'recovery_control.initial_gameplay_release_attempt_closure'::regclass
             AND attname = 'readback_digest' AND NOT attisdropped AND attnotnull
             AND atttypid = 'pg_catalog.bpchar'::regtype AND atttypmod = 68)

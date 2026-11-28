@@ -70,8 +70,11 @@ public final class InitialGameplayReleaseController {
     throw unavailable("INITIAL_GAMEPLAY_RECOVER_AUTHORIZATION_AND_EXCLUSIVE_FENCE_UNAVAILABLE");
   }
 
-  /** Resolves all source-owned proof and only then binds the immutable readiness tuple. */
+  /** Resolves source-owned proof and durably binds the immutable readiness tuple. */
   public Operation refreshReadiness(UUID operationId, MaintenanceLockCredential maintenanceLock) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw unavailable("INITIAL_GAMEPLAY_RELEASE_READINESS_REQUIRES_NO_CALLER_TRANSACTION");
+    }
     Operation operation = requireOperation(operationId);
     requireLock(operation, maintenanceLock);
     EvidenceResolution resolution = evidenceProvider.read(operation.scope());

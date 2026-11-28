@@ -147,6 +147,12 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
           "spring.flyway.sql-migration-suffixes must contain only .sql");
     }
     requireAbsent(binder, "spring.flyway.dry-run-output");
+    String connectionInitSql =
+        binder.bind("spring.datasource.hikari.connection-init-sql", String.class).orElse("");
+    if (!connectionInitSql.isBlank()) {
+      throw new SafeOverrideException(
+          "spring.datasource.hikari.connection-init-sql must be empty for the recovery migrations");
+    }
     var initSqls = binder.bind("spring.flyway.init-sqls", Bindable.listOf(String.class));
     if (initSqls.isBound() && !initSqls.get().isEmpty()) {
       throw new SafeOverrideException(

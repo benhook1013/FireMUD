@@ -445,8 +445,12 @@ def recovery_flyway_locations(
     profile_paths = sorted(path for path in snapshot if profile_pattern.fullmatch(path))
     effective_settings = {}
     auto_configuration_switch = "spring.boot.enableautoconfiguration"
-    datasource_overrides = {"spring.flyway.url", "spring.flyway.user", "spring.flyway.password"}
+    datasource_overrides = {
+        "spring.flyway.url", "spring.flyway.user", "spring.flyway.password",
+        "spring.datasource.jndiname", "spring.datasource.hikari.datasourcejndi",
+    }
     init_sqls = "spring.flyway.initsqls"
+    pool_init_sql = "spring.datasource.hikari.connectioninitsql"
     callback_locations = "spring.flyway.callbacklocations"
     placeholder_replacement = "spring.flyway.placeholderreplacement"
     effective_exclusions: list[str] | None = None
@@ -515,13 +519,14 @@ def recovery_flyway_locations(
                    path.startswith(("spring.config.import.", "spring.config.import["))
                    for path in properties):
                 return None
-            exact_guard_paths = {auto_configuration_switch,
+            exact_guard_paths = {auto_configuration_switch, pool_init_sql,
                                  "spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
                                  "spring.flyway.table", "spring.flyway.schemas", "spring.flyway.defaultschema",
                                  "spring.flyway.sqlmigrationsuffixes", "spring.flyway.sqlmigrationprefix",
                                  "spring.flyway.sqlmigrationseparator",
                                  "spring.flyway.repeatablesqlmigrationprefix",
                                  "spring.flyway.skipdefaultresolvers", "spring.flyway.executeintransaction",
+                                 "spring.flyway.mixed",
                                  "spring.flyway.skipexecutingmigrations",
                                  "spring.flyway.dryrunoutput",
                                  "spring.flyway.encoding", "spring.flyway.detectencoding",
@@ -571,6 +576,25 @@ def recovery_flyway_locations(
     enabled = flyway.get("enabled", True)
     if enabled is not True and not (isinstance(enabled, str) and enabled == "true"):
         return None
+    pool_initialization = effective_settings.get(pool_init_sql)
+    if pool_initialization is not None and (
+            not isinstance(pool_initialization, str) or pool_initialization.strip()):
+        return None
+    mixed = flyway.get("mixed", False)
+    if isinstance(mixed, bool):
+        mixed_enabled = mixed
+    elif isinstance(mixed, str):
+        normalized_mixed = mixed.strip().lower()
+        if normalized_mixed in {"true", "on", "yes", "1"}:
+            mixed_enabled = True
+        elif normalized_mixed in {"false", "off", "no", "0"}:
+            mixed_enabled = False
+        else:
+            return None
+    else:
+        return None
+    if mixed_enabled:
+        return None
     target = flyway.get("target", "latest")
     if not isinstance(target, str) or target.casefold() != "latest":
         # Qualify the complete packaged history, not a pinned migration prefix.
@@ -596,10 +620,12 @@ def recovery_flyway_locations(
             return None
     locations = flyway.get("locations", ["classpath:db/migration"])
     if isinstance(locations, str):
-        locations = locations.split(",")
+        locations = [location.strip() for location in locations.split(",")]
     if not isinstance(locations, list) or not all(isinstance(location, str) for location in locations):
         return None
-    normalized_location_list = [location.strip() for location in locations]
+    # The binder trims comma-delimited scalar elements; YAML list elements are
+    # already individual values and must match the runtime guard byte-for-byte.
+    normalized_location_list = locations
     # Spring binds Flyway locations as an ordered collection. Preserve and
     # validate that cardinality before using a set for membership checks: a
     # duplicate recovery location makes the packaged service reject startup.
@@ -826,6 +852,31 @@ def run_self_test() -> None:
     recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    check("comma-delimited Flyway scalar trims its location entry", {
+        **recovery_history,
+        recovery_config: recovery_settings.replace(
+            b"locations: classpath:db/recovery-control-migration",
+            b"locations: ' classpath:db/recovery-control-migration '",
+        ),
+    }, recovery_history, None)
+    check("normal URL datasource remains eligible for recovery history", {
+        **recovery_history,
+        recovery_config: recovery_settings +
+            b"spring.datasource.url: jdbc:postgresql://localhost/firemud_recovery_control\n",
+    }, recovery_history, None)
+    for jndi_override in (
+        b"  datasource:\n    jndi-name: java:comp/env/jdbc/override\n",
+        b"  datasource:\n    hikari:\n      data-source-j-n-d-i: java:comp/env/jdbc/override\n",
+    ):
+        check("packaged JNDI datasource override cannot qualify recovery history", {
+            **recovery_history,
+            recovery_config: recovery_settings + jndi_override,
+        }, recovery_history, "historical effective migration no longer applied")
+    check("higher-priority JNDI datasource override cannot qualify recovery history", {
+        **recovery_history,
+        recovery_config.replace("/application.yml", "/config/application.yml"):
+            b"spring.datasource.jndi-name: java:comp/env/jdbc/override\n",
+    }, recovery_history, "historical effective migration no longer applied")
     invalid_recovery_root = {**recovery_history, recovery + "Vdraft__notes.txt": b"keep notes elsewhere"}
     check("a non-SQL Recovery input can break jOOQ sort before filtering", invalid_recovery_root,
           recovery_history, "Recovery migration sources must be SQL-only")
@@ -937,6 +988,14 @@ def run_self_test() -> None:
         recovery_config: recovery_settings + b"    init-sqls: []\n",
     }, recovery_history, None)
     recovery_config_override = recovery_config.replace("/application.yml", "/config/application.yml")
+    check("nonblank effective Hikari initialization SQL cannot qualify recovery history", {
+        **recovery_history,
+        recovery_config_override: b"spring.datasource.hikari.connection-init-sql: SET application_name = fixture\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    check("blank Hikari initialization SQL does not change recovery migration history", {
+        **recovery_history,
+        recovery_config_override: b"spring.datasource.hikari.connection-init-sql: '   '\n",
+    }, recovery_history, None)
     for setting in ("init-sqls", "callback-locations"):
         check(f"higher-priority empty Flyway {setting} replaces a non-empty root list", {
             **recovery_history,
@@ -1087,6 +1146,13 @@ def run_self_test() -> None:
     }, recovery_history, "historical effective migration no longer applied")
     check("equivalent enabled list recovery history",
           {**recovery_history, recovery_config: recovery_list_settings}, recovery_history, None)
+    check("padded list-valued Recovery Flyway location is rejected", {
+        **recovery_history,
+        recovery_config: recovery_list_settings.replace(
+            b"      - classpath:db/recovery-control-migration",
+            b"      - ' classpath:db/recovery-control-migration '",
+        ),
+    }, recovery_history, "historical effective migration no longer applied")
     check("duplicate recovery locations cannot qualify enabled history", {
         **recovery_history,
         recovery_config: recovery_list_settings.replace(
@@ -1357,6 +1423,24 @@ def run_self_test() -> None:
     check("quoted mixed-case Flyway enablement is not the runtime literal true", {
         **recovery_history,
         recovery_config: recovery_settings + b"    enabled: 'TrUe'\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    check("explicitly disabled Flyway mixed mode", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    mixed: false\n",
+    }, recovery_history, None)
+    check("Flyway mixed mode cannot qualify transactional recovery migrations", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    mixed: true\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    check("higher-priority Flyway mixed mode override cannot qualify recovery migrations", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    mixed: false\n",
+        recovery_config.replace("/application.yml", "/config/application.yml"):
+            b"spring.flyway.mixed: true\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    check("unsupported Flyway mixed mode value fails closed", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    mixed: maybe\n",
     }, recovery_history, "historical effective migration no longer applied")
     for nonmatching_value in (b"yes", b"on", b"1", b"TRUE", b"True"):
         check(f"quoted {nonmatching_value!r} is not Spring Boot true", {
