@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 preview_workflow_name="PR Preview Environment"
+preview_workflow_id=""
+consumer_workflow_id=""
 eligibility_script="./dev-tools/hosted/preview/preview-eligibility.py"
 max_active="${PREVIEW_MAX_ACTIVE:-2}"
 preview_handoff_window_seconds=600
@@ -528,8 +530,6 @@ restore_owned_proof_retry() {
   return 1
 }
 
-active_count="$(kubectl get namespaces -l firemud.dev/preview=true -o name | sed '/^$/d' | wc -l)"
-available_slots=$((max_active - active_count))
 dispatch_outcome_failed=false
 refresh_available_slots() {
   local live_namespaces live_count
@@ -758,12 +758,58 @@ automatic_preview_has_tuple() {
   fi
 }
 
-settle_terminal_preview_retry() {
-  local namespace="$1" pr_number="$2" row="$3"
+resolve_preview_retry_receipt_artifact() {
+  local run_id="$1" attempt="$2" pr_number="$3" head="$4" artifacts
+  local legacy_name="preview-render-pr-${pr_number}-${head}"
+  artifacts="$(timeout 30s gh api --paginate --slurp \
+    "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100")" || return 1
+  jq -er --arg exact "${legacy_name}-attempt-${attempt}" --arg legacy "$legacy_name" '
+    select(type == "array" and length > 0 and all(.[]; (.artifacts | type) == "array"))
+    | [.[].artifacts[]] as $artifacts
+    | [$artifacts[] | select(.name == $exact)] as $attempt_artifacts
+    | (if ($attempt_artifacts | length) > 0 then $attempt_artifacts
+       else [$artifacts[] | select(.name == $legacy)] end)
+    | select(length == 1) | .[0]
+    | select(.expired == false) | .id | select(type == "number" and . > 0 and . == floor)
+  ' <<<"$artifacts"
+}
+
+validate_preview_retry_receipt_artifact() (
+  local artifact_id="$1" receipt_dir
+  shift
+  receipt_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/preview-retry-receipt.XXXXXX")" || return 1
+  trap 'rm -rf -- "$receipt_dir"' EXIT
+  timeout 30s gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
+    >"$receipt_dir/artifact.zip" || return 1
+  python3 - "$receipt_dir" <<'PYCODE' || return 1
+import shutil
+import sys
+from pathlib import Path
+from zipfile import ZipFile
+
+directory = Path(sys.argv[1])
+metadata = "preview-metadata.json"
+with ZipFile(directory / "artifact.zip") as archive:
+    if sorted(archive.namelist()) != [metadata, "preview-rendered-sanitized.yaml"]:
+        sys.exit("Unexpected preview receipt artifact contents.")
+    with archive.open(metadata) as source, (directory / metadata).open("xb") as output:
+        shutil.copyfileobj(source, output)
+PYCODE
+  python3 ./dev-tools/hosted/preview/validate-preview-artifact.py retry-receipt \
+    "$receipt_dir/preview-metadata.json" "$GITHUB_REPOSITORY" "$@"
+)
+
+verify_terminal_preview_retry() {
+  local pr_number="$1" row="$2"
   local nonce base head merge image uid inventory title matches run_id attempt run_head tuple_step
   local source_status=0 consumer_status=0
   local consumer_inventory consumer_title consumer_matches consumer_id consumer_attempt consumer_head
   local source_latest consumer_latest
+  if [[ ! "${DEFAULT_BRANCH:-}" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+    echo "Terminal preview receiver lookup requires a valid repository default branch." >&2
+    return 1
+  fi
+  load_preview_workflow_identities || return 1
   nonce="$(jq -er '.nonce | select(type == "string" and length > 0)' <<<"$row")" || return 1
   base="$(jq -er '.base' <<<"$row")" || return 1
   head="$(jq -er '.head' <<<"$row")" || return 1
@@ -799,28 +845,14 @@ settle_terminal_preview_retry() {
     return 1
   fi
   if [[ "$source_status" == 3 ]]; then
-    local receipt_dir metadata_path artifact_name receipt_files source_created
+    local source_created artifact_id
     source_created="$(jq -er '.created_at | select(type == "string" and test("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"))' <<<"$matches")" || return 1
-    receipt_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/preview-retry-receipt.XXXXXX")" || return 1
-    artifact_name="preview-render-pr-${pr_number}-${head}"
-    if ! timeout 30s gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name "$artifact_name" --dir "$receipt_dir" >/dev/null 2>&1; then
-      rm -rf -- "$receipt_dir"
-      echo "Exact preview receiver artifact is unavailable for PR #${pr_number}; reservation stays charged." >&2
-      return 1
-    fi
-    metadata_path="$receipt_dir/preview-metadata.json"
-    receipt_files="$(find "$receipt_dir" -type f -printf '%P\n' | sort)" || {
-      rm -rf -- "$receipt_dir"
-      return 1
-    }
-    if [[ "$receipt_files" != $'preview-metadata.json\npreview-rendered-sanitized.yaml' || ! -f "$metadata_path" ]] || \
-      ! python3 ./dev-tools/hosted/preview/validate-preview-artifact.py retry-receipt \
-      "$metadata_path" "$GITHUB_REPOSITORY" "$run_id" "$attempt" "$pr_number" "$base" "$head" "$merge" "$image" "$uid" "$nonce"; then
-      rm -rf -- "$receipt_dir"
+    if ! artifact_id="$(resolve_preview_retry_receipt_artifact "$run_id" "$attempt" "$pr_number" "$head")" ||
+      ! validate_preview_retry_receipt_artifact "$artifact_id" "$run_id" "$attempt" "$pr_number" \
+        "$base" "$head" "$merge" "$image" "$uid" "$nonce"; then
       echo "Exact preview receiver artifact does not prove the retained retry tuple for PR #${pr_number}; reservation stays charged." >&2
       return 1
     fi
-    rm -rf -- "$receipt_dir"
     consumer_title="${title} source-run-${run_id}-attempt-${attempt}"
     if ! consumer_inventory="$(completed_preview_inventory workflow_run "branch=${DEFAULT_BRANCH}" \
       "$consumer_workflow_id" "$source_created")" ||
@@ -864,7 +896,7 @@ settle_terminal_preview_retry() {
     --argjson workflow_id "$preview_workflow_id" --arg repo "$GITHUB_REPOSITORY" \
     --arg branch "$DEFAULT_BRANCH" --arg head "$run_head" '
       .id == $id and .run_attempt == $attempt and .workflow_id == $workflow_id
-      and .display_title == $title and .head_sha == $head and .status == "completed"
+      and .display_title == $title and .head_sha == $head and .status == "completed" and .conclusion == "success"
       and .event == "repository_dispatch" and .head_branch == $branch
       and .repository.full_name == $repo and .head_repository.full_name == $repo
       and (.path | IN(".github/workflows/preview.yml", ".github/workflows/preview.yml@" + $branch,
@@ -878,8 +910,11 @@ settle_terminal_preview_retry() {
         and .status == "completed" and ($status != 4 or .conclusion == "success")
       ' <<<"$consumer_latest" >/dev/null || return 1
   fi
+}
 
-  local holder current replacement
+settle_terminal_preview_retry() {
+  local namespace="$1" pr_number="$2" row="$3" holder current replacement
+  verify_terminal_preview_retry "$pr_number" "$row" || return 1
   holder="$(read_preview_retry_holder)" || return 1
   current="$(preview_retry_entry "$holder" "$namespace")" || return 1
   jq -en --argjson current "$current" --argjson row "$row" '$current == $row' >/dev/null || return 1
@@ -889,15 +924,34 @@ settle_terminal_preview_retry() {
 }
 
 settle_aligned_preview_retry() {
-  local namespace="$1" pr_number="$2" holder row
+  local namespace="$1" pr_number="$2" base="$3" head="$4" merge="$5" image="$6" uid="$7"
+  local holder row phase proof_status predecessor
   if ! holder="$(read_preview_retry_holder)" ||
     ! row="$(preview_retry_entry "$holder" "$namespace")"; then
     echo "Unable to check retained proof-retry settlement for aligned PR #${pr_number}." >&2
     return 1
   fi
-  if jq -e '.phase == "SEND_STARTED"' <<<"$row" >/dev/null; then
+  phase="$(jq -r '.phase // empty' <<<"$row")" || return 1
+  if [[ "$phase" == SEND_STARTED ]]; then
     if ! settle_terminal_preview_retry "$namespace" "$pr_number" "$row" >/dev/null; then
       echo "Retained proof-retry send-start for aligned PR #${pr_number} remains charged." >&2
+    fi
+  elif [[ "$phase" == RESERVED ]] &&
+    jq -e --arg uid "$uid" --arg base "$base" --arg head "$head" --arg merge "$merge" --arg image "$image" '
+      .namespaceUid == $uid and [.base,.head,.merge,.image] == [$base,$head,$merge,$image]
+    ' <<<"$row" >/dev/null; then
+    if ! proof_status="$(bash ./dev-tools/hosted/preview/check-preview-proof-retry.sh \
+      "$namespace" "$uid" "$base" "$head" "$merge" "$image")"; then
+      echo "Unable to verify live proof for the reserved retry for PR #${pr_number}; leaving its budget charged." >&2
+      return 1
+    fi
+    if [[ "$proof_status" == proof-complete ]]; then
+      predecessor="$(jq -c '.predecessor' <<<"$row")" || return 1
+      if ! write_preview_retry_entry "$holder" "$namespace" "$predecessor" true >/dev/null; then
+        echo "Unable to confirm release of the reserved retry for PR #${pr_number}; leaving its budget charged." >&2
+        return 1
+      fi
+      echo "Released proof-retry reservation for PR #${pr_number} after verified proof completion."
     fi
   fi
 }
@@ -1404,7 +1458,8 @@ dispatch_candidates() {
     "${proof_image_tag}" == "${image_tag}" &&
     -n "${namespace_uid}" &&
     "${proof_namespace_uid}" == "${namespace_uid}" ]]; then
-    settle_aligned_preview_retry "$namespace" "$pr_number" || dispatch_outcome_failed=true
+    settle_aligned_preview_retry "$namespace" "$pr_number" "$base_sha" "$head_sha" \
+      "$merge_sha" "$image_tag" "$namespace_uid" || dispatch_outcome_failed=true
     if [[ "${requested_base_sha}" != "${base_sha}" ||
       "${requested_head_sha}" != "${head_sha}" ||
       "${requested_merge_sha}" != "${merge_sha}" ||
@@ -1723,26 +1778,44 @@ dispatch_candidates() {
   done
 }
 
-candidate_rows="$(
-  gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
-    --jq '.[] | [(if (.labels | map(.name) | any(. == "preview:priority")) then 0 else 1 end), .number, .head.sha, .user.login, .base.ref, .state, (.labels | map({name: .name}) | tojson | @base64)] | @tsv' \
-    | sort -t $'\t' -k1,1n -k2,2n
-)"
-if [[ -n "$candidate_rows" ]]; then
+load_preview_workflow_identities() {
+  if [[ -n "${preview_workflow_id:-}" && -n "${consumer_workflow_id:-}" ]]; then
+    return 0
+  fi
   if ! preview_workflow_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/preview.yml" | jq -er --arg name "$preview_workflow_name" '
     select(.name == $name and .path == ".github/workflows/preview.yml")
     | .id | select(type == "number" and . > 0 and . == floor)
   ')"; then
     echo "Unable to establish canonical Preview workflow identity; refusing preview reconcile." >&2
-    exit 1
+    return 1
   fi
   if ! consumer_workflow_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/hosted-identity-request.yml" | jq -er '
     select(.name == "Trusted Hosted Identity Request" and .path == ".github/workflows/hosted-identity-request.yml")
     | .id | select(type == "number" and . > 0 and . == floor)
   ')"; then
     echo "Unable to establish canonical trusted preview consumer identity; refusing preview reconcile." >&2
-    exit 1
+    return 1
   fi
+}
+
+if [[ "${1:-}" == --retire-merged-proof-retries && $# -eq 1 ]]; then
+  retire_merged_preview_retry_entries verify_terminal_preview_retry
+  exit
+fi
+if (( $# != 0 )); then
+  echo "usage: $0 [--retire-merged-proof-retries]" >&2
+  exit 2
+fi
+
+active_count="$(kubectl get namespaces -l firemud.dev/preview=true -o name | sed '/^$/d' | wc -l)"
+available_slots=$((max_active - active_count))
+candidate_rows="$(
+  gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
+    --jq '.[] | [(if (.labels | map(.name) | any(. == "preview:priority")) then 0 else 1 end), .number, .head.sha, .user.login, .base.ref, .state, (.labels | map({name: .name}) | tojson | @base64)] | @tsv' \
+    | sort -t $'\t' -k1,1n -k2,2n
+)"
+if [[ -n "$candidate_rows" ]]; then
+  load_preview_workflow_identities || exit 1
   active_preview_run_sets=()
   for active_status in requested queued in_progress waiting pending; do
     for active_run_scope in branch pull_request pull_request_target workflow_run; do

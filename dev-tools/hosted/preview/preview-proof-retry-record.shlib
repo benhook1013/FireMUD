@@ -178,13 +178,33 @@ legacy_preview_retry_entry() {
 }
 
 preserve_legacy_preview_retry_entry() {
-  local legacy="$1" namespace="$2" stored holder
+  local legacy="$1" namespace="$2" stored holder disposition
   holder="$(read_preview_retry_holder)" || return 1
   stored="$(preview_retry_entry "$holder" "$namespace")" || return 1
-  # Once present, the durable holder owns the counter; old Namespace
-  # annotations are a one-time import source only.
-  [[ "$stored" == null ]] || return 0
-  write_preview_retry_entry "$holder" "$namespace" "$legacy" >/dev/null
+  disposition="$(jq -ner --argjson legacy "$legacy" --argjson stored "$stored" '
+    def identity: [.namespaceUid,.base,.head,.merge,.image];
+    def covers:
+      identity == ($legacy | identity) and
+      (.count > $legacy.count or
+        (.count == $legacy.count and (.nonce == $legacy.nonce or $legacy.nonce == "")));
+    if $stored == null then "retain-legacy"
+    elif $stored | has("phase") then
+      if $stored.predecessor != null and ($stored.predecessor | covers)
+      then "already-retained" else "held" end
+    elif $stored | covers then "already-retained"
+    elif ($stored | identity) == ($legacy | identity) and $stored.count < $legacy.count
+    then "retain-legacy"
+    else "held" end
+  ')" || return 1
+  case "$disposition" in
+    retain-legacy) write_preview_retry_entry "$holder" "$namespace" "$legacy" >/dev/null ;;
+    already-retained) return 0 ;;
+    held)
+      echo "Legacy retry budget for ${namespace} conflicts with the retained holder row; reconcile exact namespace, tuple and charge custody before deletion." >&2
+      return 1
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 readonly preview_retry_retirement_cursor=firemud.dev/proof-retry-retirement-cursor
@@ -221,7 +241,7 @@ write_preview_retry_retirement_cursor() {
 }
 
 retire_merged_preview_retry_entries() {
-  local holder initial holder_uid entries cursor after last namespace pr_number pr runtime row old_row
+  local verify_terminal="${1:-}" holder initial holder_uid entries cursor after last namespace pr_number pr runtime row old_row phase
   [[ "$GITHUB_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
   holder="$(read_preview_retry_holder)" || return 1
   holder_uid="$(jq -er '.metadata.uid' <<<"$holder")" || return 1
@@ -248,8 +268,9 @@ retire_merged_preview_retry_entries() {
     last="$namespace"
     old_row="$(preview_retry_entry "$initial" "$namespace")" || continue
     [[ "$old_row" != null ]] || continue
-    # A reservation remains in custody until its owner releases it or settles the send.
-    jq -e 'has("phase") | not' <<<"$old_row" >/dev/null || continue
+    phase="$(jq -r '.phase // empty' <<<"$old_row")" || continue
+    [[ "$phase" != RESERVED ]] || continue
+    [[ "$phase" != SEND_STARTED || -n "$verify_terminal" ]] || continue
     pr_number="${namespace#pr-}"
     # A closed, unmerged pull request can reopen with the same tuple. Only
     # positive, same-repository merge evidence permits automatic retirement.
@@ -261,10 +282,18 @@ retire_merged_preview_retry_entries() {
     ' <<<"$pr" >/dev/null || continue
     runtime="$(kubectl get namespace "$namespace" --ignore-not-found -o json --request-timeout=10s)" || continue
     [[ -z "$runtime" ]] || continue
+    if [[ "$phase" == SEND_STARTED ]] && ! "$verify_terminal" "$pr_number" "$old_row"; then
+      echo "Keeping preview proof-retry send-start for merged PR #${pr_number}: terminal receiver evidence could not be verified." >&2
+      continue
+    fi
     holder="$(read_preview_retry_holder)" || return 1
     jq -e --arg uid "$holder_uid" '.metadata.uid == $uid' <<<"$holder" >/dev/null || return 1
     row="$(preview_retry_entry "$holder" "$namespace")" || continue
     [[ "$row" == "$old_row" ]] || continue
+    if [[ "$phase" == SEND_STARTED ]]; then
+      runtime="$(kubectl get namespace "$namespace" --ignore-not-found -o json --request-timeout=10s)" || continue
+      [[ -z "$runtime" ]] || continue
+    fi
     write_preview_retry_entry "$holder" "$namespace" null >/dev/null || return 1
     echo "Retired the proof-retry record for merged PR #$pr_number."
   done < <(jq -r '.keys[]' <<<"$entries")

@@ -638,6 +638,17 @@ test('indeterminate dispatch visibility does not silently consume a repair or ca
   assert.equal(f.sent.length, 1);
 });
 
+test('run 601 remains held across repeated callbacks for the same tuple', async () => {
+  const f = admissionFixture();
+  f.state.keepHidden = true;
+  f.admission.context.runId = 601;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
+  assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+  assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.claimRefs.size, 1);
+});
+
 test('a lost dispatch acknowledgement keeps the exact tuple held across callbacks', async () => {
   const f = admissionFixture();
   f.state.keepHidden = true;
@@ -1590,6 +1601,35 @@ test('admission retains the refresh fallback when active inventory exceeds its b
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
   assert.equal(f.sent.length, 1);
   assert.ok(f.warnings.some(warning => warning.includes('inventory was incomplete')));
+});
+test('duplicate unrelated run ID across the 101-row page boundary keeps fallback available', async () => {
+  const f = admissionFixture();
+  const originalListRuns = f.admission.github.rest.actions.listWorkflowRuns;
+  const firstPage = Array.from({length: 100}, (_, index) => f.makePullRequestRun({
+    id: 900 + index, display_title: 'unrelated runtime work', status: 'queued', conclusion: null,
+    created_at: '2024-01-01T00:00:00Z',
+  }));
+  f.admission.github.rest.actions.listWorkflowRuns = async query => {
+    if (query.event === 'pull_request' && query.status === 'queued') {
+      const rows = query.page === 1 ? firstPage : [{...firstPage[0]}];
+      f.state.lookups.push({status: query.status, event: query.event, page: query.page,
+        per_page: query.per_page, runIds: rows.map(run => run.id)});
+      return {data: {total_count: 101, workflow_runs: rows}};
+    }
+    return originalListRuns(query);
+  };
+
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(f.state.lookups[0].runIds.length + f.state.lookups[1].runIds.length, 101);
+  assert.equal(f.state.lookups[0].runIds[0], f.state.lookups[1].runIds[0]);
+  assert.equal(f.sent.length, 1);
+  assert.ok(f.warnings.some(warning => warning.includes('inventory was incomplete')));
+});
+test('a separate complete exact active inventory still suppresses dispatch', async () => {
+  const f = admissionFixture();
+  f.runs.push(f.makePullRequestRun({status: 'queued'}));
+  assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
+  assert.equal(f.sent.length, 0);
 });
 test('qualified trusted default workflow path suppresses exact dispatch', async () => {
   const f = admissionFixture(); const r = producer(f);

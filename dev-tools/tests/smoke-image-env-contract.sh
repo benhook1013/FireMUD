@@ -48,7 +48,7 @@ docker() {
         esac
         return 0
       fi
-      command docker "$@"
+      return 0
       ;;
     "port mock-gateway"|"port mock-tcp-proxy-service")
       if [[ "${SMOKE_TEST_DIAGNOSTICS_MODE:-}" == true ]]; then
@@ -74,7 +74,7 @@ docker() {
         printf '0.0.0.0:%s\n' "$host_port"
         return 0
       fi
-      command docker "$@"
+      return 0
       ;;
     compose\ *)
       if [[ "${SMOKE_TEST_DIAGNOSTICS_MODE:-}" == true ]]; then
@@ -136,6 +136,7 @@ docker() {
         fi
         return 0
       fi
+      local arguments=" $* "
       local expected_receipt_directory
       expected_receipt_directory="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.authored-world-source"
       if [[ "${FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH:-}" != "$expected_receipt_directory" ||
@@ -145,7 +146,25 @@ docker() {
         echo "Compose ran before the claimed initial-admission receipt directory was prepared." >&2
         return 1
       fi
-      command docker "$@"
+      if [[ "${SMOKE_COMPOSE_CONFIG_ONLY:-false}" == true ]]; then
+        if [[ -n "${FIREMUD_SMOKE_RUNTIME_DIGESTS:-}" ]]; then
+          local compose_root="$FIREMUD_SMOKE_SOURCE_ROOT/docker"
+          local expected_prefix=" compose -f $compose_root/docker-compose.yml -f $compose_root/docker-compose.override.yml -f $compose_root/docker-compose.smoke-images.override.yml -f $compose_root/docker-compose.grpc-mtls.override.yml "
+          [[ "$arguments" == "${expected_prefix}config --format json " ]] || {
+            echo "Only the protected digest Compose JSON config render may reach real Docker." >&2
+            return 96
+          }
+          touch "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.docker-config-json"
+          command docker "$@"
+          return $?
+        fi
+        if [[ "$arguments" == *" config " || "$arguments" == *" config --format json " ]]; then
+          command docker "$@"
+          return $?
+        fi
+      fi
+      echo "Unexpected real Docker compose operation in smoke image contract: $*" >&2
+      return 97
       ;;
     *)
       echo "Unexpected Docker command in smoke image env contract: $*" >&2
@@ -446,6 +465,8 @@ run_protected_digest_regressions() {
     cat "$OUT_FILE" "$ERR_FILE" >&2
     return 1
   fi
+  [[ -e "$TEST_OWNERSHIP_DIR/$TEST_RUN_ID-digest-config.docker-config-json" ]]
+  [[ ! -e "$TEST_OWNERSHIP_DIR/$TEST_RUN_ID-digest-config.up" ]]
 
   local drift
   FIREMUD_SMOKE_SOURCE_ROOT="$source_root" FIREMUD_SMOKE_RUNTIME_DIGESTS="$digest_map" \

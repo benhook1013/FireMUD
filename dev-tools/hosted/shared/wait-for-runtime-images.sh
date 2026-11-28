@@ -119,7 +119,7 @@ def is_matching_run(run):
             and run.get("display_title") == f"Build Runtime Images trusted-branch branch-develop sha-{head_sha}"
         ) or (
             run.get("event") == "workflow_dispatch"
-            and run.get("display_title") == "develop"
+            and run.get("display_title") == "Build Runtime Images develop"
             and run.get("head_branch") == "develop"
             and run.get("head_sha") == head_sha
             and run.get("path") in {
@@ -218,7 +218,7 @@ for run in ranked[:limit]:
         continue
     print(line)
     seen.add(run["id"])
-if branch_alternates and len(ranked) > limit:
+if (alternates or branch_alternates) and len(ranked) > limit:
     print("incomplete")
 ' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$@"
 }
@@ -689,15 +689,19 @@ use_completed_duplicate_publication() {
 
 find_completed_alternate_publication() {
   local alternate_sources="$1" lookup_deadline="$2" proof_origin="${3:-alternate}" older_state
-  local status pending=false
+  local status pending=false incomplete=false
+  if grep -Fxq 'incomplete' <<<"$alternate_sources"; then incomplete=true; fi
   while IFS= read -r older_state; do
+    [[ "$older_state" != 'incomplete' ]] || break
     (( SECONDS < lookup_deadline )) || break
     status=0
     use_completed_duplicate_publication "$older_state" "$lookup_deadline" "$proof_origin" || status=$?
     if (( status == 0 )); then return 0; fi
     if (( status == 2 )); then pending=true; fi
   done <<<"$alternate_sources"
-  if [[ "$pending" == "true" ]]; then return 2; fi
+  # The examined newest prefix can prove a success. Without one, a capped
+  # inventory cannot establish that no later candidate needs evaluation.
+  if [[ "$pending" == "true" || "$incomplete" == "true" ]]; then return 2; fi
   return 1
 }
 

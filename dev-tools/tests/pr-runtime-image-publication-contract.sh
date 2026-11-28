@@ -43,27 +43,44 @@ import yaml
 
 jobs = yaml.load(source, Loader=yaml.BaseLoader)["jobs"]
 
-def admitted_branch_job(condition, event, branch, *, missing='["account-service"]', pinned="complete", results=None):
+def admitted_branch_job(condition, event, branch, *, missing='["account-service"]', pinned="complete",
+                        results=None, dependencies=(), cancelled=False):
     assert condition.startswith("${{") and condition.endswith("}}"), condition
     expression = condition[3:-2].strip()
     expression = expression.replace("&&", " and ").replace("||", " or ")
     expression = expression.replace("always()", "True")
-    expression = expression.replace("!cancelled()", "True")
+    expression = expression.replace("!cancelled()", "True" if not cancelled else "False")
     expression = expression.replace("github.event_name", repr(event))
     expression = expression.replace("needs.image-meta.outputs.head_branch", repr(branch))
     expression = expression.replace("needs.select-protected-runtime-digests.outputs.missing_services", repr(missing))
     expression = expression.replace("needs.pin-protected-runtime-digests.outputs.runtime_digests", repr(pinned))
     expression = re.sub(r"needs\.([a-z0-9-]+)\.result",
                         lambda match: repr((results or {}).get(match[1], "success")), expression)
-    return bool(eval(expression, {"__builtins__": {}}))
+    admitted = bool(eval(expression, {"__builtins__": {}}))
+    has_status_check = bool(re.search(r"\b(?:success|failure|cancelled|always)\(\)", condition))
+    if admitted and not has_status_check:
+        admitted = not cancelled and all((results or {}).get(dependency, "success") == "success"
+                                         for dependency in dependencies)
+    return admitted
 
 for job in ("build-base-image", "build-runtime-images", "build-backup-verifier", "publish-backup-verifier",
             "select-protected-runtime-digests",
             "build-hosted-identity-controller", "publish-hosted-identity-controller", "publish-runtime-images"):
     guard = jobs[job]["if"]
-    assert not admitted_branch_job(guard, "workflow_run", ""), (job, guard)
+    assert not admitted_branch_job(guard, "workflow_run", "", dependencies=jobs[job].get("needs", [])), (job, guard)
     for branch in ("develop", "main"):
-        assert admitted_branch_job(guard, "workflow_run", branch), (job, guard, branch)
+        assert admitted_branch_job(guard, "workflow_run", branch, dependencies=jobs[job].get("needs", [])), (job, guard, branch)
+
+for job, definition in jobs.items():
+    condition = definition.get("if", "")
+    if condition and not re.search(r"\b(?:success|failure|cancelled|always)\(\)", condition):
+        dependencies = definition.get("needs", [])
+        dependencies = [dependencies] if isinstance(dependencies, str) else dependencies
+        for dependency in dependencies:
+            assert not admitted_branch_job(condition, "workflow_run", "develop",
+                                           dependencies=dependencies, results={dependency: "failure"}), job
+            assert not admitted_branch_job(condition, "workflow_run", "develop",
+                                           dependencies=dependencies, results={dependency: "skipped"}), job
 
 for branch in ("develop", "main"):
     build = jobs["build-runtime-images"]["if"]
@@ -82,6 +99,7 @@ for branch in ("develop", "main"):
         assert not admitted_branch_job(guard, "workflow_run", branch, pinned="")
         assert not admitted_branch_job(guard, "workflow_run", branch,
                                        results={"pin-protected-runtime-digests": "failure"})
+        assert not admitted_branch_job(guard, "workflow_run", branch, cancelled=True)
     assert not admitted_branch_job(jobs["publish-runtime-images"]["if"], "workflow_run", branch,
                                    results={"smoke-full": "failure"})
 
@@ -96,6 +114,24 @@ pinned_digest_output = "${{ needs.pin-protected-runtime-digests.outputs.runtime_
 assert jobs["smoke-full"]["with"]["runtime_digests"] == pinned_digest_output
 assert jobs["publish-runtime-images"]["env"]["RUNTIME_DIGESTS"] == pinned_digest_output
 assert "CANDIDATE_TAG" not in jobs["publish-runtime-images"]["env"]
+for job_id, definition in jobs.items():
+    needs = definition.get("needs", [])
+    needs = [needs] if isinstance(needs, str) else needs
+    digest_uses = []
+
+    def find_digest_uses(value, path=()):
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                find_digest_uses(nested, (*path, key))
+        elif isinstance(value, list):
+            for index, nested in enumerate(value):
+                find_digest_uses(nested, (*path, index))
+        elif isinstance(value, str) and "needs.pin-protected-runtime-digests.outputs.runtime_digests" in value:
+            digest_uses.append((path, value))
+
+    find_digest_uses(definition)
+    if digest_uses:
+        assert "pin-protected-runtime-digests" in needs, (job_id, digest_uses)
 for job in ("select-protected-runtime-digests", "pin-protected-runtime-digests", "publish-runtime-images"):
     steps = jobs[job]["steps"]
     checkout = next(index for index, step in enumerate(steps) if step.get("uses", "").startswith("actions/checkout@"))
@@ -735,6 +771,11 @@ cat > "$fake_bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "${1:-}" == api ]] || exit 2
+include_claim_headers=false
+if [[ "${2:-}" == --include && "${3:-}" == --method && "${4:-}" == GET ]]; then
+  include_claim_headers=true
+  set -- api "$5"
+fi
 case "${2:-}" in
   repos/benhook1013/FireMUD/actions/runs/4242) cat "$FIXTURE_DIR/source-run.json" ;;
   repos/benhook1013/FireMUD/pulls/42)
@@ -772,13 +813,19 @@ case "${2:-}" in
     if [[ -n "${MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS:-}" ]] &&
       { [[ "${MOCK_RUNTIME_CLAIM_REF_PERSISTENT:-}" == true ]] ||
         [[ "$(wc -l < "$RUNTIME_CLAIM_LOOKUPS")" -eq 1 ]]; }; then
+      if [[ "$include_claim_headers" == true ]]; then
+        printf 'HTTP/2 %s\r\nRetry-After: %s\r\n\r\n{}\n' \
+          "$MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS" "${MOCK_RUNTIME_CLAIM_REF_RETRY_AFTER:-0}"
+      fi
       echo "gh: Test claim lookup response (HTTP $MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS)" >&2
       exit 1
     fi
+    [[ "$include_claim_headers" != true ]] || printf 'HTTP/2 200\r\n\r\n'
     cat "$FIXTURE_DIR/runtime-claim-ref.json"
     ;;
   repos/benhook1013/FireMUD/git/tags/*)
     [[ "$2" == "${EXPECTED_RUNTIME_CLAIM_TAG:-}" ]] || exit 2
+    [[ "$include_claim_headers" != true ]] || printf 'HTTP/2 200\r\n\r\n'
     cat "$FIXTURE_DIR/runtime-claim-tag.json"
     ;;
   repos/benhook1013/FireMUD/commits/cccccccccccccccccccccccccccccccccccccccc) cat "$FIXTURE_DIR/merge-commit.json" ;;
@@ -915,16 +962,19 @@ try:
     assert f"runtime_refresh_claim_tag={claim_sha}\n" in output
     assert claim_witness not in output
     claim_lookups = fixture / "claim-read-retry-lookups"
-    for http_status, persistent, count, succeeds in [
-        (503, False, 2, True),
-        (503, True, 3, False),
-        (404, True, 1, False),
+    for http_status, persistent, count, succeeds, retry_after in [
+        (503, False, 2, True, 0),
+        (503, True, 3, False, 0),
+        (404, True, 1, False, 0),
+        (429, False, 2, True, 0),
+        (429, True, 1, False, 120),
     ]:
         claim_lookups.unlink(missing_ok=True)
         retried_claim = admit(request, merge, branch, {
             **claim_request, "RUNTIME_CLAIM_LOOKUPS": str(claim_lookups),
             "MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS": str(http_status),
             "MOCK_RUNTIME_CLAIM_REF_PERSISTENT": str(persistent).lower(),
+            "MOCK_RUNTIME_CLAIM_REF_RETRY_AFTER": str(retry_after),
         })
         assert (retried_claim.returncode == 0) == succeeds, retried_claim.stderr
         assert claim_lookups.read_text().splitlines() == [claim_request["EXPECTED_RUNTIME_CLAIM_REF"]] * count
@@ -1637,6 +1687,13 @@ if [[ "$*" == *"https://ghcr.io/token"* ]]; then
   printf '{"token":"mock-registry-token"}\n'
   exit 0
 fi
+if [[ "${*: -1}" == https://ghcr.io/v2/*/tags/list?n=1 ]]; then
+  repository="${*: -1}"
+  repository="${repository#https://ghcr.io/v2/}"
+  repository="${repository%/tags/list?n=1}"
+  jq -n --arg name "$repository" '{name:$name,tags:[]}'
+  exit 0
+fi
 if [[ -n "${CURL_STATUS:-}" ]]; then
   printf '%s\n' "$CURL_STATUS"
   exit 0
@@ -1807,6 +1864,14 @@ if [[ "$*" == *"https://ghcr.io/token"* ]]; then
   printf '{"token":"mock-registry-token"}\n'
   exit 0
 fi
+if [[ "${*: -1}" == https://ghcr.io/v2/*/tags/list?n=1 ]]; then
+  [[ "${RUNTIME_TARGET_MODE:-}" != denied-package ]] || exit 22
+  repository="${*: -1}"
+  repository="${repository#https://ghcr.io/v2/}"
+  repository="${repository%/tags/list?n=1}"
+  jq -n --arg name "$repository" '{name:$name,tags:[]}'
+  exit 0
+fi
 [[ "$*" == *" --head "* ]]
 image_url="${*: -1}"
 printf '%s\n' "${image_url#https://ghcr.io/v2/}" >> "$RUNTIME_MANIFEST_LOG"
@@ -1815,7 +1880,7 @@ if [[ -n "${RUNTIME_CURL_STATUS:-}" ]]; then
   exit 0
 fi
 case "${RUNTIME_TARGET_MODE:-}" in
-  missing|candidate-moved|source-digest-mismatch|target-digest-mismatch|partial-retained-missing) printf '404\n' ;;
+  missing|denied-package|candidate-moved|source-digest-mismatch|target-digest-mismatch|partial-retained-missing) printf '404\n' ;;
   matching|different|fixed-reuse|inspect-failure) printf '200\n' ;;
   late-fixed-conflict)
     if [[ "$*" == *world-management-service/manifests/"$HEAD_SHA" ]]; then
@@ -1977,6 +2042,14 @@ PY_ALIASES
 }
 expected_account='ghcr.io/benhook1013/account-service'
 expected_create='buildx imagetools create --prefer-index=false --tag'
+
+# A manifest 404 with no positive package read must leave immutable tags untouched.
+rm -f "$fixture_dir/runtime-registry-marker"
+if run_runtime denied-package; then
+  echo "Protected publication treated unreadable package evidence as tag absence." >&2
+  exit 1
+fi
+[[ ! -e "$fixture_dir/runtime-registry-marker" ]]
 
 # Unchanged A remains eligible for immutable A, develop and latest publication.
 rm -f "$fixture_dir/runtime-registry-marker"

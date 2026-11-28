@@ -13,6 +13,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+if not __debug__:
+    raise SystemExit("Preview cleanup proof requires Python assertions")
+
 repo_root, workflow_path, ci_path = map(Path, sys.argv[1:])
 workflow = workflow_path.read_text(encoding="utf-8")
 ci_workflow = ci_path.read_text(encoding="utf-8")

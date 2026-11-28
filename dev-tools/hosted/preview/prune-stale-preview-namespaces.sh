@@ -434,8 +434,10 @@ fi
 
 proof_retry_retirement_failed=0
 if [[ "$retire_proof_retries" == true ]]; then
-  # shellcheck source=dev-tools/hosted/preview/preview-proof-retry-record.shlib disable=SC1091
-  if ! source "$script_dir/preview-proof-retry-record.shlib" || ! retire_merged_preview_retry_entries; then
+  if ! (
+    cd "$script_dir/../../.." &&
+    bash "$script_dir/reconcile-preview-deploys.sh" --retire-merged-proof-retries
+  ); then
     echo "Unable to retire verified merged preview proof-retry records." >&2
     proof_retry_retirement_failed=1
   fi

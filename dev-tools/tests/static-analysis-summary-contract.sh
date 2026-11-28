@@ -37,6 +37,7 @@ grep -Fq 'current.base?.sha === baseSha' "$workflow"
 grep -Fq 'run?.display_title === expectedTitle' "$workflow"
 grep -Fq 'comment.user?.login === "github-actions[bot]"' "$workflow"
 grep -Fq 'if (comment.id === existing?.id) continue;' "$workflow"
+grep -Fq 'Source: base ${baseRef}@${baseSha}, head ${headSha}' "$workflow"
 
 if grep -Fq 'listWorkflowRunsForRepo' "$workflow"; then
   echo "static analysis summary must query the CodeQL workflow directly" >&2
@@ -176,13 +177,23 @@ const checksListForRef = async () => undefined;
 const commentsList = async () => undefined;
 const association = (ref, number = 42) => ({number, base: {ref}});
 const jobRequests = [];
+const workflowRunsById = new Map();
+const attemptJobIdentities = [];
+const rememberWorkflowRuns = rows => {
+  for (const row of rows) workflowRunsById.set(row.id, {...row});
+  return rows;
+};
 const github = {
   request: async (route, input) => {
     if (route !== "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs") throw new Error("unexpected native request");
     jobRequests.push(input);
     if (input.per_page !== 100) throw new Error("candidate must use bounded jobs");
+    const selectedRun = workflowRunsById.get(input.run_id);
+    if (!selectedRun) throw new Error("candidate jobs must use the selected workflow run ID");
+    attemptJobIdentities.push({run_id: input.run_id, run_attempt: input.attempt_number,
+      head_sha: selectedRun.head_sha});
     const fromAttempt = (row) => ({
-      ...row, run_id: input.run_id, head_sha: currentHeadSha,
+      ...row, run_id: input.run_id, run_attempt: input.attempt_number, head_sha: selectedRun.head_sha,
       ...(["License Gate", "CodeQL Gate"].includes(row.name) ? {steps: row.steps ?? [
         {name: row.name === "License Gate" ? "Verify ORT results" : "Enforce successful CodeQL analysis",
           status: "completed", conclusion: row.conclusion},
@@ -220,14 +231,8 @@ const github = {
     actions: {
       listWorkflowRuns: codeqlListWorkflowRuns,
       getWorkflowRun: async ({run_id}) => {
-        const callCount = calls.paginate.length;
-        try {
-          for (const workflow_id of ["codeql.yml", "license-scan.yml"]) {
-            const runs = await github.paginate(codeqlListWorkflowRuns, {workflow_id, head_sha: currentHeadSha, per_page: 100});
-            const run = runs.find(row => row.id === run_id);
-            if (run) return {data: run};
-          }
-        } finally { calls.paginate.splice(callCount); }
+        const run = workflowRunsById.get(run_id);
+        if (run) return {data: {...run}};
         throw new Error("unexpected current producer read " + run_id);
       },
     },
@@ -246,7 +251,7 @@ const github = {
     calls.paginate.push({ method, input });
     if (method === codeqlListWorkflowRuns) {
       if (input.workflow_id === "codeql.yml") {
-        return [
+        const rows = [
           {
             id: 100,
             event: "pull_request",
@@ -311,8 +316,9 @@ const github = {
             conclusion: "success",
           },
         ].map(row => ({...row, pull_requests: [association("develop", row.id === 250 ? 99 : 42)]}));
+        return rememberWorkflowRuns(rows);
       }
-      return [
+      return rememberWorkflowRuns([
         {
           id: 300,
           event: "pull_request",
@@ -324,7 +330,7 @@ const github = {
           conclusion: "success",
           pull_requests: [association("develop")],
         },
-      ];
+      ]);
     }
     if (method === checksListForRef) {
       return [
@@ -486,14 +492,14 @@ async function assertCompletionOrders() {
             if (!currentTuplePublished) return rows;
             const key = input.workflow_id === "codeql.yml" ? "codeql" : "license";
             if (!completed.has(key) && absentCounterpart) return [];
-            return rows.filter((row) => [100, 200, 300].includes(row.id)).map((row) => ({ ...row,
+            return rememberWorkflowRuns(rows.filter((row) => [100, 200, 300].includes(row.id)).map((row) => ({ ...row,
               id: row.id + runOffset,
               head_sha: proofHead,
               pull_requests: [association(currentBaseRef)],
               display_title: row.display_title.replace(`base-${baseSha}`, `base-${currentBaseSha}`).replace(`head-${headSha}`, `head-${proofHead}`),
               status: completed.has(key) ? "completed" : "in_progress",
               conclusion: completed.has(key) ? "success" : null,
-            }));
+            })));
           }
           return rows.filter((row) => !absentCounterpart || completed.has(row.id === 3001 ? "license" : "codeql"))
             .map((row) => ({ ...row,
@@ -581,6 +587,52 @@ async function assertCompletionOrders() {
     global.setTimeout = originalTimeout;
   }
 }
+async function assertAttemptEvidencePinnedWhenLiveHeadAdvances() {
+  const originalPaginate = github.paginate;
+  const originalHead = currentHeadSha;
+  const originalBase = currentBaseSha;
+  const originalBaseRef = currentBaseRef;
+  const advancedHeadSha = "f".repeat(40);
+  currentHeadSha = headSha;
+  currentBaseSha = baseSha;
+  currentBaseRef = "develop";
+  pullRequestReads = 0;
+  changeBaseDuringRun = false;
+  changeHeadDuringRun = false;
+  Object.assign(context.payload.workflow_run, {
+    name: "CodeQL Analysis", path: ".github/workflows/codeql.yml",
+    head_sha: headSha, display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`,
+    head_repository: {id: 123}, head_branch: "feature", pull_requests: [{number: 42}],
+  });
+  const requestStart = attemptJobIdentities.length;
+  const writesBefore = mutationCounts();
+  let headAdvancedAfterSelection = false;
+  github.paginate = async (method, input) => {
+    const rows = await originalPaginate(method, input);
+    if (method === codeqlListWorkflowRuns && input.workflow_id === "codeql.yml" && !headAdvancedAfterSelection) {
+      headAdvancedAfterSelection = true;
+      currentHeadSha = advancedHeadSha;
+    }
+    return rows;
+  };
+  try {
+    await run(github, context, core);
+    const reads = attemptJobIdentities.slice(requestStart);
+    if (!headAdvancedAfterSelection || reads.length === 0 ||
+        reads.some(({head_sha}) => head_sha !== headSha)) {
+      throw new Error("native job evidence must stay bound to each selected run ID/attempt after the live PR head advances");
+    }
+    if (mutationsChanged(writesBefore)) {
+      throw new Error("an advanced live head must prevent publication from the earlier native evidence snapshot");
+    }
+  } finally {
+    github.paginate = originalPaginate;
+    currentHeadSha = originalHead;
+    currentBaseSha = originalBase;
+    currentBaseRef = originalBaseRef;
+    pullRequestReads = 0;
+  }
+}
 async function assertAssociationSelection() {
   const source = context.payload.workflow_run;
   Object.assign(source, { name: "CodeQL Analysis", path: ".github/workflows/codeql.yml",
@@ -640,8 +692,8 @@ async function assertProducerSelectionRace() {
       if (method !== codeqlListWorkflowRuns) return rows;
       const selected = rows.filter(row => row.id === (input.workflow_id === "codeql.yml" ? 200 : 300));
       if (!readComments || input.workflow_id !== movedWorkflow) return selected;
-      return [...selected, {...selected[0], id: 999, created_at: "2026-09-24T00:00:00Z",
-        status: "in_progress", conclusion: null}];
+      return rememberWorkflowRuns([...selected, {...selected[0], id: 999, created_at: "2026-09-24T00:00:00Z",
+        status: "in_progress", conclusion: null}]);
     };
     let lostEnforcementRead = false;
     github.request = async (route, input) => {
@@ -675,12 +727,16 @@ async function assertLicenseSetupFailureClassification() {
       const rows = await originalPaginate(method, input);
       if (method !== codeqlListWorkflowRuns || input.workflow_id !== "license-scan.yml") return rows;
       const prior = rows.find(row => row.id === 300);
-      return [...rows, {...prior, id: 380, created_at: "2026-09-23T00:00:00Z", conclusion: "failure"}];
+      return rememberWorkflowRuns([
+        ...rows,
+        {...prior, id: 380, created_at: "2026-09-23T00:00:00Z", conclusion: "failure"},
+      ]);
     };
     github.request = async (route, input) => {
       if (input.run_id !== 380) return originalRequest(route, input);
       jobRequests.push(input);
-      const common = {run_id: input.run_id, head_sha: headSha, status: "completed"};
+      const common = {run_id: input.run_id, run_attempt: input.attempt_number,
+        head_sha: headSha, status: "completed"};
       return {data: {total_count: 2, jobs: [
         {...common, id: 3801, name: "Detect License-Relevant Changes", conclusion: changesConclusion},
         {...common, id: 3802, name: "License Gate", conclusion: "failure", steps: [
@@ -704,6 +760,75 @@ async function assertLicenseSetupFailureClassification() {
   }
 }
 
+async function assertCodeqlSetupFailureClassification() {
+  const originalPaginate = github.paginate;
+  const originalRequest = github.request;
+  currentHeadSha = headSha; currentBaseSha = baseSha; currentBaseRef = "develop";
+  pullRequestReads = 0;
+  try {
+    for (const analysisConclusion of [null, "success", "failure"]) {
+      const metadataOnly = analysisConclusion === null;
+      const setupStep = metadataOnly ? "Check out required-gate action" : "Harden runner";
+      github.paginate = async (method, input) => {
+        const rows = await originalPaginate(method, input);
+        if (method !== codeqlListWorkflowRuns || input.workflow_id !== "codeql.yml") return rows;
+        const priorSuccess = rows.find(row => row.id === 100);
+        const failedCheckout = rows.find(row => row.id === 200);
+        return rememberWorkflowRuns([
+          priorSuccess,
+          {...failedCheckout, id: 380, created_at: "2026-09-23T00:00:00Z", conclusion: "failure"},
+        ]);
+      };
+      github.request = async (route, input) => {
+        if (input.run_id !== 380) return originalRequest(route, input);
+        jobRequests.push(input);
+        const common = {run_id: 380, run_attempt: input.attempt_number, head_sha: headSha,
+          status: "completed"};
+        const jobs = [
+          {...common, id: 3801, name: "Detect CodeQL-Relevant Changes",
+            conclusion: metadataOnly ? "skipped" : "success"},
+          {...common, id: 3802, name: "CodeQL Gate", conclusion: "failure", steps: [
+            {name: setupStep, status: "completed", conclusion: "failure"},
+            {name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "skipped"},
+            {name: "Enforce successful CodeQL analysis", status: "completed", conclusion: "skipped"},
+          ]},
+        ];
+        if (!metadataOnly) {
+          jobs.push(
+            {...common, id: 3803, name: "CodeQL Analysis (java)", conclusion: analysisConclusion},
+            {...common, id: 3804, name: "CodeQL Analysis (javascript-typescript)", conclusion: analysisConclusion},
+          );
+        }
+        return {data: {total_count: jobs.length, jobs}};
+      };
+      const start = calls.updated.length;
+      const jobsStart = jobRequests.length;
+      await run(github, context, core);
+      const body = calls.updated.slice(start).at(-1)?.body ?? "";
+      if (!jobRequests.slice(jobsStart).some(({run_id}) => run_id === 380)) {
+        throw new Error("CodeQL setup failure was not observed in the native jobs");
+      }
+      if (metadataOnly) {
+        if (!body.includes("CodeQL gate: `success`") ||
+            !body.includes("CodeQL analysis (java): `success`") ||
+            !body.includes("CodeQL analysis (javascript-typescript): `skipped`")) {
+          throw new Error("metadata-only checkout failure replaced earlier substantive CodeQL evidence");
+        }
+      } else if (!body.includes("CodeQL gate: `failure`") ||
+                 !body.includes("CodeQL analysis (java): `" + analysisConclusion + "`") ||
+                 !body.includes("CodeQL analysis (javascript-typescript): `" + analysisConclusion + "`") ||
+                 body.includes("checks passed")) {
+        throw new Error("skipped enforcement hid a substantive CodeQL gate or its selected analysis results");
+      }
+    }
+  } finally {
+    github.paginate = originalPaginate;
+    github.request = originalRequest;
+    currentHeadSha = headSha; currentBaseSha = baseSha; currentBaseRef = "develop";
+    pullRequestReads = 0;
+  }
+}
+
 async function assertUnclassifiedCancellation() {
   const originalPaginate = github.paginate;
   currentHeadSha = headSha; currentBaseSha = baseSha;
@@ -712,8 +837,10 @@ async function assertUnclassifiedCancellation() {
     const rows = await originalPaginate(method, input);
     if (method !== codeqlListWorkflowRuns || input.workflow_id !== "codeql.yml") return rows;
     const prior = rows.find(row => row.id === 200);
-    return [...rows, {...prior, id: 280, created_at: "2026-09-23T00:00:00Z",
-      status: "completed", conclusion: "cancelled"}];
+    return rememberWorkflowRuns([
+      ...rows,
+      {...prior, id: 280, created_at: "2026-09-23T00:00:00Z", status: "completed", conclusion: "cancelled"},
+    ]);
   };
   const start = calls.updated.length;
   try { await run(github, context, core); } finally { github.paginate = originalPaginate; }
@@ -741,8 +868,8 @@ async function assertExactBaseRef() {
     github.paginate = async (method, input) => {
       const rows = await originalPaginate(method, input);
       if (method !== codeqlListWorkflowRuns) return rows;
-      return rows.map(row => [200, 300].includes(row.id)
-        ? {...row, conclusion: "success", pull_requests: [association("develop", 99), association("main")]} : row);
+      return rememberWorkflowRuns(rows.map(row => [200, 300].includes(row.id)
+        ? {...row, conclusion: "success", pull_requests: [association("develop", 99), association("main")]} : row));
     };
     github.request = async (route, input) => {
       const {data} = await originalRequest(route, input);
@@ -807,7 +934,7 @@ async function assertSkippedRequiredGates() {
       github.paginate = async (method, input) => {
         const rows = await originalPaginate(method, input);
         return method === codeqlListWorkflowRuns
-          ? rows.map(row => row.id === 200 ? {...row, conclusion: "success"} : row) : rows;
+          ? rememberWorkflowRuns(rows.map(row => row.id === 200 ? {...row, conclusion: "success"} : row)) : rows;
       };
       github.request = async (route, input) => {
         const {data} = await originalRequest(route, input);
@@ -1005,8 +1132,10 @@ run(github, context, core).then(async () => {
                  deleteStatus = null;
                  await assertDuplicateDeletionRecovery();
                  await assertCompletionOrders();
+                await assertAttemptEvidencePinnedWhenLiveHeadAdvances();
                 await assertProducerSelectionRace();
                 await assertLicenseSetupFailureClassification();
+                await assertCodeqlSetupFailureClassification();
                 await assertUnclassifiedCancellation();
                 await assertExactBaseRef();
                 await assertSkippedRequiredGates();
@@ -1018,7 +1147,8 @@ run(github, context, core).then(async () => {
                 github.paginate = async (method, input) => {
                   const rows = await savedPaginate(method, input);
                   return method === codeqlListWorkflowRuns && input.workflow_id === "codeql.yml"
-                    ? rows.map(row => row.id === 200 ? {...row, run_attempt: 2, status: "in_progress", conclusion: null} : row)
+                    ? rememberWorkflowRuns(rows.map(row =>
+                      row.id === 200 ? {...row, run_attempt: 2, status: "in_progress", conclusion: null} : row))
                     : rows;
                 };
                 const rerunStart = calls.updated.length;
@@ -1033,7 +1163,7 @@ run(github, context, core).then(async () => {
                 github.paginate = async (method, input) => {
                   const rows = await savedPaginate(method, input);
                   return method === codeqlListWorkflowRuns && input.workflow_id === "codeql.yml"
-                    ? rows.map(row => row.id === 270 ? {...row, conclusion: "startup_failure"} : row)
+                    ? rememberWorkflowRuns(rows.map(row => row.id === 270 ? {...row, conclusion: "startup_failure"} : row))
                     : rows;
                 };
                 const rawNameStart = calls.updated.length;
@@ -1055,7 +1185,7 @@ run(github, context, core).then(async () => {
                 github.paginate = async (method, input) => {
                   const rows = await savedPaginate(method, input);
                   return method === codeqlListWorkflowRuns && input.workflow_id === "codeql.yml"
-                    ? rows.map(row => row.id === 200 ? {...row, run_attempt: 2, conclusion: "success"} : row)
+                    ? rememberWorkflowRuns(rows.map(row => row.id === 200 ? {...row, run_attempt: 2, conclusion: "success"} : row))
                     : rows;
                 };
                 const partialStart = calls.updated.length;
@@ -1084,7 +1214,7 @@ run(github, context, core).then(async () => {
                   github.paginate = async (method, input) => {
                     const rows = await savedPaginate(method, input);
                     return method === codeqlListWorkflowRuns && input.workflow_id === "codeql.yml"
-                      ? rows.map(row => row.id === 270 ? {...row, status, conclusion} : row)
+                      ? rememberWorkflowRuns(rows.map(row => row.id === 270 ? {...row, status, conclusion} : row))
                       : rows;
                   };
                   const start = calls.updated.length;

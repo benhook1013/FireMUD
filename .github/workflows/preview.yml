@@ -406,7 +406,7 @@ jobs:
             --labels-json "$TARGET_LABELS_JSON" >> "$GITHUB_OUTPUT"
 
       - name: Preview resolved tuple pr-${{ steps.derive.outputs.pr_number }} base-${{ steps.derive.outputs.base_sha }} head-${{ steps.derive.outputs.head_sha }} merge-${{ steps.derive.outputs.merge_sha }}
-        if: ${{ github.event_name == 'pull_request' && steps.derive.outputs.action == 'deploy' && steps.eligibility.outputs.eligible == 'true' }}
+        if: ${{ steps.derive.outputs.action == 'deploy' && steps.eligibility.outputs.eligible == 'true' }}
         run: ':'
 
       - name: Explain preview skip
@@ -699,7 +699,7 @@ jobs:
       - name: Upload sanitized render artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: preview-render-pr-${{ needs.preview-plan.outputs.pr_number }}-${{ needs.preview-plan.outputs.head_sha }}
+          name: preview-render-pr-${{ needs.preview-plan.outputs.pr_number }}-${{ needs.preview-plan.outputs.head_sha }}-attempt-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/preview-rendered-sanitized.yaml
             ${{ runner.temp }}/preview-metadata.json

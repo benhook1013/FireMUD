@@ -216,8 +216,10 @@ jobs:
                   (job.run_attempt !== undefined && job.run_attempt !== candidate.run_attempt) ||
                   job.head_sha !== headSha);
                 const licenseChangeJob = "Detect License-Relevant Changes";
+                const codeqlChangeJob = "Detect CodeQL-Relevant Changes";
                 const evidenceNames = [gateName, ...(workflowId === "codeql.yml" ? [
                   ...detailChecks.map(([, name]) => name), "CodeQL Analysis ($" + "{{ matrix.language }})",
+                  codeqlChangeJob,
                 ] : [licenseChangeJob])];
                 const duplicate = !mismatched &&
                   evidenceNames.some(name => data.jobs.filter(job => job.name === name).length > 1);
@@ -256,6 +258,12 @@ jobs:
                   const changes = data.jobs.find(job => job.name === licenseChangeJob);
                   if (workflowId === "license-scan.yml" &&
                       changes?.status === "completed" && changes.conclusion === "skipped") continue;
+                  // CodeQL deliberately skips its exact change detector for metadata-only
+                  // edits. That remains authoritative if gate checkout failed before its
+                  // preservation action could run; substantive analysis failures stay eligible.
+                  const codeqlChanges = data.jobs.find(job => job.name === codeqlChangeJob);
+                  if (workflowId === "codeql.yml" &&
+                      codeqlChanges?.status === "completed" && codeqlChanges.conclusion === "skipped") continue;
                   // Older License metadata jobs may only expose the completed deferral guard.
                   const deferral = steps.filter(step => step?.name === "Report dependency-deferred required gate");
                   if (workflowId === "license-scan.yml" && candidate.conclusion === "success" &&
@@ -362,7 +370,7 @@ jobs:
               "",
               "CodeQL breakdown",
               "",
-              `Source: base ${baseSha}, head ${headSha}`,
+              `Source: base ${baseRef}@${baseSha}, head ${headSha}`,
               "",
               ...detailResults.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
             ].join("\n");

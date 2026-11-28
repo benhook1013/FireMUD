@@ -49,10 +49,12 @@ if case == "late-ready":pathlib.Path(os.environ["CLOCK"]).write_text("90")
 if case == "shared-deadline" and n == 0 and policy == "firemud-trust-runtime-namespace-boundary":
     pathlib.Path(os.environ["CLOCK"]).write_text("89")
 ready=(case in ("ready", "timely-ready", "transient-error", "late-ready", "warnings", "ignore")
+       or (case=="invalid-then-ready" and n>0)
        or (case=="shared-deadline" and n==0 and policy=="firemud-trust-runtime-namespace-boundary"))
 print(json.dumps({"metadata":{"generation":2},"spec":{"failurePolicy":"Ignore" if os.environ["CASE"]=="ignore" else "Fail"},"status":{"observedGeneration":2 if ready else 1,"typeChecking":{"expressionWarnings":["bad"] if os.environ["CASE"]=="warnings" else []}}}))
 ''')
     for case, success in [("ready", True), ("timely-ready", True), ("transient-error", True),
+                          ("invalid-then-ready", True),
                           ("late-ready", False),
                           ("expired-before-request", False), ("stale", False),
                           ("warnings", False), ("ignore", False), ("api-error", False),
@@ -74,6 +76,9 @@ if case in ("stale", "warnings", "ignore", "api-error"):
     n=int(calls.read_text()) if calls.exists() else 0
     calls.write_text(str(n+1))
     print("0" if n < 2 else "90")
+elif case == "invalid-then-ready":
+    p.write_text("89")
+    print("89")
 else:
     print(p.read_text() if p.exists() else "0")
 ''')
@@ -103,9 +108,11 @@ print(now)
                 "firemud-trust-runtime-namespace-boundary", "firemud-trust-runtime-binding-boundary",
                 "firemud-trust-runtime-pod-boundary", "firemud-trust-runtime-pod-identity",
             }
-            if case == "transient-error":
+            if case in ("transient-error", "invalid-then-ready"):
                 assert calls[:2] == ["firemud-trust-runtime-namespace-boundary"] * 2
                 assert len(calls) == 5
+                if case == "invalid-then-ready":
+                    assert (tmp/"clock").read_text() == "89"
             else:
                 assert len(calls) == 4
         else:

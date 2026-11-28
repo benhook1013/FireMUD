@@ -252,6 +252,10 @@ module.exports = async function admitPrRuntimeRefresh({
         if (run?.event !== event || run.status !== status) {
           throw new Error('Runtime inventory contains an unexpected event or status.');
         }
+        if (isPositiveInteger(run.id)) {
+          if (queryIds.has(run.id)) throw new Error('Duplicate runtime run ID in inventory.');
+          queryIds.add(run.id);
+        }
         if (!exactNativeTuple(run)) continue;
         if (!isPositiveInteger(run.id) || !isPositiveInteger(run.run_attempt) ||
             !validChronology(run.created_at) ||
@@ -260,8 +264,6 @@ module.exports = async function admitPrRuntimeRefresh({
           throw new Error('Exact runtime run has invalid native chronology.');
         }
         const identity = `${run.event}:${run.id}:${run.run_attempt}`;
-        if (queryIds.has(identity)) throw new Error('Duplicate exact runtime run identity.');
-        queryIds.add(identity);
         seenBeforeDispatch.add(identity);
         if (activeStatuses.has(run.status)) {
           if (run.conclusion != null) throw new Error('Active runtime run has a conclusion.');

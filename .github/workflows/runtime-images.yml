@@ -158,26 +158,75 @@ jobs:
           claim="firemud-runtime-refresh-intent/v1/pr-${PR_NUMBER}/${MERGE_SHA}/${base_ref_hash}/g${EVENT_RUNTIME_REFRESH_CLAIM}"
           claim_read_error="$(mktemp)"
           trap 'rm -f "$claim_read_error"' EXIT
+          claim_read_deadline=$((SECONDS + 60))
           read_claim_object() {
             local endpoint="$1"
-            local attempt response status
+            local attempt response status remaining request_timeout normalized_response response_status
+            local response_headers response_body retry_after retry_wait retry_epoch retry_after_value
+            local -a retry_after_values=()
             for attempt in 1 2 3; do
-              if response="$(timeout --kill-after=2s 15s gh api "$endpoint" 2>"$claim_read_error")"; then
-                printf '%s\n' "$response"
-                return 0
+              remaining=$((claim_read_deadline - SECONDS))
+              (( remaining > 2 )) || break
+              request_timeout=15
+              (( remaining - 2 < request_timeout )) && request_timeout=$((remaining - 2))
+              response=""
+              if response="$(timeout --kill-after=2s "${request_timeout}s" gh api --include --method GET "$endpoint" 2>"$claim_read_error")"; then
+                status=0
               else
                 status=$?
               fi
-              if (( attempt == 3 )); then
+              normalized_response="${response//$'\r'/}"
+              response_status="$(sed -n '1{s/^HTTP\/[^ ]* \([0-9][0-9][0-9]\).*/\1/p;}' <<<"$normalized_response")"
+              response_headers="${normalized_response%%$'\n\n'*}"
+              response_body=""
+              if [[ "$normalized_response" == *$'\n\n'* ]]; then
+                response_body="${normalized_response#*$'\n\n'}"
+              fi
+
+              if [[ "$response_status" == "200" && $status -eq 0 ]]; then
+                [[ -n "$response_body" ]] || break
+                printf '%s\n' "$response_body"
+                return 0
+              fi
+              if [[ "$response_status" == "429" ]]; then
+                retry_after_values=()
+                mapfile -t retry_after_values < <(
+                  awk 'tolower($1) == "retry-after:" {sub(/^[^:]*:[[:space:]]*/, ""); print}' <<<"$response_headers"
+                )
+                (( ${#retry_after_values[@]} > 0 )) || break
+                retry_after="${retry_after_values[0]}"
+                for retry_after_value in "${retry_after_values[@]}"; do
+                  [[ "$retry_after_value" == "$retry_after" ]] || break 2
+                done
+                if [[ "$retry_after" =~ ^[0-9]{1,8}$ ]]; then
+                  retry_wait=$((10#$retry_after))
+                elif [[ "$retry_after" =~ ^[A-Z][a-z]{2},[[:space:]][0-9]{2}[[:space:]][A-Z][a-z]{2}[[:space:]][0-9]{4}[[:space:]][0-9]{2}:[0-9]{2}:[0-9]{2}[[:space:]]GMT$ ]]; then
+                  retry_epoch="$(date -u --date="$retry_after" +%s 2>/dev/null)" || break
+                  retry_wait=$((retry_epoch - $(date -u +%s)))
+                  (( retry_wait > 0 )) || retry_wait=0
+                else
+                  break
+                fi
+                remaining=$((claim_read_deadline - SECONDS))
+                if (( attempt == 3 || remaining <= 2 || retry_wait + 2 >= remaining )); then
+                  break
+                fi
+                echo "Runtime refresh claim GET was rate-limited; honoring Retry-After before retrying the same exact object." >&2
+                sleep "$retry_wait"
+                continue
+              fi
+              if (( attempt == 3 )) || {
+                (( status != 124 )) && [[ ! "$response_status" =~ ^(408|500|502|503|504)$ ]] &&
+                ! grep -Eq '^gh: .*\(HTTP (408|500|502|503|504)\)$' "$claim_read_error";
+              }; then
                 break
               fi
-              if (( status != 124 )) && ! grep -Eq '^gh: .*\(HTTP (408|500|502|503|504)\)$' "$claim_read_error"; then
-                break
-              fi
+              remaining=$((claim_read_deadline - SECONDS))
+              (( remaining > attempt )) || break
               echo "Transient runtime refresh claim read failure; retrying the same object." >&2
               sleep "$attempt"
             done
-            echo "Runtime refresh claim read failed. If this run is positively identified as the original receiver for the same current comparison, re-run all jobs after recovery. Preserve the claim and do not dispatch another receiver." >&2
+            echo "Runtime refresh claim read failed or exhausted its bounded Retry-After budget. If this run is positively identified as the original receiver for the same current comparison, re-run all jobs after recovery. Preserve the claim and do not dispatch another receiver." >&2
             return 1
           }
           claim_ref="$(read_claim_object "repos/${GITHUB_REPOSITORY}/git/ref/tags/${claim}")"

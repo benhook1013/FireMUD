@@ -23,7 +23,7 @@ registry_manifest_state() {
   local tag="${image_path##*:}"
   local manifest_url="https://ghcr.io/v2/${repository_path}/manifests/${tag}"
   local registry_token="${registry_tokens[$repository_path]:-}"
-  local status
+  local status readable_repository
 
   [[ -n "${GHCR_USERNAME:-}" && -n "${GHCR_TOKEN:-}" ]] || {
     echo "GHCR credentials are unavailable for authenticated manifest preflight: $image" >&2
@@ -55,7 +55,24 @@ registry_manifest_state() {
   fi
   case "$status" in
     200) printf -v "$output_name" '%s' existing ;;
-    404) printf -v "$output_name" '%s' missing ;;
+    404)
+      # A tag response alone cannot prove this token has pull access to the package.
+      if ! readable_repository="$(curl --silent --show-error --location --fail \
+        --connect-timeout 10 --max-time 30 \
+        --header "Authorization: Bearer ${registry_token}" \
+        --header 'Accept: application/json' \
+        "https://ghcr.io/v2/${repository_path}/tags/list?n=1")" ||
+        ! jq -e --arg repository "$repository_path" --arg tag "$tag" '
+          type == "object" and .name == $repository
+          and (.tags == null or (.tags | type == "array"
+            and all(.[]; type == "string" and . != $tag)))
+          and has("tags")
+        ' <<<"$readable_repository" >/dev/null; then
+        echo "Unable to establish pull access and consistent tag evidence for $image; refusing to infer absence." >&2
+        return 1
+      fi
+      printf -v "$output_name" '%s' missing
+      ;;
     *)
       echo "Authenticated OCI manifest HEAD returned HTTP ${status} for $image; refusing to push." >&2
       return 1

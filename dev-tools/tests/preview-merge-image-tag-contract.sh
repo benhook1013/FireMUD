@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016 # Literal workflow expressions are contract fixtures.
 set -euo pipefail
+trap 'printf "Preview merge image tag contract failed at line %s.\n" "$LINENO" >&2' ERR
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RESOLVER="$ROOT_DIR/dev-tools/hosted/preview/resolve-preview-image-tag.sh"
@@ -115,7 +116,7 @@ case "${GH_FIXTURE:-}" in
     esac
     manual="$(jq -cn --arg branch "$manual_branch" --arg pathRef "$manual_path_ref" --arg sha "$manual_sha" '
       {id:102,run_attempt:2,status:"completed",conclusion:"success",event:"workflow_dispatch",
-       html_url:"https://example.test/runtime/102",display_title:"develop",created_at:"2026-09-21T00:01:00Z",
+       html_url:"https://example.test/runtime/102",display_title:"Build Runtime Images develop",created_at:"2026-09-21T00:01:00Z",
        head_branch:$branch,head_sha:$sha,path:(".github/workflows/runtime-images.yml@refs/heads/"+$pathRef),
        repository:{full_name:"example/firemud"},head_repository:{full_name:"example/firemud"}}')"
     if [[ "$GH_FIXTURE" == branch_manual_after_skip ]]; then
@@ -251,7 +252,7 @@ case "${GH_FIXTURE:-}" in
         ;;
     esac
     ;;
-  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate|source_failure_with_alternate_rerun|source_inventory_*|publisher_callback_*|publisher_pr_merge_head|publisher_replacement_handoff*|publisher_producer_rerun_at_acceptance|publisher_stale_receipt*|publisher_exact_retry|publisher_expired_producer|publisher_missing_producer)
+  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate|source_failure_with_alternate_rerun|source_inventory_*|source_alternate_inventory_*|publisher_callback_*|publisher_pr_merge_head|publisher_replacement_handoff*|publisher_producer_rerun_at_acceptance|publisher_stale_receipt*|publisher_exact_retry|publisher_expired_producer|publisher_missing_producer)
     source_title="Build Runtime Images secure-pr-artifact pr-7 base-${base_sha} head-${head_sha} merge-${merge_sha} mode-required"
     source_event=pull_request
     publisher_merge="$merge_sha"
@@ -293,7 +294,38 @@ PY_RECEIPT
     [[ "$GH_FIXTURE" != publisher_pr_merge_head ]] || source_api_sha="$merge_sha"
     [[ "$source_event" != repository_dispatch ]] || source_api_branch=develop
     source="$(printf '{"id":101,"run_attempt":%s,"workflow_id":50,"path":".github/workflows/runtime-images.yml","status":"completed","conclusion":"success","event":"%s","head_sha":"%s","head_branch":"%s","html_url":"https://example.test/runtime/101","display_title":"%s","created_at":"2026-09-21T00:00:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$source_attempt" "$source_event" "$source_api_sha" "$source_api_branch" "$source_title")"
+    if [[ "$GH_FIXTURE" == source_alternate_inventory_* ]]; then
+      source="$(jq -c '.conclusion="failure" | .created_at="2026-09-21T00:20:00Z"' <<<"$source")"
+    fi
     publisher="$(printf '{"id":%s,"run_attempt":2,"status":"completed","conclusion":"success","event":"workflow_run","display_title":"%s","created_at":"2026-09-21T00:01:00Z","path":".github/workflows/publish-pr-runtime-images.yml","head_branch":"develop","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$publisher_id" "$publisher_title")"
+    if [[ "$GH_FIXTURE" == source_alternate_inventory_* ]]; then
+      last_alternate=109
+      [[ "$GH_FIXTURE" != source_alternate_inventory_capped ]] || last_alternate=110
+      alternate_inventory="$(jq -cn --argjson source "$source" --argjson last "$last_alternate" '
+        [$source, (range(102; $last + 1) as $id |
+          $source | .id=$id | .conclusion="success"
+          | .created_at=("2026-09-21T00:" + (121 - $id | tostring) + ":00Z")
+          | .html_url=("https://example.test/runtime/" + ($id | tostring)))]')"
+      case "$*" in
+        *actions/workflows/runtime-images.yml/runs?*)
+          jq -c '[{total_count:length,workflow_runs:.}]' <<<"$alternate_inventory"
+          exit
+          ;;
+        *actions/runs/10[2-9]|*actions/runs/110)
+          endpoint="${!#}"
+          jq -ce --argjson id "${endpoint##*/}" 'first(.[] | select(.id == $id))' <<<"$alternate_inventory"
+          exit
+          ;;
+        *actions/runs/10[2-9]/artifacts?*|*actions/runs/110/artifacts?*)
+          printf '%s' '{"total_count":0,"artifacts":[]}'
+          exit
+          ;;
+        *actions/workflows/publish-pr-runtime-images.yml/runs?*event=workflow_run*)
+          jq -c '{total_count:1,workflow_runs:[. | .id=120 | .conclusion="failure" | .created_at="2026-09-21T00:21:00Z"]}' <<<"$publisher"
+          exit
+          ;;
+      esac
+    fi
     case "$GH_FIXTURE" in
       publisher_callback_source_branch|publisher_callback_bad_receipt)
         publisher="$(jq -c '.head_branch="feature/runtime"' <<<"$publisher")"
@@ -621,6 +653,28 @@ for inventory_fixture in source_inventory_missing_row source_inventory_changing_
       fi
       ;;
   esac
+done
+
+# The cap alone keeps this otherwise terminal result pending. Every examined
+# alternate has a complete publisher read with a terminal failure.
+for alternate_fixture in source_alternate_inventory_complete source_alternate_inventory_capped; do
+  capped_alternate_status=0
+  capped_alternate_output="$(
+    GH_FIXTURE="$alternate_fixture" \
+      HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+      timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" 2>&1
+  )" || capped_alternate_status=$?
+  test "$capped_alternate_status" = 1
+  if [[ "$alternate_fixture" == source_alternate_inventory_complete ]]; then
+    grep -Fq 'Matching runtime-images workflow 101 completed with failure' <<<"$capped_alternate_output"
+  else
+    grep -Fq 'Waiting for publication of an exact replacement producer' <<<"$capped_alternate_output"
+    grep -Fq 'Timed out waiting for runtime-images workflow' <<<"$capped_alternate_output"
+    if grep -Fq 'Matching runtime-images workflow 101 completed with failure' <<<"$capped_alternate_output"; then
+      echo "capped PR alternate inventory became a terminal runtime-image failure" >&2
+      exit 1
+    fi
+  fi
 done
 
 # A stale success in the first list can turn into a rerun before its detail read.

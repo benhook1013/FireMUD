@@ -55,7 +55,7 @@ resolved = [(i, s) for i, s in enumerate(steps) if s.get("name", "").startswith(
 assert len(resolved) == 1
 index, marker = resolved[0]
 assert marker["run"] == ":"
-assert marker["if"] == "${{ github.event_name == 'pull_request' && steps.derive.outputs.action == 'deploy' && steps.eligibility.outputs.eligible == 'true' }}"
+assert marker["if"] == "${{ steps.derive.outputs.action == 'deploy' && steps.eligibility.outputs.eligible == 'true' }}"
 assert marker["name"] == "Preview resolved tuple pr-${{ steps.derive.outputs.pr_number }} base-${{ steps.derive.outputs.base_sha }} head-${{ steps.derive.outputs.head_sha }} merge-${{ steps.derive.outputs.merge_sha }}"
 assert index > next(i for i,s in enumerate(steps) if s.get("id") == "derive")
 assert index > next(i for i,s in enumerate(steps) if s.get("id") == "eligibility")
@@ -313,7 +313,7 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
     --arg legacy_retry "${FAKE_LEGACY_RETRY_JSON:-null}" \
     --arg uid "$snapshot_uid" \
     --arg resource_version "$snapshot_resource_version" \
-    '{metadata:{name:"pr-901",uid:$uid,resourceVersion:$resource_version,
+    '{apiVersion:"v1",kind:"Namespace",metadata:{name:"pr-901",uid:$uid,resourceVersion:$resource_version,
         labels:{"firemud.dev/preview":"true","firemud.dev/pr-number":"901"},
         annotations:{"firemud.dev/last-preview-base-sha":$base,"firemud.dev/last-preview-head-sha":$head,
           "firemud.dev/last-preview-merge-sha":$merge,"firemud.dev/last-preview-image-tag":$image,
@@ -661,10 +661,29 @@ if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/173
   fi
   exit 0
 fi
-if [[ "$1" == run && "$2" == download && "${FAKE_RETRY_RENDER_RECEIPT:-unavailable}" != unavailable ]]; then
-  [[ "$*" == "run download 5255 --repo example/FireMUD --name preview-render-pr-901-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --dir "* ]]
-  printf '%s\n' "$FAKE_RETRY_RENDER_RECEIPT" > "${9}/preview-metadata.json"
-  : > "${9}/preview-rendered-sanitized.yaml"
+if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5255/artifacts?per_page=100' ]]; then
+  [[ "$*" == *"--paginate --slurp"* ]]
+  if [[ -v FAKE_RETRY_ARTIFACTS_JSON ]]; then
+    printf '%s\n' "$FAKE_RETRY_ARTIFACTS_JSON"
+  else
+    printf '%s\n' '[{"artifacts":[{"id":4401,"name":"preview-render-pr-901-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-attempt-1","expired":false}]}]'
+  fi
+  exit 0
+fi
+if [[ "$1" == api && "$resource" == repos/example/FireMUD/actions/artifacts/4401/zip ]]; then
+  [[ "${FAKE_RETRY_RENDER_RECEIPT:-unavailable}" != unavailable ]] || exit 1
+  python3 - <<'PYZIP'
+import os
+import sys
+from io import BytesIO
+from zipfile import ZipFile
+
+archive = BytesIO()
+with ZipFile(archive, "w") as receipt:
+    receipt.writestr("preview-metadata.json", os.environ["FAKE_RETRY_RENDER_RECEIPT"])
+    receipt.writestr("preview-rendered-sanitized.yaml", "")
+sys.stdout.buffer.write(archive.getvalue())
+PYZIP
   exit 0
 fi
 if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/357129350/runs' ]]; then
@@ -833,17 +852,17 @@ if [[ "$*" == *"repos/example/FireMUD/dispatches"* ]]; then
     *) dispatch_reason='Test Status' ;;
   esac
   if [[ "$has_include" == true ]]; then
-    printf 'HTTP/2.0 %s %s\n' "$dispatch_status" "$dispatch_reason"
+    printf 'HTTP/2.0 %s %s\r\n' "$dispatch_status" "$dispatch_reason"
     if [[ -n "${FAKE_DISPATCH_RETRY_AFTER:-}" ]]; then
-      printf 'Retry-After: %s\n' "$FAKE_DISPATCH_RETRY_AFTER"
+      printf 'Retry-After: %s\r\n' "$FAKE_DISPATCH_RETRY_AFTER"
     fi
     if [[ -n "${FAKE_DISPATCH_RATE_REMAINING:-}" ]]; then
-      printf 'X-RateLimit-Remaining: %s\n' "$FAKE_DISPATCH_RATE_REMAINING"
+      printf 'X-RateLimit-Remaining: %s\r\n' "$FAKE_DISPATCH_RATE_REMAINING"
     fi
     if [[ -n "${FAKE_DISPATCH_RATE_RESET:-}" ]]; then
-      printf 'X-RateLimit-Reset: %s\n' "$FAKE_DISPATCH_RATE_RESET"
+      printf 'X-RateLimit-Reset: %s\r\n' "$FAKE_DISPATCH_RATE_RESET"
     fi
-    printf '\n'
+    printf '\r\n'
   fi
   if [[ "$dispatch_status" != 204 ]]; then
     jq -cn --arg message "${FAKE_DISPATCH_ERROR_MESSAGE:-Forbidden}" '{message:$message}'
@@ -1772,6 +1791,30 @@ run_proof_retry_contract() (
     test ! -e "$FAKE_DISPATCH_LOG"
   done
 
+  # An aligned Namespace consumes only an unsent reservation for its exact proof.
+  local proof_case proof_removed reserved_row
+  for proof_case in aligned changed; do
+    reset_case
+    seed_staged_holder RESERVED
+    reserved_row="$(jq -c '.data["pr-901"] | fromjson' "$FAKE_RETRY_HOLDER")"
+    proof_removed=false
+    [[ "$proof_case" != changed ]] || proof_removed=true
+    FAKE_PR_901_PROOF_COMPLETE=true FAKE_PR_901_PROOF_REMOVED_ON_RECHECK="$proof_removed" \
+      fixture_reconcile >"$case_output"
+    test ! -e "$FAKE_DISPATCH_LOG"
+    test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
+    if [[ "$proof_case" == aligned ]]; then
+      grep -Fq 'Released proof-retry reservation for PR #901 after verified proof completion.' "$case_output"
+      jq -se --argjson reserved "$reserved_row" 'length == 1 and
+        .[0][0].value == "uid-holder" and .[0][1].value == "1"
+        and (.[0][2].value | fromjson) == $reserved.predecessor' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+      assert_retry_count 1
+    else
+      test ! -e "$FAKE_RETRY_PATCH_LOG"
+      assert_retry_count 2
+    fi
+  done
+
   # An exact terminal no-op receiver preserves the old charge while allowing
   # the next reservation to proceed through the ordinary cap and CAS path.
   reset_case
@@ -1797,6 +1840,7 @@ run_proof_retry_contract() (
      display_title:$title,head_branch:"develop",path:".github/workflows/preview.yml",
      repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
      updated_at:$now}]}')"
+  local exact_source_latest="$source_latest" exact_source_inventory="$source_inventory"
   FAKE_PREVIEW_DISPATCH_JOBS_JSON="$source_jobs" \
     FAKE_PREVIEW_DISPATCH_LATEST_JSON="$source_latest" \
     FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$source_inventory" \
@@ -1853,18 +1897,43 @@ run_proof_retry_contract() (
       sourceRunId:5255,sourceRunAttempt:1,prNumber:901,baseSha:$base,headSha:$head,mergeSha:$merge,imageTag:$base,
       proofRetryNamespaceUid:"uid-pr-901",proofRetryNonce:$nonce}
   ')"
-  for receipt_case in "$receipt" unavailable; do
+  local artifact_name receipt_body artifact_json
+  artifact_name="preview-render-pr-901-${head}"
+  for receipt_case in exact legacy ambiguous unavailable; do
     reset_case
     seed_staged_holder
+    receipt_body="$receipt"
+    case "$receipt_case" in
+      exact)
+        artifact_json="$(jq -nc --arg name "$artifact_name" '
+          [{artifacts:[{id:4401,name:($name + "-attempt-1"),expired:false},
+                        {id:4402,name:($name + "-attempt-2"),expired:false}]}]')"
+        ;;
+      legacy)
+        artifact_json="$(jq -nc --arg name "$artifact_name" '
+          [{artifacts:[{id:4401,name:$name,expired:false}]}]')"
+        ;;
+      ambiguous)
+        artifact_json="$(jq -nc --arg name "$artifact_name" '
+          [{artifacts:[{id:4401,name:($name + "-attempt-1"),expired:false}]},
+           {artifacts:[{id:4402,name:($name + "-attempt-1"),expired:false},
+                        {id:4401,name:$name,expired:false}]}]')"
+        ;;
+      unavailable)
+        artifact_json='[{"artifacts":[]}]'
+        receipt_body=unavailable
+        ;;
+    esac
     FAKE_PR_901_PROOF_COMPLETE=true FAKE_PREVIEW_DISPATCH_JOBS_JSON="$rendered_jobs" \
       FAKE_PREVIEW_DISPATCH_LATEST_JSON="$source_latest" FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$source_inventory" \
       FAKE_TRUSTED_CONSUMER_LATEST_JSON="$consumer" FAKE_TRUSTED_CONSUMER_JOBS_JSON="$consumer_jobs" \
       FAKE_RETRY_TERMINAL_CONSUMER="$(jq -c '[{total_count:1,workflow_runs:[.]}]' <<<"$consumer")" \
-      FAKE_RETRY_RENDER_RECEIPT="$receipt_case" fixture_reconcile >"$case_output" 2>&1
+      FAKE_RETRY_ARTIFACTS_JSON="$artifact_json" FAKE_RETRY_RENDER_RECEIPT="$receipt_body" \
+      fixture_reconcile >"$case_output" 2>&1
     grep -Fq 'already aligned' "$case_output"
     test ! -e "$FAKE_DISPATCH_LOG"
-    if [[ "$receipt_case" == unavailable ]]; then
-      grep -Fq 'receiver artifact is unavailable' "$case_output"
+    if [[ "$receipt_case" == ambiguous || "$receipt_case" == unavailable ]]; then
+      grep -Fq 'receiver artifact does not prove the retained retry tuple' "$case_output"
       test ! -e "$FAKE_RETRY_PATCH_LOG"
     else
       jq -se --arg nonce "$old_nonce" 'length == 1 and
@@ -2004,6 +2073,42 @@ run_proof_retry_contract() (
   test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
   if grep -Fq 'proof_retry_nonce' "$FAKE_DISPATCH_LOG"; then exit 1; fi
 
+  # A first deletion can lose the Namespace resource-version fence after
+  # capturing a lower count. Its later attempt must retain the higher count.
+  reset_case
+  local previous_legacy
+  previous_legacy="$(jq -c '.["firemud.dev/proof-retry-count"] = "1"' <<<"$legacy")"
+  if FAKE_RUNTIME_DELETE_CURRENT_VERSION=rv-higher-legacy \
+    FAKE_LEGACY_RETRY_JSON="$previous_legacy" FAKE_RUNTIME_NAMESPACE_UID=uid-pr-901 \
+    bash "$DELETE_HOSTED_NAMESPACE" pr-901 pr-901 >"$case_output" 2>&1; then
+    echo 'hosted deletion crossed an intervening higher retry count' >&2
+    exit 1
+  fi
+  assert_retry_count 1
+  test ! -e "$FAKE_RUNTIME_WAIT_MARKER"
+  grep -Fxq uid-pr-901 "$FAKE_RUNTIME_DELETE_UID_LOG"
+  # Only the second request can make the Namespace disappear in this fixture.
+  rm -f "$FAKE_RUNTIME_DELETE_UID_LOG"
+  FAKE_LEGACY_RETRY_JSON="$legacy" FAKE_RETRY_RUNTIME_DELETED_AFTER_REQUEST=true \
+    FAKE_RUNTIME_NAMESPACE_UID=uid-pr-901 bash "$DELETE_HOSTED_NAMESPACE" pr-901 pr-901 >"$case_output"
+  assert_retry_count 3
+  jq -se 'length == 2 and .[1][0].value == "uid-holder" and .[1][1].value == "2"
+    and (.[1][2].value | fromjson | .count == 3)' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+
+  reset_case
+  seed_staged_holder
+  local staged_legacy_custody
+  staged_legacy_custody="$(<"$FAKE_RETRY_HOLDER")"
+  if FAKE_LEGACY_RETRY_JSON="$legacy" FAKE_RUNTIME_NAMESPACE_UID=uid-pr-901 \
+    bash "$DELETE_HOSTED_NAMESPACE" pr-901 pr-901 >"$case_output" 2>&1; then
+    echo 'hosted deletion discarded conflicting legacy/active retry custody' >&2
+    exit 1
+  fi
+  grep -Fq 'conflicts with the retained holder row' "$case_output"
+  test "$(<"$FAKE_RETRY_HOLDER")" = "$staged_legacy_custody"
+  test ! -e "$FAKE_RUNTIME_DELETE_UID_LOG"
+  test ! -e "$FAKE_RETRY_PATCH_LOG"
+
   reset_case
   if FAKE_LEGACY_RETRY_JSON='{"firemud.dev/proof-retry-count":""}' \
     bash "$DELETE_HOSTED_NAMESPACE" pr-901 pr-901 >"$case_output" 2>&1; then
@@ -2070,10 +2175,46 @@ run_proof_retry_contract() (
     seed_staged_holder "$staged_phase"
     local still_owned
     still_owned="$(<"$FAKE_RETRY_HOLDER")"
-    FAKE_NAMESPACE_ROWS='' FAKE_PR_901_NAMESPACE_ABSENT=true FAKE_RETRY_MERGE_STATE=merged \
-      bash "$PRUNER" --apply --retire-proof-retries >"$case_output"
+    DEFAULT_BRANCH=develop FAKE_NAMESPACE_ROWS='' \
+      FAKE_PR_901_NAMESPACE_ABSENT=true FAKE_RETRY_MERGE_STATE=merged \
+      bash "$PRUNER" --apply --retire-proof-retries >"$case_output" 2>&1
+    if [[ "$staged_phase" == SEND_STARTED ]]; then
+      grep -Fq 'terminal receiver evidence could not be verified' "$case_output"
+    fi
     test "$(<"$FAKE_RETRY_HOLDER")" = "$still_owned"
     test ! -e "$FAKE_RETRY_PATCH_LOG"
+  done
+
+  # Verify an exact terminal receiver only on the merged/absent path. A
+  # Namespace that reappears while verifying the receipt blocks the row CAS.
+  local retirement_case absent_all absent_initial
+  for retirement_case in terminal reappeared; do
+    reset_case
+    seed_staged_holder
+    still_owned="$(<"$FAKE_RETRY_HOLDER")"
+    absent_all=false
+    absent_initial=false
+    if [[ "$retirement_case" == terminal ]]; then
+      absent_all=true
+    else
+      absent_initial=true
+    fi
+    DEFAULT_BRANCH=develop FAKE_NAMESPACE_ROWS='' FAKE_RETRY_MERGE_STATE=merged \
+      FAKE_PR_901_NAMESPACE_ABSENT="$absent_all" FAKE_PR_901_NAMESPACE_ABSENT_ON_INITIAL="$absent_initial" \
+      FAKE_PREVIEW_DISPATCH_JOBS_JSON="$source_jobs" FAKE_PREVIEW_DISPATCH_LATEST_JSON="$exact_source_latest" \
+      FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$exact_source_inventory" \
+      bash "$PRUNER" --apply --retire-proof-retries >"$case_output"
+    test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
+    test ! -e "$FAKE_DISPATCH_LOG"
+    test ! -e "$FAKE_PRIORITY_QUERY_LOG"
+    if [[ "$retirement_case" == terminal ]]; then
+      grep -Fq 'Retired the proof-retry record for merged PR #901' "$case_output"
+      jq -se 'length == 1 and .[0][0].value == "uid-holder" and .[0][1].value == "1"
+        and .[0][2] == {op:"remove",path:"/data/pr-901"}' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+    else
+      test "$(<"$FAKE_RETRY_HOLDER")" = "$still_owned"
+      test ! -e "$FAKE_RETRY_PATCH_LOG"
+    fi
   done
 
   # A failed runtime inventory must keep the overall cleanup unsuccessful and
@@ -4828,6 +4969,7 @@ assert triggers["pull_request_target"] == {"types": ["closed"]}
 jobs = workflow["jobs"]
 expected_gates = {
     "prepare-runtime": "needs.validate-target.outputs.action == 'deploy'",
+    "publish-preparation-failure": "needs.validate-target.outputs.action == 'deploy'",
     "deploy-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "verify-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "publish-preview-proof": "needs.validate-target.outputs.action == 'deploy'",
@@ -4839,10 +4981,36 @@ for job_name, required_gate in expected_gates.items():
     condition = jobs[job_name].get("if", "")
     assert required_gate in condition, (job_name, condition)
 
+lifecycle_concurrency = {
+    "group": "preview-allocation-lifecycle",
+    "cancel-in-progress": False,
+    "queue": "max",
+}
+lifecycle_jobs = {
+    "publish-preparation-failure",
+    "deploy-runtime",
+    "publish-preview-proof",
+    "destroy-runtime",
+    "retire-identity",
+}
+observed_lifecycle_jobs = {
+    name for name, job in jobs.items()
+    if isinstance(job.get("concurrency"), dict)
+    and job["concurrency"].get("group") == lifecycle_concurrency["group"]
+}
+assert observed_lifecycle_jobs == lifecycle_jobs, observed_lifecycle_jobs
+for name in sorted(lifecycle_jobs):
+    actual = jobs[name]["concurrency"]
+    assert actual == lifecycle_concurrency and actual["cancel-in-progress"] is False, (name, actual)
+
 janitor = yaml.safe_load(
     Path(os.environ["JANITOR_WORKFLOW"]).read_text(encoding="utf-8")
 )
 janitor_job = janitor["jobs"]["prune-stale-preview-namespaces"]
+janitor_concurrency = janitor_job.get("concurrency")
+assert janitor_concurrency == lifecycle_concurrency
+assert janitor_concurrency["cancel-in-progress"] is False
+assert janitor["permissions"] == {"actions": "read", "contents": "read", "pull-requests": "read"}
 assert janitor_job["timeout-minutes"] == 60
 janitor_steps = janitor_job["steps"]
 requester_check = next(
@@ -4865,6 +5033,7 @@ prune_step = next(
 )
 prune_run = prune_step["run"]
 assert "HOSTED_IDENTITY_REQUESTER_CREDENTIALS_AVAILABLE" in prune_step["env"]
+assert prune_step["env"]["DEFAULT_BRANCH"] == "${{ github.event.repository.default_branch }}"
 assert "--retire-terminal-identities" in prune_run
 assert "prune-stale-preview-namespaces.sh --apply" in prune_run
 assert "HOSTED_IDENTITY_REQUESTER_CREDENTIALS_AVAILABLE\" == true" in prune_run
@@ -4913,7 +5082,9 @@ for job_name, job in jobs.items():
             key = (job_name, step.get("name"))
             assert key not in actual_revalidations, key
             actual_revalidations[key] = calls
-assert {job_name for job_name, _ in actual_revalidations} == set(expected_gates)
+assert {job_name for job_name, _ in actual_revalidations} == set(expected_gates) - {
+    "publish-preparation-failure"
+}
 for (job_name, step_name), calls in actual_revalidations.items():
     expected_calls = (
         {cleanup_revalidation, open_cleanup_revalidation}
@@ -5191,11 +5362,6 @@ if grep -Eq 'def labels_valid:|all\(\.labels\[\]\?; \(type == "object"\)' \
   echo "A live preview callsite duplicates the centralized label predicate" >&2
   exit 1
 fi
-grep -q 'group: preview-allocation-lifecycle' "$trusted_workflow"
-test "$(grep -Fc 'group: preview-allocation-lifecycle' "$trusted_workflow")" -eq 4
-test "$(grep -Fc 'cancel-in-progress: false' "$trusted_workflow")" -eq 4
-test "$(grep -Fc 'queue: max' "$trusted_workflow")" -eq 4
-grep -q 'group: preview-allocation-lifecycle' "$janitor_workflow"
 grep -q 'uses: ./.github/actions/resolve-certificate-identity-mode' "$janitor_workflow"
 grep -q "steps.certificate-identity.outputs.mode == 'hosted-controller'" "$janitor_workflow"
 grep -q 'HOSTED_IDENTITY_REQUESTER_KUBECONFIG' "$janitor_workflow"
@@ -5315,7 +5481,7 @@ assert (
     "labels_json_base64"
 ) in run
 function_start = run.index("dispatch_candidates()")
-function_end = run.index("\n}\n\ncandidate_rows=", function_start)
+function_end = run.index("\n}\n\nload_preview_workflow_identities()", function_start)
 function_body = run[function_start:function_end]
 assert "gh api --paginate --slurp" not in function_body
 assert run.count(

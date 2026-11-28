@@ -987,6 +987,7 @@ assert workflow["permissions"] == {
 jobs = workflow["jobs"]
 expected_gates = {
     "prepare-runtime": "needs.validate-target.outputs.action == 'deploy'",
+    "publish-preparation-failure": "needs.validate-target.outputs.action == 'deploy'",
     "deploy-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "verify-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "publish-preview-proof": "needs.validate-target.outputs.action == 'deploy'",
@@ -1049,6 +1050,10 @@ assert validate_job["permissions"] == {
 assert validate_job["timeout-minutes"] == 10
 assert jobs["prepare-runtime"]["permissions"] == {
     "actions": "read",
+    "contents": "read",
+    "pull-requests": "read",
+}
+assert jobs["publish-preparation-failure"]["permissions"] == {
     "contents": "read",
     "issues": "write",
     "pull-requests": "read",
@@ -1753,7 +1758,10 @@ for fragment in (
     'expected_artifact_name="preview-${ARTIFACT_KIND}-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"',
     'canonical_artifacts="$(jq -c',
     'select(.expired == false)',
-    'preview-(render|intent)-pr-[1-9][0-9]{0,50}-[0-9a-fA-F]{40}',
+    'preview-render-pr-[1-9][0-9]{0,50}-[0-9a-fA-F]{40}-attempt-[1-9][0-9]*$',
+    'and endswith("-attempt-" + $attempt)',
+    'expected_artifact_name+="-attempt-${SOURCE_RUN_ATTEMPT}"',
+    '--run-attempt "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT" "after validating the pinned render artifact"',
     "[[ \"$(jq 'length' <<<\"$canonical_artifacts\")\" == 1 ]]",
     'mergeable="$(jq -r',
     'if (.mergeable | type) == "boolean" then (.mergeable | tostring) else "invalid" end',
@@ -2004,6 +2012,8 @@ clean_revalidate = deploy_by_name[
 ]
 assert clean_revalidate["env"] == {
     "GH_TOKEN": "${{ github.token }}",
+    "SOURCE_RUN_ID": "${{ needs.validate-target.outputs.render_run_id }}",
+    "SOURCE_RUN_ATTEMPT": "${{ needs.validate-target.outputs.render_run_attempt }}",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
     "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
@@ -2250,7 +2260,9 @@ assert apply_run.count(revalidate_target) == 2
 source_binding_helper = (
     "bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh"
 )
-assert trusted_source.count(source_binding_helper) == 9
+assert trusted_source.count(source_binding_helper) == 12
+assert create_step["run"].index(source_binding_helper) < create_step["run"].index("kubectl create namespace")
+assert '"before recreating the preview namespace" "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"' in create_step["run"]
 assert trusted_source.count('pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"') == 1
 assert "current_pull_request_json" not in trusted_source
 assert "(.head.repo.full_name == $repository)" not in trusted_source
@@ -2298,6 +2310,18 @@ assert apply_lines[dry_run_line + 1] == revalidate_target + " \\"
 assert apply_lines[dry_run_line + 2] == '"$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
 assert actual_apply_line == dry_run_line + 3
 assert apply_run.count(source_binding_helper) == 2
+assert '"before applying the preview runtime" "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"' in apply_run
+for fence_name in (
+    "Revalidate exact PR source binding before privileged mutations",
+    "Revalidate exact PR source binding before capacity reclaim",
+    "Revalidate exact PR target before clean runtime redeploy",
+    "Create and annotate exact preview runtime namespace",
+    "Apply validated PR runtime artifact",
+):
+    fence = deploy_by_name[fence_name]
+    assert fence["env"]["SOURCE_RUN_ID"] == "${{ needs.validate-target.outputs.render_run_id }}"
+    assert fence["env"]["SOURCE_RUN_ATTEMPT"] == "${{ needs.validate-target.outputs.render_run_attempt }}"
+    assert '"$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"' in fence["run"]
 assert apply_run.count('current_pull_request_json') == 0
 
 capacity_unavailable = next(
@@ -2355,7 +2379,7 @@ assert "rollout status" not in rollout_step["run"]
 assert "concurrency" not in jobs["prepare-runtime"]
 assert "concurrency" not in jobs["verify-runtime"]
 for job_name in (
-    "deploy-runtime", "publish-preview-proof", "destroy-runtime", "retire-identity"
+    "deploy-runtime", "publish-preparation-failure", "publish-preview-proof", "destroy-runtime", "retire-identity"
 ):
     assert jobs[job_name]["concurrency"] == {
         "group": "preview-allocation-lifecycle",
@@ -2399,6 +2423,33 @@ assert "Wait for tested PR merge runtime images" not in deploy_by_name
 assert "Wait for exact controller identity readiness" not in deploy_by_name
 assert "Wait for runtime rollouts before operator validation" not in deploy_by_name
 
+preparation_failure = jobs["publish-preparation-failure"]
+assert preparation_failure["needs"] == ["validate-target", "prepare-runtime"]
+assert "needs.prepare-runtime.result == 'failure'" in preparation_failure["if"]
+preparation_failure_steps = {
+    step.get("name"): step for step in preparation_failure["steps"]
+}
+preparation_failure_check = preparation_failure_steps[
+    "Recheck proof retry before publishing preparation failure"
+]
+preparation_failure_comment = preparation_failure_steps[
+    "Publish trusted preview preparation failure"
+]
+assert list(preparation_failure_steps).index(preparation_failure_check["name"]) < list(
+    preparation_failure_steps
+).index(preparation_failure_comment["name"])
+assert "check-preview-proof-retry.sh" in preparation_failure_check["run"]
+assert "proof-missing) echo 'proceed=true'" in preparation_failure_check["run"]
+assert "proof-complete|namespace-changed)" in preparation_failure_check["run"]
+assert preparation_failure_check["env"]["RETRY_NAMESPACE_UID"] == (
+    "${{ needs.validate-target.outputs.proof_retry_namespace_uid }}"
+)
+assert preparation_failure_comment["if"] == (
+    "${{ needs.validate-target.outputs.proof_retry_namespace_uid == '' || "
+    "steps.recheck-preparation-failure.outputs.proceed == 'true' }}"
+)
+assert preparation_failure_comment["name"] not in prepare_by_name
+
 verify_steps = jobs["verify-runtime"]["steps"]
 verify_by_name = {
     step.get("name"): step for step in verify_steps if isinstance(step, dict)
@@ -2408,7 +2459,7 @@ proof_by_name = {
     step.get("name"): step for step in proof_steps if isinstance(step, dict)
 }
 for publisher in (
-    prepare_by_name["Publish trusted preview preparation failure"],
+    preparation_failure_comment,
     deploy_by_name["Publish trusted preview unavailable capacity"],
     deploy_by_name["Publish trusted preview deployment failure"],
     verify_by_name["Publish trusted preview deployment state"],
@@ -5412,11 +5463,12 @@ PY
 # fixtures prove that close/head races after server dry-run stop the real apply
 # and therefore cannot publish deployed-head evidence.
 apply_runtime_step="$TEMP_DIR/apply-runtime-step.sh"
+create_runtime_step="$TEMP_DIR/create-runtime-step.sh"
 record_preview_head_step="$TEMP_DIR/record-preview-head-step.sh"
 record_source_preview_head_step="$TEMP_DIR/record-source-preview-head-step.sh"
 prepared_render="$TEMP_DIR/runtime-target-prepared.yaml"
 python3 - "$trusted" "$preview" "$apply_runtime_step" "$record_preview_head_step" \
-  "$record_source_preview_head_step" <<'PY'
+  "$record_source_preview_head_step" "$create_runtime_step" <<'PY'
 import sys
 from pathlib import Path
 
@@ -5442,6 +5494,10 @@ for source, target in {
 Path(sys.argv[3]).write_text(apply_run, encoding="utf-8")
 Path(sys.argv[4]).write_text(record_step["run"], encoding="utf-8")
 Path(sys.argv[5]).write_text(record_step["run"], encoding="utf-8")
+create_step = next(
+    step for step in steps if step.get("name") == "Create and annotate exact preview runtime namespace"
+)
+Path(sys.argv[6]).write_text(create_step["run"], encoding="utf-8")
 PY
 
 apply_stub_dir="$TEMP_DIR/apply-stubs"
@@ -5449,6 +5505,18 @@ mkdir -p "$apply_stub_dir"
 cat >"$apply_stub_dir/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$1" == api && "$2" == repos/example/FireMUD/actions/runs/77 ]]; then
+  attempt=1
+  if [[ "${TEST_APPLY_SCENARIO:?}" == source-reran ]]; then
+    attempt=2
+  elif [[ -n "${TEST_SOURCE_ATTEMPT_FILE:-}" ]]; then
+    attempt="$(<"$TEST_SOURCE_ATTEMPT_FILE")"
+  fi
+  printf 'source-attempt-%s\n' "$attempt" >>"${TEST_APPLY_LOG:?}"
+  jq -nc --argjson attempt "$attempt" \
+    '{id:77,run_attempt:$attempt,repository:{full_name:"example/FireMUD"},status:"completed",conclusion:"success"}'
+  exit 0
+fi
 if [[ "$1" == api && "$2" == repos/example/FireMUD/git/ref/heads/develop ]]; then
   branch_sha="${TEST_EXPECTED_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
   if [[ "${TEST_APPLY_SCENARIO:?}" == wrong-base ]]; then
@@ -5485,7 +5553,7 @@ repository_name=example/FireMUD
 base_sha="${TEST_EXPECTED_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
 merge_sha="${TEST_EXPECTED_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}"
 case "${TEST_APPLY_SCENARIO:?}" in
-  success)
+  success|source-reran)
     ;;
   closed-first)
     state=closed
@@ -5584,6 +5652,8 @@ run_apply_fixture() {
       TELNET_PORT=32000 \
       EXPOSURE_MODE=private \
       ALLOCATED_TELNET_PORT=32000 \
+      SOURCE_RUN_ID=77 \
+      SOURCE_RUN_ATTEMPT=1 \
       TEST_APPLY_SCENARIO="$scenario" \
       TEST_EXPECTED_HEAD="$head_sha" \
       TEST_GH_COUNT="$gh_count" \
@@ -5635,8 +5705,42 @@ run_apply_fixture wrong-base \
 run_apply_fixture wrong-merge \
   "gh-1" \
   "Preview source binding changed"
+run_apply_fixture source-reran \
+  "gh-1 gh-2 dry-run gh-3 gh-4 source-attempt-2" \
+  "Preview source attempt changed"
 run_apply_fixture success \
-  "gh-1 gh-2 dry-run gh-3 gh-4 apply deployed-tuple"
+  "gh-1 gh-2 dry-run gh-3 gh-4 source-attempt-1 apply deployed-tuple"
+
+# The old source attempt was current before DELETE. The mocked wait completion
+# advances GitHub's native attempt while the PR tuple stays identical.
+(
+  cd "$ROOT_DIR"
+  export PATH="$apply_stub_dir:$PATH" GITHUB_REPOSITORY=example/FireMUD GH_TOKEN=fake
+  export TEST_APPLY_SCENARIO=success SOURCE_RUN_ID=77 SOURCE_RUN_ATTEMPT=1
+  export RUNTIME_NAMESPACE=pr-42 PR_NUMBER=42 EXPOSURE_MODE=private ALLOCATED_TELNET_PORT=32000
+  export BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  export HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  export MERGE_SHA=cccccccccccccccccccccccccccccccccccccccc
+  export IMAGE_TAG="pr-merge-$MERGE_SHA" ALLOCATION_TIMESTAMP=2026-01-01T00:00:00Z
+  export TEST_EXPECTED_HEAD="$HEAD_SHA" TEST_GH_COUNT="$TEMP_DIR/recreate-runtime.gh-count"
+  export TEST_APPLY_LOG="$TEMP_DIR/recreate-runtime.log"
+  export TEST_SOURCE_ATTEMPT_FILE="$TEMP_DIR/recreate-runtime.source-attempt"
+  printf '1\n' >"$TEST_SOURCE_ATTEMPT_FILE"
+  bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+    --run-attempt "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"
+  printf 'delete-wait-completed\n' >>"$TEST_APPLY_LOG"
+  printf '2\n' >"$TEST_SOURCE_ATTEMPT_FILE"
+  if bash "$create_runtime_step" >"$TEMP_DIR/recreate-runtime.out" 2>"$TEMP_DIR/recreate-runtime.err"; then
+    echo "Namespace creation accepted a source attempt superseded during deletion" >&2
+    exit 1
+  fi
+  grep -Fq 'verified current completed success before recreating the preview namespace' \
+    "$TEMP_DIR/recreate-runtime.err"
+  test "$(paste -sd ' ' "$TEST_APPLY_LOG")" = 'source-attempt-1 delete-wait-completed gh-1 source-attempt-2'
+  if grep -Fq 'unexpected fake kubectl invocation' "$TEMP_DIR/recreate-runtime.err"; then
+    exit 1
+  fi
+)
 
 stage_error="$TEMP_DIR/source-binding-stage.error"
 set +e
@@ -6486,7 +6590,7 @@ for argument in "$@"; do
   fi
   previous="$argument"
 done
-if [[ "$1" == api && "$resource" == repos/example/FireMUD/actions/artifacts/401/zip ]]; then
+if [[ "$1" == api && "$resource" == repos/example/FireMUD/actions/artifacts/40[12]/zip ]]; then
   printf '%s\n' "$*" >>"${SOURCE_GH_LOG:?}"
   artifact_directory="$(mktemp -d)"
   trap 'rm -rf -- "$artifact_directory"' EXIT
@@ -6540,8 +6644,11 @@ fi
 case "$resource" in
   repos/example/FireMUD/actions/runs/42)
     if [[ -z "$jq_expression" ]]; then
-      printf '%s\n' "$*" >>"${SOURCE_GH_LOG:?}"
-      if [[ -n "${FAKE_WORKFLOW_RUN_JSON:-}" ]]; then
+      previous_source_reads="$(grep -Fxc "$*" "${SOURCE_GH_LOG:?}" 2>/dev/null || true)"
+      printf '%s\n' "$*" >>"$SOURCE_GH_LOG"
+      if [[ "${previous_source_reads:-0}" -gt 0 && -n "${FAKE_REFRESHED_WORKFLOW_RUN_JSON:-}" ]]; then
+        printf '%s' "$FAKE_REFRESHED_WORKFLOW_RUN_JSON"
+      elif [[ -n "${FAKE_WORKFLOW_RUN_JSON:-}" ]]; then
         printf '%s' "$FAKE_WORKFLOW_RUN_JSON"
       else
         printf '%s' '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}]}'
@@ -6685,10 +6792,11 @@ SH
 chmod +x "$target_fixture_bin/python3"
 target_real_python3="$(command -v python3)"
 
-canonical_artifact_name='preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc'
-valid_workflow_run_json='{"conclusion":"success","run_attempt":1,"head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}]}'
+legacy_artifact_name='preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc'
+canonical_artifact_name="${legacy_artifact_name}-attempt-1"
+valid_workflow_run_json='{"id":42,"status":"completed","conclusion":"success","run_attempt":1,"head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}]}'
 distinct_source_sha=dddddddddddddddddddddddddddddddddddddddd
-distinct_source_workflow_run_json='{"conclusion":"success","run_attempt":1,"head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml@refs/pull/900/merge","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"dddddddddddddddddddddddddddddddddddddddd"}}]}'
+distinct_source_workflow_run_json='{"id":42,"status":"completed","conclusion":"success","run_attempt":1,"head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml@refs/pull/900/merge","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"dddddddddddddddddddddddddddddddddddddddd"}}]}'
 valid_artifacts_json='[{"artifacts":[{"id":401,"name":"'"$canonical_artifact_name"'","expired":false},{"name":"old-preview","expired":true},{"name":"unrelated-artifact","expired":false}]}]'
 
 run_deploy_target_fixture() {
@@ -6720,6 +6828,7 @@ run_deploy_target_fixture() {
       SOURCE_GH_LOG="$TEMP_DIR/deploy-target-${scenario}.gh.log" \
       GITHUB_OUTPUT="$output" \
       FAKE_WORKFLOW_RUN_JSON="${FAKE_FIXTURE_WORKFLOW_RUN_JSON:-$valid_workflow_run_json}" \
+      FAKE_REFRESHED_WORKFLOW_RUN_JSON="${FAKE_FIXTURE_REFRESHED_WORKFLOW_RUN_JSON:-}" \
       FAKE_ARTIFACTS_JSON="${FAKE_FIXTURE_ARTIFACTS_JSON:-$valid_artifacts_json}" \
       FAKE_ARTIFACT_FILES="${FAKE_FIXTURE_ARTIFACT_FILES:-valid}" \
       FAKE_METADATA_SOURCE_ATTEMPT="${FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT:-1}" \
@@ -6830,11 +6939,24 @@ FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT=2 \
   run_deploy_target_fixture natural-stale-callback 0 \
     'Ignoring render callback not bound to the current source attempt.'
 test "$(wc -l < "$TEMP_DIR/deploy-target-natural-stale-callback.gh.log")" = 1
+both_attempt_artifacts="$(jq -c --arg name "${legacy_artifact_name}-attempt-2" \
+  '.[0].artifacts += [{id:402,name:$name,expired:false}]' <<<"$valid_artifacts_json")"
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$second_attempt_run_json" \
+FAKE_FIXTURE_ARTIFACTS_JSON="$both_attempt_artifacts" \
 FAKE_FIXTURE_CALLBACK_ATTEMPT=2 \
 FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT=2 \
   run_deploy_target_fixture natural-matching-attempt 0 'action=deploy'
+grep -Fxq 'render_run_attempt=2' "$TEMP_DIR/deploy-target-natural-matching-attempt.output"
+grep -Fxq 'artifact_id=402' "$TEMP_DIR/deploy-target-natural-matching-attempt.output"
+grep -Fxq 'api repos/example/FireMUD/actions/artifacts/402/zip' \
+  "$TEMP_DIR/deploy-target-natural-matching-attempt.gh.log"
+FAKE_FIXTURE_REFRESHED_WORKFLOW_RUN_JSON="$second_attempt_run_json" \
+  run_deploy_target_fixture reran-after-artifact-pin 0 \
+    'Ignoring render whose source attempt is no longer a current completed success.'
+test "$(grep -Fxc 'api repos/example/FireMUD/actions/runs/42' "$TEMP_DIR/deploy-target-reran-after-artifact-pin.gh.log")" = 2
+grep -Fxq 'action=none' "$TEMP_DIR/deploy-target-reran-after-artifact-pin.output"
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$second_attempt_run_json" \
+FAKE_FIXTURE_ARTIFACTS_JSON="$both_attempt_artifacts" \
 FAKE_FIXTURE_CALLBACK_ATTEMPT=2 \
 FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT=1 \
   run_deploy_target_fixture natural-stale-artifact 0 \
@@ -6927,6 +7049,10 @@ FAKE_FIXTURE_WORKFLOW_RUN_JSON="$duplicate_target_json" \
   run_deploy_target_fixture duplicate-target-association 0 'Ignoring artifact not bound to the source run pull request and head.'
 grep -Fxq "action=none" "$TEMP_DIR/deploy-target-duplicate-target-association.output"
 
+FAKE_FIXTURE_ARTIFACTS_JSON="$(jq -nc --arg name "$legacy_artifact_name" \
+  '[{artifacts:[{id:401,name:$name,expired:false}]}]')" \
+  run_deploy_target_fixture unknown-legacy-attempt 0 \
+    'Ignoring source run without exactly one canonical preview artifact.'
 FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[]}]' \
   run_deploy_target_fixture missing-canonical 0 \
     'Ignoring source run without exactly one canonical preview artifact.'
@@ -6934,7 +7060,7 @@ FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[{"name":"'"$canonical_artifact_name"
   run_deploy_target_fixture missing-immutable-artifact-id 0 \
     'Ignoring source run without an immutable preview artifact ID.'
 if grep -Fq '/actions/artifacts/' "$TEMP_DIR/deploy-target-missing-immutable-artifact-id.gh.log"; then exit 1; fi
-FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[{"id":401,"name":"'"$canonical_artifact_name"'","expired":false},{"name":"preview-render-pr-900-dddddddddddddddddddddddddddddddddddddddd","expired":false}]}]' \
+FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[{"id":401,"name":"'"$canonical_artifact_name"'","expired":false},{"name":"preview-render-pr-900-dddddddddddddddddddddddddddddddddddddddd-attempt-1","expired":false}]}]' \
   run_deploy_target_fixture multiple-canonical 0 \
     'Ignoring source run without exactly one canonical preview artifact.'
 FAKE_FIXTURE_ARTIFACT_FILES=missing-metadata \

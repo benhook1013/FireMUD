@@ -7,6 +7,7 @@ on:
     types: [preview-janitor]
 
 permissions:
+  actions: read # Verify exact terminal preview receiver and consumer attempts.
   contents: read
   pull-requests: read
 
@@ -86,6 +87,7 @@ jobs:
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
           GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           HOSTED_IDENTITY_MODE: ${{ steps.certificate-identity.outputs.mode }}
           HOSTED_IDENTITY_REQUESTER_KUBECONFIG: ${{ runner.temp }}/hosted-identity-requester.kubeconfig
           HOSTED_IDENTITY_REQUESTER_CREDENTIALS_AVAILABLE: ${{ steps.requester-credentials.outputs.available }}

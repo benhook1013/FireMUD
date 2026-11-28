@@ -657,7 +657,7 @@ def check_candidate_execution(job):
             raise AssertionError("preview render uses a candidate local action")
         script = step.get("run", "").replace("\\\n", "")
         if re.search(r"(?:bash|python3)\s+(?:\./)?candidate/", script) or re.search(
-            r"""(?:^|[;&|()]|(?:then|do|else)\s)\s*['"]?(?:\./)?candidate/""",
+            r"""(?:^|[;&|()]|\b(?:then|do|else)\s)\s*['"]?(?:\./)?candidate/""",
             script,
             flags=re.MULTILINE,
         ):
@@ -666,11 +666,12 @@ def check_candidate_execution(job):
 check_candidate_execution(preview_jobs["preview-render"])
 check_candidate_execution({"steps": [{"run": "helm template example ./candidate/k8s/helm/firemud"}]})
 try:
-    check_candidate_execution({"steps": [{"run": "./candidate/inert-fixture.sh"}]})
+    check_candidate_execution({"steps": [{"run": "if false; then ./candidate/inert-fixture.sh; fi"}]})
 except AssertionError:
     pass
 else:
-    raise AssertionError("direct candidate execution escaped isolation checking")
+    raise AssertionError("conditional candidate execution escaped isolation checking")
+check_candidate_execution({"steps": [{"run": "if false; then ./chart-data/inert-fixture.sh; fi"}]})
 for job_name, job in preview_jobs.items():
     for checkout in checkouts(job):
         if checkout.get("with", {}).get("persist-credentials") is not False:

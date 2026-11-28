@@ -628,7 +628,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "041edc8496fba6c65323a2d09d57f4729e791ee04d968e02a2aa18c4f282b52b";
+            const canonicalRuntimeWorkflowSha256 = "064d6a9ea063be682e1eb5f93dcea04ae96ae766bc6a6d760286bb9044689a1e";
             // The previous archive format does not change this definition's independently valid smoke proof.
             const canonicalMergeOnlyArtifactRuntimeWorkflowSha256 = "004af984d2aa7ab023758cbc38c6c20f92976b8f07040c9a4965bda6616d5dd5";
             const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -643,7 +643,7 @@ jobs:
             const canonicalLegacyRuntimeWorkflowSha256 = "db0acb4e51630b729eb92362ea3e748f3f96b06d8ef5ca466a718ded67725804";
             // Include held-admission proof, authenticated cleanup, and their executed inputs.
             const canonicalPlayClassifierSha256 = {
-              "dev-tools/verify-smoke-images.sh": "f245dae9a632c2a331bee84b581fc45476c508df2a564af9679cd2c4a1a96a75",
+              "dev-tools/verify-smoke-images.sh": "3dcf692a0d10f34282b3cedef247a0c28d77fcc0534dd2e96ca7eb263d3dd31b",
               "dev-tools/smoke/smoke_common.py": "a1e36948b500ac796295560cb8c22321ebe47eab78be9e1f4d58837053547534",
               "services/game-session-service/websocket-login-look-smoke.sh": "0a6fbc66f7bf16aaf065bf1228d5190be340ce25543112e39482b9325ad9a90b",
               "dev-tools/smoke/demo-smoke-defaults.sh": "8c9aae1abf005b47af3f313e0d635a666c74776733bcf5278a2e11ac9c8a18fb",
@@ -1259,10 +1259,14 @@ jobs:
               }
               pollIteration += 1;
 
-              const expectedDisplayTitle =
+              const eventIdentity = currentIdentity;
+              const runtimeDisplayTitle = (identity) =>
                 `Build Runtime Images secure-pr-artifact pr-${prNumber} ` +
-                `base-${currentIdentity.baseSha} head-${currentIdentity.headSha} ` +
-                `merge-${currentIdentity.mergeSha} mode-required`;
+                `base-${identity.baseSha} head-${identity.headSha} ` +
+                `merge-${identity.mergeSha} mode-required`;
+              const expectedDisplayTitle = runtimeDisplayTitle(eventIdentity);
+              let selectedIdentity = eventIdentity;
+              let selectedDisplayTitle = expectedDisplayTitle;
               const selection = {
                 retryPrimary: retryPrimary?.identity === identityKey(currentIdentity) ? retryPrimary : null,
               };
@@ -1305,11 +1309,14 @@ jobs:
                   cancelledRunId = matching.id;
                   cancelledRunObservedAt = Date.now();
                 }
-                const replacement = await findMatchingRuntimeImagesRun(
-                  "repository_dispatch",
-                  expectedDisplayTitle,
-                  currentIdentity,
-                  selection
+                const replacementIdentity = await resolveCurrentIdentity(
+                  "Selecting a trusted replacement for the cancelled event run", true
+                );
+                if (replacementIdentity?.obsolete) return;
+                const replacementTitle = replacementIdentity
+                  ? runtimeDisplayTitle(replacementIdentity) : "";
+                const replacement = replacementIdentity && await findMatchingRuntimeImagesRun(
+                  "repository_dispatch", replacementTitle, replacementIdentity, selection
                 );
                 if (!replacement) {
                   if (Date.now() - cancelledRunObservedAt >= cancelledReplacementTimeoutMs) {
@@ -1333,6 +1340,8 @@ jobs:
                 );
                 cancelledNative = matching;
                 matching = replacement;
+                selectedIdentity = replacementIdentity;
+                selectedDisplayTitle = replacementTitle;
               }
               // A queued native run can share a tuple with a completed trusted refresh.
               // It must not hide already verified smoke proof or cause a second dispatch.
@@ -1340,20 +1349,30 @@ jobs:
                   matching?.event === "pull_request" && matching.status !== "completed") {
                 let replacement;
                 const refreshSelection = { retryPrimary: selection.retryPrimary };
+                let replacementIdentity = null;
                 try {
-                  replacement = await findMatchingRuntimeImagesRun(
-                    "repository_dispatch", expectedDisplayTitle, currentIdentity, refreshSelection
+                  replacementIdentity = await resolveCurrentIdentity(
+                    "Selecting a trusted current-base replacement for the pending event run", true
                   );
+                  if (replacementIdentity?.obsolete) return;
+                  if (replacementIdentity) {
+                    replacement = await findMatchingRuntimeImagesRun(
+                      "repository_dispatch", runtimeDisplayTitle(replacementIdentity),
+                      replacementIdentity, refreshSelection
+                    );
+                  }
                 } catch (error) {
                   if (!canResumeAfterOptionalGitHubError(error, matching)) throw error;
                   core.warning("Trusted refresh inventory is unavailable; retain the native wait.");
                 }
                 try {
-                  if (replacement && await verifyCompletedCanonicalRuntime(replacement, currentIdentity)) {
+                  if (replacement && await verifyCompletedCanonicalRuntime(replacement, replacementIdentity)) {
                     core.info("A completed verified exact trusted refresh supersedes the pending native wait.");
                     selection.pendingPrimary = matching;
                     selection.pendingRefresh = refreshSelection.pendingPrimary;
                     matching = replacement;
+                    selectedIdentity = replacementIdentity;
+                    selectedDisplayTitle = runtimeDisplayTitle(replacementIdentity);
                   }
                 } catch (error) {
                   if (error instanceof TerminalGitHubRequestError) throw error;
@@ -1381,16 +1400,19 @@ jobs:
                       );
                       const candidate = jobs.find((job) => job.name === canonicalSmokeJobName);
                       knownPlayVerified = Boolean(candidate) &&
-                        await verifyKnownPlayFailure(matching, candidate, currentIdentity);
+                        await verifyKnownPlayFailure(matching, candidate, selectedIdentity);
                     } catch (error) {
                       if (error instanceof TerminalGitHubRequestError) throw error;
                       core.warning(`Canonical PLAY transition exception proof is unavailable: ${error?.message ?? String(error)}`);
                     }
                     if (knownPlayVerified) {
-                      const freshIdentity = await resolveCurrentIdentity("Stopping stale canonical transition PLAY exception");
+                      const freshIdentity = await resolveCurrentIdentity(
+                        "Stopping stale canonical transition PLAY exception",
+                        matching.event === "repository_dispatch"
+                      );
                       if (freshIdentity?.obsolete) return;
-                      if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
-                        currentIdentity = freshIdentity;
+                      if (!freshIdentity || identityKey(freshIdentity) !== identityKey(selectedIdentity)) {
+                        if (currentIdentity.sourceEvent === "repository_dispatch") currentIdentity = freshIdentity;
                         continue smokeGatePolling;
                       }
                       core.setOutput("known_play_exception", "true");
@@ -1408,13 +1430,14 @@ jobs:
                 }
 
                 const latestIdentity = await resolveCurrentIdentity(
-                  "Stopping stale completed smoke gate for"
+                  "Stopping stale completed smoke gate for",
+                  matching.event === "repository_dispatch"
                 );
                 if (latestIdentity?.obsolete) {
                   return;
                 }
-                if (!latestIdentity || identityKey(latestIdentity) !== identityKey(currentIdentity)) {
-                  currentIdentity = latestIdentity;
+                if (!latestIdentity || identityKey(latestIdentity) !== identityKey(selectedIdentity)) {
+                  if (currentIdentity.sourceEvent === "repository_dispatch") currentIdentity = latestIdentity;
                   core.info(
                     `Runtime images run ${matching.id} was not accepted because the current PR identity changed or is unavailable; waiting for a fresh exact run.`
                   );
@@ -1499,7 +1522,7 @@ jobs:
                         fullSmokeJob.conclusion === "success") {
                       try {
                         canonicalProducerVerified = await verifyCanonicalSmokeProducer(
-                          matching, fullSmokeJob, currentIdentity
+                          matching, fullSmokeJob, selectedIdentity
                         );
                       } catch (error) {
                         if (error instanceof TerminalGitHubRequestError) throw error;
@@ -1558,7 +1581,7 @@ jobs:
                       markers[0].conclusion === "success") {
                     let knownPlayVerified = false;
                     try {
-                      knownPlayVerified = await verifyKnownPlayFailure(matching, fullSmokeJob, currentIdentity);
+                      knownPlayVerified = await verifyKnownPlayFailure(matching, fullSmokeJob, selectedIdentity);
                     } catch (error) {
                       if (error instanceof TerminalGitHubRequestError) throw error;
                       core.warning(`Canonical PLAY transition exception proof is unavailable: ${error?.message ?? String(error)}`);
@@ -1567,10 +1590,13 @@ jobs:
                       core.setFailed("Canonical PLAY transition exception could not be verified; runtime qualification remains blocked.");
                       return;
                     }
-                    const freshIdentity = await resolveCurrentIdentity("Stopping stale canonical transition PLAY exception");
+                    const freshIdentity = await resolveCurrentIdentity(
+                      "Stopping stale canonical transition PLAY exception",
+                      matching.event === "repository_dispatch"
+                    );
                     if (freshIdentity?.obsolete) return;
-                    if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
-                      currentIdentity = freshIdentity;
+                    if (!freshIdentity || identityKey(freshIdentity) !== identityKey(selectedIdentity)) {
+                      if (currentIdentity.sourceEvent === "repository_dispatch") currentIdentity = freshIdentity;
                       continue smokeGatePolling;
                     }
                     core.setOutput("known_play_exception", "true");
@@ -1608,13 +1634,14 @@ jobs:
                   return;
                 }
                 const finalIdentity = await resolveCurrentIdentity(
-                  "Stopping stale smoke gate before accepting full-stack proof"
+                  "Stopping stale smoke gate before accepting full-stack proof",
+                  matching.event === "repository_dispatch"
                 );
                 if (finalIdentity?.obsolete) {
                   return;
                 }
-                if (!finalIdentity || identityKey(finalIdentity) !== identityKey(currentIdentity)) {
-                  currentIdentity = finalIdentity;
+                if (!finalIdentity || identityKey(finalIdentity) !== identityKey(selectedIdentity)) {
+                  if (currentIdentity.sourceEvent === "repository_dispatch") currentIdentity = finalIdentity;
                   core.info(
                     `Runtime images run ${matching.id} was not accepted because the current PR identity changed after its smoke snapshot; waiting for a fresh exact run.`
                   );
@@ -1643,73 +1670,6 @@ jobs:
                   continue smokeGatePolling;
                 }
                 const needsLiveComparison = matching.event === "repository_dispatch";
-                const isSelectedLiveComparison = (live) => live &&
-                  live.baseSha === currentIdentity.baseSha && live.headSha === currentIdentity.headSha &&
-                  live.mergeSha === currentIdentity.mergeSha && live.baseRef === currentIdentity.baseRef;
-                if (needsLiveComparison) {
-                  // A trusted refresh follows the live base, unlike immutable event proof.
-                  const acceptanceIdentity = await resolveCurrentIdentity(
-                    "Stopping stale current-base smoke gate after the final run lookup", true
-                  );
-                  if (acceptanceIdentity?.obsolete) return;
-                  if (!isSelectedLiveComparison(acceptanceIdentity)) {
-                    currentIdentity = currentIdentity.sourceEvent === "repository_dispatch" ? acceptanceIdentity : currentIdentity;
-                    core.info("Current-base identity changed after the final runtime attempt lookup; resume exact selection.");
-                    if (await retryExactSelection("Rechecking the selected live smoke comparison.", { requirePendingPrimary: false })) continue smokeGatePolling;
-                    break smokeGatePolling;
-                  }
-                  let acceptanceAttempt;
-                  try {
-                    ({ data: acceptanceAttempt } = await withTransientGitHubRetry(
-                      "current-base runtime attempt lookup after live identity validation",
-                      () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
-                    ));
-                  } catch (error) {
-                    if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary) && await retryExactSelection(
-                      `Runtime run ${matching.id} final current-base attempt is temporarily unavailable; retry exact selection.`,
-                      { requirePendingPrimary: false }
-                    )) continue smokeGatePolling;
-                    throw error;
-                  }
-                  if (acceptanceAttempt.id !== matching.id ||
-                      acceptanceAttempt.run_attempt !== matching.run_attempt ||
-                      acceptanceAttempt.status !== "completed" || acceptanceAttempt.conclusion !== "success") {
-                    core.info("Runtime attempt changed after current-base identity validation; resume exact selection.");
-                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                    continue smokeGatePolling;
-                  }
-                  const confirmedIdentity = await resolveCurrentIdentity(
-                    "Stopping stale current-base smoke gate after the final attempt lookup", true
-                  );
-                  if (confirmedIdentity?.obsolete) return;
-                  if (!isSelectedLiveComparison(confirmedIdentity)) {
-                    currentIdentity = currentIdentity.sourceEvent === "repository_dispatch" ? confirmedIdentity : currentIdentity;
-                    core.info("Current-base identity changed after the final runtime attempt lookup; resume exact selection.");
-                    if (await retryExactSelection("Rechecking the selected live smoke comparison.", { requirePendingPrimary: false })) continue smokeGatePolling;
-                    break smokeGatePolling;
-                  }
-                  // A rerun can start during that last live tuple lookup. This final
-                  // attempt fence does not make the separate GitHub reads atomic.
-                  let confirmedAttempt;
-                  try {
-                    ({ data: confirmedAttempt } = await withTransientGitHubRetry(
-                      "current-base runtime attempt lookup after final live tuple validation",
-                      () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
-                    ));
-                  } catch (error) {
-                    if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary) && await retryExactSelection(
-                      `Runtime run ${matching.id} confirmed current-base attempt is temporarily unavailable; retry exact selection.`,
-                      { requirePendingPrimary: false }
-                    )) continue smokeGatePolling;
-                    throw error;
-                  }
-                  if (confirmedAttempt.id !== matching.id || confirmedAttempt.run_attempt !== matching.run_attempt ||
-                      confirmedAttempt.status !== "completed" || confirmedAttempt.conclusion !== "success") {
-                    core.info("Runtime attempt changed during final live tuple validation; resume exact selection.");
-                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                    continue smokeGatePolling;
-                  }
-                }
                 const pendingOrderingFences = [selection.pendingPrimary, selection.pendingRefresh].filter(Boolean);
                 for (const pending of pendingOrderingFences) {
                   // A fresh ordering read fences each older-success fallback. A
@@ -1717,7 +1677,9 @@ jobs:
                   let freshPrimary;
                   try {
                     freshPrimary = await findMatchingRuntimeImagesRun(
-                      pending.event, expectedDisplayTitle, currentIdentity,
+                      pending.event,
+                      pending.event === "pull_request" ? expectedDisplayTitle : selectedDisplayTitle,
+                      pending.event === "pull_request" ? eventIdentity : selectedIdentity,
                       { allowCompletedFallback: false, fallbackFence: matching }
                     );
                   } catch (error) {
@@ -1761,25 +1723,13 @@ jobs:
                       break smokeGatePolling;
                     }
                   }
-                  if (needsLiveComparison) {
-                    const fallbackIdentity = await resolveCurrentIdentity(
-                      "Stopping stale current-base smoke gate after fallback ordering", true
-                    );
-                    if (fallbackIdentity?.obsolete) return;
-                    if (!isSelectedLiveComparison(fallbackIdentity)) {
-                      currentIdentity = currentIdentity.sourceEvent === "repository_dispatch" ? fallbackIdentity : currentIdentity;
-                      core.info("Current-base identity changed during fallback ordering; resume exact selection.");
-                      if (await retryExactSelection("Rechecking the selected live smoke comparison.", { requirePendingPrimary: false })) continue smokeGatePolling;
-                      break smokeGatePolling;
-                    }
-                  }
                 }
                 if (cancelledNative) {
                   let freshNative;
                   let finalCancellation;
                   try {
                     freshNative = await findMatchingRuntimeImagesRun(
-                      "pull_request", expectedDisplayTitle, currentIdentity, { allowCompletedFallback: false }
+                      "pull_request", expectedDisplayTitle, eventIdentity, { allowCompletedFallback: false }
                     );
                     if (freshNative?.id !== cancelledNative.id || freshNative.run_attempt !== cancelledNative.run_attempt ||
                         freshNative.status !== "completed" || freshNative.conclusion !== "cancelled") {
@@ -1817,7 +1767,7 @@ jobs:
                   let freshRefresh;
                   try {
                     freshRefresh = await findMatchingRuntimeImagesRun(
-                      "repository_dispatch", expectedDisplayTitle, currentIdentity,
+                      "repository_dispatch", selectedDisplayTitle, selectedIdentity,
                       { allowCompletedFallback: false, fallbackFence: matching }
                     );
                   } catch (error) {
@@ -1836,32 +1786,40 @@ jobs:
                     break smokeGatePolling;
                   }
                 }
-                if (pendingOrderingFences.length > 0 || cancelledNative) {
-                  // This must be the last awaited validation on the fallback
-                  // path. A selected rerun can start during any preceding read.
-                  // Pending observations have the cutoff above; separate GitHub
-                  // reads are not an atomic snapshot across attempts.
-                  let finalSelected;
-                  try {
-                    ({ data: finalSelected } = await withTransientGitHubRetry(
-                      "successful fallback attempt after final ordering",
-                      () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
-                    ));
-                  } catch (error) {
-                    if (canResumeAfterOptionalGitHubError(error, pendingOrderingFences[0] ?? cancelledNative) && await retryExactSelection(
-                      "Successful fallback attempt is unavailable after ordering; retry exact selection.",
-                      { requirePendingPrimary: false }
-                    )) continue smokeGatePolling;
-                    throw error;
-                  }
-                  if (finalSelected.id !== matching.id || finalSelected.run_attempt !== matching.run_attempt ||
-                      finalSelected.status !== "completed" || finalSelected.conclusion !== "success") {
-                    if (await retryExactSelection(
-                      "Successful fallback attempt changed during ordering; retry exact selection.",
-                      { requirePendingPrimary: false }
-                    )) continue smokeGatePolling;
-                    break smokeGatePolling;
-                  }
+                // Re-read the identity after all candidate ordering checks, then
+                // check the selected successful attempt last. Separate GitHub
+                // reads still do not form an atomic snapshot.
+                const finalComparison = await resolveCurrentIdentity(
+                  "Stopping stale smoke gate after final candidate ordering", needsLiveComparison
+                );
+                if (finalComparison?.obsolete) return;
+                if (!finalComparison || identityKey(finalComparison) !== identityKey(selectedIdentity)) {
+                  if (currentIdentity.sourceEvent === "repository_dispatch") currentIdentity = finalComparison;
+                  core.info("PR comparison changed after candidate ordering; resume exact runtime selection.");
+                  if (await retryExactSelection("Rechecking the selected smoke comparison.", { requirePendingPrimary: false })) continue smokeGatePolling;
+                  break smokeGatePolling;
+                }
+                let finalSelected;
+                try {
+                  ({ data: finalSelected } = await withTransientGitHubRetry(
+                    "selected successful runtime attempt after final ordering",
+                    () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
+                  ));
+                } catch (error) {
+                  if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary ?? cancelledNative) && await retryExactSelection(
+                    "Selected successful attempt is unavailable after final ordering; retry exact selection.",
+                    { requirePendingPrimary: false }
+                  )) continue smokeGatePolling;
+                  throw error;
+                }
+                if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                if (finalSelected.id !== matching.id || finalSelected.run_attempt !== matching.run_attempt ||
+                    finalSelected.status !== "completed" || finalSelected.conclusion !== "success") {
+                  if (await retryExactSelection(
+                    "Selected successful attempt changed during final ordering; retry exact selection.",
+                    { requirePendingPrimary: false }
+                  )) continue smokeGatePolling;
+                  break smokeGatePolling;
                 }
                 return;
               }

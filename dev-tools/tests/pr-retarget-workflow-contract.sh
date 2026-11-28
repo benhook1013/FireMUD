@@ -1829,7 +1829,7 @@ for binding in manifestSha256 repository sourceRunId prNumber baseSha headSha me
   assert_job_contains preview.yml preview-render "$binding"
 done
 assert_job_contains preview.yml preview-render 'if $event == "repository_dispatch" then {action:$action}'
-assert_job_contains preview.yml preview-render 'name: preview-render-pr-${{ needs.preview-plan.outputs.pr_number }}-${{ needs.preview-plan.outputs.head_sha }}'
+assert_job_contains preview.yml preview-render 'name: preview-render-pr-${{ needs.preview-plan.outputs.pr_number }}-${{ needs.preview-plan.outputs.head_sha }}-attempt-${{ github.run_attempt }}'
 assert_job_contains preview.yml preview-destroy-intent 'runs-on: ubuntu-latest'
 assert_job_contains preview.yml preview-destroy-intent "github.event_name == 'repository_dispatch'"
 assert_job_contains preview.yml preview-destroy-intent "needs.preview-plan.outputs.action == 'destroy'"
@@ -1843,7 +1843,9 @@ require_contains "$trusted_preview_path" "github.event.workflow_run.head_reposit
 require_contains "$trusted_preview_path" "github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'repository_dispatch'"
 require_contains "$trusted_preview_path" "github.event_name == 'pull_request_target' && github.event.action == 'closed'"
 require_contains "$trusted_preview_path" 'require_source_field head-branch "$DEFAULT_BRANCH"'
-require_contains "$trusted_preview_path" 'preview-(render|intent)-pr-'
+require_contains "$trusted_preview_path" 'preview-render-pr-'
+require_contains "$trusted_preview_path" 'preview-intent-pr-'
+require_contains "$trusted_preview_path" 'expected_artifact_name+="-attempt-${SOURCE_RUN_ATTEMPT}"'
 require_contains "$trusted_preview_path" 'preview-${ARTIFACT_KIND}-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}'
 require_contains "$trusted_preview_path" 'metadata_event="$(jq -r'
 require_contains "$trusted_preview_path" 'metadata_action="$(jq -r'
@@ -3774,6 +3776,7 @@ const quota = (reset, remaining = "0") => ({ status: 403, response: { headers: {
 NODE
 
 node - "$smoke_gate_script" <<'NODE'
+const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const script = fs.readFileSync(process.argv[2], "utf8");
 const headSha = "a".repeat(40);
@@ -3895,9 +3898,9 @@ const github = {
   },
   paginate: async (method, input) => {
     if (method === "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs") {
-      if (input.attempt_number !== 1) throw new Error("jobs must bind to selected native attempt");
       const source = availableRuns.find(run => run.id === input.run_id) ?? knownRuns.get(input.run_id);
       if (!source) throw new Error(`unbound attempt jobs lookup ${input.run_id}`);
+      if (input.attempt_number !== source.run_attempt) throw new Error("jobs must bind to selected native attempt");
       if (source.conclusion === "cancelled") return []; // No complete cancellation inventory is supplied by this fixture.
       jobQueries.push(input);
       return [{
@@ -4072,6 +4075,43 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
   })
   .then(async () => {
     const native = {
+      ...runtimeRun(671, runtimeTitle(baseSha, headSha, mergeSha)),
+      status: "completed", conclusion: "cancelled",
+    };
+    const earlierRefresh = dispatchRun(672, baseSha, headSha, mergeSha);
+    const nextBase = "d".repeat(40);
+    const nextMerge = "e".repeat(40);
+    const currentRefresh = dispatchRun(673, nextBase, headSha, nextMerge);
+    const actions = github.rest.actions;
+    const originalRun = actions.getWorkflowRun;
+    const jobStart = jobQueries.length;
+    let advancedDuringOrdering = false;
+    availableRuns = [native, earlierRefresh];
+    actions.getWorkflowRun = async (input) => {
+      const run = await originalRun(input);
+      if (input.run_id === native.id && jobQueries.length > jobStart && !advancedDuringOrdering) {
+        advancedDuringOrdering = true;
+        currentBaseSha = liveBaseSha = nextBase;
+        currentMergeSha = nextMerge;
+        currentMergeParents = [{ sha: nextBase }, { sha: headSha }];
+        availableRuns.push(currentRefresh);
+      }
+      return run;
+    };
+    try {
+      await check("success", false);
+      assert.ok(advancedDuringOrdering, "the comparison should advance during the cancelled native ordering read");
+      assert.deepEqual(jobQueries.slice(jobStart).map((job) => job.run_id), [672, 673],
+        "after ordering exposes a move, only the current replacement may satisfy smoke");
+    } finally {
+      actions.getWorkflowRun = originalRun;
+      currentBaseSha = liveBaseSha = baseSha;
+      currentMergeSha = mergeSha;
+      currentMergeParents = eventMergeParents;
+    }
+  })
+  .then(async () => {
+    const native = {
       ...runtimeRun(651, runtimeTitle(baseSha, headSha, mergeSha)),
       status: "completed", conclusion: "cancelled",
     };
@@ -4084,11 +4124,15 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
     onSmokeSleep = () => {
       native.status = "completed";
       native.conclusion = "success";
+      native.run_attempt = 2;
     };
     try {
       await check("success", false);
       if (forbiddenCurrentBaseLookups <= beforeLiveReads || jobQueries.at(-1).run_id !== native.id) {
         throw new Error("a dispatch with an advanced live base must fall back to independently qualified native event proof");
+      }
+      if (jobQueries.at(-1).attempt_number !== 2) {
+        throw new Error("native fallback must read the successful rerun attempt rather than reuse cancelled attempt evidence");
       }
     } finally {
       onSmokeSleep = null;
