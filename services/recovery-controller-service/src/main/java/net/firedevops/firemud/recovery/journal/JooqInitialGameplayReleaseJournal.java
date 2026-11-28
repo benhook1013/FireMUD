@@ -417,13 +417,19 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             SELECT next_effect.*,
                    operation.phase = 'resume_authorized' AND NOT EXISTS (
                      SELECT 1 FROM outbox WHERE effect_kind = 'prepare_playable_state_fenced'
-                   ) AS missing_preparation
+                   ) AS missing_preparation,
+                   operation.phase = 'releasing' AND NOT EXISTS (
+                     SELECT 1 FROM outbox WHERE effect_kind = 'commit_owner_authorized_handoff'
+                   ) AS missing_handoff
             FROM operation LEFT JOIN next_effect ON true
             """,
             operationId,
             preparationRefreshOnly);
     if (record != null && Boolean.TRUE.equals(record.get("missing_preparation", Boolean.class))) {
       throw conflict("authorized resume has no retained preparation effect");
+    }
+    if (record != null && Boolean.TRUE.equals(record.get("missing_handoff", Boolean.class))) {
+      throw conflict("releasing operation has no retained handoff effect");
     }
     if (record == null || record.get("outbox_id", UUID.class) == null) {
       // A finalized operation must still have an exact, durable handoff receipt.

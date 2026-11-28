@@ -1,5 +1,6 @@
 package net.firedevops.firemud.recovery.config;
 
+import javax.sql.DataSource;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseTupleCodec;
 import net.firedevops.firemud.recovery.journal.JooqInitialGameplayReleaseJournal;
@@ -15,6 +16,7 @@ import org.flywaydb.core.api.MigrationVersion;
 import org.flywaydb.core.api.callback.Callback;
 import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.DSLContext;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureOrder;
@@ -26,20 +28,34 @@ import org.springframework.core.Ordered;
 @AutoConfigureOrder(Ordered.LOWEST_PRECEDENCE)
 public class RecoveryControllerOwnerConfiguration {
   @Bean
-  static BeanPostProcessor recoveryFlywayConfigurationGuard() {
+  static BeanPostProcessor recoveryFlywayConfigurationGuard(
+      ObjectProvider<DataSource> journalDataSource) {
     return new BeanPostProcessor() {
       @Override
       public Object postProcessAfterInitialization(Object bean, String beanName) {
         if (bean instanceof Flyway flyway) {
-          validateEffectiveFlywayConfiguration(flyway);
+          validateEffectiveFlywayConfiguration(flyway, journalDataSource.getObject());
         }
         return bean;
       }
     };
   }
 
-  private static void validateEffectiveFlywayConfiguration(Flyway flyway) {
+  private static void validateEffectiveFlywayConfiguration(
+      Flyway flyway, DataSource journalDataSource) {
     var configuration = flyway.getConfiguration();
+    if (configuration.getDataSource() != journalDataSource) {
+      throw new FlywayException("Recovery Flyway must use the journal datasource");
+    }
+    if (configuration.isGroup()) {
+      throw new FlywayException("Recovery Flyway must commit each migration separately");
+    }
+    if (!configuration.isValidateOnMigrate()) {
+      throw new FlywayException("Recovery Flyway must validate migrations before applying them");
+    }
+    if (configuration.isSkipExecutingMigrations()) {
+      throw new FlywayException("Recovery Flyway must execute migrations before recording them");
+    }
     Location[] locations = configuration.getLocations();
     if (locations == null
         || locations.length != 1

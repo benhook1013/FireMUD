@@ -173,6 +173,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                 AND a.attname = required.column_name AND NOT a.attisdropped
                 AND a.atttypid = required.column_type AND a.atttypmod = required.type_modifier
                 AND a.attnotnull = required.required_not_null
+                AND (a.attname <> 'finalized_at' OR NOT a.atthasdef)
               WHERE a.attnum IS NULL)
             AND (SELECT count(DISTINCT pg_catalog.pg_get_expr(c.conbin, c.conrelid)) = 3
               FROM pg_catalog.pg_constraint c
@@ -271,7 +272,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
-                AND attname = 'readback_digest' AND NOT attisdropped AND NOT attnotnull
+                AND attname = 'readback_digest' AND NOT attisdropped AND NOT attnotnull AND NOT atthasdef
                 AND atttypid = 'pg_catalog.bpchar'::regtype AND atttypmod = 68)
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
@@ -307,7 +308,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
-                AND attname = 'last_outcome_code' AND NOT attisdropped AND NOT attnotnull
+                AND attname = 'last_outcome_code' AND NOT attisdropped AND NOT attnotnull AND NOT atthasdef
                 AND (atttypid = 'pg_catalog.text'::regtype
                   OR (atttypid = 'pg_catalog.varchar'::regtype
                     -- varchar typmod includes the four-byte header. Outcome codes allow 64 characters.
@@ -359,7 +360,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
-                AND attname = 'readback_payload' AND NOT attisdropped AND NOT attnotnull
+                AND attname = 'readback_payload' AND NOT attisdropped AND NOT attnotnull AND NOT atthasdef
                 AND atttypid = 'pg_catalog.jsonb'::regtype)
             AND (SELECT count(*) = 2
               FROM pg_catalog.pg_attribute

@@ -58,14 +58,15 @@ class InitialGameplayRecoverCodecTest {
   }
 
   @Test
-  void worldSlugMustContainUnicodeCharactersBeforeHashing() {
-    for (String noncharacter : List.of("\\uFDD0", "\\uD83F\\uDFFF")) {
-      rejects(WIRE.replace("\"world\"", "\"world-" + noncharacter + "\""));
+  void worldSlugUsesCanonicalAsciiHyphenatedGrammarAndByteLimit() {
+    var atLimit = decode(WIRE.replace("\"world\"", "\"" + "a".repeat(120) + "\""));
+    assertThat(atLimit.target().launchAssociation().worldSlug()).hasSize(120);
+    for (String invalid :
+        List.of(
+            "World", "world_slug", "-world", "world-", "world--slug", "world/slug", "world-🚀")) {
+      rejects(WIRE.replace("\"world\"", "\"" + invalid + "\""));
     }
-    var valid = decode(WIRE.replace("\"world\"", "\"world-\\uD83D\\uDE80\""));
-    assertThat(valid.target().launchAssociation().worldSlug())
-        .isEqualTo("world-" + Character.toString(0x1f680));
-    assertThat(InitialGameplayRecoverCodec.mutationDigest(valid)).isNotEqualTo(DIGEST);
+    rejects(WIRE.replace("\"world\"", "\"" + "a".repeat(121) + "\""));
   }
 
   @Test

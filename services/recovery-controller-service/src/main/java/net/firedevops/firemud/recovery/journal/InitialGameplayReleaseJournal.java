@@ -1,7 +1,6 @@
 package net.firedevops.firemud.recovery.journal;
 
 import java.time.Instant;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -52,11 +51,6 @@ public interface InitialGameplayReleaseJournal {
    */
   OutboxEntry claimEffect(
       UUID operationId, UUID effectId, UUID attemptId, Supplier<Instant> claimTime);
-
-  default OutboxEntry claimEffect(UUID operationId, UUID effectId, UUID attemptId, Instant now) {
-    Objects.requireNonNull(now, "now must not be null");
-    return claimEffect(operationId, effectId, attemptId, () -> now);
-  }
 
   /** False only for an exact dispatch superseded after definitive owner rejection or closure. */
   boolean recordRetryableEffectForDispatch(

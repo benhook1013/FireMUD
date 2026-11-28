@@ -1340,10 +1340,12 @@ def run_self_test() -> None:
             b"@Bean public org.flywaydb.core.Flyway embeddedFlyway() { return flywayFactory(); }"
         ),
     }, recovery_history, "Recovery replacement Flyway beans are unsupported")
-    check("an ordinary guard can inspect the Boot-managed Flyway", {
+    check("Boot-managed Flyway keeps the inspection guard and transactional callback eligible", {
         **recovery_history,
         f"{RECOVERY_MAIN_JAVA_ROOT}Guard.java": (
             b"import org.flywaydb.core.Flyway;\n"
+            b"import org.flywaydb.core.api.callback.Callback;\n"
+            b"@Bean Callback recoveryTransactionalMigrationCallback() { return new RecoveryTransactionalMigrationCallback(); }\n"
             b"@Bean BeanPostProcessor guard() { return processor(); }\n"
             b"private boolean applies(Object bean) { return bean instanceof Flyway; }"
         ),
@@ -1570,6 +1572,14 @@ def run_self_test() -> None:
     check("qualified Saga-only Recovery parent retains inherited versions",
           isolated_recovery_candidate, inherited_recovery_parent,
           "historical effective migration no longer applied")
+    saga_root_input = shared.replace("/saga/", "/") + "V1003__root.sql"
+    root_only_saga_parent = {
+        path: data for path, data in inherited_recovery_parent.items()
+        if path != shared + "V1002__saga.sql"
+    }
+    root_only_saga_parent[saga_root_input] = b"-- outside the selected nested location"
+    check("Saga-only Recovery locations do not inherit SQL from the shared parent directory",
+          {**root_only_saga_parent, **recovery_history}, root_only_saga_parent, None)
     check("unqualified Saga-only Recovery parent cannot lose inherited versions",
           isolated_recovery_candidate, {
               **inherited_recovery_parent,
@@ -1632,6 +1642,19 @@ def run_self_test() -> None:
         raise AssertionError(f"selected dependency migrations must define the Recovery parent history: {shared_issues}")
     check("the dedicated location excludes legacy dependency migrations",
           dedicated_candidate, dedicated_candidate, None)
+    platform_input = "services/common-platform-core/src/main/resources/db/migration/V1002__shared.sql"
+    platform_recovery_parent = {
+        f"services/{RECOVERY_PROJECT}/build.gradle.kts":
+            b'dependencies { implementation(project(":common-platform-core")) }',
+        recovery_config: b"spring.flyway.locations: classpath:db/migration\n",
+        platform_input: b"-- platform",
+    }
+    platform_candidate = {**platform_recovery_parent, **recovery_history}
+    platform_issues, _, _ = collect_issues(platform_candidate, platform_recovery_parent)
+    if (not any(f"historical effective migration no longer applied: {platform_input}" in issue
+                for issue in platform_issues)
+            or not any("effective parent frontier V1002" in issue for issue in platform_issues)):
+        raise AssertionError(f"platform SQL alone must establish the Recovery parent history: {platform_issues}")
     check("an ambiguous production project declaration cannot qualify the receiving parent's history",
           dedicated_candidate, {
               **shared_recovery_parent,
