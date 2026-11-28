@@ -873,6 +873,124 @@ class GameDesignSourcePostgresIntegrationTest {
   }
 
   @Test
+  void stableCommandDeletePreservesDisjointHistoryAndFreezesTheExactSelectedSources() {
+    Fixture fixture = fixture();
+    var genesis = fixture.sources().readGenesis(fixture.target()).orElseThrow();
+    var authored =
+        binding(
+            fixture.target(), "genesis:" + genesis.policy().receiptId(), "0", "0", "main", true);
+    synchronize(fixture, authored, apply(fixture, authored));
+    var original =
+        fixture.sources().readSynchronized(fixture.target(), authored.commitId()).orElseThrow();
+    assertThat(original.command().definitions())
+        .singleElement()
+        .satisfies(
+            definition -> {
+              assertThat(definition.commandId()).isEqualTo("look");
+              assertThat(definition.sourceCommitId()).isEqualTo(authored.commitId());
+              assertThat(definition.sourceRevisionId())
+                  .isEqualTo(authored.revisions().getFirst().revisionId());
+            });
+
+    var disjoint =
+        binding(fixture.target(), authored.commitId().toString(), "1", null, "side", false);
+    synchronize(fixture, disjoint, apply(fixture, disjoint));
+    var inherited =
+        fixture.sources().readSynchronized(fixture.target(), disjoint.commitId()).orElseThrow();
+    assertThat(inherited.command().inheritedCommitId()).isEqualTo(authored.commitId());
+    assertThat(inherited.command().sourceEpoch()).isEqualTo(original.command().sourceEpoch());
+    assertThat(inherited.command().definitions())
+        .containsExactlyElementsOf(original.command().definitions());
+    assertThat(inherited.policy().policies()).hasSize(2);
+    assertThat(inherited.policy().policies()).containsAll(original.policy().policies());
+
+    UUID deleteRevisionId = UUID.randomUUID();
+    var deletion =
+        DraftCommitBinding.create(
+            fixture.target(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            authored.commitId().toString(),
+            List.of(
+                new RevisionPayload(
+                    "0",
+                    deleteRevisionId,
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    CommandSource.deletePayload("look"))),
+            List.of(
+                new AffectedUnit(
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    CommandSource.SCOPE,
+                    fixture.target().canonicalVersionId().toString(),
+                    CommandSource.SCOPE,
+                    CommandSource.SCOPE_ID,
+                    inherited.command().sourceEpoch())));
+    synchronize(fixture, deletion, apply(fixture, deletion));
+    var deleted =
+        fixture.sources().readSynchronized(fixture.target(), deletion.commitId()).orElseThrow();
+    assertThat(deleted.command().definitions()).isEmpty();
+    assertThat(deleted.command().sourceEpoch()).isEqualTo("2");
+    assertThat(deleted.command().inheritedCommitId()).isEqualTo(disjoint.commitId());
+    assertThat(deleted.policy().policies())
+        .containsExactlyElementsOf(inherited.policy().policies());
+    var operationRow =
+        Objects.requireNonNull(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT revision_id, operation_kind, command_id, definition_json "
+                        + "FROM game_design_command_source_operation WHERE commit_id = ?",
+                    deletion.commitId()));
+    assertThat(operationRow.get("revision_id", UUID.class)).isEqualTo(deleteRevisionId);
+    assertThat(operationRow.get("operation_kind", String.class)).isEqualTo("DELETE");
+    assertThat(operationRow.get("command_id", String.class)).isEqualTo("look");
+    assertThat(operationRow.get("definition_json", String.class)).isNull();
+
+    var operation =
+        fixture.tx(
+            () -> {
+              try {
+                return IsolatedPublicationOwnerSetup.retainSourceBacked(
+                    fixture.dsl(),
+                    fixture.target(),
+                    1,
+                    "ISOLATED publication after stable command deletion",
+                    deletion.commitId().toString());
+              } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+              }
+            });
+    var selected = operation.account().input().selection().selectedCommit();
+    assertThat(selected.baseCommitId()).isEqualTo(deletion.commitId().toString());
+    var selectedSources =
+        fixture.sources().readSynchronized(fixture.target(), selected.commitId()).orElseThrow();
+    var capture = fixture.tx(() -> fixture.sources().freeze(operation));
+    assertThat(capture.command().operation().canonicalBytes())
+        .containsExactly(operation.canonicalBytes());
+    assertThat(capture.command().snapshot()).isEqualTo(selectedSources.command());
+    assertThat(capture.command().snapshot().inheritedCommitId()).isEqualTo(deletion.commitId());
+    assertThat(capture.command().snapshot().definitions()).isEmpty();
+    assertThat(capture.policy().snapshot().policies())
+        .containsExactlyElementsOf(inherited.policy().policies());
+    var retry = fixture.tx(() -> fixture.sources().freeze(operation));
+    var retained = fixture.sources().readCapture(operation).orElseThrow();
+    assertThat(retry.command().canonicalBytes())
+        .containsExactly(capture.command().canonicalBytes());
+    assertThat(retained.command().canonicalBytes())
+        .containsExactly(capture.command().canonicalBytes());
+    assertThat(retained.policy().canonicalBytes())
+        .containsExactly(capture.policy().canonicalBytes());
+    assertThat(
+            fixture
+                .sources()
+                .readSynchronized(fixture.target(), authored.commitId())
+                .orElseThrow()
+                .command()
+                .canonicalBytes())
+        .containsExactly(original.command().canonicalBytes());
+  }
+
+  @Test
   void requiredOwnerSetMustBeNonEmptyDistinctAndKnownBeforeAnyOwnerFence() {
     Fixture fixture = fixture();
     String base =
