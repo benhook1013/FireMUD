@@ -9,6 +9,7 @@ import net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptStatus;
 import net.firedevops.firemud.loggingadmin.v1.AccountAuditScope;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventRequest;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventResponse;
+import net.firedevops.firemud.loggingadmin.v1.ReadLogEventReceiptRequest;
 import net.firedevops.firemud.loggingadmin.v1.ReadLogEventReceiptResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,8 @@ class AccountAuditProtoContractTest {
     assertField(descriptor, "payload", 11, FieldDescriptor.Type.BYTES);
     assertField(descriptor, "payload_digest_version", 12, FieldDescriptor.Type.INT32);
     assertField(descriptor, "payload_digest", 13, FieldDescriptor.Type.STRING);
+    assertField(descriptor, "tenant_identity_version", 14, FieldDescriptor.Type.INT32);
+    assertField(descriptor, "tenant_uuid", 15, FieldDescriptor.Type.STRING);
     assertThat(descriptor.findFieldByNumber(2)).isNull();
     assertThat(descriptor.findFieldByNumber(3)).isNull();
     assertThat(descriptor.findFieldByNumber(4)).isNull();
@@ -53,12 +56,24 @@ class AccountAuditProtoContractTest {
     assertField(descriptor, "payload_digest", 9, FieldDescriptor.Type.STRING);
     assertField(descriptor, "status", 10, FieldDescriptor.Type.ENUM);
     assertField(descriptor, "outcome", 11, FieldDescriptor.Type.ENUM);
+    assertThat(descriptor.isReservedNumber(12)).isTrue();
+    assertField(descriptor, "tenant_identity_version", 13, FieldDescriptor.Type.INT32);
+    assertField(descriptor, "tenant_uuid", 14, FieldDescriptor.Type.STRING);
     assertThat(descriptor.findFieldByName("scope").getEnumType())
         .isEqualTo(AccountAuditScope.getDescriptor());
     assertThat(descriptor.findFieldByName("status").getEnumType())
         .isEqualTo(AccountAuditReceiptStatus.getDescriptor());
     assertThat(descriptor.findFieldByName("outcome").getEnumType())
         .isEqualTo(AccountAuditReceiptOutcome.getDescriptor());
+  }
+
+  @Test
+  void receiptReadRequestKeepsVersionedTenantIdentity() {
+    Descriptor descriptor = ReadLogEventReceiptRequest.getDescriptor();
+
+    assertField(descriptor, "tenant_id", 2, FieldDescriptor.Type.STRING);
+    assertField(descriptor, "tenant_identity_version", 11, FieldDescriptor.Type.INT32);
+    assertField(descriptor, "tenant_uuid", 12, FieldDescriptor.Type.STRING);
   }
 
   @Test
@@ -76,6 +91,9 @@ class AccountAuditProtoContractTest {
     assertField(descriptor, "status", 9, FieldDescriptor.Type.ENUM);
     assertField(descriptor, "outcome", 10, FieldDescriptor.Type.ENUM);
     assertErrorField(descriptor, "error", 11);
+    assertThat(descriptor.isReservedNumber(12)).isTrue();
+    assertField(descriptor, "tenant_identity_version", 13, FieldDescriptor.Type.INT32);
+    assertField(descriptor, "tenant_uuid", 14, FieldDescriptor.Type.STRING);
   }
 
   private static void assertField(
