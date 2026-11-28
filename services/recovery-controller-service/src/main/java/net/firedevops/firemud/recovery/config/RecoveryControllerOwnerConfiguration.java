@@ -9,16 +9,27 @@ import net.firedevops.firemud.recovery.service.InitialGameplayReleaseController;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEffectPort;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider;
 import org.flywaydb.core.api.callback.Callback;
+import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.DSLContext;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureOrder;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.flyway.autoconfigure.FlywayConfigurationCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.Ordered;
 
 @AutoConfiguration(afterName = "org.springframework.boot.jooq.autoconfigure.JooqAutoConfiguration")
 @AutoConfigureOrder(Ordered.LOWEST_PRECEDENCE)
 public class RecoveryControllerOwnerConfiguration {
+  @Bean
+  FlywayConfigurationCustomizer recoveryFlywaySessionLock() {
+    // The session lock lets Flyway commit PostgreSQL DDL and its history on one connection.
+    return configuration ->
+        configuration
+            .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
+            .setTransactionalLock(false);
+  }
+
   @Bean
   Callback recoveryTransactionalMigrationCallback() {
     return new RecoveryTransactionalMigrationCallback();

@@ -2,7 +2,10 @@ package integration.net.firedevops.firemud.recovery;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -12,6 +15,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.zaxxer.hikari.HikariDataSource;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -34,6 +38,7 @@ import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal.RetrySource;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseTupleCodec;
 import net.firedevops.firemud.recovery.journal.JooqInitialGameplayReleaseJournal;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.Resume;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.CommitOwnerAuthorizedHandoffEffect;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectKind;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState;
@@ -62,6 +67,7 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterD
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterFenceAcknowledgement;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterFenceProof;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterInventory;
+import net.firedevops.firemud.recovery.model.MaintenanceLockCredential;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseController;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEffectPort;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider;
@@ -70,6 +76,7 @@ import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.flywaydb.core.api.callback.Callback;
+import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.conf.Settings;
@@ -332,6 +339,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             .table("flyway_schema_history_recovery_control")
             .placeholders(Map.of("serviceSchema", SCHEMA))
             .locations("classpath:db/recovery-control-migration");
+    configuration
+        .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
+        .setTransactionalLock(false);
     if (target != null) {
       configuration.target(target);
     }
@@ -668,12 +678,18 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     try (var application =
             startPackagedApplication(
                 true,
+                "--spring.datasource.hikari.maximum-pool-size=1",
+                "--spring.datasource.hikari.connection-timeout=1000",
                 "--spring.sql.init.mode=always",
                 "--spring.sql.init.schema-locations=classpath:/fixture-missing-recovery-init.sql");
         Connection packagedConnection =
             DriverManager.getConnection(
                 packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
       DSLContext packagedDsl = DSL.using(packagedConnection, SQLDialect.POSTGRES);
+      HikariDataSource pool = application.getBean(HikariDataSource.class);
+      assertThat(pool.getMaximumPoolSize()).isEqualTo(1);
+      assertThat(application.getBean(Flyway.class).getConfiguration().getDataSource())
+          .isSameAs(pool);
       assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
       assertThat(application.getBean(HealthEndpoint.class).healthForPath("readiness"))
           .isNotNull()
@@ -704,6 +720,72 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                       requested.operationId())
                   .get(0, UUID.class))
           .isEqualTo(lockIdentity);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void packagedV7RollsBackSchemaWhenHistoryCannotBeRecordedAndRetriesCleanly() throws Exception {
+    String database = "firemud_recovery_control";
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try {
+      journalFlyway(packagedUrl, "6").migrate();
+      try (var packagedConnection =
+          DriverManager.getConnection(
+              packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        var packagedDsl = DSL.using(packagedConnection, SQLDialect.POSTGRES);
+        seedImmutableV1Journal(packagedDsl, false, Instant.parse("2026-09-01T00:00:00Z"));
+        String retained = retainedOutboxRow(packagedDsl);
+        packagedDsl.execute(
+            """
+            ALTER TABLE recovery_control.flyway_schema_history_recovery_control
+            ADD CONSTRAINT fixture_reject_v7_history CHECK (version IS DISTINCT FROM '7')
+            """);
+
+        assertThatThrownBy(
+                () -> {
+                  try (var ignored = startPackagedApplication(true)) {
+                    throw new AssertionError("V7 must fail when its history insert is refused");
+                  }
+                })
+            .hasStackTraceContaining("fixture_reject_v7_history");
+        assertThat(
+                packagedDsl
+                    .fetchSingle(
+                        """
+                        SELECT to_regclass(
+                            'recovery_control.initial_gameplay_release_preparation_receipt') IS NULL
+                          AND NOT EXISTS (
+                            SELECT 1 FROM recovery_control.flyway_schema_history_recovery_control
+                            WHERE version = '7')
+                        """)
+                    .get(0, Boolean.class))
+            .isTrue();
+        assertThat(retainedOutboxRow(packagedDsl)).isEqualTo(retained);
+
+        packagedDsl.execute(
+            """
+            ALTER TABLE recovery_control.flyway_schema_history_recovery_control
+            DROP CONSTRAINT fixture_reject_v7_history
+            """);
+        try (var application =
+            startPackagedApplication(true, "--spring.flyway.postgresql.transactional-lock=true")) {
+          var configuration = application.getBean(Flyway.class).getConfiguration();
+          assertThat(
+                  configuration
+                      .getPluginRegister()
+                      .getExact(PostgreSQLConfigurationExtension.class)
+                      .isTransactionalLock())
+              .isFalse();
+          assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+          assertCompletePackagedMigrationReceipts(packagedUrl);
+          assertThat(retainedOutboxRow(packagedDsl)).isEqualTo(retained);
+        }
+      }
     } finally {
       dsl.execute("DROP DATABASE " + database);
     }
@@ -1426,6 +1508,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         "transition_operation_only_key",
         "transition_equivalent_key",
         "outbox_operation_kind_key",
+        "outbox_operation_only_key",
         "outbox_operation_tuple_digest_width",
         "preparation_key",
         "preparation_digest_width",
@@ -1491,6 +1574,12 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 """
                 ALTER TABLE recovery_control.initial_gameplay_release_outbox
                   DROP CONSTRAINT initial_gameplay_release_outbox_operation_id_effect_kind_key
+                """;
+            case "outbox_operation_only_key" ->
+                """
+                CREATE UNIQUE INDEX "fixture one effect per operation"
+                  ON recovery_control.initial_gameplay_release_outbox (operation_id)
+                  INCLUDE (effect_kind)
                 """;
             case "preparation_key" ->
                 """
@@ -2306,6 +2395,11 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             journal.recordAmbiguousEffectForDispatch(
                 dispatched, "TRANSPORT_OUTCOME_UNKNOWN", base.plusSeconds(6)))
         .isTrue();
+    assertThatThrownBy(() ->
+            journal.claimEffect(
+                scope.operationId(), prepare.effect().effectId(), attemptId, base.plusSeconds(7)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("effect attempt is already claimed");
     OutboxEntry retryRead =
         journal.claimEffect(
             scope.operationId(),
@@ -2336,6 +2430,62 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             scope.operationId(), prepare.effect().effectId(), nextAttempt, base.plusSeconds(9));
     assertThat(next.lastAttemptId()).isEqualTo(nextAttempt);
     assertThat(next.attemptCount()).isEqualTo(2);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void oversizedOwnerEvidenceDoesNotReachHashOrJournalWrite(boolean resume) {
+    Scope scope = scope();
+    var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
+    Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS).plusSeconds(60);
+    journal.create(scope, lock.identity());
+    InitialGameplayReleaseEvidence retained = evidence(scope);
+    if (resume) {
+      Operation ready =
+          journal.bindVerifiedEvidence(
+              scope, tupleCodec.digest(scope), retained, tupleCodec.digest(retained), now);
+      journal.transition(
+          transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY), now.plusSeconds(1));
+    }
+    Operation before = journal.find(scope.operationId()).orElseThrow();
+    var oversized =
+        new InitialGameplayReleaseEvidence(
+            retained.evidenceRef(),
+            "x".repeat(4 * 1024 * 1024),
+            retained.migration(),
+            retained.issuerLayout(),
+            retained.writerFencing(),
+            retained.worldInitialization(),
+            retained.entityInitialization(),
+            retained.regionLease());
+    var observingCodec = spy(new InitialGameplayReleaseTupleCodec());
+    var observingJournal = spy(journal);
+    var effectPort = mock(InitialGameplayReleaseEffectPort.class);
+    var controller =
+        new InitialGameplayReleaseController(
+            observingJournal,
+            observingCodec,
+            ignored ->
+                InitialGameplayReleaseEvidenceProvider.EvidenceResolution.available(oversized),
+            effectPort);
+
+    assertThatThrownBy(
+            () -> {
+              if (resume) {
+                controller.resume(
+                    new Resume(
+                        scope.operationId(), Phase.AWAITING_RESUME, lock, scope.evidenceRef()));
+              } else {
+                controller.refreshReadiness(scope.operationId(), lock);
+              }
+            })
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Initial gameplay release evidence exceeds 4 MiB of JSON");
+    verify(observingCodec, never()).digest(oversized);
+    verify(observingJournal, never()).bindVerifiedEvidence(any(), any(), any(), any(), any());
+    verify(observingJournal, never()).transition(any(), any(Instant.class));
+    verifyNoInteractions(effectPort);
+    assertThat(journal.find(scope.operationId())).contains(before);
   }
 
   @ParameterizedTest

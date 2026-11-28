@@ -342,6 +342,51 @@ class InitialGameplayReleaseControllerTest {
     org.mockito.Mockito.verifyNoMoreInteractions(port);
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void directlySelectedHeldPreparationReturnsOnlyVerifiedFinalization(boolean finalized) {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var codec = mock(InitialGameplayReleaseTupleCodec.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var scope = mock(Scope.class);
+    var releasing = mock(Operation.class);
+    var latest = mock(Operation.class);
+    var effect = mock(PreparePlayableStateFencedEffect.class);
+    var operationId = UUID.randomUUID();
+    var attempt = UUID.randomUUID();
+    var now = Instant.parse("2026-09-01T00:00:00Z");
+    var preparation =
+        new OutboxEntry(
+            UUID.randomUUID(), effect, DIGEST, EffectOutboxState.AMBIGUOUS, 1, attempt, null, null);
+    var readback = mock(EffectReadback.class);
+    when(readback.observedAt()).thenReturn(now);
+    var observation = EffectReadbackResolution.available(readback);
+    when(releasing.scope()).thenReturn(scope);
+    when(scope.operationId()).thenReturn(operationId);
+    when(latest.phase()).thenReturn(finalized ? Phase.FINALIZED : Phase.RELEASING);
+    when(effect.kind()).thenReturn(EffectKind.PREPARE_PLAYABLE_STATE_FENCED);
+    when(journal.find(operationId)).thenReturn(Optional.of(releasing), Optional.of(latest));
+    when(journal.findNextEffect(operationId)).thenReturn(Optional.of(preparation));
+    when(port.readback(effect, attempt, 1)).thenReturn(observation);
+    var conflict = new InitialGameplayReleaseConflictException("preparation changed");
+    when(journal.recordEffectReadback(preparation, readback, now)).thenThrow(conflict);
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            codec,
+            mock(InitialGameplayReleaseEvidenceProvider.class),
+            port,
+            Clock.fixed(now, ZoneOffset.UTC));
+
+    if (finalized) {
+      assertThat(controller.reconcileNextEffect(operationId)).isSameAs(latest);
+      verify(codec).requireEffectMatchesOperation(effect, latest);
+    } else {
+      assertThatThrownBy(() -> controller.reconcileNextEffect(operationId)).isSameAs(conflict);
+    }
+    verify(port, org.mockito.Mockito.only()).readback(effect, attempt, 1);
+  }
+
   @ParameterizedTest(name = "preparation conflicts while releasing: {0}")
   @ValueSource(booleans = {false, true})
   void newlyDispatchedHandoffRefreshesHeldPreparationAfterUnavailableReadback(
@@ -534,10 +579,9 @@ class InitialGameplayReleaseControllerTest {
                       : new UUID(
                           ~requested.getMostSignificantBits(),
                           requested.getLeastSignificantBits()));
-          if (ownsClaim) {
-            when(claimed.effect()).thenReturn(effect);
-            when(claimed.attemptCount()).thenReturn(claimedOrdinal);
-          } else {
+          when(claimed.effect()).thenReturn(effect);
+          when(claimed.attemptCount()).thenReturn(claimedOrdinal);
+          if (!ownsClaim) {
             snapshot.set(after);
           }
           return claimed;

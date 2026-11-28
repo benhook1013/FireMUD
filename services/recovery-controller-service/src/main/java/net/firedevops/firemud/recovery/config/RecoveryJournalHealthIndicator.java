@@ -3,15 +3,16 @@ package net.firedevops.firemud.recovery.config;
 import jakarta.annotation.PreDestroy;
 import java.sql.SQLException;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.sql.DataSource;
 import net.firedevops.firemud.recovery.journal.JooqInitialGameplayReleaseJournal;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
@@ -196,6 +197,14 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               FROM pg_catalog.pg_index i
               JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid
                 AND a.attnum = i.indkey[0] AND NOT a.attisdropped
+              WHERE i.indrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+                AND i.indisunique AND i.indisvalid AND i.indisready AND i.indnkeyatts = 1
+                AND a.attname = 'operation_id')
+            AND NOT EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_index i
+              JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid
+                AND a.attnum = i.indkey[0] AND NOT a.attisdropped
               WHERE i.indrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
                 AND i.indisunique AND i.indisvalid AND i.indisready AND i.indnkeyatts = 1
                 AND a.attname = 'operation_id')
@@ -350,7 +359,8 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
           """;
 
   private final DataSource dataSource;
-  private final AtomicBoolean probeInProgress = new AtomicBoolean();
+  private final long probeTimeoutNanos;
+  private final AtomicReference<CompletableFuture<Boolean>> inFlightProbe = new AtomicReference<>();
   private final ThreadPoolExecutor probes =
       new ThreadPoolExecutor(
           0,
@@ -364,8 +374,17 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
             return worker;
           });
 
+  @Autowired
   RecoveryJournalHealthIndicator(DataSource dataSource) {
+    this(dataSource, PROBE_TIMEOUT_NANOS);
+  }
+
+  RecoveryJournalHealthIndicator(DataSource dataSource, long probeTimeoutNanos) {
     this.dataSource = dataSource;
+    if (probeTimeoutNanos <= 0) {
+      throw new IllegalArgumentException("Probe timeout must be positive");
+    }
+    this.probeTimeoutNanos = probeTimeoutNanos;
   }
 
   @Override
@@ -373,31 +392,13 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
     if (!JooqInitialGameplayReleaseJournal.driverLoggingIsRedacted()) {
       return Health.down().build();
     }
-    long deadline = System.nanoTime() + PROBE_TIMEOUT_NANOS;
-    if (!probeInProgress.compareAndSet(false, true)) {
-      return Health.down().build();
-    }
-    Future<Boolean> probe;
+    long requestDeadline = System.nanoTime() + probeTimeoutNanos;
+    CompletableFuture<Boolean> probe = currentProbe();
     try {
-      probe =
-          probes.submit(() -> {
-            try {
-              return checkJournal(deadline);
-            } finally {
-              // Cleanup precedes result publication. The next probe may use the queue
-              // while the worker hands off this result and becomes idle.
-              probeInProgress.set(false);
-            }
-          });
-    } catch (RejectedExecutionException unavailable) {
-      probeInProgress.set(false);
-      return Health.down().build();
-    }
-    try {
-      long remaining = deadline - System.nanoTime();
+      long remaining = requestDeadline - System.nanoTime();
       return remaining > 0
               && probe.get(remaining, TimeUnit.NANOSECONDS)
-              && deadline - System.nanoTime() > 0
+              && requestDeadline - System.nanoTime() > 0
           ? Health.up().build()
           : Health.down().build();
     } catch (InterruptedException interrupted) {
@@ -405,6 +406,40 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       return Health.down().build();
     } catch (ExecutionException | TimeoutException unavailable) {
       return Health.down().build();
+    }
+  }
+
+  private CompletableFuture<Boolean> currentProbe() {
+    while (true) {
+      CompletableFuture<Boolean> current = inFlightProbe.get();
+      if (current != null) {
+        return current;
+      }
+      CompletableFuture<Boolean> candidate = new CompletableFuture<>();
+      if (!inFlightProbe.compareAndSet(null, candidate)) {
+        continue;
+      }
+      try {
+        probes.execute(() -> runProbe(candidate));
+      } catch (RejectedExecutionException unavailable) {
+        inFlightProbe.compareAndSet(candidate, null);
+        candidate.complete(false);
+      }
+      return candidate;
+    }
+  }
+
+  private void runProbe(CompletableFuture<Boolean> probe) {
+    boolean ready = false;
+    try {
+      ready = checkJournal(System.nanoTime() + probeTimeoutNanos);
+    } catch (SQLException | RuntimeException unavailable) {
+      ready = false;
+    } finally {
+      // checkJournal returns only after JDBC resources have been closed. Publish only
+      // after relinquishing the shared probe slot so a new caller cannot borrow early.
+      inFlightProbe.compareAndSet(probe, null);
+      probe.complete(ready);
     }
   }
 
@@ -419,6 +454,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
     if (deadline - System.nanoTime() <= 0) {
       return false;
     }
+    boolean ready;
     try (var connection = dataSource.getConnection()) {
       if (!connection.getAutoCommit() || connection.isReadOnly()) {
         return false;
@@ -434,11 +470,12 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       try (var statement = connection.prepareStatement(CHECK)) {
         statement.setQueryTimeout(PROBE_TIMEOUT_SECONDS);
         try (var rows = statement.executeQuery()) {
-          return rows.next() && rows.getBoolean(1);
+          ready = rows.next() && rows.getBoolean(1);
         }
       } finally {
         connection.setNetworkTimeout(Runnable::run, originalTimeout);
       }
     }
+    return ready && deadline - System.nanoTime() > 0;
   }
 }

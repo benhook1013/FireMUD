@@ -9,5 +9,6 @@ firemudJooq {
 
 dependencies {
     implementation(project(":common-platform-core"))
+    implementation(libs.flyway.database.postgresql)
     testImplementation(project(":common-test-support"))
 }

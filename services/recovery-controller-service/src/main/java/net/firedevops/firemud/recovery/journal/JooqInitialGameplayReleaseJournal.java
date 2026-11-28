@@ -422,7 +422,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               || hasRetainedOwnerRejection(tx, current, attemptId, null)) {
             throw conflict("a retry must use a new effect attempt identity");
           }
-          if (current.state() == EffectOutboxState.DISPATCHED
+          if ((current.state() == EffectOutboxState.DISPATCHED
+                  || current.state() == EffectOutboxState.AMBIGUOUS)
               && attemptId.equals(current.lastAttemptId())) {
             throw conflict("effect attempt is already claimed; read back the existing dispatch");
           }

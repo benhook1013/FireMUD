@@ -171,7 +171,10 @@ public record InitialGameplayRecoverRequest(
   }
 
   private static String exactSelector(String value, int limit, String name) {
-    boundedText(Objects.requireNonNull(value, name), limit);
+    String normalized = text(Objects.requireNonNull(value, name), limit);
+    if (!normalized.equals(value)) {
+      throw new IllegalArgumentException(name + " must be NFC");
+    }
     if (value.codePoints().anyMatch(InitialGameplayRecoverRequest::isNoncharacter)) {
       throw new IllegalArgumentException(name + " must not contain Unicode noncharacters");
     }
