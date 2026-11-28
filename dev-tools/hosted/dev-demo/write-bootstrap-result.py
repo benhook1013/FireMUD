@@ -1,11 +1,72 @@
 import argparse
 import json
+import re
 import sys
 import uuid
 from pathlib import Path
 
 RESULT_PREFIX = "DEV_DEMO_BOOTSTRAP_RESULT="
 SESSION_IDS = ("id", "tenantId", "gameTemplateId", "ownerAccountId")
+INTENT_FIELDS = {
+    "schema",
+    "repository",
+    "runId",
+    "attempt",
+    "workflowSha",
+    "headSha",
+    "deployedBaseSha",
+    "namespace",
+    "namespaceUid",
+    "release",
+    "helmRevision",
+    "certificateProfile",
+    "imageTag",
+    "renderedManifestSha256",
+    "renderedValuesSha256",
+    "tenantId",
+    "gameTemplateId",
+    "controlPlaneRequestId",
+}
+
+
+def validate_intent(intent):
+    if not isinstance(intent, dict) or set(intent) != INTENT_FIELDS:
+        raise ValueError
+    if intent["schema"] != "dev-demo-bootstrap-intent/v1":
+        raise ValueError
+    for key in ("runId", "attempt"):
+        if not isinstance(intent[key], str) or not re.fullmatch(r"[1-9][0-9]*", intent[key]):
+            raise ValueError
+    for key in ("workflowSha", "headSha", "deployedBaseSha"):
+        if not isinstance(intent[key], str) or not re.fullmatch(r"[0-9a-f]{40}", intent[key]):
+            raise ValueError
+    if intent["headSha"] == intent["deployedBaseSha"]:
+        raise ValueError
+    for key in ("renderedManifestSha256", "renderedValuesSha256"):
+        if not isinstance(intent[key], str) or not re.fullmatch(r"[0-9a-f]{64}", intent[key]):
+            raise ValueError
+    if not isinstance(intent["repository"], str) or not re.fullmatch(
+        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", intent["repository"]
+    ):
+        raise ValueError
+    if intent["namespace"] != "dev" or intent["release"] != "dev":
+        raise ValueError
+    for key in ("namespaceUid", "helmRevision"):
+        if not isinstance(intent[key], str) or not intent[key]:
+            raise ValueError
+    if not re.fullmatch(r"[1-9][0-9]*", intent["helmRevision"]):
+        raise ValueError
+    if intent["certificateProfile"] not in ("standalone", "hosted-controller"):
+        raise ValueError
+    if not isinstance(intent["imageTag"], str) or not re.fullmatch(
+        r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", intent["imageTag"]
+    ):
+        raise ValueError
+    for key in ("tenantId", "gameTemplateId"):
+        if type(intent[key]) is not int or intent[key] <= 0:
+            raise ValueError
+    if intent["controlPlaneRequestId"] != f"dev-demo-smoke-bootstrap-{intent['runId']}-{intent['attempt']}":
+        raise ValueError
 
 
 def validate_bootstrap_payload(intent, account_id, result):
@@ -29,10 +90,11 @@ def validate_bootstrap_payload(intent, account_id, result):
 
 def read_verified_receipt(intent_path, result_path):
     intent = json.loads(intent_path.read_text(encoding="utf-8"))
+    validate_intent(intent)
     receipt = json.loads(result_path.read_text(encoding="utf-8"))
-    if receipt["schema"] != "dev-demo-bootstrap-result/v1" or receipt["intent"] != intent:
+    if not isinstance(receipt, dict) or set(receipt) != {"schema", "intent", "accountUuid", "gameSession"}:
         raise ValueError
-    if intent["schema"] != "dev-demo-bootstrap-intent/v1":
+    if receipt["schema"] != "dev-demo-bootstrap-result/v1" or receipt["intent"] != intent:
         raise ValueError
     account_id = receipt["accountUuid"]
     session = validate_bootstrap_payload(intent, account_id, {
@@ -84,6 +146,7 @@ def main():
     evidence_dir, account_id_file, pod_log = map(Path, sys.argv[1:])
     try:
         intent = json.loads((evidence_dir / "intent.json").read_text(encoding="utf-8"))
+        validate_intent(intent)
         account_id = account_id_file.read_text(encoding="utf-8")
         lines = [
             line.removeprefix(RESULT_PREFIX)

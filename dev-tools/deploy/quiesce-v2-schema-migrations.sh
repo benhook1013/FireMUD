@@ -118,7 +118,7 @@ verify_writer_quiescence() {
                 (.metadata.labels.app == $service)
                 or any(.spec.containers[]?;
                   .name == $service
-                  or ((.image // "") | split("@")[0] | split(":")[0] | split("/")[-1]) == $service
+                  or ((.image // "") | split("@")[0] | split("/")[-1] | split(":")[0]) == $service
                 )
               )
           ] | length

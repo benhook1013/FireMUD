@@ -174,6 +174,12 @@ public final class AccountTenantCapacityRepository {
   public Optional<Result> createIfQuotaAvailable(Request request, Instant expiresAt, Clock clock) {
     Record usage = usage(request);
     requireCurrentLifetime(request.evidence(), clock.instant());
+    return createWithLockedUsageIfQuotaAvailable(request, usage, expiresAt, clock);
+  }
+
+  /** The caller holds the usage lock and has qualified freshness for this attempt. */
+  public Optional<Result> createWithLockedUsageIfQuotaAvailable(
+      Request request, Record usage, Instant expiresAt, Clock clock) {
     long delta = Objects.requireNonNull(request.capacityDelta());
     long occupied = Math.addExact(number(usage, "held_units"), number(usage, "used_units"));
     if (delta > request.evidence().quota() - occupied) return Optional.empty();

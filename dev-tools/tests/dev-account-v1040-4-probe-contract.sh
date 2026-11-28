@@ -141,6 +141,7 @@ export PROBE_JOB_DELETED="$temp_dir/probe-job-deleted"
 export PROBE_DELETE_ATTEMPT="$temp_dir/probe-delete-attempt"
 export PROBE_DRY_RUN="$temp_dir/probe-dry-run"
 export PROBE_JOB_READ="$temp_dir/probe-job-read"
+export PROBE_DELETING_READ="$temp_dir/probe-deleting-read"
 PROBE_FIXTURE_HEAD="$(git -C "$root_dir" rev-parse HEAD)"
 export PROBE_FIXTURE_HEAD
 export PROBE_FIXTURE_BASE="$deployed_sha"
@@ -157,6 +158,20 @@ export -f openssl
 
 kubectl() {
   case "$*" in
+    '--kubeconfig fixture-namespace-manager config view --raw --flatten --minify -o json' | \
+    '--kubeconfig fixture-runtime config view --raw --flatten --minify -o json')
+      local server=https://dev.cluster.invalid ca=Zml4dHVyZS1jYQ== insecure=false
+      if [[ "$2" == fixture-runtime ]]; then
+        case "${PROBE_SCENARIO:-}" in
+          mismatched-server) server=https://alternate.cluster.invalid ;;
+          mismatched-ca) ca=YWx0ZXJuYXRlLWNh ;;
+          insecure-runtime) insecure=true ;;
+        esac
+      fi
+      jq -n --arg server "$server" --arg ca "$ca" --argjson insecure "$insecure" '
+        {clusters:[{cluster:{server:$server,"certificate-authority-data":$ca,
+          "insecure-skip-tls-verify":$insecure}}]}'
+      ;;
     '--kubeconfig fixture-namespace-manager --request-timeout=10s get namespace dev -o json')
       local uid="$PROBE_FIXTURE_UID"
       if [[ "${PROBE_SCENARIO:-}" == replaced && -f "$PROBE_JOB_READ" ]]; then
@@ -209,7 +224,16 @@ kubectl() {
       if [[ "${PROBE_SCENARIO:-}" == job-replacement ]]; then
         observed_uid=different-job-uid
       fi
-      jq --arg uid "$observed_uid" '.metadata.uid = $uid' "$PROBE_JOB_MANIFEST"
+      if [[ "${PROBE_SCENARIO:-}" == delete-response-lost-while-deleting ]]; then
+        if [[ ! -e "$PROBE_DELETING_READ" ]]; then
+          touch "$PROBE_DELETING_READ"
+          jq --arg uid "$observed_uid" '.metadata.uid = $uid | .metadata.deletionTimestamp = "2026-11-28T00:00:00Z"' "$PROBE_JOB_MANIFEST"
+        else
+          touch "$PROBE_JOB_DELETED"
+        fi
+      else
+        jq --arg uid "$observed_uid" '.metadata.uid = $uid' "$PROBE_JOB_MANIFEST"
+      fi
       ;;
     "--request-timeout=10s -n dev wait --for=condition=complete --timeout=75s job/$PROBE_FIXTURE_JOB_NAME")
       [[ "${PROBE_SCENARIO:-}" != duplicate ]]
@@ -231,6 +255,9 @@ kubectl() {
       [[ "${PROBE_SCENARIO:-}" != job-replacement ]] || return 1
       if [[ "${PROBE_SCENARIO:-}" == delete-first-fails && ! -f "$PROBE_DELETE_ATTEMPT" ]]; then
         touch "$PROBE_DELETE_ATTEMPT"
+        return 1
+      fi
+      if [[ "${PROBE_SCENARIO:-}" == delete-response-lost-while-deleting ]]; then
         return 1
       fi
       touch "$PROBE_JOB_DELETED"
@@ -255,6 +282,15 @@ run_protected_probe() {
   bash "$root_dir/dev-tools/deploy/run-dev-account-v1040-4-probe.sh" \
     "$@" dev "$namespace_uid" "$deployed_sha" "$PROBE_FIXTURE_HEAD" 3
 }
+
+for scenario in mismatched-server mismatched-ca insecure-runtime; do
+  if PROBE_SCENARIO="$scenario" run_protected_probe --check-permissions >"$temp_dir/receipt" 2>"$temp_dir/error"; then
+    echo "Protected probe accepted $scenario." >&2
+    exit 1
+  fi
+  grep -Eq 'must address the same cluster|must identify a TLS-verified cluster' "$temp_dir/error"
+  [[ ! -s "$temp_dir/receipt" && ! -e "$PROBE_JOB_MANIFEST" && ! -e "$PROBE_DRY_RUN" ]]
+done
 
 run_protected_probe --check-permissions
 [[ -s "$PROBE_DRY_RUN" && ! -e "$PROBE_JOB_MANIFEST" ]]
@@ -306,6 +342,10 @@ done
 rm -f -- "$PROBE_JOB_DELETED"
 PROBE_SCENARIO=delete-response-lost run_protected_probe >"$temp_dir/receipt"
 [[ -f "$PROBE_JOB_DELETED" && -s "$temp_dir/receipt" ]]
+
+rm -f -- "$PROBE_JOB_DELETED" "$PROBE_DELETING_READ"
+PROBE_SCENARIO=delete-response-lost-while-deleting run_protected_probe >"$temp_dir/receipt"
+[[ -f "$PROBE_JOB_DELETED" && -f "$PROBE_DELETING_READ" && -s "$temp_dir/receipt" ]]
 
 rm -f -- "$PROBE_JOB_MANIFEST" "$PROBE_JOB_DELETED"
 if PROBE_SCENARIO=wrong-postgres-kind run_protected_probe >"$temp_dir/receipt" 2>"$temp_dir/error"; then

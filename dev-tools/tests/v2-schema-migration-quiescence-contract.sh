@@ -112,28 +112,41 @@ case "$*" in
   "-n contract scale deployment/automation-scripting-service --replicas=0")
     ;;
   "-n contract get pods -o json")
-    if [[ "${QUIESCE_MODE:-}" == pod-api-denied ]]; then
-      echo 'forbidden: pods are forbidden' >&2
-      exit 1
-    fi
-    if [[ "${QUIESCE_MODE:-}" == writer-pod-api-denied ]] &&
-      grep -q 'firemud-v2-migration-quiesced' "$QUIESCE_CALLS"; then
-      echo 'forbidden: pods are forbidden' >&2
-      exit 1
-    fi
-    if [[ "${QUIESCE_MODE:-}" == preexisting-closed-pod ]] &&
-      ! grep -q 'firemud-v2-migration-quiesced' "$QUIESCE_CALLS"; then
-      printf '{"kind":"%s","items":[{"kind":"Pod","metadata":{"labels":{"app":"firemud-v2-migration-quiesced"}}}]}\n' "$pod_list_kind"
-    elif [[ "${QUIESCE_MODE:-}" == malformed-pod-item || "${QUIESCE_MODE:-}" == wrong-kind-pod-item ]]; then
-      if [[ "${QUIESCE_MODE:-}" == malformed-pod-item ]]; then
-        printf '%s\n' '{"kind":"List","items":[{"metadata":{"labels":{"app":"account-service"}}}]}'
+    if [[ "${QUIESCE_MODE:-}" == registry-port-writer-pod ]]; then
+      marker="$QUIESCE_STATE/pod-list-call-count"
+      count=0
+      [[ ! -f "$marker" ]] || count="$(<"$marker")"
+      count=$((count + 1))
+      printf '%s\n' "$count" >"$marker"
+      if (( count == 2 )); then
+        printf '{"kind":"%s","items":[{"kind":"Pod","metadata":{"labels":{"app":"unexpected"}},"spec":{"containers":[{"name":"worker","image":"registry.example:5000/firemud/account-service:v1"}]}}]}\n' "$pod_list_kind"
       else
-        printf '%s\n' '{"kind":"List","items":[{"kind":"Deployment","metadata":{"labels":{"app":"account-service"}}}]}'
+        printf '{"kind":"%s","items":[]}\n' "$pod_list_kind"
       fi
-    elif [[ "${QUIESCE_MODE:-}" == mixed-pod-items ]]; then
-      printf '%s\n' '{"kind":"List","items":[{"kind":"Pod","metadata":{"labels":{"app":"other-service"}}},{"kind":"Deployment","metadata":{"labels":{"app":"account-service"}}}]}'
     else
-      printf '{"kind":"%s","items":[]}\n' "$pod_list_kind"
+      if [[ "${QUIESCE_MODE:-}" == pod-api-denied ]]; then
+        echo 'forbidden: pods are forbidden' >&2
+        exit 1
+      fi
+      if [[ "${QUIESCE_MODE:-}" == writer-pod-api-denied ]] &&
+        grep -q 'firemud-v2-migration-quiesced' "$QUIESCE_CALLS"; then
+        echo 'forbidden: pods are forbidden' >&2
+        exit 1
+      fi
+      if [[ "${QUIESCE_MODE:-}" == preexisting-closed-pod ]] &&
+        ! grep -q 'firemud-v2-migration-quiesced' "$QUIESCE_CALLS"; then
+        printf '{"kind":"%s","items":[{"kind":"Pod","metadata":{"labels":{"app":"firemud-v2-migration-quiesced"}}}]}\n' "$pod_list_kind"
+      elif [[ "${QUIESCE_MODE:-}" == malformed-pod-item || "${QUIESCE_MODE:-}" == wrong-kind-pod-item ]]; then
+        if [[ "${QUIESCE_MODE:-}" == malformed-pod-item ]]; then
+          printf '%s\n' '{"kind":"List","items":[{"metadata":{"labels":{"app":"account-service"}}}]}'
+        else
+          printf '%s\n' '{"kind":"List","items":[{"kind":"Deployment","metadata":{"labels":{"app":"account-service"}}}]}'
+        fi
+      elif [[ "${QUIESCE_MODE:-}" == mixed-pod-items ]]; then
+        printf '%s\n' '{"kind":"List","items":[{"kind":"Pod","metadata":{"labels":{"app":"other-service"}}},{"kind":"Deployment","metadata":{"labels":{"app":"account-service"}}}]}'
+      else
+        printf '{"kind":"%s","items":[]}\n' "$pod_list_kind"
+      fi
     fi
     ;;
   *)
@@ -152,6 +165,14 @@ run_quiesce() {
 
 run_quiesce success >/dev/null
 run_quiesce typed-lists >/dev/null
+mkdir -p "$fixture_dir/state-registry-port-writer-pod"
+QUIESCE_MODE=registry-port-writer-pod QUIESCE_CALLS="$fixture_dir/calls-registry-port-writer-pod" \
+  QUIESCE_STATE="$fixture_dir/state-registry-port-writer-pod" PATH="$fake_bin:$PATH" \
+  bash "$helper" contract >/dev/null
+[[ "$(<"$fixture_dir/state-registry-port-writer-pod/pod-list-call-count")" == 5 ]] || {
+  echo "registry-port writer Pod was not retained through the quiescence poll" >&2
+  exit 1
+}
 calls="$fixture_dir/calls-success"
 first_endpoint_line="$(grep -nF -- 'get endpointslices.discovery.k8s.io' "$calls" | head -n1 | cut -d: -f1)"
 last_close_line="$(grep -nF -- 'firemud-v2-migration-quiesced' "$calls" | grep 'patch service' | tail -n1 | cut -d: -f1)"

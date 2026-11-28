@@ -118,6 +118,7 @@ class AccountTenantCapacityClientMtlsTest {
   void exactAccountPeerReceivesCompleteRequestAndExactRetryKeepsReservation() throws Exception {
     AtomicInteger calls = new AtomicInteger();
     AtomicInteger messages = new AtomicInteger();
+    AtomicReference<Throwable> serverFailure = new AtomicReference<>();
     Server server =
         server(
             "account",
@@ -125,7 +126,7 @@ class AccountTenantCapacityClientMtlsTest {
             false,
             new AtomicLong(),
             new AtomicBoolean(true),
-            null,
+            serverFailure,
             null,
             messages);
     try (var client = client(server)) {
@@ -136,6 +137,7 @@ class AccountTenantCapacityClientMtlsTest {
       assertThat(first.reservationId()).isEqualTo(ACCOUNT_RESERVATION_ID);
       assertThat(replay).isEqualTo(first);
       assertThat(first.identity()).isEqualTo(request.identity());
+      assertThat(serverFailure.get()).isNull();
       assertThat(calls).hasValue(2);
       assertThat(messages).hasValue(2);
     } finally {
