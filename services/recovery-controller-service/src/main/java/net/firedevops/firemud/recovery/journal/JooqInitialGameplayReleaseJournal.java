@@ -760,7 +760,6 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               }
               if (operation.phase() == Phase.FINALIZED
                   && current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
-                  && readback.state() == EffectReadbackState.PREPARED_FENCED
                   && stored != null
                   && readback.equals(
                       latestPreparationObservation(
@@ -896,7 +895,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           }
           if (readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL
               && readback.state() != EffectReadbackState.PROVEN_NO_EFFECT
-              && hasRetainedLocalNoSend(tx, current, dispatchTime)) {
+              && (hasRetainedLocalNoSend(tx, current, dispatchTime)
+                  || hasRetainedClosure(tx, current, readback.attemptId(), null)
+                  || hasRetainedOwnerRejection(tx, current, readback.attemptId(), null))) {
             throw conflict("effect readback changed after definitive no effect");
           }
           EffectReadback previous = requireNonRegressingReadback(readback, timestamps, current);

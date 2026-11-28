@@ -19,7 +19,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.sql.DataSource;
@@ -29,6 +31,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.health.contributor.Status;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class RecoveryJournalHealthIndicatorTest {
   @ParameterizedTest
@@ -95,6 +98,9 @@ class RecoveryJournalHealthIndicatorTest {
       assertThat(first.get(2, TimeUnit.SECONDS).getStatus()).isEqualTo(Status.DOWN);
       assertThat(borrowFinished.getCount()).isEqualTo(1);
       assertThat(indicator.health().getStatus()).isEqualTo(Status.DOWN);
+      var probes = (ThreadPoolExecutor) ReflectionTestUtils.getField(indicator, "probes");
+      assertThat(probes).isNotNull();
+      assertThat(probes.getTaskCount()).isEqualTo(1);
       verify(source, times(1)).getConnection();
     } finally {
       release.countDown();
@@ -157,6 +163,7 @@ class RecoveryJournalHealthIndicatorTest {
     ResultSet rows = mock(ResultSet.class);
     var logger = Logger.getLogger("org.postgresql.core.v3.QueryExecutorImpl");
     Level prior = logger.getLevel();
+    var enableTracing = new AtomicBoolean(enableTracingDuringProbe);
     when(source.getConnection()).thenReturn(connection);
     when(connection.getAutoCommit()).thenReturn(true);
     when(connection.prepareStatement(anyString())).thenReturn(statement);
@@ -164,7 +171,11 @@ class RecoveryJournalHealthIndicatorTest {
     when(rows.next()).thenReturn(true);
     when(rows.getBoolean(1))
         .thenAnswer(ignored -> {
-          if (enableTracingDuringProbe) logger.setLevel(Level.FINEST);
+          synchronized (enableTracing) {
+            if (enableTracing.get()) {
+              logger.setLevel(Level.FINEST);
+            }
+          }
           return true;
         });
 
@@ -175,7 +186,10 @@ class RecoveryJournalHealthIndicatorTest {
           .isEqualTo(enableTracingDuringProbe ? Status.DOWN : Status.UP);
       verify(connection).close();
     } finally {
-      logger.setLevel(prior);
+      synchronized (enableTracing) {
+        enableTracing.set(false);
+        logger.setLevel(prior);
+      }
       indicator.stopProbes();
     }
   }

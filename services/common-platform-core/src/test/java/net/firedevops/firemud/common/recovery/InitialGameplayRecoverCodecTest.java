@@ -58,6 +58,14 @@ class InitialGameplayRecoverCodecTest {
   }
 
   @Test
+  void evidenceReferenceUsesTheExactUtf8ByteLimit() {
+    String boundary = "é".repeat(256);
+    assertThat(decode(WIRE.replace("\"evidence\"", "\"" + boundary + "\"")).target().evidenceRef())
+        .isEqualTo(boundary);
+    rejects(WIRE.replace("\"evidence\"", "\"" + boundary + "a\""));
+  }
+
+  @Test
   void evidenceReferenceRequiresNfcAndKeepsAcceptedOwnerIdentityAndDigest() {
     String composed = "owner-caf\u00e9";
     var request = decode(WIRE.replace("\"evidence\"", "\"" + composed + "\""));
@@ -142,6 +150,12 @@ class InitialGameplayRecoverCodecTest {
         .isEqualTo(HexFormat.of().parseHex(UNICODE_PREIMAGE_HEX));
     assertThat(InitialGameplayRecoverCodec.mutationDigest(composed)).isEqualTo(UNICODE_DIGEST);
     assertThat(InitialGameplayRecoverCodec.mutationDigest(decomposed)).isEqualTo(UNICODE_DIGEST);
+  }
+
+  @Test
+  void auditDetailsRejectUnicodeNoncharacters() {
+    rejects(WIRE.replace("\"initial\"", "\"owner-\\uFDD0\""));
+    rejects(WIRE.replace("\"initial\"", "\"owner-\\uD83F\\uDFFF\""));
   }
 
   @Test
