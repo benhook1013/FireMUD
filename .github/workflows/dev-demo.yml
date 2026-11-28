@@ -223,7 +223,7 @@ jobs:
           exit 1
 
       - name: Reset dev-demo namespace for clean deploy
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outputs.activation != 'true' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.v2-migration-mode.outputs.activation != 'true' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
         run: |
@@ -232,7 +232,7 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.release_name }}"
 
       - name: Ensure dev-demo namespace exists
-        if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
         run: |
@@ -240,7 +240,7 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.namespace }}"
 
       - name: Record exact dev-demo runtime target
-        if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
@@ -255,7 +255,7 @@ jobs:
             "$RUNTIME_NAMESPACE" "$HEAD_SHA" "$IMAGE_TAG" "$TELNET_PORT"
 
       - name: Bind scoped runtime and certificate roles
-        if: ${{ steps.cluster-access.outputs.available == 'true' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
@@ -408,48 +408,16 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Check Account V1040.4 probe access before writer quiescence
-        id: account-probe-access
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.v2-migration-mode.outputs.account_origin_probe == 'true' }}
-        env:
-          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
-          DEV_NAMESPACE_MANAGER_KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
-          RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
-          HEAD_SHA: ${{ needs.dev-demo-plan.outputs.head_sha }}
-          DEPLOYED_SHA: ${{ steps.v2-migration-mode.outputs.account_origin_base_sha }}
-          NAMESPACE_UID: ${{ steps.v2-migration-mode.outputs.account_origin_namespace_uid }}
-          ORIGIN_PREFIX: ${{ steps.v2-migration-mode.outputs.account_origin_prefix }}
-        run: |
-          echo "DEV_DEMO_STAGE=account-probe-access" >> "$GITHUB_ENV"
-          bash ./dev-tools/deploy/run-dev-account-v1040-4-probe.sh --check-permissions \
-            "$RUNTIME_NAMESPACE" "$NAMESPACE_UID" "$DEPLOYED_SHA" "$HEAD_SHA" "$ORIGIN_PREFIX"
-
       - name: Quiesce Account, Game Session, and Automation migration writers
         id: quiesce-writers
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outputs.activation == 'true' && (steps.v2-migration-mode.outputs.account_origin_probe != 'true' || steps.account-probe-access.outcome == 'success') }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.v2-migration-mode.outputs.activation == 'true' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
         run: bash ./dev-tools/deploy/quiesce-v2-schema-migrations.sh "$RUNTIME_NAMESPACE"
 
-      - name: Verify Account V1040.4 retained history before Helm
-        id: account-v1040-4-preflight
-        if: ${{ steps.quiesce-writers.outcome == 'success' && steps.v2-migration-mode.outputs.account_origin_probe == 'true' }}
-        env:
-          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
-          DEV_NAMESPACE_MANAGER_KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
-          RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
-          HEAD_SHA: ${{ needs.dev-demo-plan.outputs.head_sha }}
-          DEPLOYED_SHA: ${{ steps.v2-migration-mode.outputs.account_origin_base_sha }}
-          NAMESPACE_UID: ${{ steps.v2-migration-mode.outputs.account_origin_namespace_uid }}
-          ORIGIN_PREFIX: ${{ steps.v2-migration-mode.outputs.account_origin_prefix }}
-        run: |
-          echo "DEV_DEMO_STAGE=account-v1040-4-preflight" >> "$GITHUB_ENV"
-          bash ./dev-tools/deploy/run-dev-account-v1040-4-probe.sh \
-            "$RUNTIME_NAMESPACE" "$NAMESPACE_UID" "$DEPLOYED_SHA" "$HEAD_SHA" "$ORIGIN_PREFIX"
-
       - name: Deploy dev-demo release
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && (steps.v2-migration-mode.outputs.activation != 'true' || steps.quiesce-writers.outcome == 'success') && (steps.v2-migration-mode.outputs.account_origin_probe != 'true' || steps.account-v1040-4-preflight.outcome == 'success') }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && (steps.v2-migration-mode.outputs.activation != 'true' || steps.quiesce-writers.outcome == 'success') }}
         id: deploy-release
         continue-on-error: true
         env:
@@ -1125,8 +1093,8 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Warn about migration writer recovery after quiesce, preflight or deploy failure
-        if: ${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && (steps.quiesce-writers.outcome == 'failure' || steps.account-v1040-4-preflight.outcome == 'failure' || steps.deploy-release.outcome == 'failure') }}
+      - name: Warn about migration writer recovery after quiesce or deploy failure
+        if: ${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && (steps.quiesce-writers.outcome == 'failure' || steps.deploy-release.outcome == 'failure') }}
         run: |
           {
             echo ""
