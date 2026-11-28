@@ -66,6 +66,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 /** Controlled acquisition/driver behavior, not database or owner-evidence qualification. */
 class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
   private static final Clock CLOCK = Clock.systemUTC();
+  private static final long REDIS_TIME_MILLIS = 1_700_000_000_123L;
 
   @AfterEach
   void awaitResourceAndCancellationWorkerCleanup() throws InterruptedException {
@@ -519,6 +520,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     }
     String loadedSha = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(script));
     when(scriptLoad.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(loadedSha);
+    stubRedisTime(commands);
     when(connection.closeAsync()).thenReturn(close);
     RedisFuture<Long> probed = mock();
     when(commands.<Long>evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
@@ -567,6 +569,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       var probeArguments = org.mockito.ArgumentCaptor.forClass(byte[][].class);
       verify(commands, org.mockito.Mockito.times(1))
           .evalsha(any(), any(), any(), probeArguments.capture());
+      verify(commands).time();
       assertThat(probeArguments.getValue()[1])
           .containsExactly("PROBE".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
 
@@ -606,7 +609,6 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     RedisFuture<String> scriptLoad = mock();
     RedisFuture<Long> initialized = mock();
     CompletableFuture<Void> close = new CompletableFuture<>();
-    AtomicReference<byte[][]> submittedArguments = new AtomicReference<>();
     UUID tenantId = UUID.randomUUID();
     UUID gameInstanceId = UUID.randomUUID();
     UUID regionId = UUID.randomUUID();
@@ -645,16 +647,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     }
     String loadedSha = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(script));
     when(scriptLoad.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(loadedSha);
+    stubRedisTime(commands);
     when(connection.closeAsync()).thenReturn(close);
-    when(commands.evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
-        .thenAnswer(invocation -> {
-          byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
-          if ("INITIALIZE"
-              .equals(new String(arguments[1], java.nio.charset.StandardCharsets.US_ASCII))) {
-            submittedArguments.set(arguments);
-          }
-          return initialized;
-        });
+    when(commands.<Long>evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
+        .thenReturn(initialized);
     when(initialized.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1L);
     RuntimeIdentity identity =
         new RuntimeIdentity(
@@ -670,7 +666,6 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             .getDeclaredConstructor(UUID.class, String.class);
     permitConstructor.setAccessible(true);
     var permit = permitConstructor.newInstance(operationId, sourceDigest);
-    long handoffDeadline = CLOCK.millis() + 4000;
     Semaphore operations =
         (Semaphore)
             java.util.Objects.requireNonNull(
@@ -692,6 +687,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization prepared = null;
     CompletableFuture<Boolean> otherBackground = null;
     CompletableFuture<?> initialization = null;
+    long handoffBudgetMillis = 4_000L;
+    long handoffDeadline = CLOCK.millis() + handoffBudgetMillis;
     try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
       try {
         otherBackground =
@@ -733,15 +730,25 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
           initialization =
               CompletableFuture.supplyAsync(() -> session.initialize(permit), executor);
         }
-        verify(commands, timeout(1000).times(2))
-            .evalsha(any(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class));
         verify(connection, timeout(1000)).closeAsync();
-        byte[][] arguments = submittedArguments.get();
-        assertThat(arguments).isNotNull();
+        verify(commands).time();
+        var scriptArguments = org.mockito.ArgumentCaptor.forClass(byte[][].class);
+        verify(commands, org.mockito.Mockito.times(2))
+            .evalsha(
+                any(), eq(ScriptOutputType.INTEGER), any(byte[][].class), scriptArguments.capture());
+        byte[][] probe = scriptArguments.getAllValues().getFirst();
+        byte[][] arguments = scriptArguments.getValue();
+        assertThat(new String(probe[1], java.nio.charset.StandardCharsets.US_ASCII))
+            .isEqualTo("PROBE");
+        assertThat(new String(arguments[1], java.nio.charset.StandardCharsets.US_ASCII))
+            .isEqualTo("INITIALIZE");
         assertThat(new String(arguments[7], java.nio.charset.StandardCharsets.US_ASCII))
             .isEqualTo("1");
-        assertThat(new String(arguments[8], java.nio.charset.StandardCharsets.US_ASCII))
-            .isEqualTo(Long.toString(handoffDeadline));
+        assertThat(arguments[8]).containsExactly(probe[8]);
+        long redisDeadline =
+            Long.parseLong(new String(arguments[8], java.nio.charset.StandardCharsets.US_ASCII));
+        assertThat(redisDeadline)
+            .isBetween(REDIS_TIME_MILLIS + 1, REDIS_TIME_MILLIS + handoffBudgetMillis);
         assertThat(initialization.isDone()).isFalse();
         assertThat(background.availablePermits()).isZero();
         assertThat(operations.availablePermits()).isEqualTo(operationMaximum - 2);
@@ -761,6 +768,16 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         close.complete(null);
       }
     }
+  }
+
+  private static void stubRedisTime(RedisAsyncCommands<byte[], byte[]> commands) throws Exception {
+    RedisFuture<List<byte[]>> redisTime = mock();
+    when(commands.time()).thenReturn(redisTime);
+    when(redisTime.get(anyLong(), eq(TimeUnit.MILLISECONDS)))
+        .thenReturn(
+            List.of(
+                "1700000000".getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+                "123456".getBytes(java.nio.charset.StandardCharsets.US_ASCII)));
   }
 
   @Test
