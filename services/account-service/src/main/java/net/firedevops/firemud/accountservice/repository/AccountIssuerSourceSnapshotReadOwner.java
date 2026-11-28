@@ -4,10 +4,15 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.util.Objects;
+import java.util.function.Supplier;
 import net.firedevops.firemud.account.v1.ReadCurrentIssuerAuthoritySourceRequest;
+import net.firedevops.firemud.account.v1.ReadExactIssuerAuthorityEventRequest;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.CanonicalIssuerSourceSnapshot;
 import net.firedevops.firemud.accountservice.service.IssuerGenerationProjection;
 import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotEvidence;
 import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotGrpcCodec;
+import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotGrpcCodec.ExactEventReadback;
+import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotGrpcCodec.ExactEventRequest;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.jooq.exception.DataAccessException;
@@ -17,7 +22,7 @@ import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Unregistered, authenticated owner read for one exact current Account issuer source snapshot. */
+/** Unregistered, authenticated owner for current and retained Account issuer source reads. */
 public final class AccountIssuerSourceSnapshotReadOwner {
   private final AccountAuthoritySourceEvidenceRepository sourceRepository;
   private final TransactionTemplate transaction;
@@ -50,20 +55,39 @@ public final class AccountIssuerSourceSnapshotReadOwner {
     AccountIssuerSourceSnapshotGrpcCodec.ReadRequest parsed =
         AccountIssuerSourceSnapshotGrpcCodec.fromRequest(request, workloadNamespace, peer.uri());
 
-    final AccountIssuerSourceSnapshotEvidence current;
+    var current = readInOwnerTransaction(() -> readCurrent(parsed, peer));
+    return new ReadResult(parsed, peer.uri(), current);
+  }
+
+  /**
+   * Reads a retained issuer event and the independently current source in one owner transaction.
+   */
+  public ExactEventReadResult readExactEvent(ReadExactIssuerAuthorityEventRequest request) {
+    GrpcPeerIdentity peer = requireGameSessionPeer();
+    rejectAmbientTransaction();
+    if (request == null) {
+      throw new IllegalArgumentException("Malformed Account issuer source request");
+    }
+    ExactEventRequest parsed =
+        AccountIssuerSourceSnapshotGrpcCodec.fromExactEventRequest(
+            request, workloadNamespace, peer.uri());
+
+    ExactEventReadback readback = readInOwnerTransaction(() -> readSelected(parsed, peer));
+    return new ExactEventReadResult(parsed, peer.uri(), readback);
+  }
+
+  private <T> T readInOwnerTransaction(Supplier<T> read) {
     try {
-      current =
-          Objects.requireNonNull(
-              transaction.execute(
-                  ignored -> {
-                    if (!TransactionSynchronizationManager.isActualTransactionActive()
-                        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
-                      throw failedPrecondition(
-                          "Owned writable Account source transaction required");
-                    }
-                    return readCurrent(parsed, peer);
-                  }),
-              "Account issuer source transaction returned no snapshot");
+      return Objects.requireNonNull(
+          transaction.execute(
+              ignored -> {
+                if (!TransactionSynchronizationManager.isActualTransactionActive()
+                    || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+                  throw failedPrecondition("Owned writable Account source transaction required");
+                }
+                return read.get();
+              }),
+          "Account issuer source transaction returned no evidence");
     } catch (StatusRuntimeException failure) {
       throw failure;
     } catch (DataAccessException | TransactionException unavailable) {
@@ -71,7 +95,6 @@ public final class AccountIssuerSourceSnapshotReadOwner {
     } catch (RuntimeException unavailable) {
       throw unavailable();
     }
-    return new ReadResult(parsed, peer.uri(), current);
   }
 
   private AccountIssuerSourceSnapshotEvidence readCurrent(
@@ -79,18 +102,7 @@ public final class AccountIssuerSourceSnapshotReadOwner {
     final AccountIssuerSourceSnapshotEvidence current;
     try {
       var source = sourceRepository.readCurrentCanonicalIssuerSource(request.issuerId());
-      IssuerGenerationProjection projection = IssuerGenerationProjection.fromSource(source);
-      current =
-          new AccountIssuerSourceSnapshotEvidence(
-              request.reconciliationOperationId(),
-              request.targetNamespace(),
-              peer.uri(),
-              projection.issuerId(),
-              projection.issuerAuthGeneration(),
-              projection.sourceVersion(),
-              projection.outboxStreamKey(),
-              projection.lastAppliedSourceOutboxSequence(),
-              projection.sourceEvent());
+      current = snapshotEvidence(source, request, peer);
     } catch (IllegalArgumentException | IllegalStateException invalidSource) {
       throw failedPrecondition("Account issuer source snapshot is unavailable or inconsistent");
     } catch (DataAccessException unavailable) {
@@ -107,6 +119,41 @@ public final class AccountIssuerSourceSnapshotReadOwner {
               }
             });
     return current;
+  }
+
+  private ExactEventReadback readSelected(ExactEventRequest request, GrpcPeerIdentity peer) {
+    try {
+      var readback =
+          sourceRepository.readExactCanonicalIssuerEvent(
+              request.scope().issuerId(),
+              request.outboxSequence(),
+              request.expectedEventId(),
+              request.expectedEventDigest());
+      return new ExactEventReadback(
+          snapshotEvidence(readback.currentSnapshot(), request.scope(), peer),
+          readback.selectedEvent());
+    } catch (IllegalArgumentException | IllegalStateException invalidSource) {
+      throw failedPrecondition("Exact Account issuer event is unavailable or inconsistent");
+    } catch (DataAccessException unavailable) {
+      throw unavailable();
+    }
+  }
+
+  private static AccountIssuerSourceSnapshotEvidence snapshotEvidence(
+      CanonicalIssuerSourceSnapshot source,
+      AccountIssuerSourceSnapshotGrpcCodec.ReadRequest request,
+      GrpcPeerIdentity peer) {
+    IssuerGenerationProjection projection = IssuerGenerationProjection.fromSource(source);
+    return new AccountIssuerSourceSnapshotEvidence(
+        request.reconciliationOperationId(),
+        request.targetNamespace(),
+        peer.uri(),
+        projection.issuerId(),
+        projection.issuerAuthGeneration(),
+        projection.sourceVersion(),
+        projection.outboxStreamKey(),
+        projection.lastAppliedSourceOutboxSequence(),
+        projection.sourceEvent());
   }
 
   private GrpcPeerIdentity requireGameSessionPeer() {
@@ -156,6 +203,16 @@ public final class AccountIssuerSourceSnapshotReadOwner {
       Objects.requireNonNull(request);
       Objects.requireNonNull(authenticatedCallerWorkload);
       Objects.requireNonNull(evidence);
+    }
+  }
+
+  /** Context required by the unregistered gRPC adapter to encode the historical readback. */
+  public record ExactEventReadResult(
+      ExactEventRequest request, String authenticatedCallerWorkload, ExactEventReadback readback) {
+    public ExactEventReadResult {
+      Objects.requireNonNull(request);
+      Objects.requireNonNull(authenticatedCallerWorkload);
+      Objects.requireNonNull(readback);
     }
   }
 }

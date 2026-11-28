@@ -3,6 +3,7 @@ package net.firedevops.firemud.common.account.authority;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.ForwardingServerCallListener.SimpleForwardingServerCallListener;
 import io.grpc.Metadata;
@@ -25,7 +26,11 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.account.v1.AccountIssuerAuthoritySourceServiceGrpc;
 import net.firedevops.firemud.account.v1.AccountIssuerAuthoritySourceSnapshot;
+import net.firedevops.firemud.account.v1.ExactIssuerAuthorityEventReadback;
 import net.firedevops.firemud.account.v1.ReadCurrentIssuerAuthoritySourceRequest;
+import net.firedevops.firemud.account.v1.ReadExactIssuerAuthorityEventRequest;
+import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.IssuerEvent;
+import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotGrpcCodec.ExactEventRequest;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -105,6 +110,42 @@ class AccountIssuerAuthoritySourceClientMtlsTest {
   }
 
   @Test
+  void readsExactRetainedEventOverFileBackedMtlsAndRejectsSubstitution(@TempDir Path directory)
+      throws Exception {
+    var clientTls = writeClientTlsMaterial(directory);
+    var serverTls = writeServerTlsMaterial(directory, ServerIdentity.ACCOUNT);
+    IssuerOwnerTransportDouble owner = new IssuerOwnerTransportDouble();
+    UUID operation = UUID.randomUUID();
+    var historical = source(UUID.randomUUID(), "1", "2");
+    var event =
+        (IssuerEvent)
+            AccountAuthoritySourceEventV1Codec.verify(historical.sourceEvent().orElseThrow());
+    var request =
+        new ExactEventRequest(
+            request(operation, Optional.empty()), 1L, event.eventId(), event.eventDigest());
+    var current = source(operation, "2", "3");
+    owner.setCurrentSource(current);
+    owner.setSelectedEvent(event);
+    try (TransportServer server = startServer(serverTls, clientTls.caCertificate(), owner);
+        AccountIssuerAuthoritySourceClient client = newClient(server.port(), clientTls)) {
+      client.init();
+
+      var captured = client.readExactEvent(request);
+      assertThat(captured.currentSnapshot()).isEqualTo(current);
+      assertThat(captured.selectedEvent()).isEqualTo(event);
+
+      owner.setResponseMode(ResponseMode.CHANGED_SOURCE);
+      assertThatThrownBy(() -> client.readExactEvent(request))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("selected issuer event");
+
+      assertThat(owner.observation.metadataCount()).isEqualTo(2);
+      assertThat(owner.observation.messageCount()).isEqualTo(2);
+      assertThat(owner.ownerReadCount()).isEqualTo(2);
+    }
+  }
+
+  @Test
   void wrongAccountServiceOrNamespacePeerIsRejectedBeforeAnyRpcMetadataOrOwnerRead(
       @TempDir Path directory) throws Exception {
     var clientTls = writeClientTlsMaterial(directory);
@@ -118,6 +159,16 @@ class AccountIssuerAuthoritySourceClientMtlsTest {
         client.init();
         UUID operation = UUID.randomUUID();
         assertThatThrownBy(() -> client.read(request(operation, Optional.empty())))
+            .isInstanceOf(StatusRuntimeException.class)
+            .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
+            .isEqualTo(Status.Code.UNAUTHENTICATED);
+        var exact =
+            new ExactEventRequest(
+                request(operation, Optional.empty()),
+                1L,
+                "retained-event",
+                "sha256:" + "0".repeat(64));
+        assertThatThrownBy(() -> client.readExactEvent(exact))
             .isInstanceOf(StatusRuntimeException.class)
             .extracting(failure -> ((StatusRuntimeException) failure).getStatus().getCode())
             .isEqualTo(Status.Code.UNAUTHENTICATED);
@@ -295,6 +346,7 @@ class AccountIssuerAuthoritySourceClientMtlsTest {
     private final TransportObservation observation = new TransportObservation();
     private final AtomicInteger ownerReadCount = new AtomicInteger();
     private volatile AccountIssuerSourceSnapshotEvidence currentSource;
+    private volatile IssuerEvent selectedEvent;
     private volatile ResponseMode responseMode = ResponseMode.CURRENT;
 
     @Override
@@ -350,6 +402,41 @@ class AccountIssuerAuthoritySourceClientMtlsTest {
       } catch (RuntimeException failure) {
         responseObserver.onError(Status.INVALID_ARGUMENT.withCause(failure).asRuntimeException());
       }
+    }
+
+    @Override
+    public void readExactIssuerAuthorityEvent(
+        ReadExactIssuerAuthorityEventRequest request,
+        StreamObserver<ExactIssuerAuthorityEventReadback> responseObserver) {
+      ownerReadCount.incrementAndGet();
+      GrpcPeerIdentity caller = GrpcPeerIdentity.current();
+      if (caller == null || !CALLER.equals(caller.uri())) {
+        responseObserver.onError(Status.UNAUTHENTICATED.asRuntimeException());
+        return;
+      }
+      try {
+        var parsed =
+            AccountIssuerSourceSnapshotGrpcCodec.fromExactEventRequest(
+                request, NAMESPACE, caller.uri());
+        var current = currentSource;
+        var response =
+            AccountIssuerSourceSnapshotGrpcCodec.toExactEventResponse(
+                current, selectedEvent, parsed, caller.uri());
+        if (responseMode == ResponseMode.CHANGED_SOURCE) {
+          response =
+              response.toBuilder()
+                  .setSelectedEvent(ByteString.copyFromUtf8(current.sourceEvent().orElseThrow()))
+                  .build();
+        }
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+      } catch (RuntimeException failure) {
+        responseObserver.onError(Status.INVALID_ARGUMENT.withCause(failure).asRuntimeException());
+      }
+    }
+
+    void setSelectedEvent(IssuerEvent event) {
+      selectedEvent = event;
     }
 
     int ownerReadCount() {
