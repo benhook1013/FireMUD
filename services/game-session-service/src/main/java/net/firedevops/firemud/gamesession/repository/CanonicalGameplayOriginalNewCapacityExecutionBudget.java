@@ -101,6 +101,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private Statement active;
   private OwnedConnection activeConnection;
   private int outstandingAsyncCloses;
+  private int outstandingRetainedWork;
   private boolean workerDone;
   private boolean cancellationStarted;
   private boolean cancellationDone;
@@ -494,6 +495,20 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     });
   }
 
+  /** Keeps this operation's permits until borrowed work has actually exited. */
+  void retainUntilCompletion(CompletableFuture<?> work) {
+    Objects.requireNonNull(work);
+    synchronized (lifecycle) {
+      outstandingRetainedWork++;
+    }
+    work.whenComplete((ignored, failure) -> {
+      synchronized (lifecycle) {
+        outstandingRetainedWork--;
+        releaseIfFinished();
+      }
+    });
+  }
+
   private void recordRedisCloseRetained(String category) {
     synchronized (lifecycle) {
       if (outstandingAsyncCloses == 0 || redisCloseFailureRecorded) return;
@@ -591,11 +606,11 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         });
   }
 
-  private void cancel() {
+  void cancel() {
     if (!cancelled.compareAndSet(false, true)) return;
     result.completeExceptionally(unavailable());
     synchronized (lifecycle) {
-      if (workerDone) return;
+      if (workerDone && outstandingRetainedWork == 0) return;
       cancellationStarted = true;
     }
     // At most one cancellation worker per admitted operation. Its exit also owns the permit.
@@ -656,11 +671,17 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     if (failure instanceof RuntimeException runtime) throw runtime;
   }
 
+  /** Releases SQL connections opened by one retained companion operation. */
+  void releaseRetainedWorkConnections() {
+    releaseOutstandingConnections();
+  }
+
   private void releaseIfFinished() {
     if (!released
         && workerDone
         && outstandingConnections.get() == 0
         && outstandingAsyncCloses == 0
+        && outstandingRetainedWork == 0
         && (!cancellationStarted || cancellationDone)) {
       released = true;
       OPERATIONS.release();

@@ -27,6 +27,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
@@ -506,6 +507,10 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       this.permit = permit;
     }
 
+    long claimOrdinal() {
+      return permit.claimOrdinal();
+    }
+
     UUID generation() {
       return permit.generation();
     }
@@ -541,6 +546,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     private final CompletableFuture<Void> disposal = new CompletableFuture<>();
     private boolean initialized;
     private boolean closed;
+    private boolean retainedWorkInFlight;
     private boolean initializationInFlight;
     private CompletableFuture<Void> boundedClose;
 
@@ -563,6 +569,171 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       this.budget = budget;
     }
 
+    /**
+     * Runs a bounded companion read under this prepared operation's retained background permit. The
+     * read uses its own worker and does not use or close the prepared Redis connection.
+     */
+    <T> T runWithinRetainedPermit(
+        Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation) {
+      return runWithinRetainedPermit(operation, ignored -> {}, new CompletableFuture<>());
+    }
+
+    <T> T runWithinRetainedPermit(
+        Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
+        java.util.function.Consumer<T> undelivered,
+        CompletableFuture<Void> workLifetime) {
+      Objects.requireNonNull(operation, "operation");
+      Objects.requireNonNull(undelivered, "undelivered");
+      Objects.requireNonNull(workLifetime, "workLifetime");
+      CanonicalGameplayOriginalNewCapacityExecutionBudget retainedBudget;
+      boolean ownsRetainedWork = false;
+      try {
+        synchronized (this) {
+          requireNoAmbientTransaction();
+          if (closed || initialized || retainedWorkInFlight) {
+            workLifetime.complete(null);
+            throw unavailable();
+          }
+          retainedWorkInFlight = true;
+          ownsRetainedWork = true;
+          retainedBudget = budget;
+          if (retainedBudget != null) {
+            retainedBudget.retainUntilCompletion(workLifetime);
+          }
+        }
+      } catch (RuntimeException | Error startupFailure) {
+        if (ownsRetainedWork) {
+          synchronized (this) {
+            retainedWorkInFlight = false;
+          }
+        }
+        workLifetime.complete(null);
+        throw startupFailure;
+      }
+
+      if (retainedBudget == null) {
+        try {
+          return operation.apply(null);
+        } finally {
+          synchronized (this) {
+            retainedWorkInFlight = false;
+          }
+          workLifetime.complete(null);
+        }
+      }
+
+      CompletableFuture<T> result = new CompletableFuture<>();
+      CompletableFuture<Boolean> delivered = new CompletableFuture<>();
+      CompletableFuture<Void> readyForInitialization = new CompletableFuture<>();
+      AtomicReference<Thread> workerReference = new AtomicReference<>();
+      Context.CancellationListener listener =
+          ignored -> {
+            Thread worker = workerReference.get();
+            if (worker != null) worker.interrupt();
+            retainedBudget.cancel();
+            result.completeExceptionally(unavailable());
+          };
+      Context caller = null;
+      boolean listenerRegistered = false;
+      boolean workerStarted = false;
+      Thread worker = null;
+      try {
+        caller = Context.current();
+        Context workerContext = caller;
+        worker =
+            Thread.ofVirtual()
+                .name("game-session-region-timeline-retained-read")
+                .unstarted(() -> {
+                  Context previous = null;
+                  T value = null;
+                  Throwable failure = null;
+                  try {
+                    previous = workerContext.attach();
+                    retainedBudget.check();
+                    value = operation.apply(retainedBudget);
+                    retainedBudget.check();
+                  } catch (RuntimeException | Error operationFailure) {
+                    failure = operationFailure;
+                  } finally {
+                    try {
+                      retainedBudget.releaseRetainedWorkConnections();
+                    } catch (RuntimeException | Error cleanupFailure) {
+                      if (failure == null) failure = cleanupFailure;
+                      else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
+                    }
+                    // The worker owns any produced capability until the caller acknowledges
+                    // delivery. Timeout/cancellation never silently discards an issued claim.
+                    if (failure == null) result.complete(value);
+                    else result.completeExceptionally(failure);
+                    if (!delivered.join() && value != null) {
+                      try {
+                        undelivered.accept(value);
+                      } catch (RuntimeException | Error recoveryFailure) {
+                        if (failure == null) failure = recoveryFailure;
+                        else if (failure != recoveryFailure) failure.addSuppressed(recoveryFailure);
+                      }
+                    }
+                    try {
+                      if (previous != null) workerContext.detach(previous);
+                    } finally {
+                      synchronized (PreparedTimelineInitialization.this) {
+                        retainedWorkInFlight = false;
+                      }
+                      // Keep readiness separate from externally registered lifetime callbacks:
+                      // a joining caller may otherwise help execute a blocked callback.
+                      readyForInitialization.complete(null);
+                      workLifetime.complete(null);
+                    }
+                  }
+                });
+        workerReference.set(worker);
+        caller.addListener(listener, Runnable::run);
+        listenerRegistered = true;
+        worker.start();
+        workerStarted = true;
+        T value = result.get(retainedBudget.remainingNanos(), TimeUnit.NANOSECONDS);
+        delivered.complete(true);
+        // SQL cleanup already completed before result publication; only context detachment and
+        // retained-state notification remain. Initialization must not race that notification.
+        readyForInitialization.join();
+        return value;
+      } catch (InterruptedException interrupted) {
+        if (worker != null) worker.interrupt();
+        retainedBudget.cancel();
+        Thread.currentThread().interrupt();
+        throw unavailable();
+      } catch (ExecutionException failure) {
+        if (failure.getCause() instanceof RuntimeException runtime) throw runtime;
+        if (failure.getCause() instanceof Error error) throw error;
+        throw unavailable();
+      } catch (TimeoutException | RuntimeException expired) {
+        if (workerStarted) {
+          worker.interrupt();
+          retainedBudget.cancel();
+        } else {
+          synchronized (this) {
+            retainedWorkInFlight = false;
+          }
+          workLifetime.complete(null);
+        }
+        throw expired instanceof RuntimeException runtime ? runtime : unavailable();
+      } catch (Error startupFailure) {
+        if (workerStarted) {
+          worker.interrupt();
+          retainedBudget.cancel();
+        } else {
+          synchronized (this) {
+            retainedWorkInFlight = false;
+          }
+          workLifetime.complete(null);
+        }
+        throw unavailable(startupFailure);
+      } finally {
+        delivered.complete(false);
+        if (listenerRegistered) caller.removeListener(listener);
+      }
+    }
+
     LeaseGrant initialize(
         CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit) {
       return initialize(permit, ignored -> {});
@@ -575,7 +746,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       byte[][] evalArguments;
       synchronized (this) {
         requireNoAmbientTransaction();
-        if (closed || initialized) throw unavailable();
+        if (closed || initialized || retainedWorkInFlight) throw unavailable();
         boolean mayCreate = permit != null;
         if (mayCreate
             && (!permit.operationId().equals(preparation.operationId())

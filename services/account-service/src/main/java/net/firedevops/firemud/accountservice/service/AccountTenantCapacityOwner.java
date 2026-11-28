@@ -70,7 +70,7 @@ public final class AccountTenantCapacityOwner {
   private final AccountTenantCapacityRepository capacity;
   private final AccountCapacityOriginDecisionRepository originDecisions;
   private final TransactionTemplate transaction;
-  private final TransactionTemplate outcomeReadTransaction;
+  private final TransactionTemplate retainedAdmissionReadTransaction;
   private final Clock clock;
   private final String namespace;
 
@@ -98,11 +98,13 @@ public final class AccountTenantCapacityOwner {
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     transaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
-    outcomeReadTransaction = new TransactionTemplate(transactions);
-    outcomeReadTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-    outcomeReadTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
-    outcomeReadTransaction.setReadOnly(true);
-    outcomeReadTransaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
+    retainedAdmissionReadTransaction = new TransactionTemplate(transactions);
+    retainedAdmissionReadTransaction.setPropagationBehavior(
+        TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    retainedAdmissionReadTransaction.setIsolationLevel(
+        TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    retainedAdmissionReadTransaction.setReadOnly(true);
+    retainedAdmissionReadTransaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
   }
 
   /** Reads an exact historical admission outcome without mutating the original attempt. */
@@ -119,7 +121,7 @@ public final class AccountTenantCapacityOwner {
         || Context.current().isCancelled()) throw unavailable();
     try {
       AdmissionOutcome outcome =
-          outcomeReadTransaction.execute(status -> {
+          retainedAdmissionReadTransaction.execute(status -> {
             if (Context.current().isCancelled()) throw unavailable();
             dsl.connection(connection -> {
               if (connection.getAutoCommit() || !connection.isReadOnly()) throw unavailable();
@@ -149,6 +151,43 @@ public final class AccountTenantCapacityOwner {
   }
 
   public record AdmissionOutcome(Result reservation, Refusal denial) {}
+
+  /**
+   * Reads only an exact retained reservation without refreshing source evidence or authorizing a
+   * new commitment.
+   */
+  public Result readRetainedAdmissionReservation(Request request, String authenticatedCaller) {
+    requireCaller(request, authenticatedCaller);
+    if (!TenantCapacityAdmission.expectedWorkload(namespace, Owner.GAME_SESSION)
+        .equals(authenticatedCaller)) throw new CapacityException(Failure.PERMISSION_DENIED);
+    request.requireStructurallyValid();
+    requireSupportedShape(request);
+    if (request.capacityRearmFence() != 1 || !request.evidence().permitsCreation())
+      throw unavailable();
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()
+        || Context.current().isCancelled()) throw unavailable();
+    try {
+      Result result =
+          retainedAdmissionReadTransaction.execute(status -> {
+            if (Context.current().isCancelled()) throw unavailable();
+            dsl.connection(connection -> {
+              if (connection.getAutoCommit() || !connection.isReadOnly()) throw unavailable();
+            });
+            Record reservation = capacity.findForReplayReadOnly(request.identity());
+            if (reservation == null) throw unavailable();
+            return capacity.exactReadOnly(request, reservation);
+          });
+      if (result == null) throw unavailable();
+      return result;
+    } catch (CapacityException failure) {
+      // A mismatch is not exact reservation evidence.
+      if (failure.code() == Failure.IDEMPOTENCY_CONFLICT) throw unavailable();
+      throw failure;
+    } catch (IllegalArgumentException invalidEvidence) {
+      throw unavailable();
+    }
+  }
 
   public Result commit(Request request, String authenticatedCaller) {
     requireCaller(request, authenticatedCaller);

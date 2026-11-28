@@ -3,16 +3,73 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** Physical component tests for retained original NEW capacity outcomes and exact closure. */
+/**
+ * Native component composition: actual GS SQL/candidate/account-member/issuer/region/final owners.
+ * Account lease, signer/JWKS, physical Account OPEN, World/Entity RPC response DTOs, incarnation,
+ * launch and empty legacy cohort are controlled fixtures. Real mTLS clients mint private Entity
+ * references; real region owners mint grants and ACKs. This does not exercise Account callbacks,
+ * INITIAL protected observation, the full coordinator, external source custody or activation.
+ */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
-    extends CanonicalGameplayOriginalNewFinalAdmissionOwnerTestSupport {
+    extends CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSupport {
+  @Container
+  static final PostgreSQLContainer<?> POSTGRES =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static final GenericContainer<?> REDIS =
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
+
+  @Override
+  PostgreSQLContainer<?> postgresContainer() {
+    return POSTGRES;
+  }
+
+  @Override
+  GenericContainer<?> redisContainer() {
+    return REDIS;
+  }
+
+  @Test
+  void transferFenceRejectsChangedCandidateDigestBeforeSubmittingRedis() throws Exception {
+    repairAccountMember();
+    bridge(false);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    var changed =
+        new net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution(
+            controlledCapacity.request(),
+            controlledCapacity.reservation(),
+            controlledCapacity.transitionId(),
+            "sha256:" + "0".repeat(64),
+            controlledCapacity.selectedOwnerId(),
+            controlledCapacity.selectedOwnerFence());
+    String retained = sqlImage();
+    Map<String, String> physical = physicalImage();
+
+    var noRedis = org.mockito.Mockito.mock(io.lettuce.core.RedisClient.class);
+    assertThatThrownBy(() ->
+            new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(noRedis, catalog, CLOCK, tags)
+                .fenceCapacityExecutionOnce(
+                    changed, source.candidate(), assignment, UUID.randomUUID(), deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    org.mockito.Mockito.verifyNoInteractions(noRedis);
+    assertThat(admin.type(ascii(capacityKey(assignment)))).isEqualTo("none");
+    assertThat(sqlImage()).isEqualTo(retained);
+    assertThat(physicalImage()).isEqualTo(physical);
+  }
 
   @Test
   void failedPositiveRetentionRollsBackFinalReceiptAndExactRecoveryCommitsBoth() throws Exception {
@@ -108,8 +165,9 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
           historical.execute("SET LOCAL session_replication_role = replica");
           assertThat(
                   historical.execute(
-                      "UPDATE game_session_canonical_binding_transition"
-                          + " SET original_new_capacity_execution_digest = NULL WHERE transition_id = ?",
+                      "UPDATE game_session_canonical_binding_transition SET"
+                          + " original_new_capacity_execution_digest = NULL WHERE transition_id"
+                          + " = ?",
                       fixture.transitionId()))
               .isEqualTo(1);
         });
@@ -146,8 +204,8 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
             fixture
                 .dsl()
                 .execute(
-                    "UPDATE game_session_original_new_capacity_execution"
-                        + " SET status = 'CLOSED', terminal_readback = ? WHERE execution_digest = ?",
+                    "UPDATE game_session_original_new_capacity_execution SET status = 'CLOSED',"
+                        + " terminal_readback = ? WHERE execution_digest = ?",
                     new byte[] {1},
                     controlledCapacity.digest()))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
@@ -198,7 +256,8 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
           fixture
               .dsl()
               .fetchSingle(
-                  "SELECT status, terminal_readback FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                  "SELECT status, terminal_readback FROM"
+                      + " game_session_original_new_capacity_execution WHERE execution_digest = ?",
                   readback.execution().digest());
       assertThat(authorized.get("status", String.class)).isEqualTo("AUTHORIZED");
       assertThat(authorized.get("terminal_readback", byte[].class)).isNull();
@@ -209,7 +268,8 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
           fixture
               .dsl()
               .fetchSingle(
-                  "SELECT status, terminal_readback FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                  "SELECT status, terminal_readback FROM"
+                      + " game_session_original_new_capacity_execution WHERE execution_digest = ?",
                   readback.execution().digest());
       assertThat(retainedRow.get("status", String.class)).isEqualTo("COMMITTED");
       assertThat(retainedRow.get("terminal_readback", byte[].class)).isNotNull();
@@ -227,65 +287,6 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
                   .canonicalReadback())
           .containsExactly(exactProof);
     }
-  }
-
-  @Test
-  void committedRedisWinnerRecoversFullPositiveSqlRetentionBeforeCleanup() throws Exception {
-    repairAccountMember();
-    bridge();
-    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
-    byte[] committed;
-    try (var credential =
-            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
-        var template = credential.template();
-        var ignored =
-            finalOwner()
-                .finalizeOriginalNewOnce(
-                    source,
-                    template,
-                    controlledAccountOpen(),
-                    issuerOpen(),
-                    controlledCapacity,
-                    deadline())) {
-      committed = admin.get(ascii(installation.sessionKey()));
-    }
-    // A lost SQL completion keeps the durable provisional fence: STOP cannot race retention.
-    assertThatThrownBy(() -> fixture.dsl().execute("UPDATE game_instances SET status='STOPPED'"))
-        .isInstanceOf(org.jooq.exception.DataAccessException.class)
-        .hasMessageContaining("runtime row is fenced");
-    // No SQL final receipt was retained by the interrupted final caller.
-    assertThat(
-            fixture
-                .dsl()
-                .fetchSingle(
-                    "SELECT original_new_final_session_sha256 FROM game_session_canonical_binding_transition WHERE transition_id=?",
-                    fixture.transitionId())
-                .get(0, String.class))
-        .isNull();
-    var retained =
-        capacityOwner()
-            .retainCommittedBeforeCleanup(
-                controlledCapacity.request(), controlledCapacity.reservation());
-    assertThat(retained.disposition()).isEqualTo("COMMITTED");
-    assertThat(retained.physicalDigest())
-        .isEqualTo(
-            "sha256:"
-                + net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution
-                    .sha256(committed));
-    assertThat(
-            fixture
-                .dsl()
-                .fetchSingle(
-                    "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
-                    controlledCapacity.digest())
-                .get(0, String.class))
-        .isEqualTo("COMMITTED");
-    assertThat(
-            capacityOwner()
-                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
-                .canonicalReadback())
-        .containsExactly(retained.canonicalReadback());
-    assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(committed);
   }
 
   @Test
@@ -333,47 +334,12 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
   }
 
   @Test
-  void committedOriginalRetainsExactTerminalEvidenceAndReplay() throws Exception {
+  void committedRedisWinnerMustAcquireFullPositiveSqlRetentionBeforeActualHandoff()
+      throws Exception {
     repairAccountMember();
     bridge();
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
     byte[] committed;
-    try (var credential =
-            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
-        var template = credential.template();
-        var readback =
-            finalOwner()
-                .finalizeOriginalNewOnce(
-                    source,
-                    template,
-                    controlledAccountOpen(),
-                    issuerOpen(),
-                    controlledCapacity,
-                    deadline())) {
-      inventory.commitOriginalNewFinalAdmission(readback);
-      committed = admin.get(ascii(installation.sessionKey()));
-    }
-    var retained =
-        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
-    assertThat(retained.disposition()).isEqualTo("COMMITTED");
-    assertThat(retained.physicalDigest())
-        .isEqualTo(
-            "sha256:"
-                + net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution
-                    .sha256(committed));
-    assertThat(
-            capacityOwner()
-                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
-                .canonicalReadback())
-        .containsExactly(retained.canonicalReadback());
-    assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(committed);
-  }
-
-  @Test
-  void committedHashWithoutCompletePositiveServingProofStillBlocksOwnerMovement() throws Exception {
-    repairAccountMember();
-    bridge();
-    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var template = credential.template();
@@ -386,44 +352,115 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
                     issuerOpen(),
                     controlledCapacity,
                     deadline())) {
-      admin.del(ascii(installation.sessionKey()));
+      committed = admin.get(ascii(installation.sessionKey()));
     }
-    var original = regionBinding.installation();
-    assertThatThrownBy(() -> replaceRegionOwner("successor-without-positive-serving-proof"))
-        .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(
-            () -> observeGuardedRegionReplacement("successor-without-positive-serving-proof"))
-        .rootCause()
-        .isInstanceOfSatisfying(
-            org.postgresql.util.PSQLException.class,
-            failure -> {
-              assertThat(failure.getSQLState()).isEqualTo("23514");
-              assertThat(failure.getMessage())
-                  .contains("Region owner replacement lacks exact transfer custody");
-            });
-    assertThat(
-            new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl())
-                .find(original.source)
-                .orElseThrow()
-                .executorFence())
-        .isEqualTo(original.status.executorFence());
+    // A lost SQL completion keeps the durable provisional fence: STOP cannot race retention.
+    assertThatThrownBy(() -> fixture.dsl().execute("UPDATE game_instances SET status='STOPPED'"))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("runtime row is fenced");
+    // No SQL final receipt was retained by the interrupted final caller.
     assertThat(
             fixture
                 .dsl()
                 .fetchSingle(
-                    "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+                    "SELECT original_new_final_session_sha256 FROM"
+                        + " game_session_canonical_binding_transition WHERE transition_id=?",
+                    fixture.transitionId())
+                .get(0, String.class))
+        .isNull();
+    var original = regionBinding.installation();
+    var pinned = source;
+    admin.pexpire(ascii(original.grant.key()), 0);
+    byte[] servingSessionKey = ascii(installation.sessionKey());
+    byte[] servingSession = admin.get(servingSessionKey);
+    assertThat(servingSession).containsExactly(committed);
+    admin.del(servingSessionKey);
+    try {
+      assertThatThrownBy(this::actualTransferHandoff)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Original NEW final admission Redis readback is unavailable");
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      """
+                      SELECT state FROM game_session_region_owner_transfer
+                      WHERE tenant_id=? AND game_instance_id=? AND region_id=?
+                        AND old_owner_id=? AND old_owner_fence=?
+                      """,
+                      original.status.tenantId(),
+                      original.status.gameInstanceId(),
+                      original.status.regionId(),
+                      original.status.ownerInstanceId(),
+                      original.status.executorFence().longValueExact())
+                  .get(0, String.class))
+          .isEqualTo("FROZEN");
+      assertThatThrownBy(
+              () -> observeGuardedReplacementRefusal("successor-without-positive-serving-proof"))
+          .rootCause()
+          .isInstanceOfSatisfying(
+              org.postgresql.util.PSQLException.class,
+              failure -> {
+                assertThat(failure.getSQLState()).isEqualTo("23514");
+                assertThat(failure.getMessage())
+                    .contains("Region transfer must complete with owner installation");
+              });
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_canonical_binding_transition WHERE"
+                          + " transition_id=?",
+                      fixture.transitionId())
+                  .get(0, String.class))
+          .isEqualTo("PROVISIONAL");
+      assertThat(
+              new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl())
+                  .find(original.source)
+                  .orElseThrow())
+          .isEqualTo(original.status);
+    } finally {
+      admin.set(servingSessionKey, servingSession);
+    }
+    // The refused contender acquired this lease before it attempted SQL retention.
+    assertThat(admin.pexpire(ascii(original.grant.key()), 0)).isTrue();
+    var successor = actualTransferHandoff();
+    assertThat(successor.status.executorFence()).isGreaterThan(original.status.executorFence());
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT status FROM game_session_original_new_capacity_execution WHERE"
+                        + " execution_digest=?",
                     controlledCapacity.digest())
                 .get(0, String.class))
-        .isEqualTo("AUTHORIZED");
+        .isEqualTo("COMMITTED");
     assertThat(
-            admin.hget(
-                ascii(capacityKey(tags.assignmentForTransition(fixture.transitionId()))),
-                ascii("state")))
-        .containsExactly(ascii("COMMITTED"));
-    assertThatThrownBy(() ->
             capacityOwner()
-                .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
-        .isInstanceOf(IllegalStateException.class);
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                .disposition())
+        .isEqualTo("COMMITTED");
+    assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(committed);
+    var retained = inventory.readRegionTransferOriginalSource(fixture.transitionId(), pinned);
+    assertThat(retained.transitionStatus())
+        .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
+    assertThat(retained.candidate()).isEqualTo(pinned.candidate());
+    assertThat(retained.finalReceipt().orElseThrow().finalSessionSha256())
+        .isEqualTo(
+            net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution.sha256(
+                committed));
+    assertThat(
+            inventory
+                .readRegionTransferOriginalSource(fixture.transitionId(), retained)
+                .finalReceipt())
+        .isEqualTo(retained.finalReceipt());
+    assertThatThrownBy(() -> inventory.readProvisionalCasEvidence(fixture.transitionId()))
+        .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessage("A first binding cannot proceed while an active controller exists");
+    assertThatThrownBy(
+            () -> inventory.readRegionTransferOriginalSource(UUID.randomUUID(), retained))
+        .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessage("Region transfer changed its original transition");
   }
 
   @Test
@@ -509,7 +546,8 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
         fixture
             .dsl()
             .fetchSingle(
-                "SELECT status, terminal_readback FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                "SELECT status, terminal_readback FROM game_session_original_new_capacity_execution"
+                    + " WHERE execution_digest = ?",
                 retained.execution().digest());
     assertThat(row.get("status", String.class)).isEqualTo("CLOSED");
     assertThat(row.get("terminal_readback", byte[].class))
@@ -598,7 +636,12 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
             fixture
                 .dsl()
                 .execute(
-                    "UPDATE game_session_canonical_binding_transition SET original_new_final_session_sha256 = ?, original_new_capacity_execution_digest = ?, original_new_admission_at_ms = ?, original_new_continuity_expires_at_ms = ?, original_new_session_duration_ms = ? WHERE transition_id = ?",
+                    "UPDATE game_session_canonical_binding_transition SET"
+                        + " original_new_final_session_sha256 = ?,"
+                        + " original_new_capacity_execution_digest = ?,"
+                        + " original_new_admission_at_ms = ?,"
+                        + " original_new_continuity_expires_at_ms = ?,"
+                        + " original_new_session_duration_ms = ? WHERE transition_id = ?",
                     "a".repeat(64),
                     controlledCapacity.digest(),
                     CLOCK.millis(),
@@ -646,7 +689,8 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
             fixture
                 .dsl()
                 .fetchSingle(
-                    "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                    "SELECT status FROM game_session_original_new_capacity_execution WHERE"
+                        + " execution_digest = ?",
                     controlledCapacity.digest())
                 .get(0, String.class))
         .isEqualTo("AUTHORIZED");
@@ -729,7 +773,8 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
           fixture
               .dsl()
               .fetchSingle(
-                  "SELECT status, original_new_final_session_sha256 FROM game_session_canonical_binding_transition WHERE transition_id=?",
+                  "SELECT status, original_new_final_session_sha256 FROM"
+                      + " game_session_canonical_binding_transition WHERE transition_id=?",
                   fixture.transitionId());
       assertThat(pending.get("status", String.class)).isEqualTo("PROVISIONAL");
       assertThat(pending.get("original_new_final_session_sha256", String.class)).isNull();
@@ -812,7 +857,8 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
               fixture
                   .dsl()
                   .fetchSingle(
-                      "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+                      "SELECT status FROM game_session_original_new_capacity_execution WHERE"
+                          + " execution_digest=?",
                       controlledCapacity.digest())
                   .get(0, String.class))
           .isEqualTo("AUTHORIZED");
@@ -854,7 +900,7 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
     assertThatThrownBy(() -> replaceRegionOwner("successor-with-missing-committed-evidence"))
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(
-            () -> observeGuardedRegionReplacement("successor-with-missing-committed-evidence"))
+            () -> observeGuardedReplacementRefusal("successor-with-missing-committed-evidence"))
         .rootCause()
         .isInstanceOfSatisfying(
             org.postgresql.util.PSQLException.class,

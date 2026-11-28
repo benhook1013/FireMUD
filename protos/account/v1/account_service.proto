@@ -15,6 +15,8 @@ service AccountService {
   // Private read-only reconciliation of an exact retained admission outcome. An unavailable
   // outcome does not prove the original attempt did not commit.
   rpc ReadTenantCapacityAdmissionOutcome(CommitTenantCapacityAdmissionRequest) returns (CommitTenantCapacityAdmissionResponse);
+  // Private Game Session read of the exact retained reservation.
+  rpc ReadTenantCapacityAdmissionReservation(CommitTenantCapacityAdmissionRequest) returns (CommitTenantCapacityAdmissionResponse);
   rpc Ping(PingRequest) returns (PingResponse);
   rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
   rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);

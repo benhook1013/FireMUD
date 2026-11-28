@@ -90,12 +90,30 @@ class AccountTenantCapacityWorkloadGuardTest {
   }
 
   @Test
-  void quotaDenialReadRequiresExactGameSessionTlsWithoutAmbientAuthority() throws Exception {
+  void admissionOutcomeReadRequiresExactGameSessionTlsWithoutAmbientAuthority() throws Exception {
     var method = AccountServiceGrpc.getReadTenantCapacityAdmissionOutcomeMethod();
     var gameSession = tls("firemud", "game-session-service");
     assertThat(invoke(method, gameSession, "spiffe://firemud/ns/firemud/sa/game-session-service"))
         .isNull();
     assertThatThrownBy(guard::requireAdmissionOutcomeReader)
+        .isInstanceOf(StatusRuntimeException.class);
+    assertThat(invoke(method, null).getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
+    assertThat(invoke(method, tls("firemud", "world-management-service")).getCode())
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(invoke(method, tls("other", "game-session-service")).getCode())
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+    SessionContext.setContext("caller", List.of(), Map.of());
+    assertThat(invoke(method, gameSession).getCode()).isEqualTo(Status.Code.PERMISSION_DENIED);
+  }
+
+  @Test
+  void admissionReservationReadRequiresExactGameSessionTlsWithoutAmbientAuthority()
+      throws Exception {
+    var method = AccountServiceGrpc.getReadTenantCapacityAdmissionReservationMethod();
+    var gameSession = tls("firemud", "game-session-service");
+    assertThat(invoke(method, gameSession, "spiffe://firemud/ns/firemud/sa/game-session-service"))
+        .isNull();
+    assertThatThrownBy(guard::requireAdmissionReservationReader)
         .isInstanceOf(StatusRuntimeException.class);
     assertThat(invoke(method, null).getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
     assertThat(invoke(method, tls("firemud", "world-management-service")).getCode())
@@ -126,10 +144,22 @@ class AccountTenantCapacityWorkloadGuardTest {
               .getFullMethodName()
               .equals(method.getFullMethodName())) {
             assertThat(guard.requireAdmissionOutcomeReader()).isEqualTo(expectedCallerUri);
+            assertThatThrownBy(guard::requireAdmissionReservationReader)
+                .isInstanceOf(StatusRuntimeException.class);
+            assertThatThrownBy(guard::requireAuthenticatedCaller)
+                .isInstanceOf(StatusRuntimeException.class);
+          } else if (AccountServiceGrpc.getReadTenantCapacityAdmissionReservationMethod()
+              .getFullMethodName()
+              .equals(method.getFullMethodName())) {
+            assertThat(guard.requireAdmissionReservationReader()).isEqualTo(expectedCallerUri);
+            assertThatThrownBy(guard::requireAdmissionOutcomeReader)
+                .isInstanceOf(StatusRuntimeException.class);
             assertThatThrownBy(guard::requireAuthenticatedCaller)
                 .isInstanceOf(StatusRuntimeException.class);
           } else {
             assertThat(guard.requireAuthenticatedCaller()).isEqualTo(expectedCallerUri);
+            assertThatThrownBy(guard::requireAdmissionReservationReader)
+                .isInstanceOf(StatusRuntimeException.class);
             assertThatThrownBy(guard::requireAdmissionOutcomeReader)
                 .isInstanceOf(StatusRuntimeException.class);
           }

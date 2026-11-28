@@ -24,6 +24,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -33,20 +34,45 @@ import org.postgresql.jdbc.PgConnection;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Physical component tests for original NEW capacity dispatch custody and owner-movement refusal.
+ * Native component composition: actual GS SQL/candidate/account-member/issuer/region/final owners.
+ * Account lease, signer/JWKS, physical Account OPEN, World/Entity RPC response DTOs, incarnation,
+ * launch and empty legacy cohort are controlled fixtures. Real mTLS clients mint private Entity
+ * references; real region owners mint grants and ACKs. This does not exercise Account callbacks,
+ * INITIAL protected observation, the full coordinator, external source custody or activation.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
-    extends CanonicalGameplayOriginalNewFinalAdmissionOwnerTestSupport {
+    extends CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSupport {
+  @Container
+  static final PostgreSQLContainer<?> POSTGRES =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static final GenericContainer<?> REDIS =
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
+
+  @Override
+  PostgreSQLContainer<?> postgresContainer() {
+    return POSTGRES;
+  }
+
+  @Override
+  GenericContainer<?> redisContainer() {
+    return REDIS;
+  }
 
   @Test
   void committedCapacityWithoutExecutionCustodyRemainsIndeterminate() throws Exception {
     repairAccountMember();
     bridge(false);
+    authorizeKnownAccountSend(inventory.readOriginalNewFinalAdmissionSource(decision));
     var before = physicalImage();
     assertThat(
             fixture
@@ -415,7 +441,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
   }
 
   @Test
-  void activeRecordCeilingRefusesADifferentOriginBelowTheRetainedCeilings() throws Exception {
+  void exactRequestGuardPreservesTheOnlyActiveCapacitySlot() throws Exception {
     repairAccountMember();
     bridge(false, 1, 134217728L, 2);
     var dsl = fixture.dsl();
@@ -429,22 +455,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     assertThat(budget.get(0, Integer.class)).isEqualTo(1);
     assertThat(budget.get(1, Integer.class)).isEqualTo(2);
     UUID otherAttempt = UUID.randomUUID();
-    UUID otherRequest = UUID.randomUUID();
-    // Isolate the physical active-record trigger. The usual same-origin owner replay would
-    // reject before reaching the INSERT, so use a distinct request with the valid candidate.
+    // A fresh attempt with the exact request reaches the full active-record limit.
     assertThatThrownBy(() ->
-            dsl.execute(
-                "INSERT INTO game_session_capacity_evidence_charge (admission_attempt_id, tenant_id,"
-                    + " request_id, admission_id, capacity_rearm_fence, mutation_digest,"
-                    + " candidate_digest, selected_owner_id, selected_owner_fence,"
-                    + " reserved_binding_bytes)"
-                    + " SELECT ?, tenant_id, ?, admission_id, capacity_rearm_fence, mutation_digest,"
-                    + " candidate_digest, selected_owner_id, selected_owner_fence,"
-                    + " reserved_binding_bytes FROM game_session_capacity_evidence_charge"
-                    + " WHERE admission_attempt_id = ?",
-                otherAttempt,
-                otherRequest,
-                attempt))
+            insertChargeForRequest(
+                otherAttempt, controlledCapacity.request().identity().requestId(), attempt))
         .isInstanceOfSatisfying(
             org.jooq.exception.DataAccessException.class,
             failure -> {
@@ -452,12 +466,50 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
               assertThat(failure).hasMessageContaining("Capacity evidence budget is exhausted");
             });
     assertThat(
+            dsl.execute(
+                "UPDATE game_session_capacity_evidence_charge SET account_send_state='RELEASED_UNSENT'"
+                    + " WHERE admission_attempt_id=? AND account_send_state='UNCLAIMED'",
+                attempt))
+        .isEqualTo(1);
+    // Refuse a mismatched request despite the available slot, then reacquire it for the exact
+    // request.
+    assertThatThrownBy(() -> insertChargeForRequest(otherAttempt, UUID.randomUUID(), attempt))
+        .isInstanceOfSatisfying(
+            org.jooq.exception.DataAccessException.class,
+            failure -> {
+              assertThat(failure.sqlState()).isEqualTo("23514");
+              assertThat(failure)
+                  .hasMessageContaining(
+                      "Capacity evidence source or predecessor coverage is unavailable");
+            });
+    authorizeKnownAccountSend(inventory.readOriginalNewFinalAdmissionSource(decision));
+    assertThat(
             dsl.fetchSingle(
                     "SELECT admission_attempt_id FROM game_session_capacity_evidence_charge"
                         + " WHERE tenant_id = ?",
                     tenant)
                 .get(0, UUID.class))
         .isEqualTo(attempt);
+  }
+
+  private void insertChargeForRequest(UUID attempt, UUID request, UUID sourceAttempt) {
+    fixture
+        .dsl()
+        .execute(
+            "INSERT INTO game_session_capacity_evidence_charge"
+                + " (admission_attempt_id, tenant_id, request_id, admission_id,"
+                + " capacity_rearm_fence, mutation_digest, candidate_digest,"
+                + " selected_owner_id, selected_owner_fence, reserved_binding_bytes,"
+                + " account_send_state, account_send_evidence_expires_at)"
+                + " SELECT ?, tenant_id, ?, admission_id, capacity_rearm_fence,"
+                + " mutation_digest, candidate_digest, selected_owner_id,"
+                + " selected_owner_fence, reserved_binding_bytes,"
+                + " 'UNCLAIMED', clock_timestamp() + INTERVAL '5 seconds'"
+                + " FROM game_session_capacity_evidence_charge"
+                + " WHERE admission_attempt_id = ?",
+            attempt,
+            request,
+            sourceAttempt);
   }
 
   @org.junit.jupiter.params.ParameterizedTest
@@ -474,6 +526,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
 
     // The initial charge happened in bridge(); the exact replay is idempotent even at capacity.
     owner.precharge(source, controlledCapacity.request(), selected, deadline());
+    authorizeKnownAccountSend(source);
     var original = controlledCapacity.request();
     var unsupported =
         new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
@@ -498,38 +551,24 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             fixture
                 .dsl()
                 .fetchOne(
-                    "SELECT 1 FROM game_session_capacity_evidence_charge WHERE admission_attempt_id = ?",
+                    "SELECT 1 FROM game_session_capacity_evidence_charge WHERE admission_attempt_id"
+                        + " = ?",
                     unsupported.admissionAttemptId()))
         .isNull();
     assertThat(
             fixture
                 .dsl()
                 .fetchSingle(
-                    "SELECT count(*) FROM game_session_capacity_evidence_charge WHERE tenant_id = ?",
+                    "SELECT count(*) FROM game_session_capacity_evidence_charge WHERE tenant_id ="
+                        + " ?",
                     controlledCapacity.request().identity().tenantId())
                 .get(0, Long.class))
         .isEqualTo(1L);
 
-    UUID distinctAttempt = UUID.randomUUID();
-    UUID distinctRequest = UUID.randomUUID();
-    // The owner intentionally rejects non-original requests before SQL. Insert a distinct-origin
-    // charge directly so this case reaches the SQL byte-budget trigger itself.
+    // A fresh attempt for the exact request reaches the SQL budget trigger itself.
     assertThatThrownBy(() ->
-            fixture
-                .dsl()
-                .execute(
-                    "INSERT INTO game_session_capacity_evidence_charge"
-                        + " (admission_attempt_id, tenant_id, request_id, admission_id,"
-                        + " capacity_rearm_fence, mutation_digest, candidate_digest,"
-                        + " selected_owner_id, selected_owner_fence, reserved_binding_bytes)"
-                        + " SELECT ?, tenant_id, ?, admission_id, capacity_rearm_fence,"
-                        + " mutation_digest, candidate_digest, selected_owner_id,"
-                        + " selected_owner_fence, reserved_binding_bytes"
-                        + " FROM game_session_capacity_evidence_charge"
-                        + " WHERE admission_attempt_id = ?",
-                    distinctAttempt,
-                    distinctRequest,
-                    original.admissionAttemptId()))
+            insertChargeForRequest(
+                UUID.randomUUID(), original.identity().requestId(), original.admissionAttemptId()))
         .isInstanceOfSatisfying(
             org.jooq.exception.DataAccessException.class,
             failure -> {
@@ -544,14 +583,16 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             fixture
                 .dsl()
                 .fetchOne(
-                    "SELECT 1 FROM game_session_capacity_evidence_charge WHERE admission_attempt_id = ?",
+                    "SELECT 1 FROM game_session_capacity_evidence_charge WHERE admission_attempt_id"
+                        + " = ?",
                     refusedRequest.admissionAttemptId()))
         .isNull();
     assertThat(
             fixture
                 .dsl()
                 .fetchOne(
-                    "SELECT 1 FROM game_session_original_new_capacity_execution WHERE admission_attempt_id = ?",
+                    "SELECT 1 FROM game_session_original_new_capacity_execution WHERE"
+                        + " admission_attempt_id = ?",
                     refusedRequest.admissionAttemptId()))
         .isNull();
     var assignment = tags.assignmentForTransition(fixture.transitionId());
@@ -573,7 +614,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             fixture
                 .dsl()
                 .fetchSingle(
-                    "SELECT status FROM game_session_original_new_capacity_execution WHERE admission_attempt_id = ?",
+                    "SELECT status FROM game_session_original_new_capacity_execution WHERE"
+                        + " admission_attempt_id = ?",
                     controlledCapacity.request().admissionAttemptId())
                 .get(0, String.class))
         .isEqualTo("AUTHORIZED");
@@ -582,7 +624,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             fixture
                 .dsl()
                 .fetchSingle(
-                    "SELECT count(*) FROM game_session_capacity_evidence_charge WHERE tenant_id = ?",
+                    "SELECT count(*) FROM game_session_capacity_evidence_charge WHERE tenant_id ="
+                        + " ?",
                     controlledCapacity.request().identity().tenantId())
                 .get(0, Long.class))
         .isEqualTo(1L);
@@ -635,6 +678,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     repairAccountMember();
     bridge(false);
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    authorizeKnownAccountSend(source);
     RedisClient failedClient = mock(RedisClient.class);
     when(failedClient.connect(ByteArrayCodec.INSTANCE))
         .thenThrow(new IllegalStateException("Controlled connection failure"));
@@ -782,6 +826,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     repairAccountMember();
     bridge(false);
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    authorizeKnownAccountSend(source);
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var raw = credential.template();
@@ -812,6 +857,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     repairAccountMember();
     bridge(false);
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    authorizeKnownAccountSend(source);
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var raw = credential.template();
@@ -910,7 +956,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             fixture
                 .dsl()
                 .fetchOne(
-                    "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                    "SELECT status FROM game_session_original_new_capacity_execution WHERE"
+                        + " execution_digest = ?",
                     controlledCapacity.digest()))
         .isNull();
     assertThat(admin.type(ascii(capacityKey))).isEqualTo("none");
@@ -944,7 +991,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             fixture
                 .dsl()
                 .fetchOne(
-                    "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                    "SELECT status FROM game_session_original_new_capacity_execution WHERE"
+                        + " execution_digest = ?",
                     controlledCapacity.digest()))
         .isNull();
     assertThat(admin.type(ascii(capacityKey))).isEqualTo("none");
@@ -956,6 +1004,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
   void lostDispatchCommitReplyBeforeRedisSendRetainsIndeterminateOriginal() throws Exception {
     repairAccountMember();
     bridge(false);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    authorizeKnownAccountSend(source);
     String schema = fixture.dsl().fetchSingle("SELECT current_schema()").get(0, String.class);
     DriverManagerDataSource raw = new DriverManagerDataSource();
     raw.setDriverClassName("org.postgresql.Driver");
@@ -976,7 +1026,6 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     var stoppingOwner =
         new CanonicalGameplayOriginalNewCapacityExecutionOwner(
             stoppingDsl, ownerClient, catalog, CLOCK, tags);
-    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
     var accountOpen = controlledAccountOpen();
     var issuerOpen = issuerOpen();
     var physicalBefore = physicalImage();
@@ -1017,6 +1066,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                   .get(0, String.class))
           .isEqualTo("INSTALL_DISPATCHED");
     }
+    String retained = sqlImage();
     assertThatThrownBy(() ->
             capacityOwner()
                 .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
@@ -1026,6 +1076,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                 .closeOriginalAttempt(
                     controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
+    assertThat(sqlImage()).isEqualTo(retained);
     assertThat(physicalImage()).isEqualTo(physicalBefore);
   }
 
@@ -1073,89 +1124,5 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
       }
       throw failure;
     }
-  }
-
-  @Test
-  void ownerMovementBeforeCapacityAuthorizationRefusesOriginalDispatchWithoutMutation()
-      throws Exception {
-    repairAccountMember();
-    bridge(false);
-    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
-    var binding = source.candidate().bindingIdentity();
-    assertThat(
-            fixture
-                .dsl()
-                .execute(
-                    "UPDATE game_session_region_runtime_status SET executor_fence = executor_fence + 1 WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?",
-                    binding.tenantId(),
-                    binding.gameInstanceId(),
-                    binding.regionId()))
-        .isEqualTo(1);
-    var account = controlledAccountOpen();
-    var issuer = issuerOpen();
-    String rows = sqlImage();
-    var physical = physicalImage();
-    try (var credential =
-            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
-        var raw = credential.template();
-        var bound = raw.bindCapacityExecution(controlledCapacity)) {
-      assertThatThrownBy(() ->
-              capacityOwner()
-                  .authorize(source, bound, account, issuer, controlledCapacity, deadline()))
-          .isInstanceOf(IllegalStateException.class);
-    }
-    assertThat(sqlImage()).isEqualTo(rows);
-    assertThat(physicalImage()).isEqualTo(physical);
-  }
-
-  @Test
-  void unresolvedOriginalExecutionBlocksOwnerMovementUntilExactClosure() throws Exception {
-    repairAccountMember();
-    bridge();
-    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
-    admin.pexpire(ascii(regionBinding.installation().grant.key()), 0);
-    String rows = sqlImage();
-    var physical = physicalImage();
-    assertThatThrownBy(() ->
-            regionBinding
-                .owner()
-                .revalidateOriginalNewFinalBinding(regionBinding.installation(), source))
-        .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(() -> replaceRegionOwner("successor-before-closure"))
-        .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(() -> observeGuardedRegionReplacement("successor-before-closure"))
-        .rootCause()
-        .isInstanceOfSatisfying(
-            org.postgresql.util.PSQLException.class,
-            failure -> {
-              assertThat(failure.getSQLState()).isEqualTo("23514");
-              assertThat(failure.getMessage())
-                  .contains("Region owner replacement lacks exact transfer custody");
-            });
-    // The positive continuation cannot turn an unexecuted/missing final result into proof.
-    assertThatThrownBy(() ->
-            capacityOwner()
-                .retainCommittedBeforeCleanup(
-                    controlledCapacity.request(), controlledCapacity.reservation()))
-        .isInstanceOf(IllegalStateException.class);
-    assertThat(sqlImage()).isEqualTo(rows);
-    assertThat(physicalImage()).isEqualTo(physical);
-    capacityOwner()
-        .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
-    String closedRows = sqlImage();
-    var closedPhysical = physicalImage();
-    assertThatThrownBy(() -> replaceRegionOwner("successor-after-closure"))
-        .isInstanceOf(IllegalStateException.class);
-    assertThat(
-            capacityOwner()
-                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
-                .disposition())
-        .isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
-    var observed = observeGuardedRegionReplacement("successor-after-closure");
-    assertThat(observed.ownerInstanceId()).isEqualTo("successor-after-closure");
-    assertThat(observed.executorFence())
-        .isGreaterThan(regionBinding.installation().status.executorFence());
-    assertThat(sqlImage()).isEqualTo(closedRows);
-    assertThat(physicalImage()).isEqualTo(closedPhysical);
   }
 }

@@ -695,6 +695,41 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         target);
   }
 
+  /** Uses the same typed billing authority as the controlled capacity entitlement builder. */
+  CanonicalGameplayAdmissionDecision originalPreparedDecisionWithControlledCapacityLease() {
+    var carrier =
+        new LinkedHashMap<>(controlledLeaseEvidence(identity, generation, target).carrier());
+    String tenant = identity.tenantId().toString();
+    carrier.put(
+        "authorityTuple",
+        Map.of(
+            "issuerAuthGeneration",
+            identity.issuerAuthGeneration().toString(),
+            "accountAuthorityGeneration",
+            "1",
+            "tenantAuthorityGeneration",
+            Map.of(tenant, "2"),
+            "membershipAuthorityGeneration",
+            Map.of(tenant, "1"),
+            "privateRealmGrantVersions",
+            List.of(),
+            "tenantBillingCutoff",
+            Map.of(
+                tenant,
+                Map.of(
+                    "tenantAuthorityGeneration", "2",
+                    "tenantBillingSequence", "1",
+                    "outboxStreamKey", "account:auth-authority:v1:tenant/" + tenant,
+                    "outboxSequence", "1"))));
+    return new CanonicalGameplayAdmissionDecision(
+        transitionId,
+        AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier),
+        identity,
+        generation,
+        null,
+        target);
+  }
+
   /** Current controlled issuer source used by the actual bootstrap and local ACK owners. */
   CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerStateSource
       currentIssuerSource() {
@@ -1802,6 +1837,14 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       CanonicalGameplayBindingIdentity candidate,
       BigInteger bindingGeneration,
       CanonicalPlayableTarget target) {
+    return controlledLeaseEvidence(candidate, bindingGeneration, target, UUID.randomUUID());
+  }
+
+  static AccountGameplayAdmissionLeaseEvidence controlledLeaseEvidence(
+      CanonicalGameplayBindingIdentity candidate,
+      BigInteger bindingGeneration,
+      CanonicalPlayableTarget target,
+      UUID requestId) {
     long now = System.currentTimeMillis();
     String nowSeconds = Long.toString(now / 1000L);
     Map<String, Object> carrier = new LinkedHashMap<>();
@@ -1813,7 +1856,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     carrier.put(
         "callerWorkload",
         "spiffe://firemud/ns/" + target.targetNamespace() + "/sa/game-session-service");
-    carrier.put("requestId", UUID.randomUUID().toString());
+    carrier.put("requestId", requestId.toString());
     carrier.put("leaseId", UUID.randomUUID().toString());
     carrier.put("leaseFence", "1");
     Map<String, Object> scope = new LinkedHashMap<>();

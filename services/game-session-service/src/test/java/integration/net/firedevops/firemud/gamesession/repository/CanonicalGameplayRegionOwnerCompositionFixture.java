@@ -89,7 +89,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     var runtimeIdentity =
         new RuntimeIdentity(
             "game-session-service",
-            "final-owner-composition",
+            "game-session/worker α",
             "localhost",
             Instant.now(),
             "test",
@@ -119,6 +119,65 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalGameplayRegionBindingBridgeOwner owner,
       CanonicalGameplayRegionLeaseOwner.Installation installation,
       CanonicalGameplayBindingInventoryRepository.RegionBridgeAcknowledgement acknowledgement) {}
+
+  /**
+   * Actual acquire/install/revalidate path; only upstream placement/incarnation remain controlled.
+   */
+  static CanonicalGameplayRegionLeaseOwner.Installation handoffExistingOriginal(
+      DSLContext dsl,
+      RedisClient coordinationRedis,
+      RedisURI coordinationUri,
+      RedisScriptCatalog catalog,
+      CanonicalGameplayRegionLeaseOwner.Installation original,
+      CanonicalInitialPlayerLocationRegionResolver resolver,
+      CanonicalGameplayRegionOwnerTransferCoordinator transfer,
+      long deadline) {
+    return handoffExistingOriginal(
+        dsl,
+        coordinationRedis,
+        coordinationUri,
+        catalog,
+        original,
+        resolver,
+        new ControlledStableIncarnationSource(),
+        transfer,
+        deadline);
+  }
+
+  /** Rechecks the same explicit current incarnation source used by the original installation. */
+  static CanonicalGameplayRegionLeaseOwner.Installation handoffExistingOriginal(
+      DSLContext dsl,
+      RedisClient coordinationRedis,
+      RedisURI coordinationUri,
+      RedisScriptCatalog catalog,
+      CanonicalGameplayRegionLeaseOwner.Installation original,
+      CanonicalInitialPlayerLocationRegionResolver resolver,
+      CanonicalGameplayRegionIncarnationSource incarnationSource,
+      CanonicalGameplayRegionOwnerTransferCoordinator transfer,
+      long deadline) {
+    var identity =
+        new RuntimeIdentity(
+            "game-session-service",
+            "final-owner-handoff",
+            "localhost",
+            Instant.now(),
+            "test",
+            "test",
+            "controlled-test-image");
+    var successor =
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            dsl,
+            coordinationRedis,
+            coordinationUri,
+            catalog,
+            incarnationSource,
+            resolver,
+            identity,
+            Duration.ofSeconds(30),
+            Clock.systemUTC());
+    return successor.installForTransition(
+        null, original.transitionId, original.worldRequest, transfer, deadline);
+  }
 
   /**
    * Creates one real first-NEW provisional candidate from the exact placement selector, installs
@@ -586,8 +645,10 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         physical);
   }
 
-  /** Proves that refusing an expired grant replacement preserves the acknowledged bridge. */
-  public static ExpiredGrantProof installAndBridgeThenExpiredGrantReplacementRefuses(
+  /**
+   * Refuses compatibility takeover after lease expiry without mutating owner or bridge evidence.
+   */
+  public static CompatibilityTakeoverProof installAndBridgeThenCompatibilityTakeoverRefuses(
       DSLContext dsl,
       String redisHost,
       int redisPort,
@@ -596,7 +657,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient)
       throws Exception {
-    var capture = new AtomicReference<ExpiredGrantProof>();
+    var capture = new AtomicReference<CompatibilityTakeoverProof>();
     installAndBridgeInternal(
         dsl,
         redisHost,
@@ -607,7 +668,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         entityReferenceClient,
         null,
         capture);
-    return Objects.requireNonNull(capture.get(), "expired-grant bridge proof");
+    return Objects.requireNonNull(capture.get(), "changed-grant bridge proof");
   }
 
   /**
@@ -954,7 +1015,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
       SecondBinding secondBinding,
-      AtomicReference<ExpiredGrantProof> expiredGrantProofCapture)
+      AtomicReference<CompatibilityTakeoverProof> compatibilityTakeoverProofCapture)
       throws Exception {
     return installAndBridgeInternal(
         dsl,
@@ -965,7 +1026,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         worldRegionResolver,
         entityReferenceClient,
         secondBinding,
-        expiredGrantProofCapture,
+        compatibilityTakeoverProofCapture,
         null,
         null,
         null);
@@ -980,7 +1041,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
       SecondBinding secondBinding,
-      AtomicReference<ExpiredGrantProof> expiredGrantProofCapture,
+      AtomicReference<CompatibilityTakeoverProof> compatibilityTakeoverProofCapture,
       CanonicalPlayerCreatedRuntimeReferenceClient createdReferenceClient,
       java.util.function.Consumer<ExistingBinding> afterBridge,
       BridgeSqlPhaseRunner phaseRunner)
@@ -1128,9 +1189,9 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         afterBridge.accept(new ExistingBinding(bridgeOwner, installation, firstAcknowledgement));
       }
       if (secondBinding == null) {
-        if (expiredGrantProofCapture != null) {
-          expiredGrantProofCapture.set(
-              refuseReplacementAfterAcknowledgement(
+        if (compatibilityTakeoverProofCapture != null) {
+          compatibilityTakeoverProofCapture.set(
+              refuseCompatibilityTakeoverAfterAcknowledgement(
                   dsl,
                   redis,
                   scriptCatalog,
@@ -1213,21 +1274,62 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               secondPrepared.bindingGeneration(),
               null,
               secondBinding.currentTarget()));
+      var reference =
+          secondBinding
+              .entityReferenceClient()
+              .read(preseededEntityRequest(secondBinding.worldRequest()));
+      var secondBindingKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.sessionBinding(
+                  secondIdentity.tenantId(),
+                  secondIdentity.gameInstanceId(),
+                  secondIdentity.regionId(),
+                  reference.runtimeEntityId().value()));
+      if (!"none".equals(redis.admin().type(secondBindingKey))) {
+        throw new IllegalStateException("Fixture requires an unbridged second Redis binding");
+      }
+      if (secondBinding.freshGrant()) {
+        // The first private handle is deliberately not reused. Expire only this test-owned lease.
+        if (!redis.admin().pexpire(redisKey, 0L)) {
+          throw new IllegalStateException("Fixture requires a live region grant to expire");
+        }
+        var compatibilityOwner =
+            CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
+                dsl,
+                redis.ownerClient(),
+                redis.ownerUri,
+                scriptCatalog,
+                stableSource,
+                secondBinding.worldRegionResolver(),
+                secondBinding.entityReferenceClient(),
+                runtimeIdentity,
+                Duration.ofSeconds(30),
+                Clock.systemUTC());
+        var beforeFenceSequence = regionFenceSequence(dsl);
+        var beforeTakeover =
+            snapshotRegionOwnerSqlState(
+                dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId());
+        var redisBeforeTakeover = snapshotRegionRedisState(redis, redisKey, initialMetaKey);
+        try {
+          compatibilityOwner.installForTransition(secondTransitionId, secondBinding.worldRequest());
+          throw new AssertionError("Compatibility takeover unexpectedly succeeded");
+        } catch (IllegalStateException expected) {
+          if (!redisBeforeTakeover.equals(snapshotRegionRedisState(redis, redisKey, initialMetaKey))
+              || !"none".equals(redis.admin().type(secondBindingKey))
+              || !beforeFenceSequence.equals(regionFenceSequence(dsl))
+              || !beforeTakeover.equals(
+                  snapshotRegionOwnerSqlState(
+                      dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId()))) {
+            throw new AssertionError(
+                "Refused compatibility takeover changed region state", expected);
+          }
+          throw expected;
+        }
+      }
       var secondInstallation =
           bridgeOwner.installForTransition(
               installation, secondTransitionId, secondBinding.worldRequest());
       if (secondBinding.expireBeforeBridge()) {
-        var reference =
-            secondBinding
-                .entityReferenceClient()
-                .read(preseededEntityRequest(secondBinding.worldRequest()));
-        var secondBindingKey =
-            ascii(
-                CanonicalGameplayRegionRedisKeys.sessionBinding(
-                    secondIdentity.tenantId(),
-                    secondIdentity.gameInstanceId(),
-                    secondIdentity.regionId(),
-                    reference.runtimeEntityId().value()));
         if (!redis.admin().pexpire(redisKey, 0L)) {
           throw new IllegalStateException("Fixture requires a live reused region grant to expire");
         }
@@ -1510,7 +1612,13 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     };
   }
 
-  private static ExpiredGrantProof refuseReplacementAfterAcknowledgement(
+  private static Long regionFenceSequence(DSLContext dsl) {
+    return Objects.requireNonNull(
+        dsl.fetchSingle("SELECT last_value FROM game_session_region_executor_fence_seq")
+            .get(0, Long.class));
+  }
+
+  private static CompatibilityTakeoverProof refuseCompatibilityTakeoverAfterAcknowledgement(
       DSLContext dsl,
       RegionRedis redis,
       RedisScriptCatalog scriptCatalog,
@@ -1520,6 +1628,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalInitialPlayerLocationRequest worldRequest,
       Proof acknowledged,
       CanonicalGameplayRegionLeaseOwner.Installation originalInstallation) {
+    String acknowledgedRowBeforeGrant = regionBridgeRowImage(dsl, acknowledged.transitionId());
     byte[] leaseKey =
         ascii(
             CanonicalGameplayRegionRedisKeys.lease(
@@ -1551,47 +1660,57 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             replacementIdentity,
             Duration.ofSeconds(30),
             Clock.systemUTC());
-    var source = originalInstallation.source;
-    var sqlBeforeRefusal =
+    var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
+    var beforeInventory = inventory.readSnapshot();
+    var beforeRegion =
         snapshotRegionOwnerSqlState(
-            dsl, source.tenantId(), source.gameInstanceId(), source.regionId());
-    String acknowledgedRowBeforeRefusal = regionBridgeRowImage(dsl, acknowledged.transitionId());
+            dsl,
+            originalInstallation.source.tenantId(),
+            originalInstallation.source.gameInstanceId(),
+            originalInstallation.source.regionId());
     Record acknowledgedRow =
         Objects.requireNonNull(
             dsl.fetchOne(
-                "SELECT * FROM game_session_canonical_binding_region_bridge_obligation"
-                    + " WHERE transition_id = ?",
-                acknowledged.transitionId()),
-            "acknowledged bridge row before replacement refusal");
-    var physicalBridgeBeforeRefusal =
+                "SELECT * FROM game_session_canonical_binding_region_bridge_obligation WHERE transition_id = ?",
+                acknowledged.transitionId()));
+    var beforePhysical =
         snapshotRegionBridgeRedisState(redis, acknowledgedRow, acknowledged.runtimeEntityId());
-    var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
-    var inventoryBeforeRefusal = inventory.readSnapshot();
+    var beforeFenceSequence = regionFenceSequence(dsl);
     String metaKey =
         CanonicalGameplayRegionRedisKeys.meta(
-            source.tenantId(), source.gameInstanceId(), source.regionId());
-
-    boolean replacementRefused;
-    String refusalMessage;
+            originalInstallation.source.tenantId(),
+            originalInstallation.source.gameInstanceId(),
+            originalInstallation.source.regionId());
+    String refusalMessage = null;
     try {
       replacementOwner.installForTransition(acknowledged.transitionId(), worldRequest);
-      replacementRefused = false;
-      refusalMessage = null;
     } catch (IllegalStateException expected) {
-      replacementRefused = true;
       refusalMessage = expected.getMessage();
     }
-
-    return new ExpiredGrantProof(
-        acknowledged,
-        replacementRefused,
-        refusalMessage,
-        sqlBeforeRefusal.equals(
+    var after =
+        new CanonicalGameplayRegionRuntimeStatusRepository(dsl)
+            .find(originalInstallation.source)
+            .orElseThrow();
+    if (refusalMessage == null
+        || redis.admin().get(leaseKey) != null
+        || !beforeFenceSequence.equals(regionFenceSequence(dsl))
+        || !beforeRegion.equals(
             snapshotRegionOwnerSqlState(
-                dsl, source.tenantId(), source.gameInstanceId(), source.regionId())),
-        acknowledgedRowBeforeRefusal.equals(regionBridgeRowImage(dsl, acknowledged.transitionId())),
-        inventoryBeforeRefusal.equals(inventory.readSnapshot()),
-        physicalBridgeBeforeRefusal.equals(
+                dsl,
+                originalInstallation.source.tenantId(),
+                originalInstallation.source.gameInstanceId(),
+                originalInstallation.source.regionId()))) {
+      throw new IllegalStateException("Compatibility takeover mutated retained owner state");
+    }
+    return new CompatibilityTakeoverProof(
+        acknowledged,
+        after.executorFence(),
+        false,
+        true,
+        refusalMessage,
+        acknowledgedRowBeforeGrant.equals(regionBridgeRowImage(dsl, acknowledged.transitionId())),
+        beforeInventory.equals(inventory.readSnapshot()),
+        beforePhysical.equals(
                 snapshotRegionBridgeRedisState(
                     redis, acknowledgedRow, acknowledged.runtimeEntityId()))
             && "none".equals(redis.admin().type(leaseKey))
@@ -2027,8 +2146,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     }
   }
 
-  private static CanonicalGameplayRegionIncarnationSource.StableEvidence
-      controlledStableIncarnation(CanonicalGameplayRegionIncarnationSource.RegionScope scope) {
+  static CanonicalGameplayRegionIncarnationSource.StableEvidence controlledStableIncarnation(
+      CanonicalGameplayRegionIncarnationSource.RegionScope scope) {
     var deployment =
         new CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence(
             "controlled-region-deployment",
@@ -2246,13 +2365,14 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalPlayableTarget currentTarget,
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
-      boolean expireBeforeBridge) {
+      boolean expireBeforeBridge,
+      boolean freshGrant) {
     public SecondBinding(
         CanonicalInitialPlayerLocationRequest worldRequest,
         CanonicalPlayableTarget currentTarget,
         CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
         CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient) {
-      this(worldRequest, currentTarget, worldRegionResolver, entityReferenceClient, false);
+      this(worldRequest, currentTarget, worldRegionResolver, entityReferenceClient, false, false);
     }
   }
 
@@ -2287,11 +2407,12 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       boolean accountControlStatePreserved,
       boolean exactMemberRetryPreservedState) {}
 
-  public record ExpiredGrantProof(
+  public record CompatibilityTakeoverProof(
       Proof acknowledgedBridge,
-      boolean replacementRefused,
+      BigInteger replacementExecutorFence,
+      boolean replacementGrantInstalled,
+      boolean takeoverRefused,
       String refusalMessage,
-      boolean ownerSqlStatePreserved,
       boolean acknowledgementRowPreserved,
       boolean inventoryStatePreserved,
       boolean physicalBridgeStatePreserved) {}
@@ -2370,7 +2491,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               .addCommand(CommandType.PTTL)
               .addCommand(CommandType.GET)
               .addCommand(CommandType.SET)
-              .addCommand(CommandType.PEXPIRE);
+              .addCommand(CommandType.PEXPIRE)
+              .addCommand(CommandType.TIME);
       if (allowAccountMemberRepair) {
         permissions
             .keyPattern("session:game:index:account:*")

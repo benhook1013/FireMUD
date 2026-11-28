@@ -13,6 +13,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc.AccountServiceBlockingStub;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
@@ -75,6 +76,69 @@ public final class AccountTenantCapacityClient
             request,
             absoluteDeadlineMillis,
             AccountServiceBlockingStub::commitTenantCapacityAdmission);
+    return readCommitResult(request, response);
+  }
+
+  public enum SendDisposition {
+    AUTHORIZE_NEW,
+    READ_RETAINED,
+    EXPIRED_UNSENT
+  }
+
+  /** Selects exactly one creating send only after its durable local claim has committed. */
+  public Result commitWithSendBoundary(
+      Request request, long absoluteDeadlineMillis, Supplier<SendDisposition> authorize) {
+    return invoke(
+        request,
+        absoluteDeadlineMillis,
+        (stub, wire) -> {
+          SendDisposition disposition = authorize.get();
+          if (stub.getCallOptions().getDeadline().isExpired()) {
+            throw Status.DEADLINE_EXCEEDED.asRuntimeException();
+          }
+          return switch (disposition) {
+            case AUTHORIZE_NEW ->
+                readCommitResult(request, stub.commitTenantCapacityAdmission(wire));
+            case READ_RETAINED -> readRetainedReservationOrDenial(stub, wire, request);
+            case EXPIRED_UNSENT -> throw Status.DEADLINE_EXCEEDED.asRuntimeException();
+          };
+        });
+  }
+
+  /** Reads eligible retained custody with the original bounded Account call. */
+  public Result readRetainedReservationOrDenial(Request request, long absoluteDeadlineMillis) {
+    return invoke(
+        request,
+        absoluteDeadlineMillis,
+        (stub, wire) -> readRetainedReservationOrDenial(stub, wire, request));
+  }
+
+  private static Result readRetainedReservationOrDenial(
+      AccountServiceBlockingStub stub, CommitTenantCapacityAdmissionRequest wire, Request request) {
+    final CommitTenantCapacityAdmissionResponse reservation;
+    try {
+      reservation = stub.readTenantCapacityAdmissionReservation(wire);
+    } catch (StatusRuntimeException unavailable) {
+      if (unavailable.getStatus().getCode() != Status.Code.UNAVAILABLE
+          || stub.getCallOptions().getDeadline().isExpired()) {
+        throw unavailable;
+      }
+      // Reservation eligibility was not proven. Only an exact typed denial can settle
+      // the charge here, and it must use the same peer and deadline.
+      readRetainedOutcome(request, stub.readTenantCapacityAdmissionOutcome(wire));
+      throw unavailable;
+    }
+    try {
+      return TenantCapacityAdmissionGrpcCodec.requireResponse(request, reservation);
+    } catch (IllegalArgumentException inexactResponse) {
+      throw Status.UNKNOWN
+          .withDescription("Account retained reservation was not proven")
+          .asRuntimeException();
+    }
+  }
+
+  private static Result readCommitResult(
+      Request request, CommitTenantCapacityAdmissionResponse response) {
     try {
       var refusal = TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response);
       if (refusal.isPresent()) throw new CapacityRefusedException(refusal.orElseThrow());
@@ -94,12 +158,17 @@ public final class AccountTenantCapacityClient
             request,
             absoluteDeadlineMillis,
             AccountServiceBlockingStub::readTenantCapacityAdmissionOutcome);
+    return readRetainedOutcome(request, response);
+  }
+
+  private static Result readRetainedOutcome(
+      Request request, CommitTenantCapacityAdmissionResponse response) {
     try {
       var refusal = TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response);
       if (refusal.isPresent()) {
         var denial = refusal.orElseThrow();
         if (denial.durableDenialId() == null) throw new IllegalArgumentException();
-        throw new CapacityRefusedException(denial);
+        throw CapacityRefusedException.retainedAdmissionDenial(denial);
       }
       return TenantCapacityAdmissionGrpcCodec.requireResponse(request, response);
     } catch (IllegalArgumentException inexactResponse) {
@@ -121,14 +190,10 @@ public final class AccountTenantCapacityClient
         .asRuntimeException();
   }
 
-  private CommitTenantCapacityAdmissionResponse invoke(
+  private <T> T invoke(
       Request request,
       long absoluteDeadlineMillis,
-      BiFunction<
-              AccountServiceBlockingStub,
-              CommitTenantCapacityAdmissionRequest,
-              CommitTenantCapacityAdmissionResponse>
-          call) {
+      BiFunction<AccountServiceBlockingStub, CommitTenantCapacityAdmissionRequest, T> call) {
     long maximumMillis =
         TimeUnit.SECONDS.toMillis(TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS);
     Deadline maximum = Deadline.after(maximumMillis, TimeUnit.MILLISECONDS);

@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(26);
+      assertThat(catalog.catalogEpoch()).isEqualTo(37);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -177,6 +177,16 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   && fact.identity()
                       .equals(
                           "game_session_original_new_capacity_execution.gs_capacity_execution_initial_dispatch"))
+          .anyMatch(fact ->
+              fact.kind() == FactKind.TRIGGER
+                  && fact.identity()
+                      .equals(
+                          "game_session_region_owner_transfer.gs_region_transfer_exact_successor"))
+          .anyMatch(fact ->
+              fact.kind() == FactKind.TRIGGER
+                  && fact.identity()
+                      .equals(
+                          "game_session_region_timeline_preparation.gs_timeline_no_write_release_guard"))
           .anyMatch(fact -> fact.kind() == FactKind.SEQUENCE);
       assertThat(
               catalog.schemaFacts().stream()
@@ -209,7 +219,18 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.11.1",
               "catalog-installation:1065.0.11.2",
               "catalog-installation:1065.0.11.3",
-              "catalog-installation:1065.0.11.4")
+              "catalog-installation:1065.0.11.4",
+              "catalog-installation:1065.0.12",
+              "catalog-installation:1065.0.13",
+              "catalog-installation:1065.0.14",
+              "catalog-installation:1065.0.15",
+              "catalog-installation:1065.0.16",
+              "catalog-installation:1065.0.17",
+              "catalog-installation:1065.0.18",
+              "catalog-installation:1065.0.19",
+              "catalog-installation:1065.0.20",
+              "catalog-installation:1065.0.21",
+              "catalog-installation:1065.0.22")
           .noneMatch(identity ->
               identity.contains(":1057:")
                   || identity.contains(":1058:")
@@ -236,7 +257,18 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   || identity.contains(":1065.0.11.1:")
                   || identity.contains(":1065.0.11.2:")
                   || identity.contains(":1065.0.11.3:")
-                  || identity.contains(":1065.0.11.4:"));
+                  || identity.contains(":1065.0.11.4:")
+                  || identity.contains(":1065.0.12:")
+                  || identity.contains(":1065.0.13:")
+                  || identity.contains(":1065.0.14:")
+                  || identity.contains(":1065.0.15:")
+                  || identity.contains(":1065.0.16:")
+                  || identity.contains(":1065.0.17:")
+                  || identity.contains(":1065.0.18:")
+                  || identity.contains(":1065.0.19:")
+                  || identity.contains(":1065.0.20:")
+                  || identity.contains(":1065.0.21:")
+                  || identity.contains(":1065.0.22:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -773,7 +805,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(26);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(37);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(fact ->
                 fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
@@ -943,7 +975,18 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "1065.0.11.1",
               "1065.0.11.2",
               "1065.0.11.3",
-              "1065.0.11.4")) {
+              "1065.0.11.4",
+              "1065.0.12",
+              "1065.0.13",
+              "1065.0.14",
+              "1065.0.15",
+              "1065.0.16",
+              "1065.0.17",
+              "1065.0.18",
+              "1065.0.19",
+              "1065.0.20",
+              "1065.0.21",
+              "1065.0.22")) {
         String columns =
             "installed_rank,version,description,type,script,checksum,installed_by,execution_time,success";
         var original =
@@ -988,7 +1031,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           f.dsl.execute("DELETE FROM " + f.history + " WHERE installed_rank=10000");
         }
       }
-      assertThat(f.owner().capture(request()).catalog().catalogEpoch()).isEqualTo(26);
+      assertThat(f.owner().capture(request()).catalog().catalogEpoch()).isEqualTo(37);
     }
   }
 
@@ -2048,7 +2091,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
-  void regionTransferSuccessorAndFenceReceiptUpgradePreservesEpochTwentyFive() {
+  void regionTransferSuccessorAndFenceReceiptUpgradePreservesEpochTwentySix() {
     try (Fixture f = fixture("1065.0.11.3")) {
       assertCapacityCatalogGuardUpgrade(
           f,
@@ -2070,6 +2113,242 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                       + "fence_dispatch_id <> '00000000-0000-0000-0000-000000000000'::uuid"
                       + " AND (fence_readback IS NULL OR (incarnation_digest IS NOT NULL"
                       + " AND incarnation_digest = fence_dispatch_incarnation)))):true")),
+          Map.of());
+    }
+  }
+
+  @Test
+  void opaqueRuntimeOwnerIdentityUpgradePreservesRetainedRowsAndCatalogEvidence() {
+    try (Fixture f = fixture("1065.0.11.4")) {
+      f.populatePredecessor();
+      var original = f.owner().capture(request());
+      var before = f.rows(f.tables());
+      before.remove(f.history);
+      before.remove(EPOCHS);
+      var history = f.historyRows(false);
+      var evidence = f.evidence(original.request());
+      migration(f.source, f.schema, f.history, "1065.0.12").migrate();
+      assertThat(f.rows(before.keySet())).isEqualTo(before);
+      assertThat(f.historyRows(false).subList(0, history.size())).isEqualTo(history);
+      assertThat(f.historyRows(false)).hasSize(history.size() + 1);
+      assertThat(f.evidence(original.request())).isEqualTo(evidence);
+      assertThat(f.dsl.fetchSingle("SELECT max(catalog_epoch) FROM " + EPOCHS).get(0, Long.class))
+          .isEqualTo(27L);
+      for (String table :
+          List.of(
+              "game_session_original_new_capacity_execution",
+              "game_session_capacity_evidence_charge")) {
+        var definition =
+            f.dsl
+                .fetchSingle(
+                    "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname='selected_owner_id' WHERE c.conrelid=?::regclass AND c.contype='c' AND c.conkey=ARRAY[a.attnum]::smallint[]",
+                    table)
+                .get(0, String.class);
+        assertThat(definition).contains("btrim").doesNotContain("A-Za-z0-9");
+      }
+    }
+  }
+
+  @Test
+  void projectionRepairUpgradePreservesPopulatedCatalogAtEpochTwentyEight() {
+    try (Fixture f = fixture("1065.0.12")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.13",
+          27,
+          "V1065.0.13__repair_frozen_required_member_projection.sql",
+          Map.of(),
+          Map.of(),
+          Map.of(),
+          Map.of());
+    }
+  }
+
+  @Test
+  void genuineV1065Point0Point16UpgradeRetainsCatalogAndSealsCapacitySendBoundary() {
+    try (Fixture f = fixture("1065.0.16")) {
+      f.populatePredecessor();
+      var original = f.owner().capture(request());
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(31);
+      // The SQL generator projects the installed schema and migration inventory.
+      // Reconstruct each frontier while its matching generator is installed.
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT catalog_bytes=gs_runtime_family_catalog_bytes(31) FROM "
+                          + EPOCHS
+                          + " WHERE catalog_epoch=31")
+                  .get(0, Boolean.class))
+          .isTrue();
+      var rowsBefore = f.rows(f.tables());
+      rowsBefore.remove(f.history);
+      rowsBefore.remove(EPOCHS);
+      var classificationsBefore = f.classificationRows();
+      var epochsBefore =
+          f.dsl
+              .fetch(
+                  "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+                      + EPOCHS
+                      + " e ORDER BY catalog_epoch")
+              .getValues(0, String.class);
+      var snapshotsBefore =
+          f.dsl
+              .fetch(
+                  "SELECT to_jsonb(s)::text||':'||xmin::text FROM "
+                      + SNAPSHOTS
+                      + " s ORDER BY read_request_id")
+              .getValues(0, String.class);
+      var historyBefore = f.historyRows(false);
+      byte[] evidenceBefore = f.evidence(original.request());
+
+      migration(f.source, f.schema, f.history, "1065.0.17").migrate();
+
+      assertThat(f.rows(rowsBefore.keySet())).isEqualTo(rowsBefore);
+      assertThat(f.classificationRows()).isEqualTo(classificationsBefore);
+      assertThat(
+              f.dsl
+                  .fetch(
+                      "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+                          + EPOCHS
+                          + " e WHERE catalog_epoch<=31 ORDER BY catalog_epoch")
+                  .getValues(0, String.class))
+          .isEqualTo(epochsBefore);
+      assertThat(
+              f.dsl
+                  .fetch(
+                      "SELECT to_jsonb(s)::text||':'||xmin::text FROM "
+                          + SNAPSHOTS
+                          + " s ORDER BY read_request_id")
+                  .getValues(0, String.class))
+          .isEqualTo(snapshotsBefore);
+      assertThat(f.historyRows(false)).hasSize(historyBefore.size() + 1);
+      assertThat(f.historyRows(false).subList(0, historyBefore.size())).isEqualTo(historyBefore);
+      var installed =
+          f.dsl.fetchSingle(
+              "SELECT count(*),min(type),min(script),bool_and(success) FROM "
+                  + f.history
+                  + " WHERE version='1065.0.17'");
+      assertThat(installed.get(0, Long.class)).isEqualTo(1L);
+      assertThat(installed.get(1, String.class)).isEqualTo("SQL");
+      assertThat(installed.get(2, String.class))
+          .isEqualTo("V1065.0.17__retain_capacity_send_boundary.sql");
+      assertThat(installed.get(3, Boolean.class)).isTrue();
+      assertThat(f.evidence(original.request())).isEqualTo(evidenceBefore);
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+
+      assertThat(
+              f.constraints()
+                  .get(
+                      "game_session_capacity_evidence_budget.gs_capacity_evidence_budget_retained_limit_required"))
+          .contains("maximum_retained_records IS NOT NULL");
+      assertThat(f.indexes().get("gs_capacity_evidence_charge_unclaimed_expiry"))
+          .contains("account_send_evidence_expires_at");
+      var sendStateConstraint =
+          f.constraints()
+              .get("game_session_capacity_evidence_charge.gs_capacity_evidence_send_state");
+      assertThat(sendStateConstraint)
+          .contains("account_send_state IS NULL")
+          .contains("UNCLAIMED")
+          .contains("MAY_HAVE_SENT")
+          .contains("RELEASED_UNSENT")
+          .contains("account_unsent_released_at IS NOT NULL");
+      assertThat(f.indexes().get("gs_capacity_evidence_charge_active"))
+          .contains("account_send_state IS DISTINCT FROM 'RELEASED_UNSENT'");
+      assertThat(f.routines().get("settle_gs_capacity_evidence_charge()"))
+          .contains(
+              "OLD.account_send_state='UNCLAIMED' AND NEW.account_send_state='RELEASED_UNSENT'")
+          .contains("Execution custody prevents capacity evidence charge changes");
+
+      var current = f.owner().capture(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(32);
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT catalog_bytes=gs_runtime_family_catalog_bytes(32) FROM "
+                          + EPOCHS
+                          + " WHERE catalog_epoch=32")
+                  .get(0, Boolean.class))
+          .isTrue();
+      migration(f.source, f.schema, f.history, "1065.0.17").validate();
+    }
+  }
+
+  @Test
+  void genuineV1065Point0Point17UpgradeRetainsCatalogAndSealsTransferReceiptCustody() {
+    try (Fixture f = fixture("1065.0.17")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.18",
+          32,
+          "V1065.0.18__require_exact_region_transfer_receipt_custody.sql",
+          Map.of(
+              "guard_gs_region_owner_transfer_item()",
+              List.of(
+                  "a.allocation_version=NEW.allocation_version",
+                  "NEW.incarnation_digest IS DISTINCT FROM parent.incarnation_digest",
+                  "dispatched.fence_dispatch_incarnation IS DISTINCT FROM NEW.incarnation_digest"),
+              "guard_gs_region_owner_transfer()",
+              List.of(
+                  "dispatched.fence_dispatch_incarnation IS DISTINCT FROM i.incarnation_digest"),
+              "require_gs_region_owner_transfer_custody()",
+              List.of("NEW.executor_fence <= OLD.executor_fence")),
+          Map.of());
+    }
+  }
+
+  @Test
+  void genuineV1065Point0Point18UpgradeRetainsCatalogAndSealsTransferNamespaceCustody() {
+    try (Fixture f = fixture("1065.0.18")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.19",
+          33,
+          "V1065.0.19__bind_region_transfer_workload_namespace.sql",
+          Map.of(
+              "guard_gs_region_owner_transfer_item()",
+              List.of("b.entity_workload_namespace=NEW.workload_namespace"),
+              "guard_gs_region_owner_transfer()",
+              List.of("i.workload_namespace IS DISTINCT FROM b.entity_workload_namespace")),
+          Map.of());
+    }
+  }
+
+  @Test
+  void typedDenialAndSendCustodyUpgradePreservesPopulatedCatalogAtEpochThirtyFive() {
+    try (Fixture f = fixture("1065.0.19")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.20",
+          34,
+          "V1065.0.20__combine_typed_capacity_denial_and_send_custody.sql",
+          Map.of(
+              "settle_gs_capacity_evidence_charge()",
+              List.of(
+                  "OLD.account_denial_id IS NOT NULL",
+                  "NEW.account_denial_id IS NULL AND NEW.account_denial_kind IS NULL",
+                  "NEW.account_denial_kind IN ('CAPACITY_QUOTA_EXCEEDED', 'CAPACITY_EVALUATION_EXPIRED')",
+                  "NEW.account_send_state IS NOT DISTINCT FROM OLD.account_send_state",
+                  "OLD.account_send_state IS NULL OR OLD.account_send_state='MAY_HAVE_SENT'",
+                  "Execution custody prevents capacity evidence charge changes")),
+          Map.of());
+    }
+  }
+
+  @Test
+  void exactChargeRequestUpgradePreservesPopulatedCatalogAtEpochThirtySix() {
+    try (Fixture f = fixture("1065.0.20")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.21",
+          35,
+          "V1065.0.21__bind_capacity_evidence_charge_request.sql",
+          Map.of(
+              "guard_gs_capacity_evidence_charge()",
+              List.of("t.admission_request_id=NEW.request_id"),
+              "settle_gs_capacity_evidence_charge()",
+              List.of("t.admission_request_id=OLD.request_id")),
           Map.of());
     }
   }

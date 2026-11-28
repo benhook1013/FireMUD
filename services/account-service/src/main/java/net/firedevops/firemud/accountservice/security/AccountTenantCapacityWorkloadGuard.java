@@ -20,6 +20,8 @@ public final class AccountTenantCapacityWorkloadGuard implements ServerIntercept
   private final Context.Key<String> caller = Context.key("tenant-capacity-authenticated-peer");
   private final Context.Key<String> admissionOutcomeReader =
       Context.key("tenant-capacity-denial-reader");
+  private final Context.Key<String> admissionReservationReader =
+      Context.key("tenant-capacity-reservation-reader");
   private final String gameSession;
   private final Set<String> allowed;
 
@@ -46,6 +48,12 @@ public final class AccountTenantCapacityWorkloadGuard implements ServerIntercept
     return value;
   }
 
+  public String requireAdmissionReservationReader() {
+    String value = admissionReservationReader.get();
+    if (!gameSession.equals(value) || ambient()) throw Status.UNAUTHENTICATED.asRuntimeException();
+    return value;
+  }
+
   @Override
   public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
       ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
@@ -68,6 +76,13 @@ public final class AccountTenantCapacityWorkloadGuard implements ServerIntercept
         && gameSession.equals(workload)) {
       return Contexts.interceptCall(
           Context.current().withValue(admissionOutcomeReader, workload), call, headers, next);
+    }
+    if (AccountServiceGrpc.getReadTenantCapacityAdmissionReservationMethod()
+            .getFullMethodName()
+            .equals(method)
+        && gameSession.equals(workload)) {
+      return Contexts.interceptCall(
+          Context.current().withValue(admissionReservationReader, workload), call, headers, next);
     }
     return deny(call, Status.PERMISSION_DENIED);
   }

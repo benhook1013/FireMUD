@@ -13,6 +13,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -58,6 +59,7 @@ import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixtu
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
 import org.awaitility.Awaitility;
@@ -71,6 +73,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.postgresql.jdbc.PgConnection;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -670,12 +673,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       verify(connection, timeout(1000)).closeAsync();
       assertPermitRemainsHeld(operations, operationMaximum);
       assertPermitRemainsHeld(background, backgroundMaximum);
-      var probeArguments = org.mockito.ArgumentCaptor.forClass(byte[][].class);
-      verify(commands, org.mockito.Mockito.times(1))
-          .evalsha(any(), any(), any(), probeArguments.capture());
       verify(commands).time();
-      assertThat(probeArguments.getValue()[1])
-          .containsExactly("PROBE".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
 
       close.complete(null);
       assertThat(operations.tryAcquire(operationMaximum, 2, TimeUnit.SECONDS)).isTrue();
@@ -683,9 +681,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       assertThat(background.tryAcquire(backgroundMaximum, 2, TimeUnit.SECONDS)).isTrue();
       background.release(backgroundMaximum);
       verify(connection, org.mockito.Mockito.times(1)).closeAsync();
-      // Closing must not dispatch INITIALIZE or repeat the preparation probe.
-      verify(commands, org.mockito.Mockito.times(1))
-          .evalsha(any(), any(), any(), any(byte[][].class));
+      ArgumentCaptor<byte[][]> arguments = ArgumentCaptor.forClass(byte[][].class);
+      verify(commands, times(1)).evalsha(any(), any(), any(byte[][].class), arguments.capture());
+      assertThat(arguments.getValue()[1])
+          .isEqualTo("PROBE".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
     } finally {
       close.complete(null);
       closer.shutdown();
@@ -783,9 +782,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             "controlled-image");
     var permitConstructor =
         CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit.class
-            .getDeclaredConstructor(UUID.class, String.class);
+            .getDeclaredConstructor(UUID.class, String.class, long.class);
     permitConstructor.setAccessible(true);
-    var permit = permitConstructor.newInstance(operationId, sourceDigest);
+    var permit = permitConstructor.newInstance(operationId, sourceDigest, 1L);
     Semaphore operations =
         (Semaphore)
             java.util.Objects.requireNonNull(
@@ -853,7 +852,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         verify(connection, timeout(1000)).closeAsync();
         verify(commands).time();
         var scriptArguments = org.mockito.ArgumentCaptor.forClass(byte[][].class);
-        verify(commands, org.mockito.Mockito.times(2))
+        verify(commands, timeout(1000).times(2))
             .evalsha(
                 any(),
                 eq(ScriptOutputType.INTEGER),
@@ -1076,6 +1075,174 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     } finally {
       scheduler.shutdownNow();
     }
+  }
+
+  @Test
+  void actualTransferCommittedReadBoundsAcquisitionAndCannotExecuteAfterItsDeadline()
+      throws Exception {
+    ConnectionProvider provider = mock();
+    Connection connection = mock();
+    CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+    when(provider.acquire())
+        .thenAnswer(invocation -> {
+          entered.countDown();
+          awaitUninterruptibly(release);
+          return connection;
+        });
+    var inventory = new CanonicalGameplayBindingInventoryRepository(source(provider));
+    var candidate = mock(CanonicalGameplayOriginalNewCandidate.class);
+    UUID transitionId = UUID.randomUUID();
+    when(candidate.bindingDecisionId()).thenReturn(transitionId);
+    long started = System.nanoTime();
+    var caller = Executors.newVirtualThreadPerTaskExecutor();
+    var pending = new AtomicReference<java.util.concurrent.Future<?>>();
+    try (AutoCloseable cleanup =
+        () -> {
+          release.countDown();
+          var submitted = pending.get();
+          if (submitted != null) submitted.cancel(true);
+          caller.shutdownNow();
+          assertThat(caller.awaitTermination(5, TimeUnit.SECONDS))
+              .as("bounded acquisition caller termination")
+              .isTrue();
+          verify(provider, timeout(2000)).release(connection);
+          verifyNoInteractions(connection);
+        }) {
+      var read =
+          caller.submit(() ->
+              inventory.withinTransferRead(
+                  CLOCK,
+                  CLOCK.millis() + 1000,
+                  scoped -> scoped.readRegionTransferCommittedSource(transitionId, candidate)));
+      pending.set(read);
+      assertThatThrownBy(() -> read.get(3, TimeUnit.SECONDS))
+          .isInstanceOf(java.util.concurrent.ExecutionException.class)
+          .hasCauseInstanceOf(IllegalStateException.class);
+      assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(2500);
+      verifyNoInteractions(connection);
+    }
+  }
+
+  @Test
+  void handoffStatusReadBoundsAcquisitionAndCannotExecuteAfterItsDeadline() throws Exception {
+    ConnectionProvider provider = mock();
+    Connection connection = mock();
+    CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+    when(provider.acquire())
+        .thenAnswer(invocation -> {
+          entered.countDown();
+          awaitUninterruptibly(release);
+          return connection;
+        });
+    var dsl = source(provider);
+    var transferRepository =
+        new CanonicalGameplayRegionOwnerTransferRepository(
+            dsl, CLOCK, mock(CanonicalGameplayTenantGameplayTagRepository.class));
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            dsl,
+            CLOCK,
+            transferRepository,
+            mock(CanonicalGameplayOriginalNewCapacityExecutionOwner.class),
+            mock(CanonicalGameplayProtectedIncarnationReceiver.class));
+    UUID tenantId = UUID.randomUUID();
+    UUID gameInstanceId = UUID.randomUUID();
+    var lifecycleRequest =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
+            UUID.randomUUID(),
+            "prod",
+            tenantId,
+            "world",
+            gameInstanceId,
+            UUID.randomUUID(),
+            "SHARED",
+            true,
+            "budget-test",
+            UUID.randomUUID(),
+            "sha256:" + "a".repeat(64),
+            "sha256:" + "b".repeat(64),
+            "sha256:" + "c".repeat(64));
+    var regionSource =
+        new CanonicalGameplayRegionRuntimeStatusRepository.Source(
+            tenantId,
+            gameInstanceId,
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1L,
+            0L,
+            lifecycleRequest,
+            UUID.randomUUID(),
+            "d".repeat(64),
+            "sha256:" + "e".repeat(64));
+
+    var caller = Executors.newVirtualThreadPerTaskExecutor();
+    var pending = new AtomicReference<java.util.concurrent.Future<?>>();
+    try (AutoCloseable cleanup =
+        () -> {
+          release.countDown();
+          var submitted = pending.get();
+          if (submitted != null) submitted.cancel(true);
+          caller.shutdownNow();
+          assertThat(caller.awaitTermination(5, TimeUnit.SECONDS))
+              .as("bounded acquisition caller termination")
+              .isTrue();
+          verify(provider, timeout(2000)).release(connection);
+          verifyNoInteractions(connection);
+        }) {
+      var read =
+          caller.submit(() ->
+              transfer.withStatusRepository(
+                  CLOCK.millis() + 1000,
+                  statusRepository -> statusRepository.findTimelinePreparation(regionSource)));
+      pending.set(read);
+      assertThatThrownBy(() -> read.get(3, TimeUnit.SECONDS))
+          .isInstanceOf(java.util.concurrent.ExecutionException.class)
+          .hasCauseInstanceOf(IllegalStateException.class);
+      assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+      verifyNoInteractions(connection);
+    }
+  }
+
+  @Test
+  void transferReadDerivesItsOwnTransactionProviderAndKeepsTheOriginalAbsoluteDeadline() {
+    ConnectionProvider provider = mock();
+    Connection connection = mock();
+    when(provider.acquire()).thenReturn(connection);
+    try {
+      when(connection.getAutoCommit()).thenReturn(true);
+    } catch (java.sql.SQLException failure) {
+      throw new AssertionError(failure);
+    }
+    var original = source(provider);
+    var sharedTransactions = mock(org.jooq.TransactionProvider.class);
+    original.configuration().set(sharedTransactions);
+    var inventory = new CanonicalGameplayBindingInventoryRepository(original);
+    AtomicLong wall = new AtomicLong(CLOCK.millis());
+    Clock clock = mock();
+    when(clock.millis()).thenAnswer(ignored -> wall.get());
+    long deadline = wall.get() + 2000;
+    boolean read =
+        inventory.withinTransferRead(
+            clock,
+            deadline,
+            scoped -> {
+              var sql = (DSLContext) ReflectionTestUtils.getField(scoped, "dsl");
+              assertThat(sql).isNotNull();
+              assertThat(sql.configuration().connectionProvider()).isNotSameAs(provider);
+              assertThat(sql.configuration().transactionProvider()).isNotSameAs(sharedTransactions);
+              return sql.transactionResult(
+                  transaction -> DSL.using(transaction).connectionResult(owned -> Boolean.TRUE));
+            });
+    assertThat(read).isTrue();
+    verify(provider).acquire();
+    verify(provider).release(connection);
+    verifyNoInteractions(sharedTransactions);
+    wall.set(deadline);
+    assertThatThrownBy(() -> inventory.withinTransferRead(clock, deadline, scoped -> Boolean.TRUE))
+        .isInstanceOf(IllegalStateException.class);
+    verify(provider, org.mockito.Mockito.times(1)).acquire();
   }
 
   @Test

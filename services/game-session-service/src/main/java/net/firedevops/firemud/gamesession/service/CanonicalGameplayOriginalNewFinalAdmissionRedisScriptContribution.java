@@ -40,7 +40,18 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribu
       if (!ownerId().equals(descriptor.owner()) || !SCRIPT_ID.equals(descriptor.scriptId())) {
         throw unavailable();
       }
-      return List.of(descriptor);
+      try (InputStream receiptInput =
+          getClass()
+              .getResourceAsStream("/redis/scripts/game-session-region-transfer-receipt.json")) {
+        if (receiptInput == null) throw unavailable();
+        byte[] receiptBytes = receiptInput.readNBytes(16 * 1024 + 1);
+        if (receiptBytes.length == 0 || receiptBytes.length > 16 * 1024) throw unavailable();
+        RedisScriptDescriptor receipt = JSON.readValue(receiptBytes, RedisScriptDescriptor.class);
+        if (!ownerId().equals(receipt.owner())
+            || !"game-session.region-transfer-receipt.v1".equals(receipt.scriptId()))
+          throw unavailable();
+        return List.of(descriptor, receipt);
+      }
     } catch (IOException | RuntimeException failure) {
       throw unavailable();
     }
