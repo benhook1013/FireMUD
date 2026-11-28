@@ -50,6 +50,8 @@ import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -261,23 +263,32 @@ class LoggingAdminApplicationIntegrationTest {
     assertThat(logQueryService.queryLogs(new QueryLogsRequest(42L, eventId))).isEmpty();
   }
 
-  @Test
-  void receiptFailureRollsBackTheAlreadyInsertedAuditProjection() {
+  @ParameterizedTest(name = "tenant identity version {0}")
+  @ValueSource(ints = {1, 2})
+  void receiptFailureRollsBackTheAlreadyInsertedAuditProjection(int tenantIdentityVersion) {
     String eventId = "f15e1f7a-f2ee-4f90-b83d-77695bcac86c";
+    String payload = "{\"accountId\":93}";
+    CreateLogEventRequest request =
+        tenantIdentityVersion == 1
+            ? tenantAuditRequest(eventId, payload)
+            : canonicalTenantAuditRequest(
+                UUID.fromString("c7a1b80e-a5fa-4fc9-9fc4-cab3cbe44b21"), eventId, payload);
     dsl.execute(
         "CREATE OR REPLACE FUNCTION fail_test_account_audit_receipt() RETURNS trigger "
             + "LANGUAGE plpgsql AS $$ BEGIN IF NEW.audit_event_id = '"
             + eventId
-            + "' THEN RAISE EXCEPTION 'injected receipt insert failure'; END IF; RETURN NEW; END"
-            + " $$");
+            + "' THEN IF NOT EXISTS (SELECT 1 FROM log_events WHERE id = NEW.log_event_id "
+            + "AND audit_event_id = NEW.audit_event_id "
+            + "AND tenant_identity_version = NEW.tenant_identity_version) THEN "
+            + "RAISE EXCEPTION 'audit projection was absent before receipt insert'; END IF; "
+            + "RAISE EXCEPTION 'injected receipt insert failure'; END IF; RETURN NEW; END $$");
     dsl.execute(
         "CREATE TRIGGER fail_test_account_audit_receipt BEFORE INSERT ON account_audit_receipts "
             + "FOR EACH ROW EXECUTE FUNCTION fail_test_account_audit_receipt()");
     try {
-      assertThatThrownBy(
-              () ->
-                  logEventService.createLogEvent(tenantAuditRequest(eventId, "{\"accountId\":93}")))
-          .isInstanceOf(AuditStorageUnavailableException.class);
+      assertThatThrownBy(() -> logEventService.createLogEvent(request))
+          .isInstanceOf(AuditStorageUnavailableException.class)
+          .hasStackTraceContaining("injected receipt insert failure");
       assertThat(dsl.fetchCount(LOG_EVENTS, LOG_EVENTS.AUDIT_EVENT_ID.eq(eventId))).isZero();
       assertThat(
               dsl.fetchCount(
