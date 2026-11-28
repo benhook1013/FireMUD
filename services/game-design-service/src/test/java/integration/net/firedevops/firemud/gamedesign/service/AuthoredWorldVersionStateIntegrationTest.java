@@ -3,7 +3,10 @@ package integration.net.firedevops.firemud.gamedesign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.grpc.Server;
 import io.grpc.ServerInterceptors;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
@@ -54,6 +57,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * PostgreSQL owner proof received from donor #2964, adapted to current guarded source contracts.
+ *
+ * <p>Source and version rows are controlled owner fixtures. The standalone read adapter is mounted
+ * on a loopback mTLS server for the socket cases.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AuthoredWorldVersionStateIntegrationTest {
@@ -164,41 +170,16 @@ class AuthoredWorldVersionStateIntegrationTest {
     var fixture = fixture("repeated-socket-read");
     var request = request(fixture, UUID.randomUUID());
     var before = rowVersions(fixture);
-    String namespaceUri = "spiffe://firemud/ns/" + NAMESPACE + "/sa/";
-    var pki =
-        LoopbackMtlsTestPki.create(
-            directory,
-            "Authored Version State Integration Test CA",
-            new IdentitySpec("game-design", namespaceUri + "game-design-service", true),
-            new IdentitySpec("world", namespaceUri + "world-management-service", false));
-    var gameDesign = pki.identity("game-design");
-    var handler = new AuthoredWorldVersionStateGrpcService(service, NAMESPACE);
-    var server =
-        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
-            .sslContext(
-                GrpcSslContexts.configure(
-                        SslContextBuilder.forServer(
-                            gameDesign.privateKey(), gameDesign.certificate()))
-                    .trustManager(pki.caCertificate())
-                    .clientAuth(ClientAuth.REQUIRE)
-                    .build())
-            .addService(ServerInterceptors.intercept(handler, new GrpcPeerIdentityInterceptor()))
-            .build()
-            .start();
+    var pki = createVersionStatePki(directory);
+    var server = startVersionStateServer(pki);
 
     try {
-      var endpoints = new ServiceEndpointsProperties();
-      endpoints.setGameDesignService("127.0.0.1:" + server.getPort());
-      try (var client =
-          new AuthoredWorldVersionStateClient(
-              endpoints,
-              pki.clientProperties(directory, pki.identity("world")),
-              new GrpcChannelFactory(),
-              NAMESPACE)) {
+      try (var client = newVersionStateClient(directory, pki, server)) {
         client.init();
         var draft = client.read(request);
         assertThat(draft.request()).isEqualTo(request);
         assertThat(draft.sourceEvidence()).isEqualTo(fixture.source());
+        assertThat(draft.canonicalVersionId()).isEqualTo(fixture.version().getCanonicalVersionId());
         assertThat(draft.versionState())
             .isEqualTo(
                 net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
@@ -225,6 +206,47 @@ class AuthoredWorldVersionStateIntegrationTest {
         assertThat(retired.evidenceDigest()).isNotEqualTo(draft.evidenceDigest());
         assertThat(rowVersions(fixture)).isEqualTo(after);
       }
+    } finally {
+      server.shutdownNow();
+      assertThat(server.awaitTermination(3, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  @Test
+  void rejectsStaleSourceDigestAndForeignVersionOverMutualTls(@TempDir Path directory)
+      throws Exception {
+    var fixture = fixture("socket-denial-source");
+    var otherFixture = fixture("socket-denial-foreign-version");
+    var before = rowVersions(fixture);
+    var otherBefore = rowVersions(otherFixture);
+    var staleDigestRequest = request(fixture, UUID.randomUUID(), "sha256:" + "f".repeat(64));
+    var foreignVersionRequest =
+        request(
+            fixture,
+            UUID.randomUUID(),
+            fixture.source().evidenceDigest(),
+            otherFixture.version().getId());
+    var pki = createVersionStatePki(directory);
+    var server = startVersionStateServer(pki);
+
+    try (var client = newVersionStateClient(directory, pki, server)) {
+      client.init();
+      assertThatThrownBy(() -> client.read(staleDigestRequest))
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode())
+                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+      assertThat(rowVersions(fixture)).isEqualTo(before);
+
+      assertThatThrownBy(() -> client.read(foreignVersionRequest))
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode())
+                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+      assertThat(rowVersions(fixture)).isEqualTo(before);
+      assertThat(rowVersions(otherFixture)).isEqualTo(otherBefore);
     } finally {
       server.shutdownNow();
       assertThat(server.awaitTermination(3, TimeUnit.SECONDS)).isTrue();
@@ -356,6 +378,41 @@ class AuthoredWorldVersionStateIntegrationTest {
       versionQueryReleased.countDown();
       executor.shutdownNow();
     }
+  }
+
+  private static LoopbackMtlsTestPki.Pki createVersionStatePki(Path directory) throws Exception {
+    String namespaceUri = "spiffe://firemud/ns/" + NAMESPACE + "/sa/";
+    return LoopbackMtlsTestPki.create(
+        directory,
+        "Authored Version State Integration Test CA",
+        new IdentitySpec("game-design", namespaceUri + "game-design-service", true),
+        new IdentitySpec("world", namespaceUri + "world-management-service", false));
+  }
+
+  private Server startVersionStateServer(LoopbackMtlsTestPki.Pki pki) throws Exception {
+    var gameDesign = pki.identity("game-design");
+    var handler = new AuthoredWorldVersionStateGrpcService(service, NAMESPACE);
+    return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+        .sslContext(
+            GrpcSslContexts.configure(
+                    SslContextBuilder.forServer(gameDesign.privateKey(), gameDesign.certificate()))
+                .trustManager(pki.caCertificate())
+                .clientAuth(ClientAuth.REQUIRE)
+                .build())
+        .addService(ServerInterceptors.intercept(handler, new GrpcPeerIdentityInterceptor()))
+        .build()
+        .start();
+  }
+
+  private static AuthoredWorldVersionStateClient newVersionStateClient(
+      Path directory, LoopbackMtlsTestPki.Pki pki, Server server) throws Exception {
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setGameDesignService("127.0.0.1:" + server.getPort());
+    return new AuthoredWorldVersionStateClient(
+        endpoints,
+        pki.clientProperties(directory, pki.identity("world")),
+        new GrpcChannelFactory(),
+        NAMESPACE);
   }
 
   private Fixture fixture(String label) {
