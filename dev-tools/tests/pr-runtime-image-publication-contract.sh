@@ -898,7 +898,10 @@ async function runReconcile({
         },
         listWorkflowRuns: async options => {
           const {workflow_id: workflowId, event, head_sha: requestedHead, created, per_page, page} = options;
-          const normal = {owner, repo, workflow_id: workflowId, event, per_page, page};
+          assert.equal(per_page, 100);
+          assert.ok(Number.isInteger(page) && page > 0);
+          if (inventoryRequests.length === 0) assert.equal(page, 1);
+          const normal = {owner, repo, workflow_id: workflowId, event, per_page: 100, page};
           if (requestedHead !== undefined) normal.head_sha = requestedHead;
           if (created !== undefined) normal.created = created;
           record("actions.listWorkflowRuns", options, normal);
@@ -928,7 +931,7 @@ async function runReconcile({
               runs = preflightRefreshRuns;
             }
           }
-          return {data: {total_count: runs.length, workflow_runs: runs}};
+          return {data: {total_count: runs.length, workflow_runs: runs.slice((page - 1) * per_page, page * per_page)}};
         },
       },
       pulls: {

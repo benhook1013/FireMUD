@@ -23,6 +23,7 @@ import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeM
 import net.firedevops.firemud.accountservice.repository.AccountCapacityOriginDecisionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateExpiredException;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
@@ -163,7 +164,16 @@ public final class AccountTenantCapacityOwner {
           requireSupportedShape(request);
           EvaluationLifetime lifetime = observeLifetime(evidence, retainedExpiry);
           if (!lifetime.expired()) {
-            currentDelegationAndScope(request, parsed, lifetime.accountNow());
+            try {
+              currentDelegationAndScope(request, parsed, lifetime.accountNow());
+            } catch (CommittedCandidateExpiredException expired) {
+              if (!evidence.permitsCreation()
+                  || !expired.matches(sourceTokenJti(evidence), retainedExpiry))
+                throw unavailable();
+              lifetime = observeLifetime(evidence, retainedExpiry);
+              if (!lifetime.expired()) throw unavailable();
+              return refuseExpired(request);
+            }
             lifetime = observeLifetime(evidence, retainedExpiry);
           }
           if (lifetime.expired() && evidence.permitsCreation()) return refuseExpired(request);
@@ -297,7 +307,11 @@ public final class AccountTenantCapacityOwner {
     var evidence = request.evidence();
     requireCurrentLifetime(evidence, now);
     var parsed = currentMembership(request);
-    currentDelegationAndScope(request, parsed, now);
+    try {
+      currentDelegationAndScope(request, parsed, now);
+    } catch (CommittedCandidateExpiredException expired) {
+      throw unavailable();
+    }
     requireCurrentLifetime(evidence, clock.instant());
   }
 
@@ -335,8 +349,7 @@ public final class AccountTenantCapacityOwner {
     if (!(fields.get("sourceReferences") instanceof Map<?, ?> source)) throw unavailable();
     var issuance =
         qualifiedSource(() ->
-                issuances.readCurrentCommittedCandidateByJti(
-                    UUID.fromString((String) source.get("callerTokenJti"))))
+                issuances.readCurrentCommittedCandidateByJti(sourceTokenJti(request.evidence())))
             .orElseThrow(AccountTenantCapacityRepository::unavailable);
     if (!issuance.identity().accountId().equals(player.accountId())
         || !issuance.identity().callerWorkload().equals(request.evidence().callerWorkload())
@@ -363,9 +376,17 @@ public final class AccountTenantCapacityOwner {
         || !now.isBefore(Instant.parse(scope.connectScopeExpiresAt()))) throw unavailable();
   }
 
+  private static UUID sourceTokenJti(Evidence evidence) {
+    if (!(evidence.fields().get("sourceReferences") instanceof Map<?, ?> source))
+      throw unavailable();
+    return UUID.fromString((String) source.get("callerTokenJti"));
+  }
+
   private static <T> T qualifiedSource(Supplier<T> read) {
     try {
       return read.get();
+    } catch (CommittedCandidateExpiredException expired) {
+      throw expired;
     } catch (IllegalArgumentException | IllegalStateException unqualifiedSource) {
       throw unavailable();
     }

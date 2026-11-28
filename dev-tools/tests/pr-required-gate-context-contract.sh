@@ -774,9 +774,8 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single", t
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
       if (input.run_id === failedTyped.id && selectionCase.startsWith("recoverable-")) return {data: failedTyped};
       if (input.run_id === 44) {
-        const attempt = selectionCase === "recoverable-replacement-rerun" && typedCurrentChecks > 0 ? 2 : 1;
-        assert.equal(input.attempt_number, attempt);
-        return {data: refreshSource(attempt)};
+        assert.ok([1, ...(selectionCase === "recoverable-replacement-rerun" ? [2] : [])].includes(input.attempt_number));
+        return {data: refreshSource(input.attempt_number)};
       }
       if (input.run_id === 42 && originalRerunComplete()) {
         assert.equal(input.attempt_number, 2);
@@ -794,7 +793,7 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single", t
     }
     assert.equal(method, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
     if (input.run_id === 44) {
-      assert.equal(input.attempt_number, selectionCase === "recoverable-replacement-rerun" && typedCurrentChecks > 0 ? 2 : 1);
+      assert.ok([1, ...(selectionCase === "recoverable-replacement-rerun" ? [2] : [])].includes(input.attempt_number));
       typedJobAttempts.push(input.attempt_number);
       return [smokeJob(44, input.attempt_number, input.attempt_number === 1 ? "success" : typedSmokeConclusion)];
     }
@@ -938,6 +937,7 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single", t
   const replacementRerun = await scenario("cancelled", 0, "recoverable-replacement-rerun");
   assert.deepEqual(replacementRerun.failures, [], "a stale ordinary typed attempt must poll again and use the current one");
   assert.ok(replacementRerun.minutes > 0, "the first passing jobs snapshot belonged to an attempt that was no longer current");
+  assert.equal(replacementRerun.typedJobAttempts.at(-1), 2, "only the current attempt can finish the gate");
   const failedCurrentTypedSmoke = await scenario("cancelled", 0, "recoverable-replacement-rerun", "failure");
   assert.equal(failedCurrentTypedSmoke.failures.length, 1,
     "a current typed refresh with a failed full-stack smoke step must not be accepted as ordinary proof");
@@ -4812,7 +4812,7 @@ function markerAccepted(overrides = {}) {
       assert.equal(marker.proofReads, conclusion === "success" ? 2 : 1);
       assert.deepEqual(marker.outputs, conclusion === "success" ? [["known_play_exception", "true"]] : []);
       assert.equal(marker.writes, conclusion === "success" ? 1 : 0);
-      assert.equal(marker.finalReads, conclusion === "success" ? 2 : 0);
+      assert.equal(marker.finalReads, conclusion === "success" ? 3 : 0);
     }
   }
   const missingMarker = await pendingMarkerSnapshot([null, undefined, null, undefined, "success"]);
@@ -5573,7 +5573,7 @@ const topologyBase = "b".repeat(40), topologyHead = "a".repeat(40), topologyMerg
 const runtimeName = `Build Runtime Images secure-pr-artifact pr-42 base-${topologyBase} head-${topologyHead} merge-${topologyMerge} mode-required`;
 const validationName = `CI — Validation pr-42 base-${topologyBase} head-${topologyHead}`;
 function admits(job, overrides = {}) {
-  const {eventName = "workflow_run", event = "pull_request", name = runtimeName, path = runtimePath,
+  const {eventName = "workflow_run", event = "pull_request", name = "Build Runtime Images", displayTitle = runtimeName, path = runtimePath,
     conclusion = "success", foreign = false, action = "", branch = "main"} = overrides;
   // The fixture exercises the workflow's string-only admission expressions.
   // Fold string literals and input values as Actions does for comparisons.
@@ -5582,14 +5582,14 @@ function admits(job, overrides = {}) {
   const evaluate = new Function("github", "contains", "fromJSON", "format", "startsWith", "return " + expression.slice(3, -2));
   return Boolean(evaluate({event_name: eventName.toLowerCase(), repository: "example/firemud", ref: "refs/heads/" + branch.toLowerCase(),
     event: {action: action.toLowerCase(), repository: {default_branch: "main"},
-      workflow_run: {name: name.toLowerCase(), display_title: name.toLowerCase(), path: path.toLowerCase(),
+      workflow_run: {name: name.toLowerCase(), display_title: displayTitle.toLowerCase(), path: path.toLowerCase(),
         event: event.toLowerCase(), conclusion: conclusion.toLowerCase(),
         head_repository: {full_name: foreign ? "fork/foreign" : "example/firemud"}}}},
     (values, value) => values.includes(value), JSON.parse, (template, arg) => template.replace("{0}", arg),
     (value, prefix) => value.toLowerCase().startsWith(prefix.toLowerCase())));
 }
 const reconciler = "reconcile-failed-pr-runtime";
-const validation = {name: validationName, path: validationPath};
+const validation = {name: "CI — Validation", displayTitle: validationName, path: validationPath};
 for (const conclusion of ["success", "failure", "timed_out", "cancelled"]) {
   assert.equal(admits("source", {...validation, conclusion}), false, conclusion);
   assert.equal(admits(reconciler, {...validation, conclusion}), ["success", "cancelled"].includes(conclusion), conclusion);
@@ -5633,7 +5633,6 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     created_at: shared.refreshCreatedAt ?? source.created_at};
   if (kind === "visible-pending-refresh") Object.assign(refresh, {status: "in_progress", conclusion: null});
   const event = structuredClone(wake ? metadataWake ? newerMetadata : newerCancelled : source);
-  event.name = event.display_title;
   if (kind === "malformed-callback-path") event.path += "@refs/heads/a..b";
   if (kind === "cancel-wake-wrong-id") event.workflow_id = source.workflow_id;
   if (kind === "cancel-wake-stale-head") event.head_sha = base;
