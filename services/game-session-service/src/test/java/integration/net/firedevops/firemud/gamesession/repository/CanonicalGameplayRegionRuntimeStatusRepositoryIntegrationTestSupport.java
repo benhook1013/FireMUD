@@ -379,7 +379,8 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
                 BigInteger.valueOf(64));
         fixture =
             migrationTarget == null
-                ? new CanonicalGameplayAdmissionAbortCompositionFixture(dataSource, candidate, redis)
+                ? new CanonicalGameplayAdmissionAbortCompositionFixture(
+                    dataSource, candidate, redis)
                 : CanonicalGameplayAdmissionAbortCompositionFixture.atMigrationFrontier(
                     dataSource, candidate, redis, migrationTarget);
         acquiredFixture = fixture;
