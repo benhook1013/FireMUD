@@ -97,10 +97,12 @@ elif args[:2] == ["get","namespace"]:
             if count >= 2: uid = env("MOCK_HELPER_NAMESPACE_UID",uid)
             version = env("MOCK_NAMESPACE_RESOURCE_VERSION","16")
             if count >= 2: version = env("MOCK_HELPER_RESOURCE_VERSION","17")
+            marker = env("MOCK_PROOF_MARKER","true")
+            if count >= 2: marker = env("MOCK_HELPER_PROOF_MARKER",marker)
             obj = {"metadata":{"name":name,"uid":uid,
                 "labels":{"firemud.dev/preview":env("MOCK_PREVIEW_LABEL","true"),
                           "firemud.dev/pr-number":env("MOCK_PR_LABEL","42")},
-                "annotations":{"firemud.dev/cleanup-proof":env("MOCK_PROOF_MARKER","true")}}}
+                "annotations":{"firemud.dev/cleanup-proof":marker}}}
             if version: obj["metadata"]["resourceVersion"] = version
             if "-o" in args and args[args.index("-o")+1] == "json": print(json.dumps(obj))
             else: print("namespace/" + name)
@@ -178,6 +180,8 @@ with tempfile.TemporaryDirectory(prefix="preview-cleanup-proof-contract-") as tm
     assert result.returncode != 0
     result,_=scenario("missing-marker",delete={"MOCK_PROOF_MARKER":"false"})
     assert result.returncode != 0
+    result,_=scenario("missing-marker-on-delete-snapshot",delete={"MOCK_HELPER_PROOF_MARKER":"false"})
+    assert result.returncode != 0 and "cleanup-proof marker is missing at deletion" in result.stderr
     result,_=scenario("uid-mismatch",delete={"EXPECTED_NAMESPACE_UID":"uid-other"})
     assert result.returncode != 0
     result,_=scenario("replacement-race",delete={"MOCK_HELPER_NAMESPACE_UID":"uid-recreated"})

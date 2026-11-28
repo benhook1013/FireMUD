@@ -335,15 +335,21 @@ test('completed producers still permit an exact repair', async () => {
   }
 });
 
-test('a newer failed exact producer keeps the tuple eligible despite an older active run', async () => {
-  const f = admissionFixture();
-  f.runs.push(f.makeRun({id: 299, event: 'pull_request', head_sha: C,
-    pull_requests: [{number: 7, head: {sha: C}, base: {sha: B}}],
-    created_at: new Date(Date.now() - 70 * 60 * 1000).toISOString()}));
-  f.runs.push(f.makeRun({id: 300, status: 'completed', conclusion: 'failure',
-    created_at: new Date(Date.now() - 60000).toISOString()}));
-  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
-  assert.equal(f.sent.length, 1);
+test('a newer completed dispatch displaces an active PR producer only with the exact base-ref claim', async () => {
+  for (const bindsRequestedBase of [true, false]) {
+    const f = admissionFixture();
+    f.runs.push(f.makePullRequestRun({id: 299,
+      created_at: new Date(Date.now() - 70 * 60 * 1000).toISOString()}));
+    const completed = f.makeRun({id: 300, status: 'completed', conclusion: 'failure',
+      created_at: new Date(Date.now() - 60000).toISOString()});
+    f.runs.push(completed);
+    if (!bindsRequestedBase) f.admission.input.base_ref = 'another-base-ref';
+    proveFixtureDispatchBase(f, completed);
+    f.admission.input.base_ref = 'develop';
+    assert.equal(await admitRuntimeRefresh(f.admission),
+      bindsRequestedBase ? 'dispatched-observed' : 'already-active');
+    assert.equal(f.sent.length, bindsRequestedBase ? 1 : 0);
+  }
 });
 
 test('a still-active exact producer is not excluded by age or pagination', async () => {
@@ -681,8 +687,22 @@ test('a comparison moving during the claim is never dispatched', async () => {
   const f = admissionFixture();
   f.state.afterClaim = () => { f.state.base = D; };
   assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
-  assert.equal(f.claimRefs.size, 1);
+  assert.equal(f.claimRefs.size, 2);
   assert.deepEqual(f.sent, []);
+});
+
+test('an ordinary claim can resume after final merge computation returns a local no-send', async () => {
+  const f = admissionFixture();
+  f.state.afterClaim = () => {
+    f.state.pullObservations = Array(6).fill({mergeable: null, merge_commit_sha: null});
+  };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
+  assert.deepEqual(f.sent, []);
+  assert.match(f.outputs.get('unsent_claim'), /^generation 1 run 600 attempt 1 tag [0-9a-f]{40}$/);
+  completeOwnerReceiptAttempt(f);
+
+  assert.equal(await admitOrdinaryRefresh(f), 'dispatched-observed');
+  assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['2']);
 });
 
 test('an exact successful native preview refusal allows ordinary CI to claim the next generation', async () => {
@@ -1104,7 +1124,7 @@ async function execute(f, sent = []) {
         if (command === 'python3') {
           assert.deepEqual(args, ['./dev-tools/hosted/preview/preview-eligibility.py',
             '--revalidate-deploy', '--expected-repository', 'example/FireMUD',
-            '--expected-head-sha', f.run.head_sha]);
+            '--expected-head-sha', C]);
           assert.deepEqual(JSON.parse(options.input),
             f.pullHistory?.[f.pullReads - 1] ?? (f.pullReads === 1 ? f.pr : f.latestPr ?? f.pr));
           return execFileSync(command, args, {...options, cwd: root});
@@ -1124,6 +1144,31 @@ test('exact stale-base current tuple produces only the typed refresh', async () 
       base_sha: B, head_sha: C, merge_sha: A, preview_only: true}}]);
   assert.deepEqual(f.mergeReads, [E, A]);
 });
+test('a merge-reported source can request exact images for an eligible stacked PR', async () => {
+  for (const nativeBinding of ['association', 'qualified-path', 'bare-path']) {
+    const f = fixture();
+    f.run.head_sha = A;
+    if (nativeBinding === 'qualified-path') f.run.path += '@refs/pull/7/merge';
+    if (nativeBinding !== 'association') f.run.pull_requests = [];
+    f.jobs[0].head_sha = A;
+    f.jobs[0].steps = [tupleStep('event', B, A), tupleStep('resolved', B, A)];
+    f.recordedMerge = f.merge;
+    f.pr.base.ref = 'feature/stack';
+    f.pr.labels = [{name: 'preview:priority'}];
+    const bound = nativeBinding !== 'bare-path';
+    assert.equal((await execute(f)).length, bound ? 1 : 0, nativeBinding);
+    assert.deepEqual(f.mergeReads, bound ? [A] : undefined, nativeBinding);
+  }
+});
+
+test('a merge-reported source must prove the recorded merge parent order', async () => {
+  const f = fixture();
+  f.run.head_sha = E;
+  f.jobs[0].head_sha = E;
+  f.recordedMerge.parents.reverse();
+  assert.deepEqual(await execute(f), []);
+});
+
 test('a completed render failure permits repair when the plan was eligible', async () => {
   const f = fixture(); f.run.conclusion = 'failure';
   assert.equal((await execute(f)).length, 1);
@@ -1321,10 +1366,15 @@ for (const [name, mutate] of Object.entries({
   const f = admissionFixture();
   const event = name === 'wrongRepo' || name === 'fork' ? 'pull_request' : 'repository_dispatch';
   const r = producer(f, event);
-  mutate(r);
   f.runs.push(r);
-  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
-  assert.equal(f.sent.length, 1);
+  if (event === 'repository_dispatch') {
+    proveFixtureDispatchBase(f, r);
+    assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
+  }
+  mutate(r);
+  const expected = event === 'pull_request' || name === 'completed' ? 'dispatched-observed' : 'claim-held';
+  assert.equal(await admitRuntimeRefresh(f.admission), expected);
+  assert.equal(f.sent.length, expected === 'dispatched-observed' ? 1 : 0);
 });
 for (const [name, mutate] of Object.entries({
   head: r => r.head_sha = D,

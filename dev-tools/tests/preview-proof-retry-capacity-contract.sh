@@ -29,7 +29,12 @@ kubectl() {
 snapshot=$(holder 30)
 write_preview_retry_entry "$snapshot" "$ns" "$record" > admitted
 jq -e '.data["pr-123"] and .data["pr-789"]' admitted >/dev/null
-jq -e '.[0].path=="/metadata/uid" and .[1].path=="/metadata/resourceVersion"' calls >/dev/null
+jq -e --argjson snapshot "$snapshot" '
+  .[:2] == [
+    {op:"test",path:"/metadata/uid",value:$snapshot.metadata.uid},
+    {op:"test",path:"/metadata/resourceVersion",value:$snapshot.metadata.resourceVersion}
+  ]
+' calls >/dev/null
 snapshot=$(holder 524287)
 if write_preview_retry_entry "$snapshot" "$ns" "$record" > blocked 2>diagnostic; then exit 1; fi
 test "$(wc -l <calls)" = 1

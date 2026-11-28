@@ -1274,6 +1274,7 @@ jobs:
                 await new Promise((resolve) => setTimeout(resolve, Math.min(sleepMs, remainingMs)));
                 return true;
               }
+              let cancelledNative = null;
               let matching = await findMatchingRuntimeImagesRun(
                 currentIdentity.sourceEvent,
                 expectedDisplayTitle,
@@ -1325,6 +1326,7 @@ jobs:
                 core.info(
                   `Exact pull_request runtime-images run ${matching.id} was cancelled; checking exact repository_dispatch replacement ${replacement.id}.`
                 );
+                cancelledNative = matching;
                 matching = replacement;
               }
               // A queued native run can share a tuple with a completed trusted refresh.
@@ -1462,8 +1464,13 @@ jobs:
                     )) continue smokeGatePolling;
                     throw error;
                   }
-                  if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {
-                    return;
+                  try {
+                    if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) return;
+                  } catch (error) {
+                    if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary) && await retryExactSelection(
+                      `Runtime alternative ${matching.id} PR identity is temporarily unavailable; retry exact primary selection.`
+                    )) continue smokeGatePolling;
+                    throw error;
                   }
                   const producerJobs = jobs.filter((job) =>
                     job.name === "PR Full-Stack Smoke" || job.name === canonicalSmokeJobName
@@ -1752,6 +1759,32 @@ jobs:
                       continue smokeGatePolling;
                     }
                   }
+                }
+                if (cancelledNative) {
+                  let finalCancellation;
+                  try {
+                    ({ data: finalCancellation } = await withTransientGitHubRetry(
+                      "native cancellation before replacement proof",
+                      () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: cancelledNative.id })
+                    ));
+                  } catch (error) {
+                    if (canResumeAfterOptionalGitHubError(error, cancelledNative) && await retryExactSelection(
+                      "Native cancellation evidence is unavailable; retry exact selection.",
+                      { requirePendingPrimary: false }
+                    )) continue smokeGatePolling;
+                    throw error;
+                  }
+                  if (finalCancellation.id !== cancelledNative.id ||
+                      finalCancellation.run_attempt !== cancelledNative.run_attempt ||
+                      finalCancellation.status !== "completed" || finalCancellation.conclusion !== "cancelled") {
+                    if (await retryExactSelection(
+                      "Native cancellation changed before accepting replacement proof; retry exact selection.",
+                      { requirePendingPrimary: false }
+                    )) continue smokeGatePolling;
+                    break smokeGatePolling;
+                  }
+                }
+                if (pendingOrderingFences.length > 0 || cancelledNative) {
                   // This must be the last awaited validation on the fallback
                   // path. A selected rerun can start during any preceding read.
                   // Pending observations have the cutoff above; separate GitHub
@@ -1763,15 +1796,17 @@ jobs:
                       () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: matching.id })
                     ));
                   } catch (error) {
-                    if (canResumeAfterOptionalGitHubError(error, pendingOrderingFences[0]) && await retryExactSelection(
-                      "Successful fallback attempt is unavailable after ordering; retry exact selection."
+                    if (canResumeAfterOptionalGitHubError(error, pendingOrderingFences[0] ?? cancelledNative) && await retryExactSelection(
+                      "Successful fallback attempt is unavailable after ordering; retry exact selection.",
+                      { requirePendingPrimary: false }
                     )) continue smokeGatePolling;
                     throw error;
                   }
                   if (finalSelected.id !== matching.id || finalSelected.run_attempt !== matching.run_attempt ||
                       finalSelected.status !== "completed" || finalSelected.conclusion !== "success") {
                     if (await retryExactSelection(
-                      "Successful fallback attempt changed during ordering; retry exact selection."
+                      "Successful fallback attempt changed during ordering; retry exact selection.",
+                      { requirePendingPrimary: false }
                     )) continue smokeGatePolling;
                     break smokeGatePolling;
                   }

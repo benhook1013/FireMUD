@@ -26,6 +26,9 @@ paths:
       - 'unexpected key "queue" for "concurrency" section'
       # Provider-supported job cache permissions validated by the runtime image contract.
       - 'unexpected key "cache-mode" for "job" section'
+  .github/workflows/publish-pr-runtime-images.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
   .github/workflows/preview-cleanup-proof.yml:
     ignore:
       - 'unexpected key "queue" for "concurrency" section'

@@ -36,15 +36,27 @@ assert re.search(
 )
 assert re.search(r'assert_current_branch_head\n\s+promote_alias "\$candidate" "\$branch_tag"', promotion)
 
-# Empty branch metadata from an obsolete callback must skip every privileged build
-# and publisher even though the metadata job itself concludes successfully.
+# Exercise each complete parsed job guard rather than matching one branch clause.
+import yaml
+
+jobs = yaml.load(source, Loader=yaml.BaseLoader)["jobs"]
+
+def admitted_branch_job(condition, event, branch):
+    assert condition.startswith("${{") and condition.endswith("}}"), condition
+    expression = condition[3:-2].strip()
+    expression = expression.replace("&&", " and ").replace("||", " or ")
+    expression = expression.replace("always()", "True")
+    expression = expression.replace("github.event_name", repr(event))
+    expression = expression.replace("needs.image-meta.outputs.head_branch", repr(branch))
+    expression = re.sub(r"needs\.[a-z0-9-]+\.result", repr("success"), expression)
+    return bool(eval(expression, {"__builtins__": {}}))
+
 for job in ("build-base-image", "build-runtime-images", "build-backup-verifier", "publish-backup-verifier",
             "build-hosted-identity-controller", "publish-hosted-identity-controller", "publish-runtime-images"):
-    guard = re.search(rf"^  {job}:\n.*?^    if: (.+)$", source, re.MULTILINE | re.DOTALL).group(1).splitlines()[0]
-    assert re.search(
-        r"\(needs\.image-meta\.outputs\.head_branch == '(?:main|develop)' \|\| "
-        r"needs\.image-meta\.outputs\.head_branch == '(?:main|develop)'\)", guard,
-    ), (job, guard)
+    guard = jobs[job]["if"]
+    assert not admitted_branch_job(guard, "workflow_run", ""), (job, guard)
+    for branch in ("develop", "main"):
+        assert admitted_branch_job(guard, "workflow_run", branch), (job, guard, branch)
 
 # Run the actual branch metadata step with current, obsolete and unverifiable branch heads.
 meta = re.search(r"^      - name: Derive image tags\n.*?^        run: \|\n((?:^          [^\n]*\n|^\n)+)",
@@ -298,7 +310,13 @@ login = workflow.index("- name: Login to GHCR")
 publish = workflow.index("- name: Publish fixed PR image tags")
 if not download < validate < login < publish:
     raise SystemExit("source/artifact validation must precede registry login and publication")
-publisher_steps = yaml.load(workflow, Loader=yaml.BaseLoader)["jobs"]["publish"]["steps"]
+publisher_job = yaml.load(workflow, Loader=yaml.BaseLoader)["jobs"]["publish"]
+assert publisher_job["concurrency"] == {
+    "group": "publish-pr-merge-images-${{ needs.source.outputs.title }}",
+    "cancel-in-progress": "false",
+    "queue": "max",
+}
+publisher_steps = publisher_job["steps"]
 step_names = [step["name"] for step in publisher_steps]
 fence = step_names.index("Fence current source attempt before registry login")
 assert step_names[fence - 1:fence + 2:2] == ["Load fixed-tag images", "Login to GHCR"]
@@ -1550,8 +1568,23 @@ if [[ -e "$fixture_dir/registry-marker" ]]; then
   exit 1
 fi
 
+# Keep the valid registry preflight, but model a newer native source attempt.
+jq '.run_attempt += 1' "$fixture_dir/exact-source-run.json" > "$fixture_dir/source-run.json"
+if PUBLISH_TARGET_MODE=later-existing PR_RUNTIME_ARTIFACT_DIR="$artifact_dir" IMAGE_TAG="pr-merge-$merge_sha" \
+   FIXTURE_DIR="$fixture_dir" CURRENT_REPOSITORY="$repository" SOURCE_RUN_ID="$source_run_id" SOURCE_RUN_ATTEMPT="$source_run_attempt" \
+   GHCR_USERNAME='test-user' GHCR_TOKEN='test-token' GITHUB_STEP_SUMMARY="$fixture_dir/summary" \
+   PULL_STATE="$fixture_dir/pull-state" REGISTRY_MARKER="$fixture_dir/registry-marker" \
+   PATH="$fake_bin:$PATH" bash "$publisher_script" 2>"$fixture_dir/attempt-error"; then
+  echo "publisher accepted an attempt superseded during registry preflight" >&2
+  exit 1
+fi
+grep -Fq 'The pinned source attempt changed during publication preflight' "$fixture_dir/attempt-error"
+test ! -e "$fixture_dir/registry-marker"
+cp "$fixture_dir/exact-source-run.json" "$fixture_dir/source-run.json"
+
 rm -f "$fixture_dir/registry-marker" "$fixture_dir/pull-state" "$fixture_dir/summary"
 if PUBLISH_TARGET_MODE=later-existing PR_RUNTIME_ARTIFACT_DIR="$artifact_dir" IMAGE_TAG="pr-merge-$merge_sha" \
+   FIXTURE_DIR="$fixture_dir" CURRENT_REPOSITORY="$repository" SOURCE_RUN_ID="$source_run_id" SOURCE_RUN_ATTEMPT="$source_run_attempt" \
    GHCR_USERNAME='test-user' GHCR_TOKEN='test-token' GITHUB_STEP_SUMMARY="$fixture_dir/summary" \
    PULL_STATE="$fixture_dir/pull-state" REGISTRY_MARKER="$fixture_dir/registry-marker" \
    PATH="$fake_bin:$PATH" bash "$publisher_script"; then

@@ -179,6 +179,7 @@ jobs:
     concurrency:
       group: publish-pr-merge-images-${{ needs.source.outputs.title }}
       cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     permissions:
       # This trusted default-branch workflow reads one successful run artifact and publishes immutable merge tags.
@@ -579,6 +580,10 @@ jobs:
 
       - name: Publish fixed PR image tags
         env:
+          CURRENT_REPOSITORY: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ fromJSON(needs.source.outputs.source).id }}
+          SOURCE_RUN_ATTEMPT: ${{ fromJSON(needs.source.outputs.source).run_attempt }}
+          GH_TOKEN: ${{ github.token }}
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -704,6 +709,17 @@ jobs:
           for service in "${existing_services[@]}"; do
             verify_existing_target "$service"
           done
+
+          # The attempt can move during preflight. Check again before the
+          # first missing fixed tag can be written.
+          if (( ${#missing_services[@]} > 0 )); then
+            if ! gh api "repos/${CURRENT_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" |
+              jq -e --argjson id "$SOURCE_RUN_ID" --argjson attempt "$SOURCE_RUN_ATTEMPT" \
+                '.id == $id and .run_attempt == $attempt and .status == "completed" and .conclusion == "success"' >/dev/null; then
+              echo "The pinned source attempt changed during publication preflight; no fixed tags were written." >&2
+              exit 1
+            fi
+          fi
 
           available_services=("${existing_services[@]}")
           for service in "${missing_services[@]}"; do

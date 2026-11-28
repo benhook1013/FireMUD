@@ -291,16 +291,6 @@ const github = {
             conclusion: "success",
           },
           {
-            id: 280,
-            event: "pull_request",
-            head_sha: headSha,
-            display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha} mode-metadata`,
-            created_at: "2026-09-20T18:00:00Z",
-            run_attempt: 1,
-            status: "completed",
-            conclusion: "cancelled",
-          },
-          {
             id: 250,
             event: "pull_request",
             head_sha: headSha,
@@ -627,7 +617,8 @@ async function assertProducerSelectionRace() {
   const originalPaginate = github.paginate;
   const comments = [{id: 42, user: {login: "github-actions[bot]"},
     body: "### Static Analysis Summary\nchecks are still running"}];
-  for (const movedWorkflow of ["codeql.yml", "license-scan.yml"]) {
+  const originalRequest = github.request;
+  for (const movedWorkflow of ["codeql.yml", "license-scan.yml", "gate-evidence"]) {
     let readComments = false;
     currentHeadSha = headSha; currentBaseSha = baseSha;
     currentBaseRef = "develop"; pullRequestReads = 0;
@@ -651,13 +642,47 @@ async function assertProducerSelectionRace() {
       return [...selected, {...selected[0], id: 999, created_at: "2026-09-24T00:00:00Z",
         status: "in_progress", conclusion: null}];
     };
+    let lostEnforcementRead = false;
+    github.request = async (route, input) => {
+      const result = await originalRequest(route, input);
+      if (movedWorkflow !== "gate-evidence" || !readComments || input.run_id !== 200) return result;
+      lostEnforcementRead = true;
+      const jobs = result.data.jobs.map(job => job.name === "CodeQL Gate" ? {...job, steps: []} : job);
+      return {data: {...result.data, jobs}};
+    };
     const before = mutationCounts();
-    try { await run(github, context, core); } finally { github.paginate = originalPaginate; }
-    if (!readComments || mutationsChanged(before)) throw new Error("a new selected producer must preserve the pending comment");
-    if (!jobRequests.some(({run_id}) => run_id === 999)) throw new Error("the newer producer was not checked");
+    try { await run(github, context, core); } finally {
+      github.paginate = originalPaginate;
+      github.request = originalRequest;
+    }
+    if (!readComments || mutationsChanged(before)) throw new Error("changed producer evidence must preserve the pending comment");
+    if (movedWorkflow === "gate-evidence") {
+      if (!lostEnforcementRead) throw new Error("the same attempt's latest gate result was not checked");
+    } else if (!jobRequests.some(({run_id}) => run_id === 999)) {
+      throw new Error("the newer producer was not checked");
+    }
     jobRequests.length = 0;
   }
 }
+async function assertUnclassifiedCancellation() {
+  const originalPaginate = github.paginate;
+  currentHeadSha = headSha; currentBaseSha = baseSha;
+  currentBaseRef = "develop"; pullRequestReads = 0;
+  github.paginate = async (method, input) => {
+    const rows = await originalPaginate(method, input);
+    if (method !== codeqlListWorkflowRuns || input.workflow_id !== "codeql.yml") return rows;
+    const prior = rows.find(row => row.id === 200);
+    return [...rows, {...prior, id: 280, created_at: "2026-09-23T00:00:00Z",
+      status: "completed", conclusion: "cancelled"}];
+  };
+  const start = calls.updated.length;
+  try { await run(github, context, core); } finally { github.paginate = originalPaginate; }
+  if (!jobRequests.some(({run_id}) => run_id === 280) ||
+      !calls.updated.slice(start).some(({body}) => body.includes("CodeQL gate: `cancelled`"))) {
+    throw new Error("a native cancellation with no jobs must not be presumed metadata");
+  }
+}
+
 async function assertExactBaseRef() {
   const originalPaginate = github.paginate;
   const originalActions = github.rest.actions;
@@ -865,7 +890,6 @@ async function assertInterruptedRecovery() {
 }
 run(github, context, core).then(async () => {
   if (calls.paginate.length !== 3) throw new Error(`expected three paginated calls, got ${calls.paginate.length}`);
-  if (jobRequests.some(({run_id}) => run_id === 280)) throw new Error("cancelled metadata with no job evidence must not enter selection");
   if (!calls.paginate.every(({ input }) => input.per_page === 100)) throw new Error("all API listings must request page size 100");
   if (calls.updated.length !== 1 || calls.updated[0].comment_id !== 2) throw new Error("oldest bot summary was not updated");
   if (calls.deleted.length !== 1 || calls.deleted[0] !== 3) throw new Error("only the later duplicate should be deleted");
@@ -942,6 +966,7 @@ run(github, context, core).then(async () => {
                  await assertDuplicateDeletionRecovery();
                  await assertCompletionOrders();
                 await assertProducerSelectionRace();
+                await assertUnclassifiedCancellation();
                 await assertExactBaseRef();
                 await assertSkippedRequiredGates();
                 await assertInterruptedRecovery();

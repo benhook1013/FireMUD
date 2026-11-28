@@ -396,10 +396,12 @@ jobs:
 
             if (!failedChecks.length && !unavailableChecks.length && !pendingChecks.length) {
               const latest = await selectWorkflowRuns();
+              const latestChecks = resolveStatuses(latest);
               if (Object.entries(workflowRuns).some(([name, selected]) =>
                 ["id", "run_attempt", "status", "conclusion"].some(field =>
-                  selected?.[field] !== latest[name]?.[field]))) {
-                core.info("A producer selection changed before the passing summary could be published.");
+                  selected?.[field] !== latest[name]?.[field])) ||
+                  checks.some(([, result], index) => result !== latestChecks[index][1])) {
+                core.info("A producer selection or check result changed before publishing the passing summary.");
                 return;
               }
             }

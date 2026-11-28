@@ -100,27 +100,32 @@ jobs:
             const recorded = recordedTuple('event');
             const resolved = recordedTuple('resolved');
             const sourceNumber = Number(recorded?.[1]);
+            const sourceHead = recorded?.[3];
+            const mergeReported = run.head_sha !== sourceHead && run.head_sha === recorded?.[4];
+            const qualifiedPath = run.path === `${previewPath}@refs/pull/${sourceNumber}/merge`;
             // The event tuple supplies initial comparison identity. The successful
             // resolved marker proves the plan selected an eligible deployment.
             if (!recorded || !resolved || !Number.isSafeInteger(sourceNumber) ||
-                (run.path !== previewPath && run.path !== `${previewPath}@refs/pull/${sourceNumber}/merge`) ||
-                recorded[3] !== run.head_sha || resolved[3] !== run.head_sha ||
+                (run.path !== previewPath && !qualifiedPath) ||
+                (run.head_sha !== sourceHead && !mergeReported) || resolved[3] !== sourceHead ||
                 resolved[1] !== recorded[1] || !Array.isArray(run.pull_requests)) {
               core.info('Missing or invalid immutable eligible preview tuple metadata; await a fresh preview plan.');
               return;
             }
             const associations = run.pull_requests.filter(item => item?.number === sourceNumber);
-            if (associations.length !== 1) {
+            const qualifiedMergeWithoutAssociation = mergeReported && qualifiedPath && run.pull_requests.length === 0;
+            if (!qualifiedMergeWithoutAssociation &&
+                (associations.length !== 1 || associations[0].head?.sha !== sourceHead)) {
               core.info('Preview tuple has no unique matching PR association; no dispatch.');
               return;
             }
-            const source = associations[0];
             const {data: recordedMerge} = await github.rest.repos.getCommit({
               ...context.repo, ref: recorded[4],
             });
             if (recordedMerge.sha !== recorded[4] || recordedMerge.parents?.length !== 2 ||
                 !sha.test(recordedMerge.parents[0].sha) ||
-                recordedMerge.parents[1].sha !== recorded[3]) {
+                recordedMerge.parents[1].sha !== sourceHead ||
+                (mergeReported && recordedMerge.parents[0].sha !== recorded[2])) {
               core.info('Recorded preview merge does not prove its base/head tuple; no dispatch.');
               return;
             }
@@ -129,7 +134,7 @@ jobs:
               try {
                 require('node:child_process').execFileSync('python3', [
                   './dev-tools/hosted/preview/preview-eligibility.py', '--revalidate-deploy',
-                  '--expected-repository', repository, '--expected-head-sha', run.head_sha,
+                  '--expected-repository', repository, '--expected-head-sha', sourceHead,
                 ], {encoding: 'utf8', input: JSON.stringify(pull)});
                 return true;
               } catch (error) {
@@ -138,9 +143,9 @@ jobs:
                 return false;
               }
             };
-            const sourcePullMatches = pull => pull?.number === source.number && pull.state === 'open' &&
+            const sourcePullMatches = pull => pull?.number === sourceNumber && pull.state === 'open' &&
               pull.head?.repo?.full_name === repository && pull.base?.repo?.full_name === repository &&
-              pull.head.sha === run.head_sha && source.head?.sha === run.head_sha &&
+              pull.head.sha === sourceHead &&
               typeof pull.base.ref === 'string' && /^[A-Za-z0-9._/-]+$/.test(pull.base.ref);
             const conflicts = pull => pull.mergeable === false ||
               ['dirty', 'conflicting'].includes(pull.mergeable_state);
@@ -153,7 +158,7 @@ jobs:
             let expectedBaseRef;
             for (let read = 0; read < 6; read++) {
               const {data: pull} = await github.rest.pulls.get({
-                ...context.repo, pull_number: source.number,
+                ...context.repo, pull_number: sourceNumber,
               });
               if (!sourcePullMatches(pull) || conflicts(pull) ||
                   (expectedBaseRef && pull.base.ref !== expectedBaseRef) || !isEligible(pull)) {
@@ -236,7 +241,7 @@ jobs:
               return;
             }
             const {data: latestPr} = await github.rest.pulls.get({
-              ...context.repo, pull_number: source.number,
+              ...context.repo, pull_number: sourceNumber,
             });
             if (!sourcePullMatches(latestPr) || conflicts(latestPr) || !mergeReady(latestPr) ||
                 latestPr.base.ref !== pr.base.ref || latestPr.merge_commit_sha !== merge.sha ||

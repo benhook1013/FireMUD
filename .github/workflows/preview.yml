@@ -685,7 +685,7 @@ jobs:
             --arg manifestSha256 "$manifest_sha256" \
             --arg action deploy --arg retryUid "${PROOF_RETRY_NAMESPACE_UID:-}" \
             --arg retryNonce "${PROOF_RETRY_NONCE:-}" \
-            '{schemaVersion:1,event:$event,repository:$repository,sourceWorkflow:$sourceWorkflow,sourceRunId:$sourceRunId,prNumber:$prNumber,baseSha:$baseSha,headSha:$headSha,mergeSha:$mergeSha,imageTag:$imageTag,hostname:$hostname,manifestSha256:$manifestSha256} + (if $event == "repository_dispatch" then {action:$action} else {} end) + (if $retryUid != "" then {proofRetryNamespaceUid:$retryUid} else {} end) + (if $retryNonce != "" then {proofRetryNonce:$retryNonce,sourceRunAttempt:$sourceRunAttempt} else {} end)' \
+            '{schemaVersion:1,event:$event,repository:$repository,sourceWorkflow:$sourceWorkflow,sourceRunId:$sourceRunId,sourceRunAttempt:$sourceRunAttempt,prNumber:$prNumber,baseSha:$baseSha,headSha:$headSha,mergeSha:$mergeSha,imageTag:$imageTag,hostname:$hostname,manifestSha256:$manifestSha256} + (if $event == "repository_dispatch" then {action:$action} else {} end) + (if $retryUid != "" then {proofRetryNamespaceUid:$retryUid} else {} end) + (if $retryNonce != "" then {proofRetryNonce:$retryNonce} else {} end)' \
             > "$metadata"
           {
             echo '### Sanitized PR preview artifact'

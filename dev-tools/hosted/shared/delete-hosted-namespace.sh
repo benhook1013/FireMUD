@@ -10,6 +10,7 @@ namespace="$1"
 release_name="$2"
 wait_seconds="${PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS:-180}"
 expected_namespace_uid="${PREVIEW_EXPECTED_NAMESPACE_UID:-}"
+require_cleanup_proof="${PREVIEW_REQUIRE_CLEANUP_PROOF:-false}"
 
 if [[ "$namespace" == "dev" ]]; then
   if [[ "$release_name" != "dev" ]]; then
@@ -35,6 +36,12 @@ fi
 if [[ -n "$expected_namespace_uid" ]] &&
   ! [[ "$expected_namespace_uid" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]]; then
   echo "expected namespace UID is malformed" >&2
+  exit 2
+fi
+
+if [[ "$require_cleanup_proof" == true ]] &&
+  [[ "$namespace" == dev || -z "$expected_namespace_uid" ]]; then
+  echo "cleanup proof deletion requires an exact preview namespace UID" >&2
   exit 2
 fi
 
@@ -81,6 +88,11 @@ if ! namespace_uid="$(
 fi
 if [[ -n "$expected_namespace_uid" && "$namespace_uid" != "$expected_namespace_uid" ]]; then
   echo "hosted namespace ${namespace} UID changed before deletion" >&2
+  exit 1
+fi
+if [[ "$require_cleanup_proof" == true ]] &&
+  ! jq -e '.metadata.annotations["firemud.dev/cleanup-proof"] == "true"' <<<"$namespace_json" >/dev/null; then
+  echo "hosted namespace ${namespace} cleanup-proof marker is missing at deletion" >&2
   exit 1
 fi
 delete_uid="${expected_namespace_uid:-$namespace_uid}"

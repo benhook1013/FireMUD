@@ -241,8 +241,9 @@ prepare_preview_dispatch() {
   fi
   phase="$(jq -r '.phase // empty' <<<"$prior")" || return 1
   if [[ "$phase" == RESERVED ]] && ! jq -e --arg base "$base_sha" --arg head "$head_sha" \
-      --arg merge "$merge_sha" --arg image "$image_tag" '
+      --arg merge "$merge_sha" --arg image "$image_tag" --arg uid "$namespace_uid" '
       .base == $base and .head == $head and .merge == $merge and .image == $image
+      and ($uid == "" or .namespaceUid == $uid)
     ' <<<"$prior" >/dev/null; then
     # The exact holder CAS excludes a concurrent transition to SEND_STARTED.
     # A superseded reservation can therefore restore its original predecessor.
@@ -356,6 +357,10 @@ prepare_preview_dispatch() {
       prior="$legacy"
     fi
   fi
+  # Ordinary replacement carries the settled budget forward without spending it.
+  if [[ -z "$snapshot" ]]; then
+    return 0
+  fi
   if jq -e --arg base "$base_sha" --arg head "$head_sha" --arg merge "$merge_sha" --arg image "$image_tag" '
     . != null and .base == $base and .head == $head and .merge == $merge and .image == $image
   ' <<<"$prior" >/dev/null; then
@@ -451,7 +456,7 @@ start_reserved_proof_retry() {
   if ! proof_retry_namespace_matches "$namespace" "$started"; then
     # Only the process that acknowledged the send-start can prove that it
     # has not attempted POST. Restore the same reservation using this row's CAS.
-    if write_preview_retry_entry "$current" "$namespace" "$reserved" true >/dev/null; then
+    if restore_owned_proof_retry "$namespace" "$reserved" false; then
       echo "Restored the unsent proof-retry reservation for PR #${pr_number} after the final Namespace fence could not be verified." >&2
     else
       echo "Unable to restore the unsent proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
@@ -465,28 +470,41 @@ start_reserved_proof_retry() {
 
 compensate_rejected_proof_retry() {
   local namespace="$1" pr_number="$2" phase="$3" reason="${4:-after GitHub confirmed dispatch rejection}"
-  local holder current version previously_rejected_version="" attempt
   [[ -n "$proof_retry_record" ]] || return 0
   jq -e --arg phase "$phase" '.stageVersion == 2 and .phase == $phase' <<<"$proof_retry_record" >/dev/null || return 1
+  local verify_namespace=false
+  if [[ "$phase" == RESERVED ]]; then
+    verify_namespace=true
+  fi
+  if restore_owned_proof_retry "$namespace" "$proof_retry_prior_record" "$verify_namespace"; then
+    echo "Released proof-retry reservation for PR #${pr_number} $reason."
+    return 0
+  fi
+  echo "Unable to release proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
+  return 1
+}
+
+restore_owned_proof_retry() {
+  local namespace="$1" replacement="$2" verify_namespace="$3"
+  local holder current version previously_rejected_version="" attempt
   for attempt in 1 2 3; do
     if ! holder="$(read_preview_retry_holder)" ||
       ! current="$(preview_retry_entry "$holder" "$namespace")" ||
       ! jq -e --arg uid "$proof_retry_holder_uid" '.metadata.uid == $uid' <<<"$holder" >/dev/null ||
-      ! jq -en --argjson current "$current" --argjson reserved "$proof_retry_record" '$current == $reserved' >/dev/null ||
+      ! jq -en --argjson current "$current" --argjson owned "$proof_retry_record" '$current == $owned' >/dev/null ||
       ! version="$(jq -er '.metadata.resourceVersion' <<<"$holder")" ||
-      [[ "$version" == "$previously_rejected_version" ]] ||
-      ! proof_retry_namespace_matches "$namespace" "$current"; then
-      break
+      [[ "$version" == "$previously_rejected_version" ]]; then
+      return 1
     fi
-    if write_preview_retry_entry "$holder" "$namespace" "$proof_retry_prior_record" >/dev/null; then
-      echo "Released proof-retry reservation for PR #${pr_number} $reason."
+    if [[ "$verify_namespace" == true ]] && ! proof_retry_namespace_matches "$namespace" "$current"; then
+      return 1
+    fi
+    if write_preview_retry_entry "$holder" "$namespace" "$replacement" true >/dev/null; then
       return 0
     fi
-    # Reattempt only if a fresh read proves another holder version but the
-    # same exact reservation. A changed UID/row or stable refusal stays charged.
+    # Retry only an exact owned row at a fresh holder version.
     previously_rejected_version="$version"
   done
-  echo "Unable to release proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
   return 1
 }
 
@@ -846,6 +864,20 @@ settle_terminal_preview_retry() {
   replacement="$(jq -c 'del(.stageVersion,.phase,.predecessor,.holderUid,.holderResourceVersion,.namespaceResourceVersion)' <<<"$row")" || return 1
   write_preview_retry_entry "$holder" "$namespace" "$replacement" true >/dev/null || return 1
   printf '%s\n' "$replacement"
+}
+
+settle_aligned_preview_retry() {
+  local namespace="$1" pr_number="$2" holder row
+  if ! holder="$(read_preview_retry_holder)" ||
+    ! row="$(preview_retry_entry "$holder" "$namespace")"; then
+    echo "Unable to check retained proof-retry settlement for aligned PR #${pr_number}." >&2
+    return 1
+  fi
+  if jq -e '.phase == "SEND_STARTED"' <<<"$row" >/dev/null; then
+    if ! settle_terminal_preview_retry "$namespace" "$pr_number" "$row" >/dev/null; then
+      echo "Retained proof-retry send-start for aligned PR #${pr_number} remains charged." >&2
+    fi
+  fi
 }
 
 parse_completed_preview_pages() {
@@ -1322,6 +1354,7 @@ dispatch_candidates() {
     "${proof_image_tag}" == "${image_tag}" &&
     -n "${namespace_uid}" &&
     "${proof_namespace_uid}" == "${namespace_uid}" ]]; then
+    settle_aligned_preview_retry "$namespace" "$pr_number" || dispatch_outcome_failed=true
     if [[ "${requested_base_sha}" != "${base_sha}" ||
       "${requested_head_sha}" != "${head_sha}" ||
       "${requested_merge_sha}" != "${merge_sha}" ||

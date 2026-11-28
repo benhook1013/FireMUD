@@ -1240,6 +1240,23 @@ exit 99
     assert not any(call.startswith("manifest inspect ") for call in calls)
     assert not any(call.startswith("push ") for call in calls)
 
+def install_pinned_publisher_source(fixture_root):
+    fake_gh = fixture_root / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+[[ "$#" == 2 && "$1" == api && "$2" == repos/example/FireMUD/actions/runs/42 ]]
+printf '%s\\n' '{"id":42,"run_attempt":2,"status":"completed","conclusion":"success"}'
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    return {
+        "CURRENT_REPOSITORY": "example/FireMUD",
+        "SOURCE_RUN_ID": "42",
+        "SOURCE_RUN_ATTEMPT": "2",
+    }
+
 with tempfile.TemporaryDirectory() as partial_publish_fixture_dir:
     fixture_root = Path(partial_publish_fixture_dir)
     docker_calls = fixture_root / "docker-calls"
@@ -1293,6 +1310,7 @@ fi
     )
     fake_curl.chmod(0o755)
     fixture_env = os.environ.copy()
+    fixture_env.update(install_pinned_publisher_source(fixture_root))
     fixture_env.update(
         DOCKER_CALLS=str(docker_calls),
         GHCR_USERNAME="fixture-user",
@@ -1392,6 +1410,7 @@ fi
     fake_docker.chmod(0o755)
     fake_sleep.chmod(0o755)
     fixture_env = os.environ.copy()
+    fixture_env.update(install_pinned_publisher_source(fixture_root))
     fixture_env.update(
         DOCKER_CALLS=str(docker_calls),
         GHCR_USERNAME="fixture-user",
@@ -6477,6 +6496,7 @@ if [[ "$1" == run && "$2" == download ]]; then
     jq -nc \
       --arg event "${FAKE_METADATA_EVENT:-pull_request}" \
       --arg action "${FAKE_METADATA_ACTION:-}" \
+      --argjson source_attempt "${FAKE_METADATA_SOURCE_ATTEMPT:-1}" \
       --argjson pr_number "${FAKE_METADATA_PR_NUMBER:-900}" \
       --arg base_sha "${FAKE_METADATA_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
       --arg head_sha "${FAKE_METADATA_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
@@ -6484,7 +6504,7 @@ if [[ "$1" == run && "$2" == download ]]; then
       --arg image_tag "${FAKE_METADATA_IMAGE_TAG:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
       --arg hostname "${FAKE_METADATA_HOSTNAME:-pr-900.preview.firedevops.net}" \
       --arg manifest_sha "$manifest_sha" \
-      '{schemaVersion:1,event:$event,repository:"example/FireMUD",sourceWorkflow:".github/workflows/preview.yml",sourceRunId:42,prNumber:$pr_number,baseSha:$base_sha,headSha:$head_sha,mergeSha:$merge_sha,hostname:$hostname,imageTag:$image_tag,manifestSha256:$manifest_sha} + (if $event == "repository_dispatch" then {action:$action} else {} end)' \
+      '{schemaVersion:1,event:$event,repository:"example/FireMUD",sourceWorkflow:".github/workflows/preview.yml",sourceRunId:42,sourceRunAttempt:$source_attempt,prNumber:$pr_number,baseSha:$base_sha,headSha:$head_sha,mergeSha:$merge_sha,hostname:$hostname,imageTag:$image_tag,manifestSha256:$manifest_sha} + (if $event == "repository_dispatch" then {action:$action} else {} end)' \
       >"$artifact_directory/preview-metadata.json"
   fi
   if [[ "${FAKE_ARTIFACT_FILES:-valid}" == extra ]]; then
@@ -6637,9 +6657,9 @@ chmod +x "$target_fixture_bin/python3"
 target_real_python3="$(command -v python3)"
 
 canonical_artifact_name='preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc'
-valid_workflow_run_json='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}]}'
+valid_workflow_run_json='{"conclusion":"success","run_attempt":1,"head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}]}'
 distinct_source_sha=dddddddddddddddddddddddddddddddddddddddd
-distinct_source_workflow_run_json='{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml@refs/pull/900/merge","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"dddddddddddddddddddddddddddddddddddddddd"}}]}'
+distinct_source_workflow_run_json='{"conclusion":"success","run_attempt":1,"head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml@refs/pull/900/merge","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"dddddddddddddddddddddddddddddddddddddddd"}}]}'
 valid_artifacts_json='[{"artifacts":[{"name":"'"$canonical_artifact_name"'","expired":false},{"name":"old-preview","expired":true},{"name":"unrelated-artifact","expired":false}]}]'
 
 run_deploy_target_fixture() {
@@ -6664,6 +6684,7 @@ run_deploy_target_fixture() {
       EVENT_NAME=workflow_run \
       EVENT_ACTION=completed \
       WORKFLOW_RUN_ID=42 \
+      WORKFLOW_RUN_ATTEMPT="${FAKE_FIXTURE_CALLBACK_ATTEMPT:-1}" \
       WORKFLOW_RUN_HEAD_SHA="${FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       DEFAULT_BRANCH=develop \
       ARTIFACT_DIRECTORY="$TEMP_DIR/deploy-target-${scenario}-artifact" \
@@ -6672,6 +6693,7 @@ run_deploy_target_fixture() {
       FAKE_WORKFLOW_RUN_JSON="${FAKE_FIXTURE_WORKFLOW_RUN_JSON:-$valid_workflow_run_json}" \
       FAKE_ARTIFACTS_JSON="${FAKE_FIXTURE_ARTIFACTS_JSON:-$valid_artifacts_json}" \
       FAKE_ARTIFACT_FILES="${FAKE_FIXTURE_ARTIFACT_FILES:-valid}" \
+      FAKE_METADATA_SOURCE_ATTEMPT="${FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT:-1}" \
       FAKE_METADATA_BASE_SHA="${FAKE_FIXTURE_METADATA_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
       FAKE_METADATA_MERGE_SHA="${FAKE_FIXTURE_METADATA_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       TEST_PR_LABELS_JSON="${FAKE_FIXTURE_PR_LABELS_JSON:-[]}" \
@@ -6771,6 +6793,23 @@ FAKE_FIXTURE_EXPOSURE_MODE=public \
   run_deploy_target_fixture controller-public 0 'action=deploy'
 FAKE_FIXTURE_CERTIFICATE_MODE=standalone FAKE_FIXTURE_EXPOSURE_MODE=public \
   run_deploy_target_fixture standalone-public 0 'action=deploy'
+
+# Natural render consumption requires callback, REST run, and artifact to agree on the attempt.
+second_attempt_run_json="$(jq -c '.run_attempt = 2' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$second_attempt_run_json" \
+FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT=2 \
+  run_deploy_target_fixture natural-stale-callback 0 \
+    'Ignoring render callback not bound to the current source attempt.'
+test "$(wc -l < "$TEMP_DIR/deploy-target-natural-stale-callback.gh.log")" = 1
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$second_attempt_run_json" \
+FAKE_FIXTURE_CALLBACK_ATTEMPT=2 \
+FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT=2 \
+  run_deploy_target_fixture natural-matching-attempt 0 'action=deploy'
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$second_attempt_run_json" \
+FAKE_FIXTURE_CALLBACK_ATTEMPT=2 \
+FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT=1 \
+  run_deploy_target_fixture natural-stale-artifact 0 \
+    'Ignoring render metadata not bound to the current source attempt.'
 
 # A real natural preview uses H in the REST run, its workflow_run callback and PR
 # association; the sanitized artifact also records the different execution merge M.

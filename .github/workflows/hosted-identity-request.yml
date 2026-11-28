@@ -91,6 +91,11 @@ jobs:
               exit 1
             }
           }
+          require_current_source_attempt() {
+            [[ "${WORKFLOW_RUN_ATTEMPT:-}" =~ ^[1-9][0-9]*$ &&
+              "$SOURCE_RUN_ATTEMPT" == "$WORKFLOW_RUN_ATTEMPT" ]] ||
+              emit_no_action "Ignoring render callback not bound to the current source attempt."
+          }
           normalize_sha() {
             local value="$1"
             [[ "$value" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
@@ -133,7 +138,7 @@ jobs:
             }
             SOURCE_RUN_ID="$WORKFLOW_RUN_ID"
             workflow_run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}")"
-            SOURCE_RUN_ATTEMPT="$(jq -r '.run_attempt // empty' <<<"$workflow_run_json")"
+            SOURCE_RUN_ATTEMPT="$(jq -r '.run_attempt | select(type == "number" and . > 0 and . == floor)' <<<"$workflow_run_json")"
             SOURCE_DISPLAY_TITLE="$(jq -r '.display_title | select(type == "string")' <<<"$workflow_run_json")"
             if [[ "$SOURCE_DISPLAY_TITLE" =~ ^Preview\ retry\ ([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\ pr-([1-9][0-9]*)-base-([a-f0-9]{40})-head-([a-f0-9]{40})-merge-([a-f0-9]{40})$ ]]; then
               SOURCE_RETRY_NONCE="${BASH_REMATCH[1]}"
@@ -141,9 +146,6 @@ jobs:
               SOURCE_RETRY_BASE="${BASH_REMATCH[3]}"
               SOURCE_RETRY_HEAD="${BASH_REMATCH[4]}"
               SOURCE_RETRY_MERGE="${BASH_REMATCH[5]}"
-              [[ "${WORKFLOW_RUN_ATTEMPT:-}" =~ ^[1-9][0-9]*$ &&
-                "$SOURCE_RUN_ATTEMPT" == "$WORKFLOW_RUN_ATTEMPT" ]] ||
-                emit_no_action "Ignoring retry callback not bound to the current source attempt."
             else
               SOURCE_RETRY_NONCE=""
             fi
@@ -176,6 +178,9 @@ jobs:
               require_source_field head-branch "$DEFAULT_BRANCH" \
                 "$(jq -r '.head_branch // empty' <<<"$workflow_run_json")"
             fi
+            if [[ "$SOURCE_EVENT" == pull_request || -n "$SOURCE_RETRY_NONCE" ]]; then
+              require_current_source_attempt
+            fi
             if ! artifacts_json="$(gh api --paginate --slurp \
               "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?per_page=100")"; then
               emit_no_action "Ignoring source run because its artifacts could not be verified."
@@ -195,6 +200,9 @@ jobs:
             fi
             if [[ "$SOURCE_EVENT" == pull_request && "$ARTIFACT_KIND" != render ]]; then
               emit_no_action "Ignoring pull_request source without a render artifact."
+            fi
+            if [[ "$ARTIFACT_KIND" == render && "$SOURCE_EVENT" == repository_dispatch && -z "$SOURCE_RETRY_NONCE" ]]; then
+              require_current_source_attempt
             fi
             download_source_artifact "$ARTIFACT_NAME"
             if [[ "$ARTIFACT_KIND" == render ]]; then
@@ -229,12 +237,10 @@ jobs:
                   ' <<<"$workflow_run_json" >/dev/null ||
                   emit_no_action "Ignoring artifact not bound to the source run pull request and head."
               fi
-              if [[ "$SOURCE_EVENT" == repository_dispatch && -n "$SOURCE_RETRY_NONCE" ]] || \
-                jq -e 'has("sourceRunAttempt")' "$ARTIFACT_DIRECTORY/preview-metadata.json" >/dev/null; then
-                metadata_source_attempt="$(jq -er '.sourceRunAttempt | select(type == "number" and . > 0 and . == floor)' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
-                [[ "$metadata_source_attempt" == "$SOURCE_RUN_ATTEMPT" ]] || emit_no_action \
-                  "Ignoring render metadata not bound to the current source attempt."
-              fi
+              metadata_source_attempt="$(jq -r '.sourceRunAttempt | select(type == "number" and . > 0 and . == floor)' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+              [[ "$metadata_source_attempt" == "$SOURCE_RUN_ATTEMPT" ]] || emit_no_action \
+                "Ignoring render metadata not bound to the current source attempt."
+
               if [[ "$SOURCE_EVENT" == repository_dispatch && -n "$SOURCE_RETRY_NONCE" ]]; then
                 metadata_retry_nonce="$(jq -er '.proofRetryNonce | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
                 metadata_retry_uid="$(jq -er '.proofRetryNamespaceUid | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"

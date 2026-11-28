@@ -120,6 +120,12 @@ if [[ "${1:-}" == -n && "${2:-}" == firemud-system && "${3:-}" == patch &&
   state="$(kubectl -n firemud-system get configmap firemud-preview-proof-retries -o json --request-timeout=10s)"
   target_phase="$(jq -r '.[2].value | if type=="string" then fromjson | .phase // empty else empty end' <<<"$8")"
   if [[ "${FAKE_RETRY_PATCH_CASE:-}" == denied-start && "$target_phase" == SEND_STARTED ]]; then exit 1; fi
+  if [[ "${FAKE_RETRY_PATCH_CASE:-}" == rollback-version-conflict && "$target_phase" == RESERVED ]] &&
+    jq -e '.data["pr-901"] | fromjson | .phase == "SEND_STARTED" and .count == 2' <<<"$state" >/dev/null &&
+    [[ "$(jq -r '.metadata.resourceVersion' <<<"$state")" == 3 ]]; then
+    jq -c '.metadata.resourceVersion = "4"' <<<"$state" > "$FAKE_RETRY_HOLDER"
+    exit 1
+  fi
   next="$(jq -ec --argjson patch "$8" '
     select(($patch | length) == 3
       and $patch[0] == {op:"test",path:"/metadata/uid",value:.metadata.uid}
@@ -243,7 +249,8 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
   fi
   snapshot_resource_version=rv-901
   if [[ ( "${FAKE_RETRY_RUNTIME_CHANGE_BEFORE_SEND:-false}" == true && "$count" -gt 2 ) ||
-    ( "${FAKE_RETRY_RUNTIME_CHANGE_AFTER_START:-false}" == true && "$count" -gt 3 ) ]]; then
+    ( "${FAKE_RETRY_RUNTIME_CHANGE_AFTER_START:-false}" == true && "$count" -gt 3 ) ||
+    ( "${FAKE_RETRY_RUNTIME_CHANGE_AFTER_POST:-false}" == true && -f "$FAKE_DISPATCH_LOG" ) ]]; then
     snapshot_resource_version=rv-drift
   fi
   proof_complete="${FAKE_PR_901_PROOF_COMPLETE:-true}"
@@ -627,7 +634,19 @@ if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/173
   jq -c 'if type == "array" then . else [.] end' <<<"$payload"
   exit 0
 fi
+if [[ "$1" == run && "$2" == download && "${FAKE_RETRY_RENDER_RECEIPT:-unavailable}" != unavailable ]]; then
+  [[ "$*" == "run download 5255 --repo example/FireMUD --name preview-render-pr-901-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --dir "* ]]
+  printf '%s\n' "$FAKE_RETRY_RENDER_RECEIPT" > "${9}/preview-metadata.json"
+  : > "${9}/preview-rendered-sanitized.yaml"
+  exit 0
+fi
 if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/357129350/runs' ]]; then
+  if [[ -v FAKE_RETRY_TERMINAL_CONSUMER ]]; then
+    [[ "$*" == *"--method GET --paginate --slurp"* &&
+       "$*" == *"event=workflow_run -f status=completed -f branch=develop -f created=>="* ]]
+    printf '%s\n' "$FAKE_RETRY_TERMINAL_CONSUMER"
+    exit 0
+  fi
   if [[ "$*" != *"--method GET"* || "$*" != *"event=workflow_run"* ||
     "$*" != *"created=>="* || "$*" != *"per_page=100"* ||
     "$*" == *"branch="* || "$*" == *"head="* ]]; then
@@ -1439,7 +1458,7 @@ run_proof_retry_contract() (
     cd "$ROOT_DIR"
     FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
       FAKE_PR_901_HEAD=head-901 FAKE_PR_901_REQUESTED_HEAD=head-901 \
-      FAKE_PR_901_PROOF_COMPLETE=false DEFAULT_BRANCH=develop PREVIEW_MAX_ACTIVE=2 \
+      FAKE_PR_901_PROOF_COMPLETE="${FAKE_PR_901_PROOF_COMPLETE:-false}" DEFAULT_BRANCH=develop PREVIEW_MAX_ACTIVE=2 \
       bash "$retry_reconciler"
   )
 
@@ -1578,6 +1597,23 @@ run_proof_retry_contract() (
     and $restored == $reserved)' "$FAKE_RETRY_PATCH_LOG" >/dev/null
 
   reset_case
+  seed_retry_holder 1
+  FAKE_RETRY_PATCH_CASE=rollback-version-conflict FAKE_RETRY_RUNTIME_CHANGE_AFTER_START=true \
+    fixture_reconcile >"$case_output" 2>&1
+  grep -Fq 'Restored the unsent proof-retry reservation' "$case_output"
+  test ! -e "$FAKE_DISPATCH_LOG"
+  jq -se 'length == 4 and .[2][1].value == "3" and .[3][1].value == "4"
+    and .[2][2] == .[3][2] and .[3][2] == .[0][2]' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+
+  reset_case
+  seed_reserved_holder_with_old_namespace_version
+  FAKE_PR_901_NAMESPACE_UID=uid-replacement fixture_reconcile >"$case_output"
+  test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+  jq -se 'length == 3 and .[0][2].op == "remove"
+    and (.[1][2].value | fromjson | .phase == "RESERVED" and .namespaceUid == "uid-replacement"
+      and .count == 1 and .predecessor == null)' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+
+  reset_case
   seed_reserved_holder_with_old_namespace_version
   jq -c '.data["pr-901"] |= (fromjson | .base = ("d" * 40) | .image = .base | tojson)' \
     "$FAKE_RETRY_HOLDER" > "$FAKE_RETRY_HOLDER.next"
@@ -1591,9 +1627,9 @@ run_proof_retry_contract() (
   reset_case
   seed_retry_holder 1
   FAKE_PR_901_NAMESPACE_ABSENT=true fixture_reconcile >"$case_output" 2>&1
-  grep -Fq 'retained proof retry requires an exact deployed Namespace' "$case_output"
   assert_retry_count 1
-  test ! -e "$FAKE_DISPATCH_LOG"
+  test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+  if grep -Fq 'proof_retry_nonce' "$FAKE_DISPATCH_LOG"; then exit 1; fi
   test ! -e "$FAKE_RETRY_PATCH_LOG"
 
   reset_case
@@ -1669,6 +1705,50 @@ run_proof_retry_contract() (
     "$FAKE_RETRY_HOLDER" >/dev/null
   test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
 
+  # An aligned preview settles an exact rendered handoff while its artifact
+  # is retained. An unavailable artifact keeps the original charge staged.
+  local rendered_jobs consumer consumer_jobs receipt receipt_case
+  rendered_jobs="$(jq -c '
+    .jobs[0].steps = []
+    | .jobs[1].conclusion = "success"
+    | .jobs[1].steps = [{name:"Upload sanitized render artifact",status:"completed",conclusion:"success"}]
+  ' <<<"$source_jobs")"
+  source_inventory="$(jq -c '.workflow_runs[0].created_at = .workflow_runs[0].updated_at' <<<"$source_inventory")"
+  consumer="$(jq -c --arg title "$retry_title source-run-5255-attempt-1" '
+    . + {id:5256,event:"workflow_run",workflow_id:357129350,path:".github/workflows/hosted-identity-request.yml",
+         name:"Trusted Hosted Identity Request",display_title:$title}
+  ' <<<"$source_latest")"
+  consumer_jobs="$(jq -cn --arg head "$base" \
+    --arg tuple "Trusted preview deploy tuple pr-901 base-${base} head-${head} merge-${merge}" '
+    {total_count:1,jobs:[{name:"Validate Trusted Preview Target",run_id:5256,run_attempt:1,
+      head_sha:$head,status:"completed",conclusion:"success",
+      steps:[{name:$tuple,status:"completed",conclusion:"success"}]}]}
+  ')"
+  receipt="$(jq -cn --arg base "$base" --arg head "$head" --arg merge "$merge" --arg nonce "$old_nonce" '
+    {event:"repository_dispatch",action:"deploy",repository:"example/FireMUD",sourceWorkflow:".github/workflows/preview.yml",
+      sourceRunId:5255,sourceRunAttempt:1,prNumber:901,baseSha:$base,headSha:$head,mergeSha:$merge,imageTag:$base,
+      proofRetryNamespaceUid:"uid-pr-901",proofRetryNonce:$nonce}
+  ')"
+  for receipt_case in "$receipt" unavailable; do
+    reset_case
+    seed_started_holder
+    FAKE_PR_901_PROOF_COMPLETE=true FAKE_PREVIEW_DISPATCH_JOBS_JSON="$rendered_jobs" \
+      FAKE_PREVIEW_DISPATCH_LATEST_JSON="$source_latest" FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$source_inventory" \
+      FAKE_TRUSTED_CONSUMER_LATEST_JSON="$consumer" FAKE_TRUSTED_CONSUMER_JOBS_JSON="$consumer_jobs" \
+      FAKE_RETRY_TERMINAL_CONSUMER="$(jq -c '[{total_count:1,workflow_runs:[.]}]' <<<"$consumer")" \
+      FAKE_RETRY_RENDER_RECEIPT="$receipt_case" fixture_reconcile >"$case_output" 2>&1
+    grep -Fq 'already aligned' "$case_output"
+    test ! -e "$FAKE_DISPATCH_LOG"
+    if [[ "$receipt_case" == unavailable ]]; then
+      grep -Fq 'receiver artifact is unavailable' "$case_output"
+      test ! -e "$FAKE_RETRY_PATCH_LOG"
+    else
+      jq -se --arg nonce "$old_nonce" 'length == 1 and
+        (.[0][2].value | fromjson | .count == 2 and .nonce == $nonce and (has("phase") | not))' \
+        "$FAKE_RETRY_PATCH_LOG" >/dev/null
+    fi
+  done
+
   # A terminal-looking inventory row with a different nonce cannot release the
   # original staged charge or authorize a replacement dispatch.
   reset_case
@@ -1700,7 +1780,8 @@ run_proof_retry_contract() (
     seed_retry_holder 2
     local mutate="$custody"
     [[ "$custody" != exact ]] || mutate=false
-    if FAKE_RETRY_CUSTODY_CHANGED_AT_POST="$mutate" FAKE_DISPATCH_HTTP_STATUS=422 fixture_reconcile >"$case_output" 2>&1; then
+    if FAKE_RETRY_CUSTODY_CHANGED_AT_POST="$mutate" FAKE_RETRY_RUNTIME_CHANGE_AFTER_POST=true \
+      FAKE_DISPATCH_HTTP_STATUS=422 fixture_reconcile >"$case_output" 2>&1; then
       echo 'confirmed rejection was reported successful' >&2
       exit 1
     fi
@@ -1747,8 +1828,9 @@ run_proof_retry_contract() (
   # Stop between deletion and restore. There is no recreated Namespace or
   # workflow output to recover, and the next callback still sees count three.
   FAKE_PR_901_NAMESPACE_ABSENT=true fixture_reconcile >"$case_output" 2>&1
-  grep -Fq 'proof retry budget exhausted' "$case_output"
-  test ! -e "$FAKE_DISPATCH_LOG"
+  assert_retry_count 3
+  test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+  if grep -Fq 'proof_retry_nonce' "$FAKE_DISPATCH_LOG"; then exit 1; fi
 
   reset_case
   if FAKE_LEGACY_RETRY_JSON='{"firemud.dev/proof-retry-count":""}' \

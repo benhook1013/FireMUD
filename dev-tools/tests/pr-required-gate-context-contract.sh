@@ -753,11 +753,15 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
             "${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}"
         ):
             raise SystemExit("Smoke classification must distinguish metadata edits from substantive proof")
-    elif not excludes_metadata(result_steps[0].get("if", "")) and result_steps[0].get("if") not in (
-        "${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}",
-        "${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}",
-    ):
-        raise SystemExit(f"{workflow} {gate_name} substantive enforcement must skip metadata edits")
+    else:
+        condition = result_steps[0].get("if", "")
+        if not condition or evaluate(condition, "edited", None):
+            raise SystemExit(f"{workflow} {gate_name} substantive enforcement must skip metadata edits")
+        for action, base_ref in (("edited", "develop"), ("opened", None), ("synchronize", None), ("reopened", None)):
+            if not evaluate(condition, action, base_ref):
+                raise SystemExit(f"{workflow} {gate_name} must enforce failure for {action}")
+        if not pr_only and not evaluate(condition, None, None, event="push"):
+            raise SystemExit(f"{workflow} {gate_name} must enforce failure on push")
     if workflow == "codeql.yml":
         step = result_steps[0]
         if step["env"].get("SHOULD_RUN") != "${{ needs.changes.outputs.should_run }}" or \
@@ -1224,6 +1228,9 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   const h0 = kind.startsWith("optional-final-read-");
   const cancelledPrimary = kind === "optional-final-read-cancelled-primary";
   const cancelledWithReplacement = kind === "optional-final-read-cancelled-with-replacement";
+  const movedNativeCancellation = kind === "cancelled-native-attempt-moves";
+  const transientFinalPull = kind === "optional-final-read-pr-identity";
+  let nativeCancellationRead = false, failedFinalPullReads = 0;
   const finalAttemptError = kind.startsWith("optional-final-read-attempt-");
   const duplicatePrimary = kind === "optional-final-read-duplicate";
   const newerFailure = kind === "duplicate-after-newer-failure";
@@ -1257,6 +1264,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     status: "completed", conclusion: "success", pull_requests: []};
   const exactPrimary = {...source, id: 43, event: "pull_request", head_sha: head,
     created_at: "2026-09-01T00:00:01Z"};
+  const cancelledOriginal = {...exactPrimary, status: "completed", conclusion: "cancelled"};
   const dispatchPrimary = {...source, id: 44, created_at: "2026-09-01T00:00:02Z"};
   const incompleteSnapshot = kind.startsWith("incomplete-snapshot-");
   let snapshotRerunVisible = false;
@@ -1290,6 +1298,10 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     pulls: {get: async () => {
       reads += 1;
       pullRequestLookups += 1;
+      if (transientFinalPull && alternativeJobsReads >= 3 && primaryInventoryReads === 1) {
+        failedFinalPullReads += 1;
+        throw Object.assign(new Error("optional refresh PR identity temporarily unavailable"), {status: 503});
+      }
       if (kind === "optional-final-acceptance-transient" && pullRequestLookups === 4) {
         acceptanceLookupArmed = true;
       }
@@ -1318,6 +1330,13 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
       getWorkflowRun: async ({run_id: runId}) => {
         if (runId === 43 && primaryReady()) return {data: exactPrimary};
         if (runId === 43 && newerSuccessDuringAcceptance) return {data: exactPrimary};
+        if (runId === 43 && (cancelledPrimary || cancelledWithReplacement ||
+            (event === "repository_dispatch" && !h0 && !kind.startsWith("pending-native")))) {
+          nativeCancellationRead = true;
+          return {data: movedNativeCancellation
+            ? {...exactPrimary, run_attempt: 2, status: "queued", conclusion: null}
+            : cancelledOriginal};
+        }
         if (runId === 44 && cancelledWithReplacement) return {data: dispatchPrimary};
         if (kind === "optional-final-acceptance-transient" && runId === 44) {
           return {data: {...source, id: 44, event: "repository_dispatch", head_sha: defaultSha,
@@ -1371,9 +1390,12 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
       assert.equal(input.attempt_number, dispatchPrimary.run_attempt);
       return {data: dispatchPrimary};
     }
-    if ((cancelledPrimary || cancelledWithReplacement) && input.run_id === 43) {
-      assert.equal(input.attempt_number, exactPrimary.run_attempt);
-      return {data: {...source, id: 43, event: "pull_request", status: "completed", conclusion: "cancelled"}};
+    if ((cancelledPrimary || cancelledWithReplacement ||
+        (event === "repository_dispatch" && !h0 && !kind.startsWith("pending-native"))) &&
+        input.run_id === 43) {
+      return {data: input.attempt_number === 2 && movedNativeCancellation
+        ? {...exactPrimary, run_attempt: 2, status: "completed", conclusion: "failure"}
+        : cancelledOriginal};
     }
     assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
     return {data: {...source, ...(sourceMutations[kind] || {})}};
@@ -1406,7 +1428,8 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     if (kind === "sole-final-jobs-missing") {
       throw Object.assign(new Error("sole final jobs missing"), {status: 404});
     }
-    if (h0 && ++alternativeJobsReads > (cancelledPrimary ? 0 : 2) && !finalAttemptError) {
+    if (h0) alternativeJobsReads += 1;
+    if (h0 && alternativeJobsReads > (cancelledPrimary ? 0 : 2) && !finalAttemptError && !transientFinalPull) {
       assert.equal(input.attempt_number, source.run_attempt);
       if (kind.endsWith("-malformed")) return null;
       if (disappearingSnapshot) return [];
@@ -1468,9 +1491,10 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     }
     if (event === "repository_dispatch" && input.event === "pull_request") {
       const nativeFailed = kind === "pending-native-dual-native-fails-during-refresh" && pendingRefreshObserved;
-      yield {data: [{...source, id: kind.startsWith("pending-native") ? 43 : source.id, event: "pull_request", head_sha: head,
+      const rerunFailed = movedNativeCancellation && nativeCancellationRead;
+      yield {data: [{...exactPrimary, run_attempt: rerunFailed ? 2 : 1,
         status: kind.startsWith("pending-native") && !nativeFailed ? "queued" : "completed",
-        conclusion: nativeFailed ? "failure" : kind.startsWith("pending-native") ? null : "cancelled"}]}; return;
+        conclusion: nativeFailed || rerunFailed ? "failure" : kind.startsWith("pending-native") ? null : "cancelled"}]}; return;
     }
     if (kind.startsWith("pending-native-dual-") && input.event === "repository_dispatch") {
       refreshInventoryReads += 1;
@@ -1521,7 +1545,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     lookupFailure = error;
   }
   return {failures, refs, snapshots, info, warnings, refreshInventoryReads, alternativeJobsReads, primaryInventoryReads,
-    completedPrimaryJobReads, acceptanceLookupAttempts, rerunStartedDuringFinalTupleRead, lookupFailure, fallbackReadOrder};
+    completedPrimaryJobReads, acceptanceLookupAttempts, failedFinalPullReads, rerunStartedDuringFinalTupleRead, lookupFailure, fallbackReadOrder};
 }
 (async () => {
   for (const event of ["pull_request", "repository_dispatch"]) {
@@ -1529,6 +1553,13 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     assert.deepEqual(success.failures, []);
     assert.deepEqual(success.refs, [event === "pull_request" ? merge : defaultSha], "immutable definition must come from actual source event revision");
   }
+  const movedCancellation = await scenario("cancelled-native-attempt-moves", "repository_dispatch");
+  assert(movedCancellation.warnings.some(line => line.includes("Native cancellation changed before accepting replacement proof")));
+  assert.equal(movedCancellation.failures.length, 1, "a later native failed attempt cannot inherit cancelled-attempt fallback proof");
+  const transientRefreshPull = await scenario("optional-final-read-pr-identity", "repository_dispatch");
+  assert.equal(transientRefreshPull.failedFinalPullReads, 4, "bounded PR validation retry must finish before returning to native selection");
+  assert(transientRefreshPull.info.some(line => line.includes("Found runtime-images run 43 with status=completed")));
+  assert.deepEqual(transientRefreshPull.failures, []);
   assert.deepEqual((await scenario("legacy-positive")).failures, []);
   assert.deepEqual((await scenario("pending-native-refresh", "repository_dispatch")).failures, [], "trusted successful refresh releases queued native wait");
   const latePendingFailure = await scenario("pending-native-fails-after-final-order", "repository_dispatch");

@@ -43,7 +43,7 @@ jobs:
 
       - name: Runtime refresh unsent claim ${{ steps.admit.outputs.unsent_claim }}
         if: ${{ success() && steps.admit.outputs.unsent_claim != '' }}
-        run: echo 'The verified preview claim owner stopped before invoking dispatch.'
+        run: echo 'The verified claim owner stopped before invoking dispatch.'
 
       - name: Runtime refresh rejected claim ${{ steps.admit.outputs.rejected_claim }}
         if: ${{ success() && steps.admit.outputs.rejected_claim != '' }}
