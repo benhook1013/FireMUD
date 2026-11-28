@@ -104,6 +104,17 @@ namespace_for_head "$game_session_v2_sha"
 assert_activation true push "$supported_v2_sha" "$later_push_sha"
 assert_activation true push "" "$later_push_sha"
 
+# An unresolved attempt holds its original target and later pushes at the same boundary.
+FAKE_NAMESPACE_JSON="$(jq -c --arg base "$game_session_v2_sha" --arg target "$supported_v2_sha" '
+  .metadata.annotations["firemud.dev/pending-dev-demo-deployment"] = ("123:1:" + $base + ":" + $target)
+' <<<"$FAKE_NAMESPACE_JSON")"
+for target in "$supported_v2_sha" "$later_push_sha"; do
+  assert_rejected --reason 'unresolved retained deployment requires owner verification' repository_dispatch "" "$target"
+done
+namespace_for_head "$supported_v2_sha"
+assert_rejected --reason 'the namespace already records the target SHA' repository_dispatch "" "$supported_v2_sha"
+assert_activation false repository_dispatch "" "$later_push_sha"
+
 echo 'retained migration edit' >>"$repo/services/game-session-service/src/main/resources/db/migration/V2__scope_gameplay_command_identity.sql"
 git -C "$repo" add .
 git -C "$repo" commit -qm "Edit existing Game Session V2 migration"

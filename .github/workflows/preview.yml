@@ -494,17 +494,17 @@ jobs:
 
             await github.rest.repos.createDispatchEvent({
               ...context.repo,
-              event_type: "pr-runtime-base-refresh",
+              event_type: "pr-runtime-base-refresh-request",
               client_payload: {
                 pr_number: process.env.PR_NUMBER,
                 base_ref: baseRef,
                 base_sha: process.env.BASE_SHA,
                 head_sha: process.env.HEAD_SHA,
                 merge_sha: process.env.MERGE_SHA,
-                image_tag: process.env.IMAGE_TAG,
+                preview_only: true,
               },
             });
-            core.info(`Dispatched current-base runtime refresh for PR #${process.env.PR_NUMBER}.`);
+            core.info(`Requested current-base runtime refresh admission for PR #${process.env.PR_NUMBER}.`);
 
   preview-render:
     name: Render Sanitized Preview Artifact

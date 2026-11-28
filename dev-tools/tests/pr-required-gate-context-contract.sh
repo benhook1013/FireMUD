@@ -4081,10 +4081,10 @@ const isTransientGitHubFailure = new Function("TerminalGitHubRequestError", "ret
     TerminalGitHubRequestError, new Set([408, 425, 429]), new Set(transientTransportCodes));
 async function finalAttemptCheck(latest, error = null, onLookup = () => {},
   selected = {id: 99, run_attempt: 2, conclusion: "success"}) {
-  const start = script.indexOf("async function isCurrentCanonicalAttempt(");
+  const start = script.indexOf("async function readLatestCanonicalAttempt(");
   const end = script.indexOf("async function verifyFailedPullCanonicalRefresh(", start);
   const check = new Function("github", "withTransientGitHubRetry", "owner", "repo",
-    "TerminalGitHubRequestError", "retryableStatuses", "isTransientGitHubFailure", "core",
+    "TerminalGitHubRequestError", "retryableStatuses", "isTransientGitHubFailure", "core", "positiveInteger",
     `${script.slice(start, end)}; return isCurrentCanonicalAttempt;`)(
       {rest: {actions: {getWorkflowRun: async ({run_id}) => {
         assert.equal(run_id, selected.id);
@@ -4092,7 +4092,8 @@ async function finalAttemptCheck(latest, error = null, onLookup = () => {},
         if (error) throw error;
         return {data: latest};
       }}}}, (_label, call) => call(), "benhook1013", "FireMUD", TerminalGitHubRequestError,
-      new Set([408, 425, 429]), isTransientGitHubFailure, {warning: () => {}});
+      new Set([408, 425, 429]), isTransientGitHubFailure, {warning: () => {}},
+      value => Number.isSafeInteger(value) && value > 0);
   return check(selected);
 }
 assert.ok(script.includes("const refreshDiscoveryTimeoutMs = prerequisiteAndQueueAllowanceMinutes * 60 * 1000;"));
@@ -4240,7 +4241,7 @@ async function pendingMarkerSnapshot(conclusions, duplicate = false) {
 }
 async function selectedProducerFinalFence(event, moved = false, superseded = false, rerunDuringIdentity = false, duringFinal = null) {
   const outputs = [], failures = [], required = [];
-  let proofs = 0, sleeps = 0, attemptChanged = false, afterAttempt = false, labelRemoved = false;
+  let proofs = 0, sleeps = 0, attemptChanged = false, attemptReads = 0, labelRemoved = false;
   const core = {warning: () => {}, setFailed: x => failures.push(x), setOutput: (...x) => outputs.push(x)};
   core.summary = {addHeading() {return this;}, addRaw() {return this;}, async write() {}};
   const execute = new Function("fullSmokeJob", "matching", "canonicalSmokeJobName", "currentIdentity",
@@ -4252,23 +4253,24 @@ async function selectedProducerFinalFence(event, moved = false, superseded = fal
     ++proofs === 1 && superseded ? "attempt-superseded" : true,
     TerminalGitHubRequestError, core, async (_label, current) => {
       required.push(current);
-      attemptChanged = rerunDuringIdentity || (afterAttempt && duringFinal === "rerun");
-      if (afterAttempt && ["closed", "head", "retarget"].includes(duringFinal)) return {obsolete: true};
+      attemptChanged = rerunDuringIdentity;
+      if (attemptReads === 2 && ["closed", "head", "retarget"].includes(duringFinal)) return {obsolete: true};
       return {...identity, canonicalPlayEligible: !labelRemoved,
         ...(current ? {sourceEvent: "repository_dispatch"} : {}),
-        ...(current && (moved || afterAttempt && duringFinal === "base")
+        ...(current && (moved || attemptReads === 2 && duringFinal === "base")
           ? {baseSha: "e".repeat(40), mergeSha: "f".repeat(40)} : {})};
     }, selected => { const {canonicalPlayEligible, ...tuple} = selected; return JSON.stringify(tuple); },
     async selected => {
-      afterAttempt = true;
-      if (duringFinal === "label") return finalAttemptCheck({...selected, status: "completed"}, null, () => {
+      attemptReads++;
+      if (attemptReads === 2 && duringFinal === "rerun") return false;
+      if (attemptReads === 2 && duringFinal === "label") return finalAttemptCheck({...selected, status: "completed"}, null, () => {
         labelRemoved = true;
       }, selected);
       return !attemptChanged;
     }, resolve => {sleeps++; resolve();}, 0);
   assert.equal(proofs, superseded ? 2 : 1);
   assert.equal(sleeps, superseded || rerunDuringIdentity || duringFinal === "rerun" ? 1 : 0);
-  const fenceCount = !(event === "repository_dispatch" && moved) && !rerunDuringIdentity ? 2 : 1;
+  const fenceCount = !(event === "repository_dispatch" && moved) && !rerunDuringIdentity && duringFinal !== "rerun" ? 2 : 1;
   assert.deepEqual(required, Array((proofs - (superseded ? 1 : 0)) * fenceCount).fill(event === "repository_dispatch"));
   assert.deepEqual(failures, duringFinal === "label"
     ? ["Canonical PLAY transition exception label is absent or no longer eligible."] : []);
@@ -4314,7 +4316,7 @@ async function recoveredFinalFence(disposition, change = null) {
     value => Number.isSafeInteger(value) && value > 0, async selected => {
       assert.deepEqual(selected, proofRun); finalAttempts++; return true;
     }, resolve => resolve(), 0, () => {resumedPolling = true;});
-  assert.equal(finalAttempts, change === null ? 2 : 1);
+  assert.equal(finalAttempts, disposition === "verified" || change === null ? 2 : 1);
   assert.equal(postAttemptFences, 1);
   assert.deepEqual(failures, []);
   assert.deepEqual(outputs, disposition === "verified" && change === null ? [["known_play_exception", "true"]] : []);
@@ -4484,7 +4486,7 @@ async function pendingRefreshCaller(statuses, expires = false, options = {}) {
       if (options.transientFinal && finalChecks === 1) {
         return finalAttemptCheck(null, Object.assign(new Error("temporary"), {status: 502}));
       }
-      if (options.withdrawDuringFinal) return finalAttemptCheck({...selected, status: "completed"}, null, () => {
+      if (options.withdrawDuringFinal && finalChecks === 2) return finalAttemptCheck({...selected, status: "completed"}, null, () => {
         labelRemovedDuringFinal = true;
       }, selected);
       return !options.rerunFinal || finalChecks > 1;
@@ -5629,6 +5631,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     path: kind === "metadata-wake-qualified" ? qualified(validationPath) : validationPath};
   const refresh = {...source, id: 110, event: "repository_dispatch", head_branch: "develop", head_sha: "d".repeat(40),
     created_at: shared.refreshCreatedAt ?? source.created_at};
+  if (kind === "visible-pending-refresh") Object.assign(refresh, {status: "in_progress", conclusion: null});
   const event = structuredClone(wake ? metadataWake ? newerMetadata : newerCancelled : source);
   event.name = event.display_title;
   if (kind === "malformed-callback-path") event.path += "@refs/heads/a..b";
@@ -5665,7 +5668,17 @@ async function run(kind, shared = {visible: false, posts: 0}) {
       getWorkflow: async ({workflow_id}) => ({data: workflow_id === "ci.yml"
         ? {id: 8, path: ".github/workflows/ci.yml", name: "CI — Validation"}
         : {id: 7, path: runtimePath, name: source.name}}),
+      getWorkflowRunAttempt: async ({run_id, attempt_number}) => {
+        assert.equal(run_id, refresh.id);
+        assert.equal(attempt_number, refresh.run_attempt);
+        (shared.exactRefreshAttempts ??= []).push(run_id);
+        return {data: {...refresh, run_started_at: refresh.created_at, updated_at: refresh.created_at}};
+      },
       getWorkflowRun: async ({run_id}) => {
+        (shared.nativeRunReads ??= []).push(run_id);
+        if (run_id === refresh.id) return {data: kind === "visible-mismatched-refresh" ? source : refresh};
+        if (cancelledCase && kind === "cancel-wake-newer-ci" && run_id === 92)
+          return {data: {...ci, id: 92, status: "in_progress", conclusion: null}};
         if (metadataWake && run_id === 92) {
           wakeReads++;
           if (kind === "metadata-wake-missing" || kind === "metadata-wake-late-missing" && wakeReads >= 8) return {data: null};
@@ -5692,14 +5705,14 @@ async function run(kind, shared = {visible: false, posts: 0}) {
       listWorkflowRuns: async ({workflow_id, page, event: runEvent, created}) => {
         (shared.inventoryPages ??= []).push({workflow_id, page, event: runEvent, post: shared.posts});
         if (workflow_id === "ci.yml") ciInventoryReads++;
-        let runs = workflow_id === "ci.yml" ? [{...ci, ...(kind === "ci-pending" ? {status: "in_progress"} : {})}]
+        let runs = workflow_id === "ci.yml" ? [{...ci, ...(kind === "ci-pending" ? {status: "in_progress", conclusion: null} : {})}]
           : shared.visible ? [refresh] : [];
         if (workflow_id === "ci.yml" && (["metadata-newer", "old-meta-rerun", "unclassified-newer", "pending-newer"].includes(kind) || kind.startsWith("new-meta"))) {
-          runs = [{...ci, id: 91, ...(kind === "pending-newer" ? {status: "in_progress"} : {})}, ci];
+          runs = [{...ci, id: 91, ...(kind === "pending-newer" ? {status: "in_progress", conclusion: null} : {})}, ci];
           if (kind === "new-meta-only") runs = runs.slice(0, 1);
         }
         if (workflow_id === "ci.yml" && cancelledCase) runs = kind === "cancel-wake-not-inventory"
-          ? [olderCi] : kind === "cancel-wake-newer-ci" ? [{...ci, id: 92, status: "in_progress"}, newerCancelled, olderCi] : [newerCancelled, olderCi];
+          ? [olderCi] : kind === "cancel-wake-newer-ci" ? [{...ci, id: 92, status: "in_progress", conclusion: null}, newerCancelled, olderCi] : [newerCancelled, olderCi];
         if (workflow_id === "ci.yml" && metadataWake) {
           runs = [newerMetadata, newerCancelled, olderCi];
           if (kind === "metadata-wake-only") runs = [newerMetadata];
@@ -5707,7 +5720,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
           if (kind === "metadata-wake-newer-pending") runs.unshift({...ci, id: 93, status: "in_progress", conclusion: null});
         }
         if (workflow_id === "ci.yml" && ciInventoryReads > 1 && kind.startsWith("late-ci-")) {
-          runs = kind === "late-ci-absent" ? [] : [{...ci, id: 91, ...(kind === "late-ci-pending" ? {status: "in_progress"} : {})}, ci];
+          runs = kind === "late-ci-absent" ? [] : [{...ci, id: 91, ...(kind === "late-ci-pending" ? {status: "in_progress", conclusion: null} : {})}, ci];
         }
         if (workflow_id === "runtime-images.yml" && runEvent === "pull_request") {
           runs = ["newer-original", "cancel-wake-newer-original"].includes(kind)
@@ -5721,6 +5734,9 @@ async function run(kind, shared = {visible: false, posts: 0}) {
           }
         }
         if (workflow_id === "runtime-images.yml" && runEvent === "repository_dispatch" && shared.posts) {
+          if (kind === "visible-typed-failure") {
+            runs = [{...refresh, id: refresh.id + 1, status: "queued", conclusion: null}];
+          }
           shared.observations = (shared.observations || 0) + 1;
           if ((kind === "post-read-transient" && shared.observations === 1) || kind === "post-read-timeout") {
             throw Object.assign(new Error("temporary post visibility error"), {status: 502});
@@ -5787,6 +5803,13 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   }};
   async function fixtureCIJobs(request) {
     assert.equal(request.attempt_number, 1);
+    if (request.run_id === refresh.id) {
+      const marker = "Known canonical transition PLAY failure with successful authenticated cleanup";
+      return [{id: 41, run_id: refresh.id, run_attempt: refresh.run_attempt, head_sha: refresh.head_sha,
+        name: "PR Full-Stack Smoke (runtime-required=true)", workflow_name: refresh.name, status: "completed",
+        conclusion: "failure", started_at: refresh.created_at, completed_at: refresh.created_at,
+        steps: [{name: marker, status: "completed", conclusion: kind === "visible-typed-failure" ? "skipped" : "success"}]}];
+    }
     if (metadataWake && request.run_id === 92) {
       const expression = "github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Gate)' || 'Validation Gate'";
       const gate = {id: 32, run_id: 92, run_attempt: 1, head_sha: head,
@@ -5907,6 +5930,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   assert.equal(lateIncomplete.posts, 0, "unverifiable final inventory cannot authorize a POST");
   const delayedWake = {visible: false, posts: 0};
   assert.equal(await run("pending-newer", delayedWake), 0, "original completion cannot ignore pending CI");
+  assert.ok(delayedWake.nativeRunReads.includes(91), "read the newer pending CI before refusing the POST");
   assert.equal(await run("wake-cancel-before-enforcement", delayedWake), 1, "exact cancelled CI wake restores liveness");
   assert.equal(await run("wake-cancel-before-enforcement", delayedWake), 1, "replayed wake does not redispatch");
   for (const kind of ["native", "qualified", "expression", "wrapped", "preservation"]) {
@@ -5917,7 +5941,9 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     "late-rerun", "late-path", "missing", "late-missing", "only", "absent", "late-absent", "newer-pending", "older-failed", "masked-failure",
     "job-attempt", "job-run", "job-head", "job-url", "job-success", "job-pending", "plain-success", "mixed",
     "preservation-failed", "preservation-duplicate", "substantive-success"]) {
-    assert.equal(await run("wake-metadata-wake-" + kind), 0, "metadata wake fails closed: " + kind);
+    const state = {visible: false, posts: 0};
+    assert.equal(await run("wake-metadata-wake-" + kind, state), 0, "metadata wake fails closed: " + kind);
+    if (kind === "newer-pending") assert.ok(state.nativeRunReads.includes(93));
   }
   for (const kind of ["unavailable", "late-unavailable"]) {
     const state = {visible: false, posts: 0};
@@ -5927,7 +5953,9 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   for (const scenario of ["cancel-wake-wrong-id", "cancel-wake-stale-head", "cancel-wake-fork",
     "cancel-wake-nonterminal", "cancel-rerun", "cancel-upstream-step-failed", "cancel-older-failed",
     "cancel-wake-not-inventory", "cancel-wake-newer-ci", "cancel-wake-newer-original", "cancel-wake-no-original"]) {
-    assert.equal(await run("wake-" + scenario), 0, scenario);
+    const state = {visible: false, posts: 0};
+    assert.equal(await run("wake-" + scenario, state), 0, scenario);
+    if (scenario === "cancel-wake-newer-ci") assert.ok(state.nativeRunReads.includes(92));
   }
   for (const scenario of ["cancel-older-failed", "cancel-native-failure", "cancel-enforced",
       "cancel-missing-time", "cancel-started", "cancel-rerun", "cancel-gate-failed", "cancel-missing-step",
@@ -5946,7 +5974,9 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     assert.equal(await run(scenario), 0, scenario);
   }
   for (const scenario of ["late-ci-pending", "late-ci-substantive", "late-ci-unknown", "late-ci-absent"]) {
-    assert.equal(await run(scenario), 0, "newer exact CI owns recovery: " + scenario);
+    const state = {visible: false, posts: 0};
+    assert.equal(await run(scenario, state), 0, "newer exact CI owns recovery: " + scenario);
+    if (scenario === "late-ci-pending") assert.ok(state.nativeRunReads.includes(91));
   }
   for (const scenario of ["late-ci-old-metadata", "late-ci-new-metadata"]) {
     assert.equal(await run(scenario), 1, "proven newer metadata must not hide selected substantive CI: " + scenario);
@@ -6023,9 +6053,18 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   assert.equal(ambiguousVisible.posts, 1, "the next serialized callback sees the exact handoff and does not retry");
   // Under the shared job mutex, a CI-first visible refresh suppresses completion recovery.
   assert.equal(await run("valid", {visible: true, posts: 0}), 0);
-  // Repeated completion callbacks, including after terminal refresh failure, dispatch at most once.
-  const shared = {visible: false, posts: 0};
-  await run("valid", shared); await run("valid", shared); assert.equal(shared.posts, 1);
+  // The dispatch here requests trusted admission. The claim remains the actual send authority.
+  for (const [scenario, posts, nativeReads, exactReads] of [
+    ["visible-pending-refresh", 0, false, false],
+    ["visible-mismatched-refresh", 0, true, false],
+    ["valid", 0, true, true],
+    ["visible-typed-failure", 1, true, true],
+  ]) {
+    const state = {visible: true, posts: 0};
+    assert.equal(await run(scenario, state), posts, scenario);
+    assert.equal(state.nativeRunReads.includes(110), nativeReads, scenario);
+    assert.equal(Boolean(state.exactRefreshAttempts?.includes(110)), exactReads, scenario);
+  }
   console.log("Failed original runtime reconciliation contracts passed (offline serialized model, not GitHub delivery proof).");
 })().catch(error => {console.error(error); process.exitCode = 1;});
 NODE

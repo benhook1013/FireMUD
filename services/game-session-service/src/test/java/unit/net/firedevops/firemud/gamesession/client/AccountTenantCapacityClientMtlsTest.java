@@ -696,8 +696,9 @@ class AccountTenantCapacityClientMtlsTest {
       server =
           server(
               "account", calls, false, new AtomicLong(), respond, measuredSecondInvocationEntered);
-      try (var client = client(server, tls, factory);
-          var executor = Executors.newSingleThreadExecutor()) {
+      var client = client(server, tls, factory);
+      var executor = Executors.newSingleThreadExecutor(Thread.ofPlatform().daemon().factory());
+      try {
         client.init();
         assertThat(factory.singleAttemptBuilds).hasValue(1);
         assertThat(factory.standardBuilds).hasValue(0);
@@ -726,6 +727,13 @@ class AccountTenantCapacityClientMtlsTest {
           factory.releaseReload.countDown();
         }
         assertThat(factory.reloadBuilt.await(5, TimeUnit.SECONDS)).isTrue();
+      } finally {
+        factory.releaseReload.countDown();
+        executor.shutdownNow();
+        boolean workerStopped = executor.awaitTermination(5, TimeUnit.SECONDS);
+        // A deadlocked worker must not turn this bounded test into a blocking client close.
+        if (workerStopped) client.close();
+        assertThat(workerStopped).as("capacity RPC worker terminated").isTrue();
       }
     } finally {
       try {

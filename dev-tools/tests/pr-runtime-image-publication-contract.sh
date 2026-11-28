@@ -457,8 +457,9 @@ for (const publishable of ["false", "", undefined]) {
     client_payload: {source_run_id: "4242", source_run_attempt: "2"}}};
   await rejectsResolver(resolve({runs: [rerun]}), /run attempt differs from the dispatch/);
   await rejectsResolver(resolve({runs: [source], context: rerunContext}), /run attempt differs from the dispatch/);
-  const attempt2 = {...rerun, created_at: "2026-01-08T01:00:00Z",
-    run_started_at: "2026-01-08T01:00:00.500Z", updated_at: "2026-01-08T01:04:00Z"};
+  // The attempt endpoint can report created_at exactly one second after start.
+  const attempt2 = {...rerun, created_at: "2026-01-08T01:00:01Z",
+    run_started_at: "2026-01-08T01:00:00Z", updated_at: "2026-01-08T01:04:00Z"};
   const rerunProducer = producerFor(attempt2);
   const rerunResult = await resolve({runs: [rerun], context: rerunContext, nativeAttempt: attempt2, jobs: [rerunProducer]});
   assert.deepEqual(JSON.parse(rerunResult.output.source), rerun,

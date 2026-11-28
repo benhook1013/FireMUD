@@ -29,6 +29,21 @@ if [[ -z "$namespace_json" ]]; then
   echo "refusing hosted deployment: namespace $namespace is absent, so its deployed-head ancestry cannot be proven" >&2
   exit 1
 fi
+if ! namespace_uid="$(jq -er --arg namespace "$namespace" '
+  select(.metadata.name == $namespace
+    and .metadata.labels["firemud.dev/dev-demo"] == "true"
+    and .metadata.labels["firemud.dev/environment-class"] == "dev-demo-cluster")
+  | .metadata.uid | select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"))
+' <<<"$namespace_json")"; then
+  echo "refusing hosted deployment: namespace $namespace is not the owned dev-demo namespace" >&2
+  exit 1
+fi
+if ! jq -e '
+  (.metadata.annotations // {}) | has("firemud.dev/pending-dev-demo-deployment") | not
+' <<<"$namespace_json" >/dev/null; then
+  echo "refusing hosted deployment: an unresolved retained deployment requires owner verification of the exact Helm release and Flyway state before namespace mutation" >&2
+  exit 1
+fi
 if ! base_sha="$(jq -e -r \
   --arg namespace "$namespace" '
     select(.metadata.name == $namespace)
@@ -135,6 +150,7 @@ if [[ "$hold_account_uniqueness" == true ]]; then
 fi
 
 printf 'deployed_base_sha=%s\n' "$base_sha"
+printf 'namespace_uid=%s\n' "$namespace_uid"
 if [[ "$migration_changed" == true ]]; then
   emit_mode true "$reason_source first adds a supported Account, Game Session, or Automation migration"
 else

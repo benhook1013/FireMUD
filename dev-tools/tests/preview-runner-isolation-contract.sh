@@ -356,9 +356,9 @@ refresh_scripts = [
 ]
 if len(refresh_scripts) != 1:
     raise AssertionError("preview runtime base refresh must use exactly one pinned GitHub dispatcher")
-if 'event_type: "pr-runtime-base-refresh"' not in refresh_scripts[0]:
-    raise AssertionError("preview runtime base refresh lost its typed dispatch")
-if "base_sha" not in refresh_scripts[0] or "head_sha" not in refresh_scripts[0] or "merge_sha" not in refresh_scripts[0]:
+if 'event_type: "pr-runtime-base-refresh-request"' not in refresh_scripts[0] or "preview_only: true" not in refresh_scripts[0]:
+    raise AssertionError("preview runtime base refresh lost its preview-only trusted admission request")
+if not all(f"{field}:" in refresh_scripts[0] for field in ("pr_number", "base_ref", "base_sha", "head_sha", "merge_sha")):
     raise AssertionError("preview runtime base refresh dispatch lost its exact merge tuple")
 
 # Keep the permission boundary regression-tested independently of the live
