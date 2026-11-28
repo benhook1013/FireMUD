@@ -82,7 +82,8 @@ class DraftTerminalReadClientMtlsTest {
     var response = GameDesignDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(readback));
     AtomicReference<ReadGameDesignDraftTerminalOutcomeRequest> received = new AtomicReference<>();
 
-    try (TransportServer server = startGameDesignServer(pki.gameDesignServer(), response, received);
+    try (TransportServer server =
+            startGameDesignServer(pki.gameDesignServer(), response, received);
         GameDesignDraftTerminalReadClient client = gameDesignClient(server.port())) {
       client.init();
       var configuredStub = gameDesignStub(client);
@@ -191,7 +192,7 @@ class DraftTerminalReadClientMtlsTest {
     assertThat(received.get()).as(identity.alias()).isNull();
   }
 
-  private static GameDesignDraftTerminalReadEvidence.Request gameDesignRequest() {
+  private static GameDesignDraftTerminalReadEvidence.Request gameDesignRequest() throws Exception {
     return new GameDesignDraftTerminalReadEvidence.Request(
         1,
         NAMESPACE,
