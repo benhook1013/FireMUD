@@ -33,6 +33,25 @@ fi
 [[ "$(git -C "$helper_dir" rev-parse HEAD)" == "$target_sha" ]] ||
   fail "the checked-out probe source does not match the target"
 
+cluster_route() {
+  kubectl --kubeconfig "$1" config view --raw --flatten --minify -o json |
+    jq -ce '
+      .clusters | select(length == 1) | .[0].cluster
+      | select((.server | type == "string" and startswith("https://"))
+          and (."certificate-authority-data" | type == "string" and length > 0)
+          and ((."insecure-skip-tls-verify" // false) == false))
+      | {server, ca: ."certificate-authority-data",
+          tlsName: (."tls-server-name" // ""), proxy: (."proxy-url" // "")}
+    '
+}
+
+manager_route="$(cluster_route "$DEV_NAMESPACE_MANAGER_KUBECONFIG")" ||
+  fail "the namespace manager credential must identify a TLS-verified cluster"
+runtime_route="$(cluster_route "$KUBECONFIG")" ||
+  fail "the runtime credential must identify a TLS-verified cluster"
+[[ "$manager_route" == "$runtime_route" ]] ||
+  fail "the namespace manager and runtime credentials must address the same cluster"
+
 verify_namespace() {
   kubectl --kubeconfig "$DEV_NAMESPACE_MANAGER_KUBECONFIG" --request-timeout=10s get namespace "$namespace" -o json |
     jq -e --arg namespace "$namespace" --arg uid "$namespace_uid" --arg deployed "$deployed_sha" '
@@ -59,7 +78,11 @@ image="$(kubectl --request-timeout=10s -n "$namespace" get deployment postgres -
     | .spec.template.spec.containers | map(select(.name == "postgres"))
     | select(length == 1) | .[0].image | select(type == "string")')" ||
   fail "the retained PostgreSQL image is unavailable"
-[[ "$image" =~ ^postgres:[0-9][a-zA-Z0-9._-]*@sha256:[0-9a-f]{64}$ ]] ||
+image_ref="${image%@sha256:*}"
+image_basename="${image_ref##*/}"
+image_tag="${image_basename##*:}"
+[[ "$image" =~ @sha256:[0-9a-f]{64}$ &&
+  "$image_basename" == postgres:* && "$image_tag" =~ ^[0-9][a-zA-Z0-9._-]*$ ]] ||
   fail "the retained PostgreSQL image is not an approved digest-pinned client"
 
 probe_source="$(<"$helper_dir/probe-dev-account-v1040-4.sh")"
@@ -78,7 +101,7 @@ read_owned_job_uid() {
 }
 
 remove_probe_job() {
-  local delete_accepted=false observed observed_uid deadline
+  local delete_accepted=false observed observed_uid observed_deleting deadline
   if jq -n --arg uid "$job_uid" \
     '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid},propagationPolicy:"Foreground"}' |
     kubectl --request-timeout=10s delete --raw "/apis/batch/v1/namespaces/$namespace/jobs/$job_name" -f - >/dev/null; then
@@ -97,9 +120,14 @@ remove_probe_job() {
       if observed_uid="$(jq -er --arg name "$job_name" --arg namespace "$namespace" '
         select(.kind == "Job" and .metadata.name == $name and .metadata.namespace == $namespace)
         | .metadata.uid | select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"))
-      ' <<<"$observed")" && [[ "$observed_uid" != "$job_uid" ]]; then
-        job_uid=""
-        return 0
+      ' <<<"$observed")"; then
+        if [[ "$observed_uid" != "$job_uid" ]]; then
+          job_uid=""
+          return 0
+        fi
+        if observed_deleting="$(jq -er '.metadata.deletionTimestamp | select(type == "string" and length > 0)' <<<"$observed")"; then
+          delete_accepted=true
+        fi
       fi
     fi
     [[ "$delete_accepted" == true ]] && (( SECONDS < deadline )) || return 1

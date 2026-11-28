@@ -29,6 +29,7 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRep
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Evidence;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Owner;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
@@ -159,33 +160,30 @@ public final class AccountTenantCapacityOwner {
           if (!evidence.permitsCreation()) requireCurrentLifetime(evidence, now);
           var parsed = currentMembership(request);
           requireSupportedShape(request);
-          boolean expired = capacity.retainedEvaluationExpired(retainedExpiry);
-          if (!expired && now.isBefore(retainedExpiry)) {
-            currentDelegationAndScope(request, parsed, now);
-            now = clock.instant();
-            expired = capacity.retainedEvaluationExpired(retainedExpiry);
+          EvaluationLifetime lifetime = observeLifetime(evidence, retainedExpiry);
+          if (!lifetime.expired()) {
+            currentDelegationAndScope(request, parsed, lifetime.accountNow());
+            lifetime = observeLifetime(evidence, retainedExpiry);
           }
-          if (expired && !now.isBefore(retainedExpiry) && evidence.permitsCreation()) {
-            return new CommitDecision(
-                null, originDecisions.refuse(request, Failure.CAPACITY_EVALUATION_EXPIRED));
-          }
-          requireCurrentLifetime(evidence, now);
-          if (expired) throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+          if (lifetime.expired() && evidence.permitsCreation()) return refuseExpired(request);
+          requireFresh(lifetime);
           if (!evidence.permitsCreation())
             throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
+
+          Record usage = capacity.usage(request);
+          if (observeLifetime(evidence, retainedExpiry).expired()) return refuseExpired(request);
           var reservation =
-              capacity.createIfQuotaAvailable(request, request.evidence().expiresAt(), clock);
-          // The quota lock and write path can outlive the last qualification read. A late
-          // database observation rolls back any provisional acceptance, reservation and usage.
-          if (capacity.retainedEvaluationExpired(retainedExpiry))
-            throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+              capacity.createWithLockedUsageIfQuotaAvailable(
+                  request, usage, evidence.expiresAt(), clock);
+          // Expiry after a provisional write must roll back the transaction.
+          lifetime = observeLifetime(evidence, retainedExpiry);
           if (reservation.isPresent()) {
+            requireFresh(lifetime);
             return new CommitDecision(reservation.orElseThrow(), null);
           }
+          if (lifetime.expired()) return refuseExpired(request);
           Refusal denial = originDecisions.refuse(request, Failure.CAPACITY_QUOTA_EXCEEDED);
-          requireCurrentLifetime(evidence, clock.instant());
-          if (capacity.retainedEvaluationExpired(retainedExpiry))
-            throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+          requireFresh(observeLifetime(evidence, retainedExpiry));
           return new CommitDecision(null, denial);
         });
     // Throw only after the transaction has committed the exact denial.
@@ -193,6 +191,26 @@ public final class AccountTenantCapacityOwner {
       throw new CapacityException(decision.denial().code(), decision.denial().durableDenialId());
     return decision.reservation();
   }
+
+  private EvaluationLifetime observeLifetime(Evidence evidence, Instant retainedExpiry) {
+    boolean databaseExpired = capacity.retainedEvaluationExpired(retainedExpiry);
+    Instant accountNow = clock.instant();
+    boolean accountExpired = !accountNow.isBefore(retainedExpiry);
+    if (databaseExpired != accountExpired || accountNow.isBefore(evidence.evaluatedAt()))
+      throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+    return new EvaluationLifetime(accountNow, databaseExpired);
+  }
+
+  private static void requireFresh(EvaluationLifetime lifetime) {
+    if (lifetime.expired()) throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+  }
+
+  private CommitDecision refuseExpired(Request request) {
+    return new CommitDecision(
+        null, originDecisions.refuse(request, Failure.CAPACITY_EVALUATION_EXPIRED));
+  }
+
+  private record EvaluationLifetime(Instant accountNow, boolean expired) {}
 
   private record CommitDecision(Result reservation, Refusal denial) {}
 

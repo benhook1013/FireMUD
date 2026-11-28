@@ -669,11 +669,11 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single", t
     pull_requests: [],
   });
   const failedTyped = {...refreshSource(1, "completed", "failure"), id: 43, created_at: "2026-09-01T00:00:00Z"};
-  const smokeJob = (runId, runAttempt, smokeConclusion) => {
+  const smokeJob = (runId, runAttempt, smokeConclusion, typed = runId === 44) => {
     const jobConclusion = runId === 44 ? "success" : smokeConclusion;
     const jobId = runId === 44 ? 144 : runId * 100 + 1;
     return {id: jobId, run_id: runId, run_attempt: runAttempt,
-      head_sha: runId === 44 ? "d".repeat(40) : head,
+      head_sha: typed ? "d".repeat(40) : head,
       workflow_name: "Build Runtime Images", name: "PR Full-Stack Smoke (runtime-required=true)",
       status: "completed", conclusion: jobConclusion,
       created_at: "2026-09-01T00:00:01Z", started_at: "2026-09-01T00:00:02Z",
@@ -749,7 +749,7 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single", t
       listJobsForWorkflowRunAttempt: async input => {
         assert.equal(input.run_id, failedTyped.id);
         assert.equal(input.attempt_number, failedTyped.run_attempt);
-        const job = {...smokeJob(44, 1, "failure"), run_id: failedTyped.id, conclusion: "failure"};
+        const job = smokeJob(failedTyped.id, failedTyped.run_attempt, failedTyped.conclusion, true);
         if (selectionCase === "recoverable-ambiguous-failure") {
           job.steps.find(step => step.name.startsWith("Known canonical transition")).conclusion = null;
         }
@@ -1018,6 +1018,8 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
     head_branch: event === "pull_request" ? "feature" : "develop", display_title: title,
     status: "completed", conclusion: "success",
     pull_requests: event === "pull_request" ? [{number: 42, base: {ref: "develop", sha: base}, head: {sha: head}}] : []};
+  const cancelledOriginal = {...source, id: 41, event: "pull_request", head_sha: head,
+    head_branch: "feature", conclusion: "cancelled", pull_requests: [{number: 42, head: {sha: head}}]};
   const job = {id: 100, run_id: 42, run_attempt: 1, head_sha: source.head_sha,
     workflow_name: "Build Runtime Images", created_at: "2026-09-01T00:00:00Z",
     started_at: "2026-09-01T00:00:01Z", completed_at: "2026-09-01T00:30:01Z",
@@ -1081,7 +1083,10 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
           afterFinalGet && kind === "ordinary-final-get-retarget" ? "other" : "develop", sha: moved ? movedBase : base},
         merge_commit_sha: moved ? movedMerge : merge}};
     }},
-    git: {getRef: async () => ({data: {ref: "refs/heads/develop", object: {sha: observedBaseMove ? movedBase : base}}})},
+    git: {getRef: async () => {
+      observedBaseMove ||= kind === "ordinary-final-get-ref-drift" && qualifiedAttemptReads >= 2;
+      return {data: {ref: "refs/heads/develop", object: {sha: observedBaseMove ? movedBase : base}}};
+    }},
     repos: {
       getCommit: async ({ref}) => ({data: {sha: ref, parents: [
         {sha: kind === "bad-parents" ? defaultSha : ref === movedMerge ? movedBase : base}, {sha: head}]}}),
@@ -1096,6 +1101,9 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
     actions: {
       listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
       listJobsForWorkflowRunAttempt: async ({run_id, attempt_number}) => {
+        if (event === "repository_dispatch" && run_id === cancelledOriginal.id) {
+          return {data: {total_count: 0, jobs: []}};
+        }
         assert.equal(run_id, source.id); assert.equal(attempt_number, source.run_attempt);
         return {data: {total_count: 1, jobs: [job]}};
       },
@@ -1107,12 +1115,16 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
     },
   }, request: async (route, input) => {
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
-    assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
-    if (ordinary) assert.equal(listedAttempt, 1, "attempt proof cannot precede complete typed list identity");
+    assert.equal(input.attempt_number, 1);
     exactAttemptReads++;
     if (kind === "transient-exact-attempt" && exactAttemptReads <= 4) {
       throw Object.assign(new Error("temporary exact-attempt lookup"), {status: 502});
     }
+    if (event === "repository_dispatch" && input.run_id === cancelledOriginal.id) {
+      return {data: cancelledOriginal};
+    }
+    assert.equal(input.run_id, source.id);
+    if (ordinary) assert.equal(listedAttempt, 1, "attempt proof cannot precede complete typed list identity");
     // The first exact-attempt read classifies the cancelled original.
     if (kind === "sparse-exact-attempt-source" && exactAttemptReads === 2) {
       return {data: {...source, run_attempt: undefined}};
@@ -1124,6 +1136,7 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
   }, paginate: async (method, input) => {
     if (method === listJobs) { snapshots += 1; return kind === "duplicate-jobs" ? [job, {...job, id: 101}] : [job]; }
     assert.equal(method, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
+    if (event === "repository_dispatch" && input.run_id === cancelledOriginal.id) return [];
     assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
     if (ordinary) assert.equal(listedAttempt, 1, "attempt jobs cannot precede complete typed list identity");
     snapshots++;
@@ -1197,7 +1210,7 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
       }
     }
     if (event === "repository_dispatch" && input.event === "pull_request") {
-      yield {data: [{...source, event: "pull_request", head_sha: head, conclusion: "cancelled"}]}; return;
+      yield {data: [cancelledOriginal]}; return;
     }
     yield {data: [source]};
   };
@@ -1334,6 +1347,11 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
   assert.equal(finalGetBase.failures.length, 1);
   assert.match(finalGetBase.failures[0], /^Timed out waiting for the exact runtime-images/,
     "base movement during the final GET cannot accept the old typed proof");
+  const finalGetRef = await scenario("ordinary-final-get-ref-drift", "repository_dispatch");
+  assert(finalGetRef.observedBaseMove && finalGetRef.postAttemptIdentityReads > 0);
+  assert.equal(finalGetRef.failures.length, 1);
+  assert.match(finalGetRef.failures[0], /^Timed out waiting for the exact runtime-images/,
+    "base ref movement must refuse old proof even when GitHub PR comparison metadata lags");
   for (const change of ["closed", "head", "retarget"]) {
     const obsolete = await scenario(`ordinary-final-get-${change}`, "repository_dispatch");
     assert(obsolete.postAttemptIdentityReads > 0, `${change} during the final GET must reach the repeated PR fence`);
@@ -4672,6 +4690,12 @@ async function sameTupleCancellation(replacementStatus, proofSequence = [], spar
         if (options.originalAttemptAt !== undefined) old.run_attempt = now < options.originalAttemptAt ? 1 : 2;
         return old;
       }
+      if (now < (options.transientReplacementUntil ?? 0)) {
+        throw Object.assign(new Error("temporary replacement discovery failure"), {status: 503});
+      }
+      if (options.olderReplacementUntil !== undefined) {
+        replacement.id = now < options.olderReplacementUntil ? 97 : 99;
+      }
       if (now < (options.visibleAt ?? 0)) return null;
       if (options.hiddenAfter !== undefined && now >= options.hiddenAfter) return null;
       if (options.completeAt !== undefined) {
@@ -4947,6 +4971,20 @@ function markerAccepted(overrides = {}) {
   assert.equal(noReplacement.now, 50);
   assert.match(noReplacement.failures[0], /has no exact repository_dispatch replacement/);
   assert.equal(noReplacement.proofReads, 0, "a no-show still exhausts the discovery-only allowance");
+  const transientDiscovery = await sameTupleCancellation("completed", ["ordinary"], false,
+    {transientReplacementUntil: 20});
+  assert.deepEqual(transientDiscovery.failures, []);
+  assert.equal(transientDiscovery.now, 20);
+  assert.equal(transientDiscovery.proofReads, 1);
+  const persistentDiscovery = await sameTupleCancellation("completed", ["ordinary"], false,
+    {transientReplacementUntil: Infinity});
+  assert.match(persistentDiscovery.failures[0], /has no exact repository_dispatch replacement/);
+  assert.equal(persistentDiscovery.now, 50, "transient inventory failures cannot extend the original deadline");
+  const olderReplacement = await sameTupleCancellation("completed", ["ordinary"], false,
+    {olderReplacementUntil: 20});
+  assert.deepEqual(olderReplacement.failures, []);
+  assert.equal(olderReplacement.now, 20);
+  assert.equal(olderReplacement.proofReads, 1, "proof lookup waits for a producer newer than the cancellation");
   const newlyCancelledAttempt = await sameTupleCancellation("completed", ["ordinary"], false,
     {originalAttemptAt: 40, visibleAt: 80});
   assert.deepEqual(newlyCancelledAttempt.failures, []);
@@ -5854,7 +5892,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   assert.equal(await run("same-second", sameSecondHandoff), 1);
   assert.equal(sameSecondHandoff.observations, 1, "a unique new exact run is visible in the POST's own timestamp second");
   const ambiguousSameSecond = {visible: false, posts: 0};
-  await assert.rejects(run("ambiguous-same-second", ambiguousSameSecond), /dispatch outcome is ambiguous/);
+  await assert.rejects(run("ambiguous-same-second", ambiguousSameSecond), /Multiple new exact typed producers are visible/);
   assert.equal(ambiguousSameSecond.posts, 1, "ambiguous visibility must never repeat the POST");
   assert.equal(await run("cancel-before-enforcement"), 1);
   for (const kind of ["cancel-gate-only", "cancel-inventory-short", "cancel-inventory-disagrees"]) {

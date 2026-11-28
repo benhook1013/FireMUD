@@ -376,17 +376,15 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   void exactCapacityRefusalRemainsReadableAfterHeadroomReturnsAndEvaluationExpires()
       throws Exception {
     Fixture f = fixture(true, true);
-    var request = capacityRequest(f);
-    long quota = request.evidence().quota();
+    var firstHold = capacityRequest(f);
+    long quota = firstHold.evidence().quota();
     assertThat(quota).isBetween(1L, 10L);
-    TenantCapacityAdmission.Request firstHold = null;
-    for (long used = 0; used < quota; used++) {
+    assertThat(f.capacityOwner.commit(firstHold, PEER).state())
+        .isEqualTo(TenantCapacityAdmission.State.RESERVED);
+    for (long used = 1; used < quota; used++) {
       var occupying = capacityRequest(f);
       assertThat(f.capacityOwner.commit(occupying, PEER).state())
           .isEqualTo(TenantCapacityAdmission.State.RESERVED);
-      if (firstHold == null) {
-        firstHold = occupying;
-      }
     }
     String readUsage =
         "SELECT held_units, used_units, usage_revision FROM account_tenant_capacity_usage"
@@ -395,6 +393,8 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     assertThat(usageBeforeDenial)
         .containsEntry("held_units", quota)
         .containsEntry("used_units", 0L);
+    var request = capacityRequest(f);
+    assertThat(request.evidence().quota()).isEqualTo(quota);
     UUID requestId = request.identity().requestId();
     var decision = new java.util.concurrent.atomic.AtomicReference<UUID>();
     assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
@@ -423,9 +423,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
 
     // Recovery claims are checked against live PostgreSQL time, not the frozen evaluation clock.
     Clock recoveryClock = mock(Clock.class);
-    when(recoveryClock.instant())
-        .thenAnswer(invocation ->
-            f.dsl.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class).toInstant());
+    when(recoveryClock.instant()).thenAnswer(invocation -> databaseNow(f.dsl));
     // The external no-execution observation is controlled; all Account storage mutations are real.
     var recovery =
         new AccountTenantCapacityRecoveryWorker(
@@ -446,9 +444,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             recoveryClock);
     assertThat(
             recovery
-                .reconcile(
-                    java.util.Objects.requireNonNull(firstHold),
-                    AccountTenantCapacityRecoveryWorker.NoCommitAction.RELEASE)
+                .reconcile(firstHold, AccountTenantCapacityRecoveryWorker.NoCommitAction.RELEASE)
                 .state())
         .isEqualTo(TenantCapacityAdmission.State.RELEASED);
     var usageBeforeReplay = f.dsl.fetchSingle(readUsage, f.tenantId).intoMap();
@@ -591,15 +587,15 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   private static void awaitDatabaseExpiry(Fixture f, Instant expiry) {
     org.awaitility.Awaitility.await("PostgreSQL reaches the retained evaluation expiry")
         .atMost(java.time.Duration.ofSeconds(20))
-        .until(() ->
-            !f.dsl
-                .fetchSingle("SELECT clock_timestamp()")
-                .get(0, OffsetDateTime.class)
-                .toInstant()
-                .isBefore(expiry));
+        .until(() -> !databaseNow(f.dsl).isBefore(expiry));
+  }
+
+  private static Instant databaseNow(DSLContext dsl) {
+    return dsl.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class).toInstant();
   }
 
   private static TenantCapacityAdmission.Request capacityRequest(Fixture f) {
+    f.clock.setInstant(databaseNow(f.dsl));
     var entitlementRequest = f.request();
     var entitlement = f.owner.evaluate(entitlementRequest, CONTROLLED_COMPACT_TOKEN);
     var evidence =
@@ -826,9 +822,9 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
 
     private Fixture(DriverManagerDataSource dataSource, boolean join, boolean initializeCapacity) {
       this.dataSource = dataSource;
-      now = initializeCapacity ? Instant.now().truncatedTo(ChronoUnit.MICROS) : NOW;
-      clock = new MutableClock(now, ZoneOffset.UTC);
       dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+      now = initializeCapacity ? databaseNow(dsl) : NOW;
+      clock = new MutableClock(now, ZoneOffset.UTC);
       var transactions = new DataSourceTransactionManager(dataSource);
       transaction = new TransactionTemplate(transactions);
       accounts = new AccountRepository(dsl);
