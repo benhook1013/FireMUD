@@ -237,7 +237,7 @@ import json
 import re
 import sys
 
-wait_mode, image_tag, merge_sha, base_sha, head_sha, source_run_id, source_run_attempt = sys.argv[1:]
+wait_mode, image_tag, merge_sha, base_sha, head_sha, source_run_id, source_run_attempt, source_event = sys.argv[1:]
 if not all(re.fullmatch(r"[1-9][0-9]*", value) for value in (source_run_id, source_run_attempt)):
     raise SystemExit(1)
 try:
@@ -262,7 +262,9 @@ if wait_mode == "pull-request":
     matching_runs = [
         run for run in workflow_runs
         if (run.get("event") == "repository_dispatch" and
-            run.get("display_title") == f"Publish PR Runtime Images {source_suffix}")
+            (run.get("display_title") == f"Publish PR Runtime Images {source_suffix}"
+             or (source_event == "pull_request" and
+                 run.get("display_title") == f"Publish PR Runtime Images requalification {source_suffix}")))
         or (run.get("event") == "workflow_run" and
         (tokens := run.get("display_title", "").split())[:8] == [
             "Publish", "PR", "Runtime", "Images", "Build", "Runtime", "Images",
@@ -296,7 +298,7 @@ print(
         workflow_id, run["event"], title,
     )
 )
-' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$1" "$2"
+' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$1" "$2" "$3"
 }
 
 verify_publisher_attempt() {
@@ -389,6 +391,9 @@ publisher = read_object(publisher_path)
 verify_run(publisher, run_id, attempt, workflow_id, event, ".github/workflows/publish-pr-runtime-images.yml")
 if publisher.get("display_title") != title or publisher.get("name") not in ("Publish PR Runtime Images", title):
     unavailable("native publisher title differs from the selected run")
+requalification = title == f"Publish PR Runtime Images requalification source-run-{source_id} attempt-{source_attempt}"
+if requalification and (event != "repository_dispatch" or source_event != "pull_request"):
+    unavailable("publication requalification requires an original pull_request source run")
 job = successful_job(publisher, publisher_path, ("Publish Fixed PR Merge Image Tags",))
 download = successful_step(job, "Download successful PR image artifacts")
 validate = successful_step(job, "Validate exact PR source and artifact before registry login")
@@ -411,6 +416,9 @@ if receipts:
         unavailable("publication receipt does not bind the successful producer and publisher attempts")
     print(f"{match[1]}\t{match[2]}")
     raise SystemExit(0)
+
+if requalification:
+    unavailable("publication requalification requires a native receipt")
 
 # Earlier publishers can still use the native artifact inventory while it
 # identifies the original, successful upload. An expired artifact cannot
@@ -536,7 +544,7 @@ wait_for_pr_publisher() {
     fi
     coverage_unavailable=false
     publisher_payload="[${publisher_payload}]"
-    if ! publisher_state="$(read_publisher_state "${source_run_id}" "${source_run_attempt}" <<<"${publisher_payload}")"; then
+    if ! publisher_state="$(read_publisher_state "${source_run_id}" "${source_run_attempt}" "${source_event}" <<<"${publisher_payload}")"; then
       printf 'GitHub API response was empty or invalid while waiting for the trusted PR image publisher; retrying.\n' >&2
       sleep "${sleep_seconds}"
       continue
