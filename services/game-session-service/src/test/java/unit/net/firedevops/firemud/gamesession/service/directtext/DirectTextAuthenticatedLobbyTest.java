@@ -110,6 +110,28 @@ class DirectTextAuthenticatedLobbyTest {
   }
 
   @Test
+  void rejectsIssuedScopeForAnotherCanonicalAccountBeforeRetention() {
+    var f = new Fixture();
+    var login = InitialGameplayLoginContextState.installed(f.original, f.result);
+    var issuedForAnotherAccount =
+        DirectTextIssuedConnectScope.fromAccountResponse(
+            "22222222-2222-4222-8222-222222222222",
+            f.scope.issued().target(),
+            scopeResponse(),
+            CLOCK);
+
+    assertThatThrownBy(
+            () ->
+                new DirectTextAuthenticatedLobbyScope(
+                    f.scope.recordId(),
+                    login,
+                    f.transport,
+                    f.scope.publicTarget(),
+                    issuedForAnotherAccount))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void sameAccountCannotSubstituteRequestCallerOrFenceInRetainedScope() {
     var f = new Fixture();
     for (var other :
