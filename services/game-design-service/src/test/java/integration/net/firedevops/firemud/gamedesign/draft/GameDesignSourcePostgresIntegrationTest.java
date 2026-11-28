@@ -38,6 +38,11 @@ import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence;
+import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.CoordinatorProof;
+import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.DraftCommitStateConflictException;
+import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.OwnerOutcome;
+import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.OwnerStatus;
+import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.WorkflowState;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
@@ -225,6 +230,153 @@ class GameDesignSourcePostgresIntegrationTest {
         .hasMessage("REVIEWED_BASE_STORED_BINDING_CONFLICT");
     assertThat(reviewedClaimRows(local)).isEqualTo(retained);
     assertReviewedClaimInventory(local, original);
+  }
+
+  @Test
+  void committedUnknownOwnerRecoversOriginalCommandSourceAndKeepsCompetingDraftQueued() {
+    var local = fixture();
+    var target = local.target();
+    var prior = storageBinding(local, "prior synchronized command");
+    synchronize(local, prior, apply(local, prior));
+    var priorFence = local.coordinator().readVisibilityFence(target).orElseThrow();
+    var priorSource = local.sources().readSynchronized(target, prior.commitId()).orElseThrow();
+
+    var original = binding(target, prior.commitId().toString(), null, "1", "recovered", false);
+    var competitor = binding(target, prior.commitId().toString(), null, "1", "competing", false);
+    var owner = Owner.GAME_DESIGN_CONTROL_PLANE;
+    // The uncertain observation is controlled; recovery below runs the real command owner.
+    var uncertain =
+        new OwnerOutcome(
+            owner,
+            OwnerStatus.UNKNOWN,
+            original.commitId(),
+            original.digest(),
+            "uncertain-command-observation",
+            "owner response was uncertain".getBytes(StandardCharsets.UTF_8),
+            List.of());
+    start(local, original);
+    var originalSlot = local.coordinator().readApplicationSlot(target).orElseThrow();
+    local.tx(() -> local.coordinator().recordOwnerOutcome(original, uncertain));
+    local.tx(
+        () -> {
+          claimStorageBinding(local, competitor);
+          return null;
+        });
+
+    var recovered = new DraftCommitCoordinatorRepository(local.dsl());
+    var sources = new GameDesignSourceRepository(local.dsl());
+    var pending = recovered.read(target, original.requestId()).orElseThrow();
+    var binding = pending.binding();
+    assertThat(binding.canonicalBytes()).containsExactly(original.canonicalBytes());
+    assertThat(pending.workflowState()).isEqualTo(WorkflowState.RECONCILIATION_REQUIRED);
+    assertThat(pending.ownerStates()).containsOnlyKeys(owner);
+    var pendingOwner = pending.ownerStates().get(owner);
+    assertThat(pendingOwner.status()).isEqualTo(OwnerStatus.UNKNOWN);
+    var storedUncertain = pendingOwner.outcome().orElseThrow();
+    assertThat(storedUncertain).isEqualTo(uncertain);
+    assertThat(storedUncertain.resultBytes()).containsExactly(uncertain.resultBytes());
+    assertThat(recovered.readApplicationSlot(target)).contains(originalSlot);
+    assertThat(recovered.readVisibilityFence(target)).contains(priorFence);
+    assertThat(sources.readSynchronized(target, original.commitId())).isEmpty();
+
+    var queued = recovered.read(target, competitor.requestId()).orElseThrow();
+    assertThat(queued.workflowState()).isEqualTo(WorkflowState.QUEUED);
+    assertThat(queued.ownerStates().get(owner).status()).isEqualTo(OwnerStatus.NOT_ATTEMPTED);
+    var heldRows = draftRecoveryRows(local.dsl());
+    assertThat(local.tx(() -> recovered.claimApplicationSlot(binding))).isEqualTo(originalSlot);
+    assertThat(local.tx(() -> recovered.recordOwnerOutcome(binding, storedUncertain)))
+        .isEqualTo(pendingOwner);
+    assertThatThrownBy(() -> local.tx(() -> recovered.claimApplicationSlot(competitor)))
+        .isExactlyInstanceOf(DraftCommitStateConflictException.class)
+        .hasMessageContaining("Another exact Draft commit");
+    assertThatThrownBy(() -> local.tx(() -> sources.apply(changedClaimInput(binding))))
+        .isExactlyInstanceOf(IllegalArgumentException.class)
+        .hasMessage("REVIEWED_BASE_STORED_BINDING_CONFLICT");
+    assertThatThrownBy(
+            () ->
+                local
+                    .write()
+                    .executeWithoutResult(status -> recovered.releaseApplicationSlot(binding)))
+        .isExactlyInstanceOf(DraftCommitStateConflictException.class)
+        .hasMessageContaining("cannot release");
+    assertThatThrownBy(
+            () ->
+                local.tx(
+                    () ->
+                        recovered.advanceSourceVisibilityFence(
+                            binding, new CoordinatorProof(binding, List.of(storedUncertain)))))
+        .isExactlyInstanceOf(DraftCommitStateConflictException.class)
+        .hasMessageContaining("one exact APPLIED result");
+    assertThat(draftRecoveryRows(local.dsl())).isEqualTo(heldRows);
+
+    var applied = local.tx(() -> sources.apply(binding));
+    var appliedOutcome = applied.ownerOutcome();
+    var appliedOwner =
+        recovered.read(target, binding.requestId()).orElseThrow().ownerStates().get(owner);
+    assertThat(appliedOwner.status()).isEqualTo(OwnerStatus.APPLIED);
+    assertThat(appliedOwner.outcome()).contains(appliedOutcome);
+    assertThat(appliedOutcome.appliedEpochs())
+        .containsExactly(applied.command().orElseThrow().commandAppliedEpoch());
+    assertThat(recovered.readApplicationSlot(target)).contains(originalSlot);
+    assertThat(recovered.readVisibilityFence(target)).contains(priorFence);
+    assertThat(sources.readSynchronized(target, binding.commitId())).isEmpty();
+
+    var stagedRows = draftRecoveryRows(local.dsl());
+    var reopenedSources = new GameDesignSourceRepository(local.dsl());
+    var replay = local.tx(() -> reopenedSources.apply(binding));
+    assertThat(replay.ownerOutcome().resultBytes()).containsExactly(appliedOutcome.resultBytes());
+    assertThat(replay.command().orElseThrow().canonicalBytes())
+        .containsExactly(applied.command().orElseThrow().canonicalBytes());
+    assertThat(draftRecoveryRows(local.dsl())).isEqualTo(stagedRows);
+
+    local
+        .write()
+        .executeWithoutResult(
+            status -> {
+              recovered.advanceSourceVisibilityFence(
+                  binding,
+                  new CoordinatorProof(binding, List.of(appliedOwner.outcome().orElseThrow())));
+              recovered.releaseApplicationSlot(binding);
+            });
+    var fence = recovered.readVisibilityFence(target).orElseThrow();
+    assertThat(fence.commitId()).isEqualTo(binding.commitId());
+    assertThat(fence.requestId()).isEqualTo(binding.requestId());
+    assertThat(fence.inputDigest()).isEqualTo(binding.digest());
+    assertThat(recovered.read(target, binding.requestId()).orElseThrow().workflowState())
+        .isEqualTo(WorkflowState.SYNCHRONIZED);
+    var snapshot = reopenedSources.readSynchronized(target, binding.commitId()).orElseThrow();
+    assertThat(snapshot.command().sourceEpoch()).isEqualTo("2");
+    assertThat(snapshot.command().definitions())
+        .singleElement()
+        .satisfies(
+            definition -> assertThat(definition.sourceCommitId()).isEqualTo(binding.commitId()));
+    assertThat(reopenedSources.readSynchronized(target, prior.commitId())).contains(priorSource);
+    assertThat(recovered.readApplicationSlot(target)).isEmpty();
+    assertThat(recovered.read(target, competitor.requestId())).contains(queued);
+    assertThat(reopenedSources.readSynchronized(target, competitor.commitId())).isEmpty();
+  }
+
+  private static List<List<String>> draftRecoveryRows(DSLContext sql) {
+    return List.of(
+            "game_design_draft_commit",
+            "game_design_draft_commit_owner_result",
+            "game_design_reviewed_draft_base",
+            "game_design_draft_commit_application_slot",
+            "game_design_draft_commit_visibility",
+            "game_design_draft_commit_visibility_fence",
+            "game_design_command_source_application",
+            "game_design_command_source_operation",
+            "game_design_command_source_snapshot",
+            "game_design_command_source_head")
+        .stream()
+        .map(
+            table ->
+                sql.fetch(
+                        "SELECT t.xmin::text || '/' || to_jsonb(t)::text FROM "
+                            + table
+                            + " t ORDER BY 1")
+                    .getValues(0, String.class))
+        .toList();
   }
 
   @Test
