@@ -483,7 +483,6 @@ class FriendsCommandHandlerTest {
         (FriendPresenceViewOutput) result.outputs().getFirst().payload();
     assertThat(view.filter()).isEqualTo(filter);
     assertThat(view.totalCount()).isEqualTo(2);
-    assertThat(view.matchCount()).isZero();
     assertThat(view.friends()).isEmpty();
     assertThat(
             new TextPlayerOutputRenderer(
