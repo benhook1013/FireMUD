@@ -245,10 +245,6 @@ public final class GameplayWorldCatalog {
     return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
-  boolean hasRealmForAdmission(WorldView world, String selector) {
-    return resolveRealmForAdmission(world, selector).isPresent();
-  }
-
   public Optional<RealmView> resolveDefaultRealm(WorldView world) {
     // Avoid loading authoritative routing data when the supplied world cannot be selected.
     if (world == null) {

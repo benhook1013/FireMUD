@@ -297,12 +297,48 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void twoArgumentHiddenRealmMatchesUnknownCharacterShorthand() {
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .add(realm("invite-only", "Hidden Realm", 22L, 41L, false, false));
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(entityManagementClient.listCharactersByAccount(
+            "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+        .thenReturn(
+            characterRoster(
+                "7002",
+                "Realm Actor",
+                "22",
+                ACCOUNT_ID,
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+    var parser = new TextCommandParser();
+
+    var hidden = handler.handle("1", parser.parse("PLAY demo invite-only"));
+    var unknown = handler.handle("1", parser.parse("PLAY demo unlisted"));
+
+    assertThat(hidden.commandResult()).isEqualTo(unknown.commandResult());
+    assertThat(hidden.outputs()).isEqualTo(unknown.outputs());
+    Mockito.verify(accountClient, never())
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+    verifyNoGameplayBindingSideEffects();
+  }
+
+  @Test
   void twoArgumentNumericSelectorPrefersAnExactKnownRealmSlug() {
     gameplayCatalogProperties
         .getWorlds()
         .getFirst()
         .getRealms()
-        .add(realm("1", "Hidden Realm", 22L, 41L, false, false));
+        .add(realm("1", "Numbered Realm", 22L, 41L, true, false));
     SessionContext context =
         new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -1638,6 +1674,44 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playInvisibleRealmWithMissingMembershipMatchesUnknownSelection() {
+    markPreviewRealmInvisible();
+    SessionContext context =
+        new SessionContext(
+            1L, 22L, ACCOUNT_ID, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId(ACCOUNT_ID)
+                .setTenantId("22")
+                .setMembershipExists(false)
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState("MISSING")
+                .setMembershipAuthorityGeneration(0L)
+                .setEvaluatedAt(Instant.now().toString())
+                .build());
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("sandbox", "preview", "Emberline"),
+                "PLAY sandbox preview Emberline"));
+
+    assertHiddenRealmDenialMatchesUnknownSelection(result);
+    Mockito.verify(accountClient, Mockito.never())
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+  }
+
+  @Test
   void playInvisibleRealmWithGrantedAccessContinuesAdmission() {
     markPreviewRealmInvisible();
     SessionContext context = previewRealmContext();
@@ -1702,8 +1776,7 @@ class PlayCommandHandlerTest {
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
-    assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.REALM_ACCESS_DENIED_CODE);
+    assertHiddenRealmDenialMatchesUnknownSelection(result);
     Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "access_denied");
   }
 
@@ -1729,8 +1802,7 @@ class PlayCommandHandlerTest {
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
-    assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.REALM_ACCESS_DENIED_CODE);
+    assertHiddenRealmDenialMatchesUnknownSelection(result);
     Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "access_denied");
   }
 
@@ -2710,6 +2782,15 @@ class PlayCommandHandlerTest {
         .filter(text -> text != null && !text.isBlank())
         .reduce((left, right) -> left + "\n" + right)
         .orElse(null);
+  }
+
+  private void assertHiddenRealmDenialMatchesUnknownSelection(PlayCommandHandlingResult denied) {
+    var unknown =
+        handler.handle("1", new TextCommandParser().parse("PLAY sandbox unlisted Emberline"));
+    assertThat(unknown.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
+    assertThat(denied.commandResult()).isEqualTo(unknown.commandResult());
+    assertThat(denied.outputs()).isEqualTo(unknown.outputs());
   }
 
   private void markPreviewRealmInvisible() {

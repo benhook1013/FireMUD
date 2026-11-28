@@ -265,15 +265,7 @@ public class PlayCommandHandler {
                   selectedWorld, selection.explicitRealmSelector())
               : selectDefaultRealm(selectedWorld, catalogSnapshot);
       if (maybeRealm.isEmpty()) {
-        return failure(
-            GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
-            explicitRealmSelectionMessage(selectedWorld),
-            "error.play.realm-selection-required",
-            Map.of("worldSlug", selectedWorld.slug()),
-            tenantTag,
-            null,
-            null,
-            null);
+        return realmSelectionRequiredFailure(selectedWorld, tenantTag);
       }
 
       GameplayWorldCatalog.RealmView selectedRealm = maybeRealm.orElseThrow();
@@ -963,6 +955,9 @@ public class PlayCommandHandler {
         requestedCharacterId,
         tenantTag,
         "access_denied");
+    if (!selectedRealm.visible() && isMembershipOrGrantDenial(code)) {
+      return realmSelectionRequiredFailure(selectedWorld, tenantTag);
+    }
     return failure(
         code,
         message,
@@ -1203,9 +1198,9 @@ public class PlayCommandHandler {
         catalogSnapshot.resolveWorld(worldSelector);
     if (maybeWorld.isPresent()
         && StringUtils.hasText(secondSelector)
-        && !gameplayWorldCatalog.hasRealmForAdmission(maybeWorld.orElseThrow(), secondSelector)) {
-      // If no exact realm slug matches, the two-argument form treats the selector as a character
-      // name. Character resolution remains exact and never indexes a fresh roster.
+        && gameplayWorldCatalog.resolveRealm(maybeWorld.orElseThrow(), secondSelector).isEmpty()) {
+      // The two-argument form must interpret hidden realm slugs the same way as unknown slugs.
+      // An explicit realm and character still uses the membership and grant checks.
       return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), null, secondSelector));
     }
     return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), secondSelector, null));
@@ -1218,6 +1213,29 @@ public class PlayCommandHandler {
       return Optional.empty();
     }
     return catalogSnapshot.resolveDefaultRealm(selectedWorld);
+  }
+
+  private static boolean isMembershipOrGrantDenial(String code) {
+    return switch (code) {
+      case GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
+          GameplayStageCommandConstants.NON_PUBLIC_ENROLLMENT_REQUIRED_CODE,
+          GameplayStageCommandConstants.REALM_ACCESS_DENIED_CODE ->
+          true;
+      default -> false;
+    };
+  }
+
+  private PlayCommandHandlingResult realmSelectionRequiredFailure(
+      GameplayWorldCatalog.WorldView selectedWorld, String tenantTag) {
+    return failure(
+        GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
+        explicitRealmSelectionMessage(selectedWorld),
+        "error.play.realm-selection-required",
+        Map.of("worldSlug", selectedWorld.slug()),
+        tenantTag,
+        null,
+        null,
+        null);
   }
 
   private String explicitRealmSelectionMessage(GameplayWorldCatalog.WorldView selectedWorld) {
