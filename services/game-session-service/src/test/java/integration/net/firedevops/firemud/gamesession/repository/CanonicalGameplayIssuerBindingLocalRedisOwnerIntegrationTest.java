@@ -827,10 +827,21 @@ class CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest {
         .isInstanceOf(IllegalStateException.class);
     administratorCommands.hset(key, secondCapacityFieldBytes, second.exactMemberValueBytes());
 
+    var partitionBeforeTtl = hashImage(key);
+    String registrationsBeforeTtl = localRegistrationImage(dsl);
     assertThat(administratorCommands.pexpire(key, 60_000L)).isTrue();
+    long ttlBefore = administratorCommands.pttl(key);
+    assertThat(ttlBefore).isPositive();
     assertThatThrownBy(() -> projectionOwner.projectAndRead(second))
         .isInstanceOf(IllegalStateException.class);
+    assertThat(administratorCommands.pttl(key)).isBetween(1L, ttlBefore);
+    assertThat(hashImage(key)).isEqualTo(partitionBeforeTtl);
+    assertThat(localRegistrationImage(dsl)).isEqualTo(registrationsBeforeTtl);
     assertThat(administratorCommands.persist(key)).isTrue();
+    assertThat(administratorCommands.pttl(key)).isEqualTo(-1L);
+    projectionOwner.projectAndRead(second);
+    assertThat(hashImage(key)).isEqualTo(partitionBeforeTtl);
+    assertThat(localRegistrationImage(dsl)).isEqualTo(registrationsBeforeTtl);
     assertThat(administratorCommands.hlen(key)).isEqualTo(5L);
 
     var fencedCandidate = identityForAccount("account-fenced", firstCandidate.accountId());
