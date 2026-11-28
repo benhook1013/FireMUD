@@ -132,10 +132,7 @@ def _validate_expected(
     merge_sha: object,
     image_tag: object,
 ) -> dict[str, object]:
-    if (
-        not isinstance(pr_number, str)
-        or re.fullmatch(r"[1-9][0-9]{0,50}", pr_number) is None
-    ):
+    if not isinstance(pr_number, str) or re.fullmatch(r"[1-9][0-9]{0,50}", pr_number) is None:
         fail("trusted PR number must be a canonical positive decimal integer")
     if not isinstance(image_tag, str) or IMAGE_TAG_RE.fullmatch(image_tag) is None:
         fail("trusted image tag is malformed")
@@ -170,12 +167,8 @@ def _validate_namespace(namespace: object, expected: dict[str, object]) -> dict[
     exposure = labels.get(EXPOSURE_LABEL)
     if exposure != "public":
         fail("playable proof requires the public preview exposure mode")
-    requested_head = _sha(
-        annotations.get(REQUESTED_HEAD_ANNOTATION), "Namespace requested head SHA"
-    )
-    deployed_head = _sha(
-        annotations.get(DEPLOYED_HEAD_ANNOTATION), "Namespace deployed head SHA"
-    )
+    requested_head = _sha(annotations.get(REQUESTED_HEAD_ANNOTATION), "Namespace requested head SHA")
+    deployed_head = _sha(annotations.get(DEPLOYED_HEAD_ANNOTATION), "Namespace deployed head SHA")
     if requested_head != expected["headSha"]:
         fail("Namespace requested head SHA is stale")
     if deployed_head != expected["headSha"]:
@@ -186,9 +179,7 @@ def _validate_namespace(namespace: object, expected: dict[str, object]) -> dict[
         (REQUESTED_MERGE_ANNOTATION, "mergeSha"),
         (DEPLOYED_MERGE_ANNOTATION, "mergeSha"),
     ):
-        if _sha(annotations.get(annotation), f"Namespace {annotation}") != expected[
-            expected_field
-        ]:
+        if _sha(annotations.get(annotation), f"Namespace {annotation}") != expected[expected_field]:
             fail(f"Namespace {annotation} is stale")
     if annotations.get(REQUESTED_IMAGE_ANNOTATION) != expected["imageTag"]:
         fail("Namespace requested image tag does not match the trusted image tag")
@@ -221,38 +212,28 @@ def _validate_identity(
         fail("identity name does not match the trusted PR")
     generation = _positive_integer(metadata.get("generation"), "identity generation")
     status = _mapping(identity_obj.get("status"), "identity status")
-    observed_generation = _positive_integer(
-        status.get("observedGeneration"), "identity observed generation"
-    )
+    observed_generation = _positive_integer(status.get("observedGeneration"), "identity observed generation")
     if status.get("phase") != "Ready" or observed_generation != generation:
         fail("HostedEnvironmentIdentity is not Ready for its current generation")
     conditions = status.get("conditions")
     if not isinstance(conditions, list):
         fail("identity Ready condition is missing")
     ready_conditions = [
-        condition
-        for condition in conditions
-        if isinstance(condition, dict) and condition.get("type") == "Ready"
+        condition for condition in conditions if isinstance(condition, dict) and condition.get("type") == "Ready"
     ]
     if len(ready_conditions) != 1:
         fail("identity Ready condition is missing or ambiguous")
     ready = ready_conditions[0]
-    ready_generation = _positive_integer(
-        ready.get("observedGeneration"), "identity Ready observed generation"
-    )
+    ready_generation = _positive_integer(ready.get("observedGeneration"), "identity Ready observed generation")
     if ready.get("status") != "True" or ready_generation != generation:
         fail("identity Ready condition is stale or false")
 
     profile = _mapping(status.get("profile"), "identity profile")
     if profile.get("runtimeNamespaceUid") != namespace_record["uid"]:
         fail("identity runtime Namespace UID does not match")
-    if _sha(profile.get("requestedHeadSha"), "identity requested head SHA") != expected[
-        "headSha"
-    ]:
+    if _sha(profile.get("requestedHeadSha"), "identity requested head SHA") != expected["headSha"]:
         fail("identity requested head SHA is stale")
-    if _sha(profile.get("deployedHeadSha"), "identity deployed head SHA") != expected[
-        "headSha"
-    ]:
+    if _sha(profile.get("deployedHeadSha"), "identity deployed head SHA") != expected["headSha"]:
         fail("identity deployed head SHA is stale")
     if profile.get("exposureMode") != namespace_record["exposureMode"]:
         fail("identity exposure mode does not match the Namespace")
@@ -333,10 +314,7 @@ def _validate_pods(
             if container_name in SERVICE_IMAGES:
                 matching.append((container_name, container))
                 continue
-            if (
-                isinstance(declared_image, str)
-                and declared_image.startswith(APP_IMAGE_PREFIX)
-            ):
+            if isinstance(declared_image, str) and declared_image.startswith(APP_IMAGE_PREFIX):
                 service_name = declared_image[len(APP_IMAGE_PREFIX) :].split(":", 1)[0]
                 if service_name not in SERVICE_IMAGES:
                     fail("pod contains an unidentifiable application image")
@@ -362,9 +340,7 @@ def _validate_pods(
         if not isinstance(conditions, list):
             fail(f"application pod {service} Ready condition is missing")
         ready_conditions = [
-            condition
-            for condition in conditions
-            if isinstance(condition, dict) and condition.get("type") == "Ready"
+            condition for condition in conditions if isinstance(condition, dict) and condition.get("type") == "Ready"
         ]
         if len(ready_conditions) != 1 or ready_conditions[0].get("status") != "True":
             fail(f"application pod {service} is not Ready")
@@ -372,9 +348,7 @@ def _validate_pods(
         if not isinstance(container_statuses, list):
             fail(f"application pod {service} container status is missing")
         matching_statuses = [
-            item
-            for item in container_statuses
-            if isinstance(item, dict) and item.get("name") == service
+            item for item in container_statuses if isinstance(item, dict) and item.get("name") == service
         ]
         if len(matching_statuses) != 1 or matching_statuses[0].get("ready") is not True:
             fail(f"application container {service} is not Ready")
@@ -413,9 +387,7 @@ def build_record(
 
     expected = _validate_expected(pr_number, base_sha, head_sha, merge_sha, image_tag)
     if telnet_passed is not True or wss_passed is not True:
-        fail(
-            "public Telnet and first-party WSS diagnostic outcomes must be explicitly passed"
-        )
+        fail("public Telnet and first-party WSS diagnostic outcomes must be explicitly passed")
     namespace_record = _validate_namespace(namespace, expected)
     identity_record = _validate_identity(identity, expected, namespace_record)
     images = _validate_pods(pods, expected, namespace_record)
@@ -481,4 +453,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

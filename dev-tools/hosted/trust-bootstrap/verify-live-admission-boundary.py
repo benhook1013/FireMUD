@@ -195,8 +195,7 @@ def read_live_spec(context: str, kind: str, name: str) -> dict[str, Any]:
     if len(result.stdout.encode("utf-8")) > MAX_RESPONSE_BYTES:
         raise ProofError("response-too-large", kind=kind, name=name)
     try:
-        live = json.loads(result.stdout, object_pairs_hook=unique_json_object,
-                          parse_constant=reject_constant)
+        live = json.loads(result.stdout, object_pairs_hook=unique_json_object, parse_constant=reject_constant)
     except (ValueError, TypeError, RecursionError) as error:
         raise ProofError("invalid-json", kind=kind, name=name) from error
     if (
@@ -266,4 +265,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
