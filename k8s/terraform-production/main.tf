@@ -63,11 +63,11 @@ resource "helm_release" "velero" {
   namespace  = var.namespace
   set {
     name  = "image.tag"
-    value = "v1.18.4"
+    value = "v1.19.0"
   }
   set {
     name  = "image.digest"
-    value = "sha256:c89fb5b6d1fd6afd368e0f483e6f5555fd62851a1eada8ac5c72482e674ca17b"
+    value = "sha256:da94e0de154f837db0ada37ea0c168428943dab2c872efc10481189925de395f"
   }
   set {
     name  = "configuration.backupStorageLocation[0].name"
