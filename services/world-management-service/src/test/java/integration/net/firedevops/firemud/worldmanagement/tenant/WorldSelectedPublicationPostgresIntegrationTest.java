@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -12,6 +13,8 @@ import com.google.protobuf.util.JsonFormat;
 import io.grpc.Context;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
@@ -20,6 +23,8 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -38,9 +43,11 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
+import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome;
@@ -59,6 +66,8 @@ import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionRe
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadEvidence;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.publication.WorldPublicationTerminalCompletionClient;
+import net.firedevops.firemud.common.publication.WorldPublicationTerminalCompletionGrpcCodec;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadClient;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
@@ -113,12 +122,12 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Current-default PostgreSQL component proof. The source, Version, synchronized selection, Account
  * source vector, COMMIT_ORDER verifier, and Game Design terminal read are controlled fixtures: this
- * proves owner-local World storage and required-mTLS owner readback, not a genuine Account actor,
- * source hold, producer provenance, public publication, selector activation, or runtime admission.
- * The paired Game Design Version/DRAFT revision and affected unit are controlled original-order
- * binding inputs only; this test does not claim a physical Game Design mutation. The graph declares
- * explicit counts for all six families (including zero generation rules) and all seven empty
- * inbound families. A separate opaque nonempty generation-rule fixture proves that selected
+ * proves owner-local World storage and required-mTLS terminal completion and readback. Launch
+ * evidence and preparation authority in the abort case are also controlled inputs. The paired Game
+ * Design Version/DRAFT revision and affected unit are controlled original-order binding inputs
+ * only; this test does not claim a physical Game Design mutation. The graph declares explicit
+ * counts for all six families (including zero generation rules) and all seven empty inbound
+ * families. A separate opaque nonempty generation-rule fixture proves that selected
  * freeze/inventory failure leaves the APPLIED graph and World owner unchanged.
  */
 @Testcontainers(disabledWithoutDocker = true)
@@ -532,15 +541,52 @@ class WorldSelectedPublicationPostgresIntegrationTest {
       assertThat(terminalReadRequests.getAllValues().get(0).readRequestId())
           .isNotEqualTo(terminalReadRequests.getAllValues().get(1).readRequestId());
 
+      var abortedSource = selectedFrozenPublication(dsl, transactionManager, false);
+      var abortOperation = abortedSource.operation();
+      var noPublication =
+          new GameDesignPublicationTerminalEvidence(
+              abortOperation.canonicalBytes(), Outcome.NO_PUBLICATION, null, null);
+      var abortedFence = noPublication.worldEvidence().request().publicationFence();
+      var abortReadClient = mock(GameDesignPublicationTerminalClient.class);
+      var abortStatus =
+          new AtomicReference<>(GameDesignPublicationTerminalReadEvidence.Status.UNKNOWN);
+      when(abortReadClient.read(any()))
+          .thenAnswer(
+              invocation ->
+                  new GameDesignPublicationTerminalReadEvidence.ReadResult(
+                      invocation.getArgument(0),
+                      abortStatus.get(),
+                      abortStatus.get() == GameDesignPublicationTerminalReadEvidence.Status.UNKNOWN
+                          ? Optional.empty()
+                          : Optional.of(noPublication)));
+      var completionService =
+          new WorldPublicationTerminalCompletionGrpcService(
+              WorldPublicationTerminalService.authenticated(
+                  terminalRepository, abortReadClient, NAMESPACE),
+              NAMESPACE);
       var pki = TerminalReadTestPki.create(temporaryDirectory.resolve("terminal-read-pki"));
       var readService = new WorldPublicationTerminalReadService(terminalRepository, NAMESPACE);
-      Server readServer =
-          startWorldTerminalReadTransport(
-              new WorldPublicationTerminalReadGrpcService(readService, NAMESPACE), pki);
-      try (WorldPublicationTerminalReadClient client =
-          worldTerminalReadClient(
-              readServer, pki.accountClient().clientProperties(pki.caCertificate()))) {
+      Server terminalServer =
+          startWorldTerminalTransport(
+              new WorldPublicationTerminalReadGrpcService(readService, NAMESPACE),
+              completionService,
+              pki);
+      var endpoints = new ServiceEndpointsProperties();
+      endpoints.setWorldManagementService("127.0.0.1:" + terminalServer.getPort());
+      try (var client =
+              new WorldPublicationTerminalReadClient(
+                  endpoints,
+                  pki.accountClient().clientProperties(pki.caCertificate()),
+                  new GrpcChannelFactory(),
+                  NAMESPACE);
+          var completionClient =
+              new WorldPublicationTerminalCompletionClient(
+                  endpoints,
+                  pki.gameDesignClient().clientProperties(pki.caCertificate()),
+                  new GrpcChannelFactory(),
+                  NAMESPACE)) {
         client.init();
+        completionClient.init();
         var ownerRequest =
             WorldPublicationTerminalReadEvidence.Request.create(
                 NAMESPACE, publicationOperation.canonicalBytes(), terminal.canonicalBytes());
@@ -551,9 +597,49 @@ class WorldSelectedPublicationPostgresIntegrationTest {
             .isEqualTo(WorldPublicationTerminalReadEvidence.WorldOutcome.PUBLISHED);
         assertThat(ownerRead.worldTerminalEvidence()).containsExactly(terminal.canonicalBytes());
         assertThat(exactRetry.worldTerminalEvidence()).containsExactly(terminal.canonicalBytes());
+
+        var abortRequest =
+            WorldPublicationTerminalCompletionGrpcCodec.Request.create(
+                NAMESPACE, abortOperation.canonicalBytes(), noPublication.canonicalBytes());
+        var abortReadRequest =
+            WorldPublicationTerminalReadEvidence.Request.create(
+                NAMESPACE, abortOperation.canonicalBytes(), noPublication.canonicalBytes());
+        Map<String, List<String>> beforeUnknownAbort = snapshotMutationRows(dsl);
+        assertThatThrownBy(() -> completionClient.complete(abortRequest))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode())
+                        .isEqualTo(Status.Code.FAILED_PRECONDITION));
+        assertThat(snapshotMutationRows(dsl)).isEqualTo(beforeUnknownAbort);
+        assertThat(publicationOwnerPhase(dsl, abortedFence)).isEqualTo("FROZEN");
+        assertThat(publicationTerminalCount(dsl, abortedFence)).isZero();
+
+        abortStatus.set(GameDesignPublicationTerminalReadEvidence.Status.NO_PUBLICATION);
+        assertThat(completionClient.complete(abortRequest).canonicalBytes())
+            .containsExactly(noPublication.canonicalBytes());
+        assertThat(publicationOwnerPhase(dsl, abortedFence)).isEqualTo("ABORTED");
+        assertThat(publicationTerminalCount(dsl, abortedFence)).isEqualTo(1L);
+        assertThat(publicationTerminalBytes(dsl, abortedFence))
+            .containsExactly(noPublication.canonicalBytes());
+        Map<String, List<String>> afterAbort = snapshotMutationRows(dsl);
+        var retryRequest =
+            WorldPublicationTerminalCompletionGrpcCodec.Request.create(
+                NAMESPACE, abortOperation.canonicalBytes(), noPublication.canonicalBytes());
+        assertThat(retryRequest.requestId()).isNotEqualTo(abortRequest.requestId());
+        assertThat(completionClient.complete(retryRequest).canonicalBytes())
+            .containsExactly(noPublication.canonicalBytes());
+        var abortRead = client.read(abortReadRequest);
+        assertThat(abortRead.request()).isEqualTo(abortReadRequest);
+        assertThat(abortRead.worldOutcome())
+            .isEqualTo(WorldPublicationTerminalReadEvidence.WorldOutcome.ABORTED);
+        assertThat(abortRead.worldTerminalEvidence())
+            .containsExactly(noPublication.canonicalBytes());
+        assertThat(snapshotMutationRows(dsl)).isEqualTo(afterAbort);
+        assertAbortedPublicationCannotPrepare(dsl, transactionManager, write, abortedSource);
       } finally {
-        readServer.shutdownNow();
-        assertThat(readServer.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+        terminalServer.shutdownNow();
+        assertThat(terminalServer.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
 
       OwnerFixture unsupportedRuleOwner =
@@ -625,6 +711,30 @@ class WorldSelectedPublicationPostgresIntegrationTest {
   static PrivateFreshPublished privateFreshPublished(
       DSLContext dsl, DataSourceTransactionManager transactions, boolean includeSpawnBinding)
       throws Exception {
+    var selected = selectedFrozenPublication(dsl, transactions, includeSpawnBinding);
+    var operation = selected.operation();
+    var terminal = publishedTerminal(operation, operation.world());
+    var client = mock(GameDesignPublicationTerminalClient.class);
+    when(client.read(any()))
+        .thenAnswer(
+            invocation ->
+                new GameDesignPublicationTerminalReadEvidence.ReadResult(
+                    invocation.getArgument(0),
+                    GameDesignPublicationTerminalReadEvidence.Status.PUBLISHED,
+                    Optional.of(terminal)));
+    var terminalService =
+        WorldPublicationTerminalService.authenticated(
+            new WorldPublicationTerminalRepository(dsl, transactions), client, NAMESPACE);
+    selected
+        .authenticatedGameDesign()
+        .call(
+            () -> terminalService.complete(operation.canonicalBytes(), terminal.canonicalBytes()));
+    return new PrivateFreshPublished(selected.owner().intake(), selected.frozen(), terminal);
+  }
+
+  private static SelectedFrozenPublication selectedFrozenPublication(
+      DSLContext dsl, DataSourceTransactionManager transactions, boolean includeSpawnBinding)
+      throws Exception {
     var write = new TransactionTemplate(transactions);
     write.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -664,27 +774,187 @@ class WorldSelectedPublicationPostgresIntegrationTest {
             .orElseThrow();
     var world = publishedStartLocationEvidence(source);
     var operation = new GameDesignPublicationOperationBinding(publication, world, inventory);
-    var terminal = publishedTerminal(operation, world);
-    var client = mock(GameDesignPublicationTerminalClient.class);
-    when(client.read(any()))
-        .thenAnswer(
-            invocation ->
-                new GameDesignPublicationTerminalReadEvidence.ReadResult(
-                    invocation.getArgument(0),
-                    GameDesignPublicationTerminalReadEvidence.Status.PUBLISHED,
-                    Optional.of(terminal)));
-    var terminalService =
-        WorldPublicationTerminalService.authenticated(
-            new WorldPublicationTerminalRepository(dsl, transactions), client, NAMESPACE);
-    authenticated.call(
-        () -> terminalService.complete(operation.canonicalBytes(), terminal.canonicalBytes()));
-    return new PrivateFreshPublished(owner.intake(), source.frozenTopology(), terminal);
+    return new SelectedFrozenPublication(owner, source.frozenTopology(), operation, authenticated);
   }
+
+  private record SelectedFrozenPublication(
+      OwnerFixture owner,
+      WorldCanonicalFrozenTopology frozen,
+      GameDesignPublicationOperationBinding operation,
+      Context authenticatedGameDesign) {}
 
   record PrivateFreshPublished(
       WorldAuthoredSourceIntakeReceipt intake,
       WorldCanonicalFrozenTopology frozen,
       GameDesignPublicationTerminalEvidence terminal) {}
+
+  private static void assertAbortedPublicationCannotPrepare(
+      DSLContext dsl,
+      DataSourceTransactionManager transactionManager,
+      TransactionTemplate write,
+      SelectedFrozenPublication selected) {
+    var owner = selected.owner();
+    var source = owner.source();
+    var world = selected.operation().world();
+    var hypotheticalPublication = publishedTerminal(selected.operation(), world);
+    var content = hypotheticalPublication.releaseContent();
+    long publishedEpoch = hypotheticalPublication.publicationVersionStateEpoch();
+    String control = "aborted-prepare-" + UUID.randomUUID();
+    var descriptor =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            new AuthoredWorldLaunchDescriptorEvidence.Request(
+                NAMESPACE,
+                control,
+                source.canonicalTenantId(),
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest(),
+                71L,
+                false,
+                null,
+                false,
+                null,
+                false,
+                null,
+                false,
+                null),
+            "aborted-publication-descriptor",
+            owner.version().gameDesignVersionId(),
+            false,
+            null,
+            "{}",
+            content.generationConfigRevision(),
+            publishedEpoch,
+            97L,
+            content.publishedReleaseBundleRef(),
+            false,
+            null);
+    var participants =
+        content.participantDigests().stream()
+            .map(
+                participant ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        false,
+                        null,
+                        participant.appliedCommitId(),
+                        participant.contentDigest(),
+                        participant.digestSchemaVersion(),
+                        participant.abilitySchemaDigest() != null,
+                        participant.abilitySchemaDigest()))
+            .toList();
+    var release =
+        AuthoredWorldReleaseAttestationEvidence.createClosureSelector(
+            NAMESPACE,
+            descriptor.resultDigest(),
+            source.canonicalTenantId(),
+            owner.version().canonicalVersionId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest(),
+            descriptor.launchDescriptorId(),
+            content.publishedReleaseBundleRef(),
+            publishedEpoch,
+            content.publishWorkflowId(),
+            world.request().appliedCommitId(),
+            participants,
+            content.manifestHash(),
+            content.manifestSchemaVersion(),
+            content.requiredManifestAssetKeys(),
+            content.artifactDigests(),
+            content.commandDefinitions(),
+            content.generationConfigRevision(),
+            world);
+    var launchBindings = new WorldCompleteLaunchBindingRepository(dsl);
+    var launch =
+        Objects.requireNonNull(
+            write.execute(
+                ignored ->
+                    launchBindings.acceptFresh(
+                        NAMESPACE,
+                        owner.intake(),
+                        new CompleteLaunchBindingEvidence(descriptor, release))));
+    UUID readId = UUID.randomUUID();
+    UUID instanceId = UUID.randomUUID();
+    var readRequest =
+        new WorldCanonicalInstanceAssociation.GameSessionReadRequest(
+            readId,
+            NAMESPACE,
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            instanceId,
+            control,
+            descriptor.launchDescriptorId(),
+            descriptor.requestDigest(),
+            descriptor.resultDigest(),
+            release.evidenceDigest());
+    var readEvidence =
+        new WorldCanonicalInstanceAssociation.GameSessionReadEvidence(
+            readId,
+            NAMESPACE,
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            instanceId,
+            control,
+            descriptor.launchDescriptorId(),
+            descriptor.requestDigest(),
+            descriptor.resultDigest(),
+            release.evidenceDigest(),
+            UUID.randomUUID(),
+            "SHARED",
+            true,
+            UUID.randomUUID(),
+            1L,
+            "PREPARING",
+            1L,
+            descriptor,
+            release);
+    var input =
+        new WorldCanonicalInstancePreparation.Input(
+            readRequest,
+            readEvidence,
+            UUID.randomUUID(),
+            1L,
+            launch,
+            owner.version(),
+            WorldCanonicalInstanceTopologyPlan.create(selected.frozen()));
+    var associations =
+        new WorldCanonicalInstanceAssociationRepository(
+            dsl,
+            launchBindings,
+            new WorldAuthoredSourceIntakeRepository(dsl),
+            new WorldAuthoredVersionIdentityRepository(dsl));
+    var frozenTopology = mock(WorldCanonicalFrozenTopologyRepository.class);
+    var preparation =
+        new WorldCanonicalInstancePreparationRepository(
+            dsl, transactionManager, associations, frozenTopology, Duration.ofSeconds(5));
+    // Supply a current operation lookup identity to isolate the actual World publication check.
+    var executionIdentity = mock(WorldCanonicalInstanceExecutionIdentity.class);
+    when(executionIdentity.hasOriginalAttemptEvidence()).thenReturn(true);
+    when(executionIdentity.targetNamespace()).thenReturn(NAMESPACE);
+    when(executionIdentity.canonicalTenantId()).thenReturn(source.canonicalTenantId());
+    when(executionIdentity.controlPlaneRequestId()).thenReturn(control);
+    when(executionIdentity.originalAuthorizationExpiry())
+        .thenReturn(Instant.now().plus(Duration.ofMinutes(5)));
+    var authority = mock(WorldCanonicalInstancePreparationService.HeldCommitAuthority.class);
+    when(authority.executionIdentity()).thenReturn(executionIdentity);
+
+    assertThatThrownBy(() -> preparation.materialize(input, authority))
+        .isInstanceOf(
+            WorldCanonicalInstancePreparationRepository.InvalidPreparationEvidenceException.class)
+        .hasMessage("Fresh canonical preparation requires an exact PUBLISHED World owner terminal");
+    verifyNoInteractions(frozenTopology);
+    verify(authority, never()).requireHeld();
+    for (String table :
+        List.of(
+            "world_canonical_instance_execution",
+            "world_canonical_instance_preparation",
+            "world_canonical_instance_association",
+            "world_instance")) {
+      assertThat(dsl.fetchCount(DSL.table(DSL.name(table)))).as(table).isZero();
+    }
+  }
 
   private static FreezeFixture freezeFixture(
       DSLContext dsl,
@@ -1437,8 +1707,11 @@ class WorldSelectedPublicationPostgresIntegrationTest {
         .get("terminal_evidence_bytes", byte[].class);
   }
 
-  private static Server startWorldTerminalReadTransport(
-      WorldPublicationTerminalReadGrpcService adapter, TerminalReadTestPki pki) throws Exception {
+  private static Server startWorldTerminalTransport(
+      WorldPublicationTerminalReadGrpcService readAdapter,
+      WorldPublicationTerminalCompletionGrpcService completionAdapter,
+      TerminalReadTestPki pki)
+      throws Exception {
     return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
         .sslContext(
             GrpcSslContexts.configure(
@@ -1448,20 +1721,12 @@ class WorldSelectedPublicationPostgresIntegrationTest {
                 .trustManager(pki.caCertificate().toFile())
                 .clientAuth(ClientAuth.REQUIRE)
                 .build())
-        .addService(ServerInterceptors.intercept(adapter, new GrpcPeerIdentityInterceptor()))
+        .maxInboundMessageSize(WorldPublicationTerminalCompletionGrpcCodec.MAX_MESSAGE_BYTES)
+        .addService(ServerInterceptors.intercept(readAdapter, new GrpcPeerIdentityInterceptor()))
+        .addService(
+            ServerInterceptors.intercept(completionAdapter, new GrpcPeerIdentityInterceptor()))
         .build()
         .start();
-  }
-
-  private static WorldPublicationTerminalReadClient worldTerminalReadClient(
-      Server server, CommonGrpcClientProperties tlsProperties) throws Exception {
-    var endpoints = new ServiceEndpointsProperties();
-    endpoints.setWorldManagementService("127.0.0.1:" + server.getPort());
-    var client =
-        new WorldPublicationTerminalReadClient(
-            endpoints, tlsProperties, new GrpcChannelFactory(), NAMESPACE);
-    client.init();
-    return client;
   }
 
   private static Map<String, List<String>> snapshotMutationRows(DSLContext dsl) {
@@ -1510,7 +1775,10 @@ class WorldSelectedPublicationPostgresIntegrationTest {
   }
 
   private record TerminalReadTestPki(
-      Path caCertificate, TerminalReadIdentity worldServer, TerminalReadIdentity accountClient) {
+      Path caCertificate,
+      TerminalReadIdentity worldServer,
+      TerminalReadIdentity accountClient,
+      TerminalReadIdentity gameDesignClient) {
     private static TerminalReadTestPki create(Path directory) throws Exception {
       Files.createDirectories(directory);
       var generator = java.security.KeyPairGenerator.getInstance("RSA");
@@ -1546,7 +1814,14 @@ class WorldSelectedPublicationPostgresIntegrationTest {
       return new TerminalReadTestPki(
           caPath,
           issue(directory, "world-server", "world-management-service", true, caKeys, caCertificate),
-          issue(directory, "account-client", "account-service", false, caKeys, caCertificate));
+          issue(directory, "account-client", "account-service", false, caKeys, caCertificate),
+          issue(
+              directory,
+              "game-design-client",
+              "game-design-service",
+              false,
+              caKeys,
+              caCertificate));
     }
 
     private static TerminalReadIdentity issue(
