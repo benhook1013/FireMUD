@@ -284,7 +284,34 @@ if not matching_runs:
     print("missing")
     raise SystemExit(0)
 
-run = sorted(matching_runs, key=lambda item: item.get("created_at", ""), reverse=True)[0]
+# A failed explicit requalification can follow an already completed original
+# publication for this exact source attempt. Keep that retained success usable
+# only when the complete exact-tuple inventory has one unambiguous latest
+# failed requalification and one earlier successful original publisher.
+# Other terminal failures, active candidates, and ambiguous histories retain
+# their existing fail-closed behavior.
+run_ids = [run.get("id") for run in matching_runs]
+if any(type(run_id) is not int or run_id <= 0 for run_id in run_ids) or len(set(run_ids)) != len(run_ids):
+    raise SystemExit(1)
+ordered = sorted(matching_runs, key=lambda item: item.get("created_at", ""), reverse=True)
+latest_created = ordered[0].get("created_at")
+latest = [run for run in ordered if run.get("created_at") == latest_created]
+if len(latest) != 1:
+    raise SystemExit(1)
+run = latest[0]
+selection_reason = "latest"
+requalification_title = f"Publish PR Runtime Images requalification source-run-{source_run_id} attempt-{source_run_attempt}"
+if (len(ordered) > 1 and run.get("event") == "repository_dispatch"
+        and run.get("display_title") == requalification_title
+        and run.get("status") == "completed" and run.get("conclusion") == "failure"):
+    earlier = ordered[1:]
+    if (len(ordered) != 2 or len(earlier) != 1
+            or earlier[0].get("event") != "workflow_run"
+            or earlier[0].get("status") != "completed"
+            or earlier[0].get("conclusion") != "success"):
+        raise SystemExit(1)
+    run = earlier[0]
+    selection_reason = "retained-after-failed-requalification"
 attempt, workflow_id = run.get("run_attempt"), run.get("workflow_id")
 if any(type(value) is not int or value <= 0 for value in (attempt, workflow_id)):
     raise SystemExit(1)
@@ -293,9 +320,9 @@ if any(character in title for character in "\r\n\t"):
     raise SystemExit(1)
 url = run.get("html_url") or "-"
 print(
-    "found\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(
+    "found\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(
         run["id"], run.get("status"), run.get("conclusion"), url, attempt,
-        workflow_id, run["event"], title,
+        workflow_id, run["event"], title, selection_reason,
     )
 )
 ' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$1" "$2" "$3"
@@ -550,9 +577,9 @@ wait_for_pr_publisher() {
       continue
     fi
 
-    local state run_id run_status run_conclusion run_url publisher_attempt publisher_workflow_id publisher_event publisher_title
+    local state run_id run_status run_conclusion run_url publisher_attempt publisher_workflow_id publisher_event publisher_title selection_reason
     IFS=$'\t' read -r state run_id run_status run_conclusion run_url publisher_attempt \
-      publisher_workflow_id publisher_event publisher_title <<<"${publisher_state}"
+      publisher_workflow_id publisher_event publisher_title selection_reason <<<"${publisher_state}"
 
     if [[ "${state}" == "missing" || "${run_status}" != "completed" || "${run_conclusion}" != "success" ]]; then
       local source_status=0
@@ -576,6 +603,16 @@ wait_for_pr_publisher() {
     fi
 
     if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
+      if [[ "${selection_reason}" == "retained-after-failed-requalification" ]]; then
+        local source_status=0
+        check_current_source "${publisher_deadline}" "${source_run_id}" "${source_run_attempt}" \
+          "${source_created_at}" "${source_event}" "${source_workflow_id}" || source_status=$?
+        case "${source_status}" in
+          0) ;;
+          1) sleep "${sleep_seconds}"; continue ;;
+          *) return "${source_status}" ;;
+        esac
+      fi
       local artifact_evidence
       if ! artifact_evidence="$(verify_publisher_attempt "${run_id}" "${publisher_attempt}" \
         "${publisher_workflow_id}" "${publisher_event}" "${publisher_title}" \

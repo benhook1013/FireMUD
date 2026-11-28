@@ -1428,8 +1428,12 @@ if bootstrap_step["if"] != "${{ success() && steps.retain-bootstrap-intent.outco
     raise SystemExit("dev-demo bootstrap must wait for durable intent retention")
 if bootstrap_step["env"]["BOOTSTRAP_REQUEST_ID"] != "${{ steps.bootstrap-intent.outputs.request_id }}":
     raise SystemExit("dev-demo bootstrap request must consume the captured attempt identity")
-if retain_result["if"] != "${{ success() && steps.bootstrap-smoke.outcome == 'success' }}":
-    raise SystemExit("failed bootstrap must never upload result evidence")
+if retain_result["if"] != "${{ always() && steps.bootstrap-smoke.outputs.result_ready == 'true' }}":
+    raise SystemExit("validated bootstrap evidence must upload even when cleanup fails")
+if bootstrap_step["run"].index("write-bootstrap-result.py") > bootstrap_step["run"].index(
+    'delete pod dev-demo-bootstrap'
+):
+    raise SystemExit("dev-demo must validate and write the bootstrap result before resource cleanup")
 if "dev-demo-smoke-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" not in intent_step["run"]:
     raise SystemExit("dev-demo bootstrap intent must use a stable native run/attempt identity")
 for key in ("workflowSha", "headSha", "deployedBaseSha", "namespaceUid", "helmRevision",
@@ -1492,6 +1496,12 @@ with tempfile.TemporaryDirectory() as directory:
     request_id = "dev-demo-smoke-bootstrap-123-2"
     intent = {
         "schema": "dev-demo-bootstrap-intent/v1",
+        "repository": "benhook1013/FireMUD",
+        "runId": "123", "attempt": "2", "workflowSha": "b" * 40,
+        "headSha": "a" * 40, "deployedBaseSha": "c" * 40,
+        "namespace": "dev", "namespaceUid": "namespace-uid", "release": "dev",
+        "helmRevision": "7", "certificateProfile": "standalone", "imageTag": "image",
+        "renderedManifestSha256": "d" * 64, "renderedValuesSha256": "e" * 64,
         "controlPlaneRequestId": request_id,
         "tenantId": 1,
         "gameTemplateId": 1,
@@ -1528,8 +1538,18 @@ with tempfile.TemporaryDirectory() as directory:
         raise SystemExit("dev-demo result lost exact IDs or copied unapproved response material")
     if subprocess.run(command, capture_output=True).returncode == 0:
         raise SystemExit("dev-demo result was allowed to overwrite its immutable receipt")
+    incomplete_write_intent = dict(intent)
+    incomplete_write_intent.pop("workflowSha")
+    (evidence / "intent.json").write_text(json.dumps(incomplete_write_intent), encoding="utf-8")
+    receipt.unlink()
+    if subprocess.run(command, capture_output=True).returncode == 0 or receipt.exists():
+        raise SystemExit("dev-demo result writer accepted an intent missing a required v1 field")
     verify_intent = {
         "schema": "dev-demo-bootstrap-intent/v1",
+        "repository": "benhook1013/FireMUD", "workflowSha": "b" * 40,
+        "deployedBaseSha": "c" * 40, "certificateProfile": "standalone",
+        "imageTag": "image", "renderedManifestSha256": "d" * 64,
+        "renderedValuesSha256": "e" * 64,
         "runId": "123", "attempt": "2", "headSha": "a" * 40,
         "namespace": "dev", "namespaceUid": "namespace-uid",
         "release": "dev", "helmRevision": "7",
@@ -1554,6 +1574,17 @@ with tempfile.TemporaryDirectory() as directory:
     verified = subprocess.run(verify_command, capture_output=True, text=True)
     if verified.returncode != 0 or verified.stdout != "bootstrap receipt verified\n":
         raise SystemExit("dev-demo offline receipt verification must accept the exact synthetic receipt")
+    incomplete_intent = dict(verify_intent)
+    incomplete_intent.pop("workflowSha")
+    intent_path.write_text(json.dumps(incomplete_intent), encoding="utf-8")
+    incomplete_result = dict(verify_result)
+    incomplete_result["intent"] = incomplete_intent
+    result_path.write_text(json.dumps(incomplete_result), encoding="utf-8")
+    incomplete = subprocess.run(verify_command, capture_output=True, text=True)
+    if incomplete.returncode == 0 or incomplete.stdout != "bootstrap receipt refused\n":
+        raise SystemExit("dev-demo offline receipt verification must reject a field omitted from both artifacts")
+    intent_path.write_text(json.dumps(verify_intent), encoding="utf-8")
+    result_path.write_text(json.dumps(verify_result), encoding="utf-8")
     for option, mismatch in (("--run-id", "124"), ("--attempt", "3"),
                              ("--target-sha", "b" * 40), ("--namespace-uid", "other-uid"),
                              ("--helm-revision", "8"), ("--account-uuid", "12345678-1234-1234-1234-123456789abd"),

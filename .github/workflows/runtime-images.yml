@@ -1650,12 +1650,12 @@ jobs:
                     }
                   }
                 );
-                if (!observed.complete) throw new Error("Accepted refresh has incomplete visibility; no retry issued");
+                if (!observed.complete) throw new Error("Exact producer visibility is incomplete; no retry issued");
                 for (let index = pendingVisibility.length - 1; index >= 0; index--) {
                   const {tuple, previousIds, dispatchSince, responseUnknown} = pendingVisibility[index];
                   const exactTitle = `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
-                  // The floor includes this POST's second; the complete pre-POST ID
-                  // snapshot distinguishes new candidates from already-visible runs.
+                  // An earlier request may register during this window. The time and
+                  // inventory fences establish new visibility, not POST attribution.
                   const unseenExactRuns = observed.runs.filter(run => run.event === "repository_dispatch" &&
                     run.display_title === exactTitle && !previousIds.has(run.id));
                   for (const run of unseenExactRuns) {
@@ -1677,7 +1677,8 @@ jobs:
                   }
                   if (freshExactRuns.length > 0) {
                     pendingVisibility.splice(index, 1);
-                    if (responseUnknown) core.info(`Runtime refresh for PR #${tuple.prNumber} became visible after an unknown POST response.`);
+                    const observedAfter = responseUnknown ? "an unknown POST response" : "the admission request";
+                    core.info(`Exact runtime producer for PR #${tuple.prNumber} became visible after ${observedAfter}. Producer visibility is separate from admission of this request.`);
                   }
                 }
               } catch (error) {

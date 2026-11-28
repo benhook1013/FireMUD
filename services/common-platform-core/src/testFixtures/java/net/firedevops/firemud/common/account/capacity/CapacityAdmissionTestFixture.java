@@ -87,9 +87,6 @@ public final class CapacityAdmissionTestFixture {
       Map<String, Object> target,
       Instant at) {
     Map<String, Object> source = new LinkedHashMap<>(sources());
-    source.put("callerTokenJti", DELEGATION_JTI.toString());
-    source.put("callerContextId", "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
-    source.put("callerOperationId", "dddddddd-dddd-4ddd-8ddd-dddddddddddd");
     source.put("callerTokenExpiresAt", at.plusSeconds(90).toString());
     var evidence =
         RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
@@ -264,9 +261,10 @@ public final class CapacityAdmissionTestFixture {
     Map<String, Object> source = new LinkedHashMap<>();
     source.put("callerTokenExpiresAt", NOW.plusSeconds(90).toString());
     source.put("paidReceiptValidUntil", null);
-    for (String key :
-        List.of("callerTokenJti", "callerContextId", "callerOperationId", "worldCaptureId"))
-      source.put(key, REQUEST.toString());
+    source.put("callerTokenJti", DELEGATION_JTI.toString());
+    source.put("callerContextId", "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    source.put("callerOperationId", "dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+    source.put("worldCaptureId", REQUEST.toString());
     for (String key :
         List.of(
             "callerTokenSha256",

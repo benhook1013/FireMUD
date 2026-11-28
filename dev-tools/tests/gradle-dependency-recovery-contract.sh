@@ -1233,7 +1233,7 @@ run_case logging-admin-service 0
 assert_call_count 2
 assert_rate_limit_delay
 
-for mutation in url host mixed unpinned-root unsupported-variant; do
+for mutation in url host mixed unpinned-root unsupported-variant compile-started; do
   new_case "buildsrc-jar-invalid-$mutation"
   write_buildsrc_jar_429_cause
   case "$mutation" in
@@ -1242,6 +1242,7 @@ for mutation in url host mixed unpinned-root unsupported-variant; do
     mixed) sed -i '/^[*] Try:/i > Received status code 403 from server: Forbidden' "$CASE_DIR/buildsrc-cause.log" ;;
     unpinned-root) sed -i "s/configuration 'classpath'/configuration 'runtimeClasspath'/" "$CASE_DIR/buildsrc-cause.log" ;;
     unsupported-variant) sed -i 's/-gradle96/-arbitrary-variant/g' "$CASE_DIR/buildsrc-cause.log" ;;
+    compile-started) sed -i '1i > Task :logging-admin-service:compileJava FAILED' "$CASE_DIR/buildsrc-cause.log" ;;
   esac
   write_buildsrc_wrapper
   run_case logging-admin-service 1

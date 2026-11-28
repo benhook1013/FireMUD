@@ -628,7 +628,7 @@ is_dependency_resolution_failure() {
   case "$substantive_status" in
     0) return 1 ;;
     1) return 0 ;;
-    2) [[ "$resolution_boundary" != before-compile ]] ;;
+    2) [[ "$resolution_boundary" != before-compile* ]] ;;
     *) return 1 ;;
   esac
 }

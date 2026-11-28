@@ -168,6 +168,15 @@ assert_rejected --reason "$hold_uniqueness" push "$capacity_uniqueness_sha" "$ca
 namespace_for_head "$capacity_uniqueness_sha"
 assert_activation true push "$capacity_uniqueness_sha" "$capacity_origin_sha"
 assert_activation true repository_dispatch "" "$capacity_origin_sha"
+push_with_older_before_sha="$(cd "$repo" && bash "$detector" push "$account_v25_sha" "$capacity_origin_sha" dev)"
+grep -Fxq "deployed_base_sha=$capacity_uniqueness_sha" <<<"$push_with_older_before_sha" || {
+  echo "push before-SHA replaced the deployed annotation as the migration comparison base" >&2
+  exit 1
+}
+grep -Fxq 'activation=true' <<<"$push_with_older_before_sha" || {
+  echo "push before-SHA incorrectly changed the retained migration activation decision" >&2
+  exit 1
+}
 
 namespace_for_head "$capacity_origin_sha"
 assert_rejected workflow_dispatch "" "$capacity_origin_sha"

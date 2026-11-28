@@ -983,15 +983,16 @@ jobs:
             exit 1
           fi
           kubectl -n "${PREVIEW_NAMESPACE}" logs dev-demo-bootstrap >"${BOOTSTRAP_POD_LOG}"
+          python3 ./dev-tools/hosted/dev-demo/write-bootstrap-result.py \
+            "$BOOTSTRAP_EVIDENCE_DIR" "$BOOTSTRAP_ACCOUNT_ID_FILE" "$BOOTSTRAP_POD_LOG"
+          echo "result_ready=true" >> "$GITHUB_OUTPUT"
           kubectl -n "${PREVIEW_NAMESPACE}" delete pod dev-demo-bootstrap --ignore-not-found >/dev/null 2>&1 || true
           kubectl -n "${PREVIEW_NAMESPACE}" delete configmap dev-demo-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
           cleanup_bootstrap_secret
-          python3 ./dev-tools/hosted/dev-demo/write-bootstrap-result.py \
-            "$BOOTSTRAP_EVIDENCE_DIR" "$BOOTSTRAP_ACCOUNT_ID_FILE" "$BOOTSTRAP_POD_LOG"
 
       - name: Retain successful dev-demo bootstrap result
         id: retain-bootstrap-result
-        if: ${{ success() && steps.bootstrap-smoke.outcome == 'success' }}
+        if: ${{ always() && steps.bootstrap-smoke.outputs.result_ready == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dev-demo-bootstrap-result-${{ github.run_id }}-${{ github.run_attempt }}
