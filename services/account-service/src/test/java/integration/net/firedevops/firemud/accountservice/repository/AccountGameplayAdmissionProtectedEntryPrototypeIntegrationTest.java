@@ -3,7 +3,6 @@ package net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.AdditionalAnswers.delegatesTo;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -1587,49 +1586,31 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
       AtomicInteger physicalCommits,
       AtomicInteger lostClockResponses) {
     return new DelegatingDataSource(delegate) {
-      @SuppressFBWarnings(
-          value = "ODR_OPEN_DATABASE_RESOURCE",
-          justification = "The returned delegate closes the physical database connection.")
       @Override
       public Connection getConnection() throws SQLException {
         Connection physical = super.getConnection();
         try {
           var committed = new AtomicBoolean();
-          var observed = mock(Connection.class, delegatesTo(physical));
-          doAnswer(
-                  call -> {
-                    physical.commit();
-                    physicalCommits.incrementAndGet();
-                    committed.set(true);
-                    return null;
-                  })
-              .when(observed)
-              .commit();
-          doAnswer(
-                  call -> {
-                    var statement = physical.createStatement();
-                    if (!committed.get()) return statement;
-                    var observedStatement = mock(Statement.class, delegatesTo(statement));
-                    doAnswer(
-                            query -> {
-                              try (var reply = statement.executeQuery(query.getArgument(0))) {
-                                assertThat(reply.next()).isTrue();
-                                assertThat(reply.getLong(1))
-                                    .isPositive()
-                                    .isLessThan(originalExpiryMs);
-                              }
-                              lostClockResponses.incrementAndGet();
-                              throw new SQLException("Post-COMMIT clock response lost", "08006");
-                            })
-                        .when(observedStatement)
-                        .executeQuery(
-                            "SELECT ceil(extract(epoch FROM clock_timestamp()) * 1000)::bigint");
-                    return observedStatement;
-                  })
-              .when(observed)
-              .createStatement();
-          return observed;
-        } catch (SQLException | RuntimeException | Error failure) {
+          var physicalCalls = delegatesTo(physical);
+          return mock(
+              Connection.class,
+              call -> {
+                String method = call.getMethod().getName();
+                if ("commit".equals(method)) {
+                  physical.commit();
+                  physicalCommits.incrementAndGet();
+                  committed.set(true);
+                  return null;
+                }
+                if ("createStatement".equals(method)
+                    && call.getArguments().length == 0
+                    && committed.get()) {
+                  return withPostCommitClockResponseLoss(
+                      physical.createStatement(), originalExpiryMs, lostClockResponses);
+                }
+                return physicalCalls.answer(call);
+              });
+        } catch (RuntimeException | Error failure) {
           try {
             physical.close();
           } catch (SQLException closeFailure) {
@@ -1639,6 +1620,35 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
         }
       }
     };
+  }
+
+  private static Statement withPostCommitClockResponseLoss(
+      Statement physical, long originalExpiryMs, AtomicInteger lostClockResponses) {
+    try {
+      var physicalCalls = delegatesTo(physical);
+      return mock(
+          Statement.class,
+          call -> {
+            if ("executeQuery".equals(call.getMethod().getName())
+                && "SELECT ceil(extract(epoch FROM clock_timestamp()) * 1000)::bigint"
+                    .equals(call.getArgument(0))) {
+              try (var reply = physical.executeQuery(call.getArgument(0))) {
+                assertThat(reply.next()).isTrue();
+                assertThat(reply.getLong(1)).isPositive().isLessThan(originalExpiryMs);
+              }
+              lostClockResponses.incrementAndGet();
+              throw new SQLException("Post-COMMIT clock response lost", "08006");
+            }
+            return physicalCalls.answer(call);
+          });
+    } catch (RuntimeException | Error failure) {
+      try {
+        physical.close();
+      } catch (SQLException closeFailure) {
+        failure.addSuppressed(closeFailure);
+      }
+      throw failure;
+    }
   }
 
   private static OriginalCommitAcknowledgement finalized(Context context, long lifetime) {
