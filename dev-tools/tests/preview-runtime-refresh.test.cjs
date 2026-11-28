@@ -778,10 +778,19 @@ test('only the exact successful admission attempt can prove an unsent or rejecte
         else f.state.dispatchError = dispatchValidationError();
         assert.equal(await admitRuntimeRefresh(f.admission), kind === 'unsent' ? 'obsolete' : 'dispatch-rejected');
         const evidence = completeOwnerReceiptAttempt(f, kind);
-        change(f, {...evidence, run: kind === 'rejected' ? evidence.originalAttempt : evidence.run, kind});
+        // Rejection is attributed to historical evidence. Current-run movement
+        // blocks unsent receipts, while historical contradictions block either kind.
+        const receiptRun = kind === 'rejected' && name !== 'attempt moves during marker read'
+          ? evidence.originalAttempt : evidence.run;
+        change(f, {...evidence, run: receiptRun, kind});
         delete f.state.dispatchError;
-        assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
-        assert.equal(f.sent.length, kind === 'unsent' ? 0 : 1);
+        const historicalRejection = kind === 'rejected' && name === 'attempt moves during marker read';
+        assert.equal(await admitOrdinaryRefresh(f), historicalRejection ? 'dispatched-observed' : 'claim-held');
+        assert.equal(f.sent.length, historicalRejection ? 2 : kind === 'unsent' ? 0 : 1);
+        if (historicalRejection) {
+          assert.equal(evidence.run.run_attempt, 2);
+          assert.equal(evidence.originalAttempt.run_attempt, 1);
+        }
         if (kind === 'unsent' && name === 'attempt moves during marker read') {
           assert.deepEqual(f.state.ownerReads, [1, 2]);
         }

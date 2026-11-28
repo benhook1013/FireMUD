@@ -837,7 +837,7 @@ jobs:
                 // permit only their boundary second, never an earlier execution second.
                 const attemptStart = Math.floor(started / 1000) * 1000;
                 const attemptEnd = Math.floor(updated / 1000) * 1000 + 999;
-                if (created >= started + 1000 || created > updated || started > attemptEnd) {
+                if (created > started + 1000 || created > updated || started > attemptEnd) {
                   throw new Error("publication source attempt chronology is inconsistent");
                 }
                 const jobs = [], ids = new Set();

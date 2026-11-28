@@ -97,11 +97,22 @@ case "$*" in
     printf '%s\n' 'deployment/automation-scripting-service'
     ;;
   "-n contract get deployment account-service --ignore-not-found -o json")
-    printf '%s\n' '{"spec":{"replicas":0}}'
+    observed=2
+    if [[ "${QUIESCE_MODE:-}" == unobserved-deployment ]]; then
+      observed=1
+    fi
+    printf '{"metadata":{"generation":2},"status":{"observedGeneration":%s},"spec":{"replicas":0}}\n' "$observed"
     ;;
   "-n contract get deployment game-session-service --ignore-not-found -o json"|\
   "-n contract get deployment automation-scripting-service --ignore-not-found -o json")
-    printf '%s\n' '{"spec":{"replicas":0}}'
+    printf '%s\n' '{"metadata":{"generation":2},"status":{"observedGeneration":2},"spec":{"replicas":0}}'
+    ;;
+  "-n contract get replicasets -o json")
+    replicas=0
+    if [[ "${QUIESCE_MODE:-}" == active-replicaset ]]; then
+      replicas=1
+    fi
+    printf '{"kind":"ReplicaSetList","items":[{"kind":"ReplicaSet","metadata":{"ownerReferences":[{"kind":"Deployment","name":"account-service","controller":true}]},"spec":{"replicas":%s}}]}\n' "$replicas"
     ;;
   "-n contract scale deployment/account-service --replicas=0")
     [[ "${QUIESCE_MODE:-}" != account-scale-failure ]] || { echo 'scale denied' >&2; exit 1; }
@@ -165,6 +176,24 @@ run_quiesce() {
 
 run_quiesce success >/dev/null
 run_quiesce typed-lists >/dev/null
+for mode in success unobserved-deployment active-replicaset; do
+  calls="$fixture_dir/verify-calls-$mode"
+  if QUIESCE_MODE="$mode" QUIESCE_CALLS="$calls" \
+    QUIESCE_STATE="$fixture_dir/state-success" PATH="$fake_bin:$PATH" \
+    bash "$helper" --verify-only contract >"$fixture_dir/verify-out" 2>&1; then
+    [[ "$mode" == success ]] || {
+      echo "verify-only accepted $mode" >&2
+      exit 1
+    }
+  else
+    [[ "$mode" != success ]] || { cat "$fixture_dir/verify-out" >&2; exit 1; }
+    grep -Fq 'writer account-service is not quiescent' "$fixture_dir/verify-out"
+  fi
+  if rg -q ' (scale|patch) ' "$calls"; then
+    echo "verify-only attempted a writer or Service mutation" >&2
+    exit 1
+  fi
+done
 mkdir -p "$fixture_dir/state-registry-port-writer-pod"
 QUIESCE_MODE=registry-port-writer-pod QUIESCE_CALLS="$fixture_dir/calls-registry-port-writer-pod" \
   QUIESCE_STATE="$fixture_dir/state-registry-port-writer-pod" PATH="$fake_bin:$PATH" \

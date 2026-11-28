@@ -147,7 +147,11 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
     return current;
   }
 
-  /** Keeps the selected TLS channel available for one bounded blocking call. */
+  /**
+   * Keeps the selected TLS channel available for one bounded blocking callback. Reload and close
+   * allow an already selected callback to finish, including one that has yet to start its RPC.
+   * Close prevents further selections.
+   */
   protected final <R> R withPublishedInitializedStub(
       String unavailableMessage, Function<TStub, R> call) {
     ChannelGeneration selected;

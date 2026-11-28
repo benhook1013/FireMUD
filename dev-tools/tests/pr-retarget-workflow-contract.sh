@@ -898,7 +898,7 @@ async function runDispatcher({
   tuples, inventories = {}, apiFailure = null, sourceTuples = [], callback = {},
   branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, mergeReadFailures = {}, ciEvidence = {},
   hideDispatchVisibility = false, admissionFails = false, filesByPr = {}, postFailurePr = null, previewFailurePr = null,
-  visibilityResponse = null, filesFailurePr = null, postFailureVisible = false, postFailureStatus = null,
+  visibilityResponse = null, observedNativeProducer = null, filesFailurePr = null, postFailureVisible = false, postFailureStatus = null,
   fanoutCutoffAfterInventory = false, fanoutCutoffAfterPreviewPr = null, expireAfterFirstApiRequest = false,
   pullGetFailures = {}, lateProducer = null, runtimeWorkflowLookupFailures = [],
   pullListResponse = null, apiRequestMillis = 0, runtimeRunOverrides = {}, runtimeAttemptJobs = {}, runtimeNativeAttempts = {},
@@ -1109,7 +1109,7 @@ async function runDispatcher({
           if (request.run_id !== ciRun.id) {
             runtimeRunReads.push(request.run_id);
             const reads = runtimeRunReads.filter(id => id === request.run_id).length;
-            const run = inventoriedRuntimeRuns().find(run => run?.id === request.run_id);
+            const run = [...inventoriedRuntimeRuns(), observedNativeProducer].find(run => run?.id === request.run_id);
             assert(run, "native runtime lookup must target an inventoried producer");
             const override = runtimeRunOverrides[request.run_id];
             return {data: {...run, ...(typeof override === "function" ? override(reads, run) : override ?? {})}};
@@ -1162,8 +1162,11 @@ async function runDispatcher({
           }
           inventoryCalls.push(request);
           observationPostCounts.push(dispatches.filter(item => item.event_type === "pr-runtime-base-refresh-request").length);
-          if (visibilityResponse && request.created === "2026-01-08T00:00:00.000Z..*") {
-            assert.equal(request.event, "repository_dispatch");
+          if (request.event === "pull_request" && observedNativeProducer && dispatches.length > 0 &&
+              request.created === "2026-01-08T00:00:00.000Z..*") {
+            return {data: {total_count: 1, workflow_runs: [observedNativeProducer]}};
+          }
+          if (visibilityResponse && request.event === "repository_dispatch" && request.created === "2026-01-08T00:00:00.000Z..*") {
             const response = visibilityResponse(request, postedRuns);
             if (response) return {data: response};
           }
@@ -2213,8 +2216,26 @@ async function runDispatcher({
   assert.equal(manyInvisible.waitedMillis, 120000, "fan-out shares exactly one visibility window");
   const visibilityFloor = "2026-01-08T00:00:00.000Z..*";
   const observations = manyInvisible.inventoryCalls.filter(request => request.created === visibilityFloor);
-  assert.equal(observations.length, 24, "each five-second interval before the deadline queries one narrow dispatch page");
-  assert(observations.every(request => request.event === "repository_dispatch" && request.page === 1 && request.per_page === 100));
+  assert.equal(observations.length, 48, "each interval checks typed and native visibility within the same window");
+  for (const event of ["repository_dispatch", "pull_request"]) {
+    assert.equal(observations.filter(request => request.event === event).length, 24);
+  }
+  assert(observations.every(request => request.page === 1 && request.per_page === 100));
+  const nativeProducer = producer(tuple, "pull_request", "in_progress", null, {
+    created_at: "2026-01-08T00:00:00Z",
+    pull_requests: [{number: Number(tuple.prNumber), head: {sha: tuple.headSha}, base: {sha: tuple.baseSha, ref: "develop"}}],
+  });
+  const reused = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true, observedNativeProducer: nativeProducer});
+  assert.deepEqual(numbers(reused), ["101"]);
+  assert.deepEqual(reused.errors, []);
+  assert.deepEqual(reused.runtimeRunReads, [nativeProducer.id]);
+  assert.equal(reused.waitedMillis, 0);
+  assert(reused.infos.some(message => message.includes("Exact native runtime producer") &&
+    message.includes("separate from admission")));
+  const movedNative = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true, observedNativeProducer: nativeProducer,
+    runtimeRunOverrides: {[nativeProducer.id]: {run_attempt: nativeProducer.run_attempt + 1}}});
+  assert.deepEqual(numbers(movedNative), ["101"]);
+  assert(movedNative.errors.some(message => message.includes("visibility is unknown")));
   assert(manyInvisible.inventoryCalls.some(request => request.event === "pull_request" && request.created !== visibilityFloor),
     "broad preflight still checks native producers");
   assert(manyInvisible.inventoryCalls.some(request => request.event === "repository_dispatch" && request.created !== visibilityFloor),
@@ -2526,7 +2547,7 @@ require_contains "$image_wait_path" 'GitHub API poll failed while %s; retrying w
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
 require_contains "$image_wait_path" 'if ! workflow_payload="$('
 # shellcheck disable=SC2016 # These assertions intentionally match literal shell source.
-require_contains "$image_wait_path" 'if ! event_payload="$('
+require_contains "$image_wait_path" 'event_payload="$(fetch_publisher_runs'
 if grep -Eq '^concurrency:' "$preview_path"; then
   echo "Preview workflow must not cancel an active lifecycle from workflow-level concurrency" >&2
   exit 1
@@ -3063,6 +3084,9 @@ if [[ "$*" == *'/actions/runs/101' ]]; then
   exit 0
 fi
 if [[ "$*" == *'/attempts/1/jobs?per_page=100&page=1' ]]; then
+  if [[ -n "${CONTRACT_PUBLISHER_MOVE_FILE:-}" ]]; then
+    touch "$CONTRACT_PUBLISHER_MOVE_FILE"
+  fi
   if [[ -n "${CONTRACT_JOB_PAYLOAD:-}" ]]; then
     cat "$CONTRACT_JOB_PAYLOAD"
     exit 0
@@ -3113,8 +3137,14 @@ PY_PAGE
     printf '%s' '{"total_count":0,"workflow_runs":[]}'
     exit 0
   fi
-  cat <<'JSON'
-{"total_count":1,"workflow_runs":[{"id":201,"workflow_id":502,"run_attempt":1,"event":"workflow_run","status":"completed","conclusion":"success","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required source-run-101 attempt-2","created_at":"2026-07-24T00:03:00Z"}]}
+  attempt=1
+  conclusion=success
+  if [[ -n "${CONTRACT_PUBLISHER_MOVE_FILE:-}" && -f "$CONTRACT_PUBLISHER_MOVE_FILE" ]]; then
+    attempt=2
+    conclusion=failure
+  fi
+  cat <<JSON
+{"total_count":1,"workflow_runs":[{"id":201,"workflow_id":502,"run_attempt":$attempt,"event":"workflow_run","status":"completed","conclusion":"$conclusion","html_url":"https://example.test/publisher/201","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required source-run-101 attempt-2","created_at":"2026-07-24T00:03:00Z"}]}
 JSON
 else
   if [[ -n "${CONTRACT_SOURCE_PAYLOAD:-}" ]]; then
@@ -3138,6 +3168,22 @@ bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
   >"$contract_fixture_dir/output"
 require_contains "$contract_fixture_dir/output" 'Matching runtime-images workflow 101 succeeded'
 require_contains "$contract_fixture_dir/output" 'Trusted PR image publisher 201 succeeded'
+
+if CONTRACT_PUBLISHER_MOVE_FILE="$contract_fixture_dir/publisher-moved" \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/publisher-moved.output" 2>"$contract_fixture_dir/publisher-moved.error"; then
+  echo "superseded publisher proof unexpectedly qualified" >&2
+  exit 1
+fi
+require_contains "$contract_fixture_dir/publisher-moved.output" 'publisher selection changed'
+require_contains "$contract_fixture_dir/publisher-moved.error" 'publisher 201 completed with failure'
+if rg -Fq 'publisher 201 succeeded' "$contract_fixture_dir/publisher-moved.output"; then
+  echo "superseded publisher must not report success" >&2
+  exit 1
+fi
 
 CONTRACT_GH_STATE_FILE="$contract_fixture_dir/gh-state" \
 PATH="$contract_fixture_dir:$PATH" \
@@ -4149,7 +4195,7 @@ async function checkTypedFailureProofTemporaryRefusal() {
       context.sha = cancelledOriginal ? priorEventSha : undefined;
       const originals = cancelledOriginal ? [event] : [];
       availableRuns = [...originals, failed];
-      let reads = 0, warnings = 0;
+      let reads = 0, warnings = 0, inventoryAtRefusal;
       const jobs = jobQueries.length;
       const refusal = Object.assign(new Error("injected exact typed attempt lookup failure"), {status});
       github.rest.actions.getWorkflow = async (input) => {
@@ -4161,6 +4207,7 @@ async function checkTypedFailureProofTemporaryRefusal() {
       github.request = async (route, input) => {
         if (input.run_id === failed.id) {
           reads++;
+          inventoryAtRefusal = workflowRunQueries.length;
           throw refusal;
         }
         return priorRequest(route, input);
@@ -4188,15 +4235,55 @@ async function checkTypedFailureProofTemporaryRefusal() {
           !jobQueries.slice(jobs).some(({run_id, attempt_number}) => run_id === 622 && attempt_number === 1))) {
         throw new Error(`exhausted transient proof lookups must keep polling for exact successor: ${cancelledOriginal}/${reads}/${warnings}`, {cause: caught});
       }
-      if (status === 403 && (!caught || reads !== 1 || warnings !== 0)) {
+      if (status === 403 && (caught?.cause !== refusal ||
+          !caught.message.includes("injected exact typed attempt lookup failure") ||
+          reads !== 1 || warnings !== 0 || workflowRunQueries.length !== inventoryAtRefusal)) {
         throw new Error("terminal proof refusal must stop without polling", {cause: caught});
       }
     }
   }
 }
 
+async function checkSparseSuccessfulAttemptSupersession() {
+  const originalGetRun = github.rest.actions.getWorkflowRun;
+  const originalPaginate = github.paginate;
+  const priorRuns = availableRuns, priorEventSha = context.sha;
+  const first = {...dispatchRun(623, baseSha, headSha, mergeSha), name: "Build Runtime Images"};
+  const second = {...first, run_attempt: 2};
+  const jobStart = jobQueries.length;
+  let readLatest = false;
+  context.sha = undefined;
+  availableRuns = [first];
+  github.rest.actions.getWorkflowRun = async input => {
+    if (input.run_id === first.id) {
+      availableRuns = [second];
+      readLatest = true;
+    }
+    return originalGetRun(input);
+  };
+  github.paginate = async (route, input) => {
+    const jobs = await originalPaginate(route, input);
+    if (input.run_id === first.id && input.attempt_number === 1) delete jobs[0].run_attempt;
+    return jobs;
+  };
+  github.paginate.iterator = originalPaginate.iterator;
+  try {
+    await check("success", false);
+    const attempts = jobQueries.slice(jobStart).filter(job => job.run_id === first.id).map(job => job.attempt_number);
+    if (!readLatest || attempts[0] !== 1 || attempts.filter(attempt => attempt === 1).length !== 1 || !attempts.includes(2)) {
+      throw new Error("Sparse typed producer must reselect its new attempt before retrying old job proof.");
+    }
+  } finally {
+    github.paginate = originalPaginate;
+    github.rest.actions.getWorkflowRun = originalGetRun;
+    availableRuns = priorRuns;
+    context.sha = priorEventSha;
+  }
+}
+
 checkPartialPaginationRetry().then(checkIdentityQuotaFailures)
-  .then(checkSparseReplacementUsesOverallBudget).then(checkTypedFailureProofTemporaryRefusal).then(() => {
+  .then(checkSparseReplacementUsesOverallBudget).then(checkTypedFailureProofTemporaryRefusal)
+  .then(checkSparseSuccessfulAttemptSupersession).then(() => {
   setExactEventRun(101);
   return check("skipped", true, "credential-free full-stack smoke step did not pass");
 })

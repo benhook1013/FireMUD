@@ -170,14 +170,16 @@ print(
 }
 
 fetch_publisher_runs() {
-  python3 - "${GITHUB_REPOSITORY}" "$1" "$2" "$3" <<'PY_PUBLISHERS'
+  python3 - "${GITHUB_REPOSITORY}" "$1" "$2" "$3" "$4" <<'PY_PUBLISHERS'
 import json
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 
-repository, event, lower_text, upper_text = sys.argv[1:]
+repository, event, lower_text, upper_text, remaining = sys.argv[1:]
+deadline = time.monotonic() + int(remaining)
 
 def unavailable(reason):
     print(f"Publisher coverage unavailable: {reason}.", file=sys.stderr)
@@ -198,7 +200,14 @@ endpoint = f"repos/{repository}/actions/workflows/publish-pr-runtime-images.yml/
 records, seen, total = [], set(), None
 page_number = 1
 while True:
-    result = subprocess.run(["gh", "api", f"{endpoint}&page={page_number}"], capture_output=True, text=True)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        unavailable("exact-window GitHub API deadline reached")
+    try:
+        result = subprocess.run(["gh", "api", f"{endpoint}&page={page_number}"],
+                                capture_output=True, text=True, timeout=remaining)
+    except subprocess.TimeoutExpired:
+        unavailable("exact-window GitHub API deadline reached")
     if result.returncode:
         unavailable("exact-window GitHub API lookup failed")
     try:
@@ -538,6 +547,24 @@ check_current_source() {
   fi
 }
 
+select_pr_publisher() {
+  local source_run_id="$1" source_run_attempt="$2" source_created_at="$3" source_event="$4" publisher_deadline="$5"
+  local publisher_payload="" event_payload publisher_event poll_upper_bound remaining
+  poll_upper_bound="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  # Preserve complete discovery within the verified source creation window.
+  for publisher_event in workflow_run repository_dispatch; do
+    remaining=$((publisher_deadline - SECONDS))
+    (( remaining > 0 )) || return 1
+    event_payload="$(fetch_publisher_runs "${publisher_event}" "${source_created_at}" "${poll_upper_bound}" "${remaining}")" ||
+      return 1
+    publisher_payload+="${publisher_payload:+,}${event_payload}"
+  done
+  if ! read_publisher_state "${source_run_id}" "${source_run_attempt}" "${source_event}" <<<"[${publisher_payload}]"; then
+    printf 'GitHub API response was empty or invalid while waiting for the trusted PR image publisher; retrying.\n' >&2
+    return 1
+  fi
+}
+
 wait_for_pr_publisher() {
   local source_run_id="$1"
   local source_run_attempt="$2"
@@ -549,33 +576,14 @@ wait_for_pr_publisher() {
   local publisher_deadline=$((SECONDS + publisher_timeout_seconds))
   if (( publisher_deadline > deadline )); then publisher_deadline="$deadline"; fi
   while (( SECONDS < publisher_deadline )); do
-    local publisher_payload publisher_state event_payload publisher_event fetch_failed
-    publisher_payload=""
-    fetch_failed=false
-    local poll_upper_bound
-    poll_upper_bound="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    # Preserve complete discovery within the verified source creation window.
-    for publisher_event in workflow_run repository_dispatch; do
-      if ! event_payload="$(
-        fetch_publisher_runs "${publisher_event}" "${source_created_at}" "${poll_upper_bound}"
-      )"; then
-        fetch_failed=true
-        break
-      fi
-      publisher_payload+="${publisher_payload:+,}${event_payload}"
-    done
-    if [[ "${fetch_failed}" == "true" ]]; then
+    local publisher_state
+    if ! publisher_state="$(select_pr_publisher "${source_run_id}" "${source_run_attempt}" \
+      "${source_created_at}" "${source_event}" "${publisher_deadline}")"; then
       coverage_unavailable=true
       sleep "${sleep_seconds}"
       continue
     fi
     coverage_unavailable=false
-    publisher_payload="[${publisher_payload}]"
-    if ! publisher_state="$(read_publisher_state "${source_run_id}" "${source_run_attempt}" "${source_event}" <<<"${publisher_payload}")"; then
-      printf 'GitHub API response was empty or invalid while waiting for the trusted PR image publisher; retrying.\n' >&2
-      sleep "${sleep_seconds}"
-      continue
-    fi
 
     local state run_id run_status run_conclusion run_url publisher_attempt publisher_workflow_id publisher_event publisher_title selection_reason
     IFS=$'\t' read -r state run_id run_status run_conclusion run_url publisher_attempt \
@@ -624,6 +632,17 @@ wait_for_pr_publisher() {
           "${source_created_at}" "${source_event}" "${source_workflow_id}" || source_status=$?
         if (( source_status > 1 )); then return "${source_status}"; fi
         sleep "${sleep_seconds}"
+        continue
+      fi
+      local refreshed_publisher_state
+      if ! refreshed_publisher_state="$(select_pr_publisher "${source_run_id}" "${source_run_attempt}" \
+        "${source_created_at}" "${source_event}" "${publisher_deadline}")"; then
+        coverage_unavailable=true
+        sleep "${sleep_seconds}"
+        continue
+      fi
+      if [[ "${refreshed_publisher_state}" != "${publisher_state}" ]]; then
+        printf 'Trusted PR image publisher selection changed for %s; selecting fresh proof.\n' "${image_tag}"
         continue
       fi
       local source_status=0 artifact_id artifact_digest

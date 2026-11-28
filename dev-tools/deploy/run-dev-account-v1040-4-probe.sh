@@ -100,8 +100,48 @@ read_owned_job_uid() {
   '
 }
 
+read_probe_pod() {
+  kubectl --request-timeout=10s -n "$namespace" get pods \
+    --selector "batch.kubernetes.io/controller-uid=$job_uid" -o json |
+    jq -cer --arg job "$job_name" --arg job_uid "$job_uid" --arg namespace "$namespace" '
+      select((.kind == "PodList" or .kind == "List") and (.items | type == "array" and length == 1))
+      | .items[0]
+      | select(.kind == "Pod" and .metadata.namespace == $namespace
+          and .metadata.deletionTimestamp == null
+          and any(.metadata.ownerReferences[]?;
+            .apiVersion == "batch/v1" and .kind == "Job" and .name == $job
+            and .uid == $job_uid and .controller == true))
+      | .metadata
+      | select((.name | type == "string" and test("^[a-z0-9][a-z0-9.-]{0,252}$"))
+          and (.uid | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")))
+      | [.name, .uid]
+    '
+}
+
+verify_probe_job() {
+  local observed_job
+  observed_job="$(kubectl --request-timeout=10s -n "$namespace" get job "$job_name" -o json)" ||
+    return 1
+  [[ "$(read_owned_job_uid <<<"$observed_job")" == "$job_uid" ]] || return 1
+  if [[ "$1" == complete ]]; then
+    jq -e 'any(.status.conditions[]?; .type == "Complete" and .status == "True")' \
+      <<<"$observed_job" >/dev/null
+  fi
+}
+
+read_probe_logs() {
+  local completion="$1" pod_identity pod_name logs
+  shift
+  verify_probe_job "$completion" || return 1
+  pod_identity="$(read_probe_pod)" || return 1
+  pod_name="$(jq -er '.[0]' <<<"$pod_identity")" || return 1
+  logs="$(kubectl --request-timeout=10s -n "$namespace" logs "pod/$pod_name" -c probe "$@")" || return 1
+  [[ "$(read_probe_pod)" == "$pod_identity" ]] && verify_probe_job "$completion" || return 1
+  printf '%s\n' "$logs"
+}
+
 remove_probe_job() {
-  local delete_accepted=false observed observed_uid observed_deleting deadline
+  local delete_accepted=false observed observed_uid deadline
   if jq -n --arg uid "$job_uid" \
     '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid},propagationPolicy:"Foreground"}' |
     kubectl --request-timeout=10s delete --raw "/apis/batch/v1/namespaces/$namespace/jobs/$job_name" -f - >/dev/null; then
@@ -125,7 +165,7 @@ remove_probe_job() {
           job_uid=""
           return 0
         fi
-        if observed_deleting="$(jq -er '.metadata.deletionTimestamp | select(type == "string" and length > 0)' <<<"$observed")"; then
+        if jq -e '.metadata.deletionTimestamp | type == "string" and length > 0' <<<"$observed" >/dev/null; then
           delete_accepted=true
         fi
       fi
@@ -179,7 +219,7 @@ fi
 
 if [[ "$check_permissions" == true ]]; then
   for required in 'get jobs.batch' 'list jobs.batch' 'watch jobs.batch' 'delete jobs.batch' \
-    'list pods' 'get pods --subresource=log'; do
+    'get pods' 'list pods' 'get pods --subresource=log' 'list replicasets.apps'; do
     read -ra permission <<<"$required"
     if ! kubectl --request-timeout=10s -n "$namespace" auth can-i "${permission[@]}" >/dev/null; then
       fail "the runtime credential cannot $required before writer quiescence"
@@ -202,7 +242,7 @@ fi
 job_uid="$(read_owned_job_uid <<<"$created_job")" || fail "Kubernetes did not return the owned probe Job UID"
 
 if ! kubectl --request-timeout=10s -n "$namespace" wait --for=condition=complete --timeout=75s "job/$job_name" >/dev/null; then
-  probe_error="$(kubectl --request-timeout=10s -n "$namespace" logs "job/$job_name" --tail=1 2>/dev/null || true)"
+  probe_error="$(read_probe_logs any --tail=1 2>/dev/null || true)"
   case "$probe_error" in
     'Account V1040.4 probe found duplicate retained admission attempts. Account-owned disposition is required.'|\
     'Account V1040.4 probe refused an unverified database state (unverified-account-history).'|\
@@ -215,11 +255,8 @@ if ! kubectl --request-timeout=10s -n "$namespace" wait --for=condition=complete
       ;;
   esac
 fi
-observed_job="$(kubectl --request-timeout=10s -n "$namespace" get job "$job_name" -o json)" ||
-  fail "the completed probe Job is unavailable"
-[[ "$(read_owned_job_uid <<<"$observed_job")" == "$job_uid" ]] || fail "the probe Job was replaced"
-receipt="$(kubectl --request-timeout=10s -n "$namespace" logs "job/$job_name")" ||
-  fail "the probe receipt is unavailable"
+receipt="$(read_probe_logs complete)" ||
+  fail "the completed probe Job, its owned Pod, or their bound receipt could not be verified"
 outcome=retained-no-duplicates
 if [[ "$origin_prefix" == 0 ]]; then
   outcome=first-origin-migration
