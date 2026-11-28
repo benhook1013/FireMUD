@@ -344,7 +344,7 @@ class InitialGameplayReleaseControllerTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {true, false})
-  void directlySelectedHeldPreparationReturnsOnlyVerifiedFinalization(boolean finalized) {
+  void directlySelectedPreparationRespectsTheJournalEvenAfterFinalization(boolean exactReadback) {
     var journal = mock(InitialGameplayReleaseJournal.class);
     var codec = mock(InitialGameplayReleaseTupleCodec.class);
     var port = mock(InitialGameplayReleaseEffectPort.class);
@@ -357,19 +357,29 @@ class InitialGameplayReleaseControllerTest {
     var now = Instant.parse("2026-09-01T00:00:00Z");
     var preparation =
         new OutboxEntry(
-            UUID.randomUUID(), effect, DIGEST, EffectOutboxState.AMBIGUOUS, 1, attempt, null, null);
+            UUID.randomUUID(), effect, DIGEST, EffectOutboxState.AMBIGUOUS, 2, attempt, null, null);
     var readback = mock(EffectReadback.class);
     when(readback.observedAt()).thenReturn(now);
     var observation = EffectReadbackResolution.available(readback);
     when(releasing.scope()).thenReturn(scope);
     when(scope.operationId()).thenReturn(operationId);
-    when(latest.phase()).thenReturn(finalized ? Phase.FINALIZED : Phase.RELEASING);
+    org.mockito.Mockito.lenient().when(latest.phase()).thenReturn(Phase.FINALIZED);
     when(effect.kind()).thenReturn(EffectKind.PREPARE_PLAYABLE_STATE_FENCED);
     when(journal.find(operationId)).thenReturn(Optional.of(releasing), Optional.of(latest));
     when(journal.findNextEffect(operationId)).thenReturn(Optional.of(preparation));
-    when(port.readback(effect, attempt, 1)).thenReturn(observation);
-    var conflict = new InitialGameplayReleaseConflictException("preparation changed");
-    when(journal.recordEffectReadback(preparation, readback, now)).thenThrow(conflict);
+    when(port.readback(effect, attempt, 2)).thenReturn(observation);
+    var conflict =
+        new InitialGameplayReleaseConflictException("readback dispatch generation changed");
+    if (exactReadback) {
+      when(journal.recordEffectReadback(preparation, readback, now)).thenReturn(latest);
+    } else {
+      when(readback.attemptOrdinal()).thenReturn(1);
+      when(journal.recordEffectReadback(preparation, readback, now))
+          .thenAnswer(invocation -> {
+            assertThat(readback.attemptOrdinal()).isNotEqualTo(preparation.attemptCount());
+            throw conflict;
+          });
+    }
     var controller =
         new InitialGameplayReleaseController(
             journal,
@@ -378,13 +388,12 @@ class InitialGameplayReleaseControllerTest {
             port,
             Clock.fixed(now, ZoneOffset.UTC));
 
-    if (finalized) {
+    if (exactReadback) {
       assertThat(controller.reconcileNextEffect(operationId)).isSameAs(latest);
-      verify(codec).requireEffectMatchesOperation(effect, latest);
     } else {
       assertThatThrownBy(() -> controller.reconcileNextEffect(operationId)).isSameAs(conflict);
     }
-    verify(port, org.mockito.Mockito.only()).readback(effect, attempt, 1);
+    verify(port, org.mockito.Mockito.only()).readback(effect, attempt, 2);
   }
 
   @ParameterizedTest(name = "preparation conflicts while releasing: {0}")
@@ -689,7 +698,7 @@ class InitialGameplayReleaseControllerTest {
     var operation = mock(Operation.class);
     var retainedEvidence = mock(InitialGameplayReleaseEvidence.class);
     var ownerEvidence = mock(InitialGameplayReleaseEvidence.class);
-    String evidenceDigest = "c".repeat(64);
+    String evidenceDigest = "a".repeat(64);
     var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
     Instant now = Instant.parse("2026-09-01T00:00:00Z");
     when(operation.scope()).thenReturn(scope);
@@ -769,7 +778,7 @@ class InitialGameplayReleaseControllerTest {
     var before = mock(Operation.class);
     var after = new PublicTransitionResult(scope.operationId(), Phase.RESUME_AUTHORIZED);
     var evidence = mock(InitialGameplayReleaseEvidence.class);
-    String evidenceDigest = "c".repeat(64);
+    String evidenceDigest = "a".repeat(64);
     var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
     when(before.scope()).thenReturn(scope);
     when(before.maintenanceLockIdentity()).thenReturn(lock.identity());

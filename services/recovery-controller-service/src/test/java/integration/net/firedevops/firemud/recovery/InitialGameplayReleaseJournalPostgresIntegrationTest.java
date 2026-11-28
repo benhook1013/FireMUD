@@ -130,7 +130,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           "V5__retain_local_dispatch_uncertainty.sql",
           "V6__retain_latest_preparation_observation.sql",
           "V7__retain_preparation_receipt_identities.sql",
-          "V8__require_pending_effect_without_dispatch_timestamp.sql");
+          "V8__require_pending_effect_without_dispatch_timestamp.sql",
+          "V9__require_pristine_pending_attempt.sql");
   private static final String DIGEST = "b".repeat(64);
   private static final java.util.logging.Logger POSTGRES_PROTOCOL_LOG =
       java.util.logging.Logger.getLogger("org.postgresql.core.v3.QueryExecutorImpl");
@@ -563,13 +564,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     String database = "firemud_recovery_control";
     dsl.execute("CREATE DATABASE " + database);
     try {
-      try (var migration = startPackagedApplication(true)) {
-        assertThat(journalHealth(migration).health().getStatus()).isEqualTo(Status.UP);
-      }
       try (var application =
-          startPackagedApplication(
-              false,
-              "--spring.datasource.hikari.connection-init-sql=SET synchronous_commit TO off")) {
+          startPackagedApplication(true, "--spring.datasource.hikari.maximum-pool-size=1")) {
+        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+        try (var session = application.getBean(DataSource.class).getConnection();
+            var statement = session.createStatement()) {
+          statement.execute("SET synchronous_commit TO off");
+        }
         assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
         assertThat(application.getBean(HealthEndpoint.class).healthForPath("liveness"))
             .isNotNull()
@@ -1137,6 +1138,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   @ValueSource(
       strings = {
         "rejection_key",
+        "rejection_outbox_unique",
         "local_no_send_key",
         "maintenance_lock",
         "outbox_dispatch",
@@ -1163,6 +1165,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         packaged.execute(
             "ALTER TABLE recovery_control.initial_gameplay_release_attempt_rejection"
                 + " DROP CONSTRAINT initial_gameplay_release_attempt_rejection_pkey");
+      } else if ("rejection_outbox_unique".equals(drift)) {
+        packaged.execute(
+            "ALTER TABLE recovery_control.initial_gameplay_release_attempt_rejection"
+                + " ADD UNIQUE (outbox_id)");
       } else if ("local_no_send_key".equals(drift)) {
         packaged.execute(
             "ALTER TABLE recovery_control.initial_gameplay_release_attempt_local_no_send"
@@ -1188,7 +1194,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             """
             ALTER TABLE recovery_control.initial_gameplay_release_outbox
               DROP CONSTRAINT ck_release_outbox_pending_dispatch_timestamp,
-              ADD CONSTRAINT ck_release_outbox_pending_dispatch_timestamp CHECK (true)
+              ADD CONSTRAINT ck_release_outbox_pending_dispatch_timestamp
+                CHECK (state <> 'pending' OR last_dispatched_at IS NULL)
             """);
       } else if ("closure_primary_key".equals(drift)) {
         packaged.execute(
@@ -1434,14 +1441,16 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         assertThat(journalHealth(migration).health().getStatus()).isEqualTo(Status.UP);
       }
       try (var application =
-              startPackagedApplication(
-                  false,
-                  readOnly
-                      ? "--spring.datasource.hikari.read-only=true"
-                      : "--spring.datasource.hikari.auto-commit=false");
-          var connection = application.getBean(DataSource.class).getConnection()) {
-        assertThat(connection.getAutoCommit()).isEqualTo(readOnly);
-        assertThat(connection.isReadOnly()).isEqualTo(readOnly);
+          startPackagedApplication(
+              true,
+              "--spring.datasource.hikari.maximum-pool-size=1",
+              readOnly
+                  ? "--spring.datasource.hikari.read-only=true"
+                  : "--spring.datasource.hikari.auto-commit=false")) {
+        try (var connection = application.getBean(DataSource.class).getConnection()) {
+          assertThat(connection.getAutoCommit()).isEqualTo(readOnly);
+          assertThat(connection.isReadOnly()).isEqualTo(readOnly);
+        }
         assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
         assertThat(application.getBean(HealthEndpoint.class).healthForPath("liveness"))
             .isNotNull()
@@ -2331,14 +2340,14 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             "handoff-needs-preparation-refresh",
             base.plusSeconds(9));
     EffectReadback refreshed =
-        readbackFor(
-            preparation,
-            preparation.lastAttemptId(),
-            finalizeDuringRefresh
-                ? EffectReadbackState.UNKNOWN_OR_PARTIAL
-                : EffectReadbackState.PREPARED_FENCED,
-            "fresh-preparation-receipt",
-            base.plusSeconds(10));
+        finalizeDuringRefresh
+            ? partial
+            : readbackFor(
+                preparation,
+                preparation.lastAttemptId(),
+                EffectReadbackState.PREPARED_FENCED,
+                "fresh-preparation-receipt",
+                base.plusSeconds(10));
     EffectReadback applied =
         readbackFor(
             handoff,
@@ -2372,6 +2381,22 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       assertThat(journal.find(operationId)).contains(result);
       assertThat(storedOutbox(operationId, handoff.effect().effectId()))
           .contains(tupleCodec.digest(applied));
+      var wrongGeneration =
+          new EffectReadback(
+              refreshed.operationId(),
+              refreshed.effectId(),
+              refreshed.attemptId(),
+              refreshed.attemptOrdinal() + 1,
+              refreshed.effectKind(),
+              refreshed.operationTupleDigest(),
+              refreshed.payloadDigest(),
+              refreshed.state(),
+              refreshed.authority(),
+              refreshed.readbackIdentity(),
+              refreshed.observedAt());
+      assertThatThrownBy(() -> journal.recordEffectReadback(preparation, wrongGeneration, now))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("generation changed");
       assertThat(storedOutbox(operationId, preparation.effect().effectId()))
           .isEqualTo(priorPreparation);
       assertThat(journal.findNextEffect(operationId)).isEmpty();
@@ -6167,8 +6192,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
   @ParameterizedTest
   @ValueSource(
-      strings = {"pristine pending", "valid dispatched", "pending with dispatch timestamp"})
-  void v8ValidatesRetainedPendingDispatchTimestampsWithoutChangingRows(String variant)
+      strings = {
+        "pristine pending",
+        "valid dispatched",
+        "pending with dispatch timestamp",
+        "pending with attempt but no dispatch timestamp"
+      })
+  void pendingAttemptMigrationsValidateRetainedRowsWithoutChangingThem(String variant)
       throws Exception {
     String database = "legacy_pending_timestamp_" + UUID.randomUUID().toString().replace("-", "");
     dsl.execute("CREATE DATABASE " + database);
@@ -6192,28 +6222,57 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               .isEqualTo(1);
         }
         String retained = retainedOutboxRow(legacyDsl);
-        Flyway upgrade = journalFlyway(legacyUrl, "8");
+        Flyway timestampUpgrade = journalFlyway(legacyUrl, "8");
         if (invalid) {
-          assertThatThrownBy(upgrade::migrate)
+          assertThatThrownBy(timestampUpgrade::migrate)
               .hasStackTraceContaining("ck_release_outbox_pending_dispatch_timestamp");
-          assertThat(upgrade.info().current().getVersion().getVersion()).isEqualTo("7");
-          assertThat(
-                  legacyDsl.fetch(
-                      """
-                      SELECT 1 FROM pg_catalog.pg_constraint
-                      WHERE conrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
-                        AND conname = 'ck_release_outbox_pending_dispatch_timestamp'
-                      """))
-              .isEmpty();
-        } else {
-          upgrade.migrate();
-          assertCompletePackagedMigrationReceipts(legacyUrl);
+          assertThat(timestampUpgrade.info().current().getVersion().getVersion()).isEqualTo("7");
+          assertThat(pendingDispatchConstraintDefinition(legacyDsl)).isEmpty();
+          assertThat(retainedOutboxRow(legacyDsl)).isEqualTo(retained);
+          return;
         }
+
+        timestampUpgrade.migrate();
         assertThat(retainedOutboxRow(legacyDsl)).isEqualTo(retained);
+        Flyway pendingAttemptUpgrade = journalFlyway(legacyUrl, "9");
+        if ("pending with attempt but no dispatch timestamp".equals(variant)) {
+          assertThat(
+                  legacyDsl.execute(
+                      "UPDATE recovery_control.initial_gameplay_release_outbox"
+                          + " SET attempt_count=1, last_attempt_id=? WHERE outbox_id=?",
+                      UUID.randomUUID(),
+                      V1_OUTBOX_ID))
+              .isEqualTo(1);
+          String malformed = retainedOutboxRow(legacyDsl);
+          var priorConstraint = pendingDispatchConstraintDefinition(legacyDsl);
+          assertThat(priorConstraint).hasSize(1);
+          assertThatThrownBy(pendingAttemptUpgrade::migrate)
+              .hasStackTraceContaining("ck_release_outbox_pending_dispatch_timestamp");
+          assertThat(pendingAttemptUpgrade.info().current().getVersion().getVersion())
+              .isEqualTo("8");
+          assertThat(pendingDispatchConstraintDefinition(legacyDsl)).isEqualTo(priorConstraint);
+          assertThat(retainedOutboxRow(legacyDsl)).isEqualTo(malformed);
+        } else {
+          pendingAttemptUpgrade.migrate();
+          assertCompletePackagedMigrationReceipts(legacyUrl);
+          assertThat(retainedOutboxRow(legacyDsl)).isEqualTo(retained);
+        }
       }
     } finally {
       dsl.execute("DROP DATABASE " + database);
     }
+  }
+
+  private static List<String> pendingDispatchConstraintDefinition(DSLContext journalDsl) {
+    return journalDsl
+        .fetch(
+            """
+            SELECT pg_catalog.pg_get_constraintdef(oid) AS definition
+            FROM pg_catalog.pg_constraint
+            WHERE conrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+              AND conname = 'ck_release_outbox_pending_dispatch_timestamp'
+            """)
+        .getValues("definition", String.class);
   }
 
   @ParameterizedTest

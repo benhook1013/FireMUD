@@ -760,7 +760,6 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               }
               if (operation.phase() == Phase.FINALIZED
                   && current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
-                  && readback.state() == EffectReadbackState.PREPARED_FENCED
                   && stored != null
                   && readback.equals(
                       latestPreparationObservation(

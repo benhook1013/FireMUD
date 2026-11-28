@@ -220,19 +220,8 @@ public final class InitialGameplayReleaseController {
       throw new InitialGameplayReleaseConflictException(
           "IDEMPOTENCY_CONFLICT: effect readback observation time changed");
     }
-    try {
-      return journal.recordEffectReadback(outbox, readback, now);
-    } catch (InitialGameplayReleaseConflictException conflict) {
-      if (outbox.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED) {
-        // An independent journal read verifies the durable handoff receipt for FINALIZED.
-        Operation current = requireOperation(operation.scope().operationId());
-        if (current.phase() == Phase.FINALIZED) {
-          tupleCodec.requireEffectMatchesOperation(outbox.effect(), current);
-          return current;
-        }
-      }
-      throw conflict;
-    }
+    // The journal alone correlates the exact attempt and any retained finalization proof.
+    return journal.recordEffectReadback(outbox, readback, now);
   }
 
   private PublicTransitionResult transition(

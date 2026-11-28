@@ -39,10 +39,13 @@ RECOVERY_MIGRATION_ANCESTORS = {
     if path.parts
 }
 RECOVERY_HISTORY_VERSION_LIMIT = 50
+RECOVERY_RESERVED_FLYWAY_VERSION = "9223372036854775807"
+RECOVERY_YAML_ENTRY_LIMIT = 4096
 RECOVERY_HISTORY_TABLE = "flyway_schema_history_recovery_control"
 RECOVERY_SCHEMA = "recovery_control"
 POSTGRESQL_DRIVER = "org.postgresql.Driver"
 JAVA_TRIM_CHARACTERS = "".join(map(chr, range(0x21)))
+JAVA_UNICODE_ESCAPE_RE = re.compile(r"\\u+([0-9a-fA-F]{4})")
 RECOVERY_DATASOURCE_URL = (
     "jdbc:postgresql://${FIREMUD_RECOVERY_CONTROL_DB_HOST}:${FIREMUD_RECOVERY_CONTROL_DB_PORT:5432}"
     "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended"
@@ -306,8 +309,34 @@ def parent_snapshot(repo_root: Path, base_ref: str) -> Snapshot:
     return snapshot
 
 
+def translate_java_unicode_escapes(source: str) -> str:
+    """Translate eligible raw Unicode escapes before Java tokenization (JLS 3.3)."""
+    if r"\u" not in source:
+        return source
+
+    translated = []
+    trailing_backslashes = 0
+    previous_was_escape = False
+    index = 0
+    while index < len(source):
+        character = source[index]
+        escape = None
+        if character == "\\" and (previous_was_escape or trailing_backslashes % 2 == 0):
+            escape = JAVA_UNICODE_ESCAPE_RE.match(source, index)
+        if escape is None:
+            index += 1
+        else:
+            character = chr(int(escape.group(1), 16))
+            index = escape.end()
+        translated.append(character)
+        trailing_backslashes = trailing_backslashes + 1 if character == "\\" else 0
+        previous_was_escape = escape is not None
+    return "".join(translated)
+
+
 def java_code_tokens(source: str) -> str:
     """Blank Java comments and literals so policy checks see code tokens only."""
+    source = translate_java_unicode_escapes(source)
     characters = list(source)
 
     def blank(start: int, end: int) -> None:
@@ -397,6 +426,9 @@ def recovery_input_issues(snapshot: Snapshot) -> list[str]:
                 version = VERSION_RE.fullmatch(relative)
                 if version is None:
                     issues.append(f"{path}: recovery SQL must use Flyway's canonical versioned V* migration filename")
+                elif version.group("version") == RECOVERY_RESERVED_FLYWAY_VERSION:
+                    issues.append(f"{path}: Recovery Flyway version {RECOVERY_RESERVED_FLYWAY_VERSION} "
+                                  "is reserved for Flyway's LATEST marker")
                 elif len(version.group("version")) > RECOVERY_HISTORY_VERSION_LIMIT:
                     issues.append(f"{path}: Recovery Flyway version must fit the "
                                   f"{RECOVERY_HISTORY_VERSION_LIMIT}-character history column")
@@ -412,7 +444,9 @@ def discover_migration_files(snapshot: Snapshot) -> list[MigrationFile]:
         version_match = VERSION_RE.match(Path(path).name)
         if project_match and version_match:
             text = version_match.group("version")
-            if path.startswith(RECOVERY_SQL_ROOT) and len(text) > RECOVERY_HISTORY_VERSION_LIMIT:
+            if path.startswith(RECOVERY_SQL_ROOT) and (
+                text == RECOVERY_RESERVED_FLYWAY_VERSION or len(text) > RECOVERY_HISTORY_VERSION_LIMIT
+            ):
                 continue
             project, directory = project_match.groups()
             discovered.append(MigrationFile(path, project, text, normalize_version(text), f"classpath:db/{directory}"))
@@ -564,24 +598,31 @@ def recovery_flyway_config(
             properties[path] = child
             flatten_properties(child, (*prefix, *parts), properties, ambiguous)
 
-    def reject_recursive_aliases(
-        value: object, active: set[int], completed: set[int], config_path: str,
-    ) -> None:
+    def count_yaml_entries(
+        value: object, active: set[int], completed: dict[int, int], config_path: str,
+    ) -> int:
+        # Count the expanded entries before flattening or comparing properties.
+        # Memoization lets each alias contribute its full size without expanding it.
         if not isinstance(value, (dict, list)):
-            return
+            return 0
         identity = id(value)
         if identity in active:
             raise ValueError(f"{config_path}: recursive YAML aliases are unsupported")
         if identity in completed:
-            return
+            return completed[identity]
         active.add(identity)
+        entries = 0
         try:
             children = value.values() if isinstance(value, dict) else value
             for child in children:
-                reject_recursive_aliases(child, active, completed, config_path)
+                entries += 1 + count_yaml_entries(child, active, completed, config_path)
+                if entries > RECOVERY_YAML_ENTRY_LIMIT:
+                    raise ValueError(f"{config_path}: packaged Spring YAML exceeds "
+                                     f"{RECOVERY_YAML_ENTRY_LIMIT} expanded entries per document")
         finally:
             active.remove(identity)
-        completed.add(identity)
+        completed[identity] = entries
+        return entries
 
     resource_root = f"services/{project}/src/main/resources"
     # Properties and imported files can override the packaged YAML. This static
@@ -599,6 +640,7 @@ def recovery_flyway_config(
                   for extension in ("yaml", "yml")]
     profile_pattern = re.compile(rf"{re.escape(resource_root)}/(?:config/)?application-[^/]+\.ya?ml")
     profile_paths = sorted(path for path in snapshot if profile_pattern.fullmatch(path))
+    profile_selection = re.compile(r"^spring\.profiles\.(?:active|default|include)(?:\[0\])?$")
     effective_settings = {}
     auto_configuration_switch = "spring.boot.enableautoconfiguration"
     datasource_overrides = {
@@ -629,7 +671,7 @@ def recovery_flyway_config(
     for config_path in [*base_paths, *profile_paths]:
         try:
             documents = list(yaml.load_all(snapshot.get(config_path, b""), Loader=RuntimeLiteralLoader))
-        except yaml.YAMLError as error:
+        except (yaml.YAMLError, RecursionError) as error:
             raise ValueError(f"{config_path}: invalid packaged Spring configuration: {error}") from error
 
         for document in documents:
@@ -637,10 +679,13 @@ def recovery_flyway_config(
                 continue
             if not isinstance(document, dict):
                 return None
-            reject_recursive_aliases(document, set(), set(), config_path)
             properties: dict[str, object] = {}
             ambiguous: set[str] = set()
-            flatten_properties(document, (), properties, ambiguous)
+            try:
+                count_yaml_entries(document, set(), {}, config_path)
+                flatten_properties(document, (), properties, ambiguous)
+            except RecursionError as error:
+                raise ValueError(f"{config_path}: packaged Spring YAML nesting is too deep") from error
             obsolete_profile_index = re.compile(
                 r"^spring\.profiles(?:\[[^]]+\]|\.[0-9]+)(?:\.|$)"
             )
@@ -648,6 +693,12 @@ def recovery_flyway_config(
                     or "spring.profiles" in ambiguous
                     or any(obsolete_profile_index.match(path) for path in properties)):
                 return None
+            if config_path in profile_paths:
+                for path, value in properties.items():
+                    if profile_selection.fullmatch(path) and (
+                        not isinstance(value, dict) or any(type(key) is int and key == 0 for key in value)
+                    ):
+                        raise ValueError(f"{config_path}: {path} is invalid in profile-specific Spring configuration")
             if any(path == override or path.startswith((override + ".", override + "["))
                    for path in properties for override in datasource_overrides):
                 return None
@@ -1180,6 +1231,15 @@ def run_self_test() -> None:
             b"}\n"
         ),
     }, recovery_history, None)
+    for raw, expected in (
+        (r"class Na\uu006de {}", "class Name {}"),
+        (r"// notes\u000aclass Name {}", "\nclass Name {}"),
+        (r'String name = "\\u0022";', "String name =          ;"),
+        (r"\u005cu004e", r"\u004e"),
+    ):
+        actual = java_code_tokens(raw)
+        if actual.strip() != expected.strip():
+            raise AssertionError(f"unexpected Java tokens for {raw!r}: {actual!r}")
     check("Recovery JavaMigration beans cannot override SQL version authority", {
         **recovery_history,
         recovery_java_migration: (
@@ -1896,6 +1956,30 @@ def run_self_test() -> None:
             b"    include: ops\n    group:\n      dev: local\nserver:\n  port: 9000\n"
         ),
     }, recovery_history, None)
+    profile_config = recovery_config.replace("application.yml", "application-dev.yml")
+    configured_profile = {
+        **recovery_history,
+        recovery_config: recovery_settings + b"spring.profiles.active: dev\n",
+        profile_config: b"server.port: 9000\n",
+    }
+    check("base profile selection with an unrelated profile-specific setting",
+          configured_profile, recovery_history, None)
+    for setting, error_property in (
+        (b"spring.profiles.active: ops\n", "active"),
+        (b"spring.profiles.default[0]: local\n", "default[0]"),
+        (b"spring:\n  profiles:\n    include: [ops]\n", "include"),
+        (b"spring.profiles.include:\n  0: ops\n", "include"),
+    ):
+        invalid_profile = {**configured_profile, profile_config: setting}
+        for current, parent in ((invalid_profile, recovery_history), (recovery_history, invalid_profile)):
+            try:
+                collect_issues(current, parent)
+            except ValueError as error:
+                if str(error) != (f"{profile_config}: spring.profiles.{error_property} "
+                                  "is invalid in profile-specific Spring configuration"):
+                    raise
+            else:
+                raise AssertionError(f"profile-specific setting was accepted: {setting!r}")
     check("Flyway SQL suffix override cannot disconnect the recovery journal", {
         **recovery_history,
         recovery_config: recovery_settings + b"    sql-migration-suffixes: [.ddl]\n",
@@ -2128,6 +2212,16 @@ def run_self_test() -> None:
             **complete_recovery_history, recovery + f"V{version}__width.sql": b"-- version width",
         }, complete_recovery_history, None if length == RECOVERY_HISTORY_VERSION_LIMIT else
             "Recovery Flyway version must fit the 50-character history column")
+    reserved = {**complete_recovery_history,
+                recovery + f"V{RECOVERY_RESERVED_FLYWAY_VERSION}__reserved.sql": b"-- version marker"}
+    check("Flyway's numeric LATEST marker is reserved", reserved, complete_recovery_history,
+          "is reserved for Flyway's LATEST marker")
+    check("the receiving parent cannot contain Flyway's numeric LATEST marker",
+          complete_recovery_history, reserved, "is reserved for Flyway's LATEST marker")
+    for version in ("9223372036854775806", "9223372036854775808", "09223372036854775807"):
+        check(f"ordinary numeric version {version} is eligible", {
+            **complete_recovery_history, recovery + f"V{version}__ordinary.sql": b"-- numeric version",
+        }, complete_recovery_history, None)
     check("ordinary flat underscore Recovery filenames remain supported", {
         **complete_recovery_history, recovery + "V3__generation_notes.sql": b"-- generation",
     }, complete_recovery_history, None)
@@ -2183,6 +2277,23 @@ def run_self_test() -> None:
     }
     check("acyclic YAML aliases may be reused by separate branches", reused_alias,
           complete_recovery_history, None)
+    catalog = b"".join(f"setting{index}: value\n".encode()
+                       for index in range(RECOVERY_YAML_ENTRY_LIMIT - 4))
+    alias_catalog = b"shared: &shared {setting: value}\ncopy: *shared\n" + catalog
+    check("a YAML document at the expanded entry limit is accepted", {
+        **complete_recovery_history, recovery_config: recovery_settings + b"---\n" + alias_catalog,
+    }, complete_recovery_history, None)
+    try:
+        collect_issues({
+            **complete_recovery_history,
+            recovery_config: recovery_settings + b"---\n" + alias_catalog + b"extra: value\n",
+        }, complete_recovery_history)
+    except ValueError as error:
+        if str(error) != (f"{recovery_config}: packaged Spring YAML exceeds "
+                          f"{RECOVERY_YAML_ENTRY_LIMIT} expanded entries per document"):
+            raise
+    else:
+        raise AssertionError("YAML expanded entry limit was not enforced")
     try:
         collect_issues({
             **complete_recovery_history,
