@@ -4211,7 +4211,7 @@ fi
 
 done
 
-for namespace_count_sequence in 2,1 2,2; do
+for namespace_count_sequence in 2,1 2,2 2,1,2; do
   reset_case
   reconciler_capacity_refresh_output="$TEMP_DIR/reconciler-capacity-refresh-${namespace_count_sequence//,/-}.out"
   export FAKE_NAMESPACE_COUNT_SEQUENCE="$namespace_count_sequence"
@@ -4230,6 +4230,11 @@ for namespace_count_sequence in 2,1 2,2; do
     test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 3
     grep -Fq 'Dispatching preview render for PR #901' "$reconciler_capacity_refresh_output"
     test -s "$FAKE_DISPATCH_LOG"
+  elif [[ "$namespace_count_sequence" == 2,1,2 ]]; then
+    test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 3
+    grep -Fq 'Skipping ordinary PR #901: preview capacity is still full after refresh.' \
+      "$reconciler_capacity_refresh_output"
+    test ! -e "$FAKE_DISPATCH_LOG"
   else
     test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 2
     grep -Fq 'Skipping ordinary PR #901: preview capacity is still full after refresh.' \
@@ -4238,7 +4243,7 @@ for namespace_count_sequence in 2,1 2,2; do
   fi
 done
 
-for namespace_count_sequence in 2,1 2,2 2,1,2; do
+for namespace_count_sequence in 2,1 2,2; do
   reset_case
   reconciler_capacity_refresh_output="$TEMP_DIR/reconciler-final-capacity-refresh-${namespace_count_sequence//,/-}.out"
   export FAKE_NAMESPACE_COUNT_SEQUENCE="$namespace_count_sequence"
@@ -4253,11 +4258,7 @@ for namespace_count_sequence in 2,1 2,2 2,1,2; do
       bash "$RECONCILER_RUN"
   ) > "$reconciler_capacity_refresh_output"
   test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
-  if [[ "$namespace_count_sequence" == 2,1,2 ]]; then
-    test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 3
-  else
-    test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 2
-  fi
+  test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 2
   test ! -e "$FAKE_ANNOTATE_LOG"
   if [[ "$namespace_count_sequence" == 2,1 ]]; then
     grep -Fq 'Dispatching preview render for PR #901' "$reconciler_capacity_refresh_output"
