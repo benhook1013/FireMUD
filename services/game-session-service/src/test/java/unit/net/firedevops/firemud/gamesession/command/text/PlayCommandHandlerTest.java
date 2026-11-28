@@ -2529,11 +2529,26 @@ class PlayCommandHandlerTest {
     Mockito.verify(sessionContextService, Mockito.never()).save(Mockito.any());
   }
 
-  @Test
-  void staleContextCharacterIsReplacedByPersistedRosterActorBeforeFreshEntry() {
+  @ParameterizedTest
+  @ValueSource(longs = {123L, 7001L})
+  void roomlessFreshEntryUsesThePersistedActorAndRedrawsTheSameActor(long retainedCharacterId) {
     SessionContext context =
         new SessionContext(
-            1L, 22L, ACCOUNT_ID, "demo@example.com", 123L, "demo", 1L, null, "jwt-token");
+            1L,
+            22L,
+            ACCOUNT_ID,
+            "demo@example.com",
+            retainedCharacterId,
+            "demo",
+            1L,
+            null,
+            "jwt-token",
+            null,
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
         .thenReturn(Optional.empty());
@@ -2543,6 +2558,8 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo as demo");
+    boolean sameActor = retainedCharacterId == 7001L;
+    assertThat(result.reconnectRedrawRecommended()).isEqualTo(sameActor);
     Mockito.verify(sessionContextService)
         .save(
             new SessionContext(
@@ -2568,7 +2585,7 @@ class PlayCommandHandlerTest {
                     "reason",
                     "stale_or_missing_context")
                 .count())
-        .isEqualTo(0.0);
+        .isEqualTo(sameActor ? 1.0 : 0.0);
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             new SessionContext(

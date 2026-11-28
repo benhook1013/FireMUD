@@ -806,6 +806,27 @@ class GameSessionGrpcServiceTest {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void getAdmissionPointerReturnsTypedUnavailableForStorageFailures(boolean translated) {
+    var authority = Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    RuntimeException storageFailure =
+        translated
+            ? new org.springframework.dao.DataAccessResourceFailureException(
+                "internal storage detail")
+            : new org.jooq.exception.DataAccessException("internal storage detail");
+    Mockito.when(authority.listPointersByTenant(7L)).thenThrow(storageFailure);
+
+    var response = admissionPointer(catalogService(authority), "demo", "selected");
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.getError().getCode());
+    assertEquals(
+        "Authoritative gameplay pointer storage is unavailable", response.getError().getMessage());
+    assertFalse(response.hasAdmissionPointer());
+    Mockito.verify(authority).listPointersByTenant(7L);
+    Mockito.verify(authority, Mockito.never()).listPointers();
+  }
+
   private static GetAdmissionPointerResponse admissionPointer(
       GameSessionGrpcService service, String worldSlug, String realmSlug) {
     AtomicReference<GetAdmissionPointerResponse> response = new AtomicReference<>();

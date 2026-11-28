@@ -26,6 +26,20 @@ class GameplayWorldCatalogTest {
       Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
 
   @Test
+  void storageFailureDoesNotBecomeAnEmptyPublicCatalog() {
+    var storageFailure = new org.jooq.exception.DataAccessException("internal storage detail");
+    when(authorityService.listPointers()).thenThrow(storageFailure);
+    var catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThatThrownBy(catalog::browseView)
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class)
+        .hasCause(storageFailure);
+    assertThatThrownBy(catalog::publicWorldsFromAuthoritySnapshot)
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class)
+        .hasCause(storageFailure);
+  }
+
+  @Test
   void directPublicProductionGuardReadsOnlyTheExpectedTenant() {
     GameplayAdmissionPointerSnapshot expectedPointer = publicPointer("demo", "Demo World", 1L, 11L);
     when(authorityService.listPointers())
