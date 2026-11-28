@@ -3,10 +3,13 @@ package net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -17,10 +20,16 @@ import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -29,6 +38,8 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
@@ -48,23 +59,23 @@ import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Real Flyway/PostgreSQL owner storage proof only. Primary authentication, canonical authority,
- * signer capture and Redis/TLS/WAITAOF are explicitly test-only doubles. The tenant source is a
- * stipulated external Game Design fixture, not genuine owner provenance. No private proof
- * constructor is bypassed: Coordination creates its receipt through its normal transport path.
- * Ordinary opaque envelope fixtures prove retention only. The explicit retained-key rotation test
- * additionally uses real envelope cryptography with temporary test custody. Neither proves genuine
- * issuance, production custody or physical Redis.
+ * Real Flyway/PostgreSQL owner storage. Repository cases use controlled primary, authority and
+ * signer inputs. The retained-key rotation and signing refusal cases use real envelope cryptography
+ * with temporary test custody. Signing refusal also uses actual Account source, primary
+ * authentication, mounted signing and JWT validation with controlled upstream inputs. Coordination
+ * creates receipts through the owner adapter with controlled transport responses.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountControlUiIssuancePostgresIntegrationTest {
@@ -107,6 +118,156 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     assertThat(envelope.binding()).isEqualTo(f.ownerBinding);
     assertThat(c.dsl.fetchCount(DSL.table("account_control_ui_issuance_operations"))).isEqualTo(1);
     assertThat(c.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes"))).isEqualTo(1);
+  }
+
+  @Test
+  void serviceCommitsPreparedBeforeSigningAndRecoversTheSameOriginalAfterRefusal(
+      @TempDir Path temporary) throws Exception {
+    var f =
+        new AccountControlUiOwnerSourcesFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            temporary,
+            false);
+    var lifecycle = new AccountControlUiSignerFixture(f, temporary);
+    lifecycle.commit();
+    Path custody = temporary.resolve("custody");
+    writeTestKeyring(custody.resolve("encryption"), "enc1", (byte) 11);
+    writeTestKeyring(custody.resolve("request-mac"), "mac1", (byte) 29);
+    Clock clock = Clock.fixed(Instant.now().truncatedTo(ChronoUnit.SECONDS), ZoneOffset.UTC);
+    var crypto =
+        new AccountControlUiResponseCryptography(new AccountControlUiKeyring(custody), clock);
+    var operations = new AccountControlUiIssuanceRepository(f.dsl);
+    var signer = spy(lifecycle.signer);
+    var registry = controlledRegistry(f, operations);
+    var publicSource =
+        new AccountJwtJwksTrustedSource(
+            lifecycle.client, lifecycle.trust, lifecycle.desired, lifecycle.publication, f.manager);
+    var actors =
+        new AccountControlUiActorService(
+            operations, f.authority, signer, registry, publicSource, f.fences, f.manager, clock);
+    Function<Clock, AccountControlUiIssuanceService> issuance =
+        currentClock ->
+            new AccountControlUiIssuanceService(
+                f.primary,
+                null,
+                new AccountControlUiIssuanceRepository(f.dsl),
+                f.authority,
+                f.fences,
+                signer,
+                crypto,
+                registry,
+                actors,
+                f.manager,
+                currentClock,
+                300_000L,
+                AccountControlUiOwnerSourcesFixture.CALLER);
+    var first = new AtomicReference<AccountControlUiIssuanceRepository.Stored>();
+    var refusal = new IllegalStateException("Controlled first signing refusal");
+    doAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              var prepared = Objects.requireNonNull(f.tx(() -> operations.findRequest(f.request)));
+              var captured = call.getArgument(0, AccountControlUiSignerOwner.Capture.class);
+              var spec = call.getArgument(1, AccountControlUiSigningSpec.class);
+              assertThat(prepared.status).isEqualTo("PREPARED");
+              assertThat(prepared.tokenHash).isNull();
+              assertThat(prepared.pendingRegistry).isNull();
+              assertThat(prepared.activeRegistry).isNull();
+              assertThat(prepared.operationId).isEqualTo(spec.operationId());
+              assertThat(prepared.requestId).isEqualTo(spec.requestId());
+              assertThat(prepared.jti).isEqualTo(spec.jti());
+              assertThat(prepared.claims)
+                  .containsExactly(AccountControlUiAuthority.canonical(spec.claims()));
+              assertThat(prepared.signerReceipt).containsExactly(captured.receipt());
+              assertThat(prepared.issuedAt).isEqualTo(clock.instant());
+              assertThat(f.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes")))
+                  .isZero();
+              if (first.compareAndSet(null, prepared)) {
+                throw refusal;
+              }
+              assertOriginal(first.get(), prepared);
+              return call.callRealMethod();
+            })
+        .when(signer)
+        .sign(any(), any(), any());
+
+    var request = f.request(AccountControlUiOwnerSourcesFixture.OTP);
+    var environment = f.terms.captureCurrentEnvironmentBoundary();
+    try (var peer =
+        AccountControlUiOwnerSourcesFixture.withPeer(AccountControlUiOwnerSourcesFixture.CALLER)) {
+      assertThatThrownBy(() -> issuance.apply(clock).issue(request, environment)).isSameAs(refusal);
+      assertThat(f.challenges.findByAccountId(f.account.getId())).isEmpty();
+      var retained = f.tx(() -> operations.findRequest(f.request));
+      assertOriginal(first.get(), retained);
+      assertThat(retained.status).isEqualTo("PREPARED");
+      assertThat(retained.tokenHash).isNull();
+      verifyNoInteractions(registry);
+
+      var restarted = issuance.apply(Clock.offset(clock, Duration.ofSeconds(1)));
+      try (var issued = restarted.issue(request, environment);
+          var replayed = restarted.issue(request, environment)) {
+        var committed = f.tx(() -> operations.findRequest(f.request));
+        assertOriginal(retained, committed);
+        assertThat(committed.status).isEqualTo("COMMITTED");
+        assertThat(committed.tokenHash)
+            .isEqualTo(AccountControlUiIssuanceRepository.hash(issued.compactBytes()));
+        assertThat(replayed.compactBytes()).containsExactly(issued.compactBytes());
+        assertThat(replayed.expiresAt()).isEqualTo(retained.expiresAt);
+        assertThat(replayed.recoveryExpiresAt()).isEqualTo(retained.recoveryExpiry);
+      }
+    }
+    verify(signer, times(2)).sign(any(), any(), any());
+    verify(registry).registerPending(anyString(), any(byte[].class), anyLong());
+    assertThat(f.dsl.fetchCount(DSL.table("account_control_ui_issuance_operations"))).isEqualTo(1);
+    assertThat(f.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes"))).isEqualTo(1);
+  }
+
+  private static AccountControlUiCoordination controlledRegistry(
+      AccountControlUiOwnerSourcesFixture f, AccountControlUiIssuanceRepository operations) {
+    var registry = mock(AccountControlUiCoordination.class);
+    var activated = new AtomicReference<AccountControlUiIssuanceRepository.Committed>();
+    when(registry.registerPending(anyString(), any(byte[].class), anyLong()))
+        .thenAnswer(
+            call -> {
+              var candidate = f.tx(() -> operations.findRequest(f.request));
+              return new Transport(candidate)
+                  .client.registerPending(
+                      call.getArgument(0), call.getArgument(1), call.getArgument(2));
+            });
+    when(registry.activate(any()))
+        .thenAnswer(
+            call -> {
+              var original =
+                  call.getArgument(0, AccountControlUiIssuanceRepository.Committed.class);
+              var receipt =
+                  new Transport(original.stored, original.activeRegistry())
+                      .client.activate(original);
+              activated.set(original);
+              return receipt;
+            });
+    when(registry.readActive(anyString()))
+        .thenAnswer(
+            call -> {
+              var original = activated.get();
+              return original != null && original.tokenHash().equals(call.getArgument(0))
+                  ? original.activeRegistry()
+                  : null;
+            });
+    return registry;
+  }
+
+  private static void writeTestKeyring(Path directory, String id, byte fill) throws Exception {
+    byte[] key = new byte[32];
+    Arrays.fill(key, fill);
+    Files.writeString(
+        Files.createDirectories(directory).resolve("keyring"),
+        "firemud-account-response-envelope-keyring-v1\nactive "
+            + id
+            + " "
+            + Base64.getUrlEncoder().withoutPadding().encodeToString(key)
+            + "\n");
   }
 
   @Test
@@ -906,6 +1067,10 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     final AccountControlUiCoordination client;
 
     Transport(AccountControlUiIssuanceRepository.Stored original) {
+      this(original, original.pendingRegistry);
+    }
+
+    Transport(AccountControlUiIssuanceRepository.Stored original, byte[] exactReadback) {
       var descriptor = AccountControlUiRegistryContract.descriptor();
       var catalog = mock(RedisScriptCatalog.class);
       when(catalog.require(AccountControlUiRegistryContract.SCRIPT_ID)).thenReturn(descriptor);
@@ -924,7 +1089,7 @@ class AccountControlUiIssuancePostgresIntegrationTest {
               anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class));
       doReturn(List.of(1L, 1L)).when(commands).dispatch(any(), any(), any());
       when(commands.pexpiretime(any(byte[].class))).thenReturn(original.expiryMillis());
-      when(commands.get(any(byte[].class))).thenReturn(original.pendingRegistry);
+      when(commands.get(any(byte[].class))).thenReturn(exactReadback);
       client =
           new AccountControlUiCoordination(
               () -> connection, new AcknowledgementRequirements(1, 1, 1000), catalog);
