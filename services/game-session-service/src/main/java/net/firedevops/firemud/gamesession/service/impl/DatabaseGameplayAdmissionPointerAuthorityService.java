@@ -249,7 +249,8 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
         pointer.getCharacterCreationPolicy(),
         pointer.getCatalogRevision() == null ? 0L : pointer.getCatalogRevision(),
         pointer.getRealmId(),
-        pointer.getPlayableStateNamespaceId());
+        pointer.getPlayableStateNamespaceId(),
+        pointer.getRepresentationVersion());
   }
 
   private long nextCatalogRevision(

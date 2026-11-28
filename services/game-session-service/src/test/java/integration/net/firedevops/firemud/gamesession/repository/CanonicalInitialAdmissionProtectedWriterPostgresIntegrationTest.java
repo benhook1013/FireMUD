@@ -33,6 +33,7 @@ import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRe
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
+import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.Record;
 import org.junit.jupiter.api.Test;
@@ -664,6 +665,11 @@ class CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest {
         assertThat(terminal.get(column)).isEqualTo(pending.get(column));
       }
       assertThat(terminal.get("intent_state", String.class)).isEqualTo("TERMINAL");
+      assertThat(
+              new GameplayAdmissionPointerRepository(harness.dsl())
+                  .findAllByOrderByWorldSlugAscRealmSlugAsc())
+          .extracting(pointer -> pointer.getRepresentationVersion())
+          .containsExactly(3);
       assertThat(terminal.get("intent_terminal", OffsetDateTime.class))
           .isEqualTo(terminal.get("terminal_at", OffsetDateTime.class));
       assertThat(

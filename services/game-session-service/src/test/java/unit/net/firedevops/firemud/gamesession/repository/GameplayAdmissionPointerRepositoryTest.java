@@ -30,7 +30,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 class GameplayAdmissionPointerRepositoryTest {
   @Test
-  void numericInventoryExcludesCanonicalClosedRowsBeforeMapping() throws Exception {
+  void numericInventoryRetainsOrdinaryAndCanonicalOpenRepresentations() throws Exception {
     try (Connection connection =
         DriverManager.getConnection(
             "jdbc:h2:mem:gameplay-pointer-representation-inventory;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
@@ -38,17 +38,25 @@ class GameplayAdmissionPointerRepositoryTest {
       createSchema(dsl);
       var repository = new GameplayAdmissionPointerRepository(dsl);
       var retained = repository.save(pointer(7L, 44L, "SHARED", "production"));
-      var canonicalSelector = repository.save(pointer(8L, 55L, "SHARED", "production"));
-      // H2 qualifies query selection only. The current PostgreSQL CLOSED suite constructs the
-      // real canonical row through its owner and checks all representation/immutability guards.
+      var closed = repository.save(pointer(8L, 55L, "SHARED", "production"));
+      var opened = repository.save(pointer(9L, 66L, "SHARED", "production"));
+      // H2 qualifies selection and projection only. PostgreSQL owner tests prove row guards.
       dsl.execute(
           "UPDATE gameplay_admission_pointer SET representation_version = 2, tenant_id = NULL, game_instance_id = NULL WHERE id = ?",
-          canonicalSelector.getId());
+          closed.getId());
+      dsl.execute(
+          "UPDATE gameplay_admission_pointer SET representation_version = 3 WHERE id = ?",
+          opened.getId());
+
       assertEquals(1L, repository.count());
       var selected = repository.findAllByOrderByWorldSlugAscRealmSlugAsc();
-      assertEquals(1, selected.size());
+      assertEquals(2, selected.size());
       assertEquals(retained.getId(), selected.getFirst().getId());
       assertEquals(7L, selected.getFirst().getTenantId());
+      assertEquals(1, selected.getFirst().getRepresentationVersion());
+      assertEquals(opened.getId(), selected.getLast().getId());
+      assertEquals(9L, selected.getLast().getTenantId());
+      assertEquals(3, selected.getLast().getRepresentationVersion());
     }
   }
 

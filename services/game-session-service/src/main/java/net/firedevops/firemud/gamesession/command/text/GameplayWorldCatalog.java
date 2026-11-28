@@ -972,7 +972,8 @@ public final class GameplayWorldCatalog {
         pointer.characterCreationPolicy(),
         pointer.catalogRevision(),
         pointer.realmId(),
-        pointer.playableStateNamespaceId());
+        pointer.playableStateNamespaceId(),
+        pointer.representationVersion());
   }
 
   private static WorldView copyWorldView(WorldView input) {
@@ -1021,7 +1022,8 @@ public final class GameplayWorldCatalog {
         input.characterCreationPolicy(),
         input.catalogRevision(),
         input.realmId(),
-        input.playableStateNamespaceId());
+        input.playableStateNamespaceId(),
+        input.representationVersion());
   }
 
   private record CatalogSnapshot(
@@ -1066,7 +1068,40 @@ public final class GameplayWorldCatalog {
       String characterCreationPolicy,
       long catalogRevision,
       UUID realmId,
-      UUID playableStateNamespaceId) {
+      UUID playableStateNamespaceId,
+      Integer representationVersion) {
+    /** Creates a synthetic realm view without persisted pointer representation evidence. */
+    public RealmView(
+        String slug,
+        String displayName,
+        long tenantId,
+        long gameInstanceId,
+        long pointerVersion,
+        boolean visible,
+        boolean publicProductionRealm,
+        boolean requiresCharacterSelection,
+        String stateScope,
+        String characterCreationPolicy,
+        long catalogRevision,
+        UUID realmId,
+        UUID playableStateNamespaceId) {
+      this(
+          slug,
+          displayName,
+          tenantId,
+          gameInstanceId,
+          pointerVersion,
+          visible,
+          publicProductionRealm,
+          requiresCharacterSelection,
+          stateScope,
+          characterCreationPolicy,
+          catalogRevision,
+          realmId,
+          playableStateNamespaceId,
+          null);
+    }
+
     /** Creates a synthetic realm view without authoritative identity evidence. */
     public RealmView(
         String slug,

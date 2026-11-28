@@ -152,9 +152,6 @@ public final class DirectTextWorldSelectionService {
     } catch (InvalidAuthorityException exception) {
       return Optional.empty();
     }
-    if (current == null) {
-      return Optional.empty();
-    }
     boolean changed =
         !expected.equals(current)
             || !snapshot.fingerprint().equals(catalog.discoverySnapshot().fingerprint());
