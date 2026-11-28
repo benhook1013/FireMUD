@@ -25,7 +25,7 @@ This is the always-on guidance for AI agents working in FireMUD. It states inten
 
 ## How Work Flows
 
-- FireMUD is pre-v1. Converge on one canonical state: when a contract changes, update its call sites, tests, and docs together and remove the old path. Keep compatibility only where the owning architecture requires it for live data (none before v1 once [ADR 0185](design/architecture/decisions/adr-0185-no-data-carry-over-before-v1.md) is accepted), security, or protocol reasons.
+- FireMUD is pre-v1. Converge on one canonical state: when a contract changes, update its call sites, tests, and docs together and remove the old path. Keep compatibility only where the owning architecture requires it for live data (none before v1, [ADR 0185](design/architecture/decisions/adr-0185-no-data-carry-over-before-v1.md)), security, or protocol reasons.
 - **Group work into as few PRs as stay reviewable** ([PR lifecycle](design/developer-workflows/pr-lifecycle.md#change-and-merge-policy)).
 - **Design first.** A PR that changes an intended contract updates its owning design doc in the same PR. Implementing an agreed design changes a design doc only to remove a limitation line it makes stale; record progress and proof in the tracker.
 - Update an implementation tracker when capability status actually changes, not on every PR. Read the owning tracker before interpreting branch names, commits, or raw diffs during implementation or branch reconciliation.
