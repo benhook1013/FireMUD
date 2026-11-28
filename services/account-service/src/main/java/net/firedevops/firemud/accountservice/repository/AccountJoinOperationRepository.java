@@ -98,6 +98,13 @@ public class AccountJoinOperationRepository {
     }
   }
 
+  /** Exact negative evidence, read only after the caller has locked the owning Account row. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public boolean hasGlobalPendingIntent(UUID accountId) {
+    requireWritableOwnerTransaction();
+    return AccountGlobalPendingIntentReader.hasPending(dsl, accountId);
+  }
+
   public Optional<JoinOperation> find(String requestId) {
     return dsl.selectFrom(ACCOUNT_JOIN_OPERATIONS)
         .where(ACCOUNT_JOIN_OPERATIONS.REQUEST_ID.eq(requestId).and(retainedV1Representation()))

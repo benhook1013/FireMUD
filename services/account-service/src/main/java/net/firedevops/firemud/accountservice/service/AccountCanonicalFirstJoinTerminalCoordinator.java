@@ -379,6 +379,9 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
 
     final Checkpoint checkpoint;
     if ("PENDING".equals(operation.status())) {
+      if (joinOperationRepository.hasGlobalPendingIntent(scope.accountId())) {
+        throw new IllegalStateException("Canonical first-JOIN Account source intent is unresolved");
+      }
       VerifiedTenantProvenance provenance = operation.scopeEvidence().tenantProvenance();
       if (!Boolean.TRUE.equals(operation.allowPublicJoin())
           || !"AVAILABLE".equals(operation.entitlementAuthorityAvailability())

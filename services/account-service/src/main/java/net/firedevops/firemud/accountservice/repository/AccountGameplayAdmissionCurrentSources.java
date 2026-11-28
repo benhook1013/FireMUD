@@ -229,6 +229,7 @@ public final class AccountGameplayAdmissionCurrentSources {
     } else {
       lockExactAccountFirst(accountId);
     }
+    if (AccountGlobalPendingIntentReader.hasPending(dsl, accountId)) throw unavailable();
     // Match composite snapshot order: lock the issuer and caller before tenant source generations.
     CommittedCandidateVerificationData candidate =
         readCommittedCandidate(expectedOriginalTokenJti, expectedCommittedCandidate);
