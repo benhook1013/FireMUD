@@ -340,7 +340,14 @@ class AccountGameplayAdmissionLeaseClientTest {
       } finally {
         java.util.Arrays.fill(receivedHandle, (byte) 0);
       }
-      assertThat(signedBoundJwts).containsExactly(received.signedBoundGsACompactJwt());
+      var requestedIssueDeadline = Deadline.after(3, TimeUnit.SECONDS);
+      var boundedReceived =
+          client.issueOriginalNewBoundGameplayCredential(
+              JWT, originalLease, requestedIssueDeadline);
+      assertThat(boundedReceived.originalLeaseId()).isEqualTo(received.originalLeaseId());
+      assertThat(signedBoundJwts)
+          .containsExactly(
+              received.signedBoundGsACompactJwt(), boundedReceived.signedBoundGsACompactJwt());
       assertThat(received.toString())
           .doesNotContain(JWT, signedBoundJwts.getFirst(), HexFormat.of().formatHex(handle));
       var confirmation = client.confirmOriginalNewGameplayAdmission(JWT, originalLease);
@@ -349,10 +356,12 @@ class AccountGameplayAdmissionLeaseClientTest {
           client.confirmOriginalNewGameplayAdmission(JWT, originalLease, requestedBoundedDeadline);
 
       assertThat(boundedConfirmation).usingRecursiveComparison().isEqualTo(confirmation);
-      assertThat(observed).containsExactly(GAME_SESSION_PEER, GAME_SESSION_PEER, GAME_SESSION_PEER);
+      assertThat(observed)
+          .containsExactly(
+              GAME_SESSION_PEER, GAME_SESSION_PEER, GAME_SESSION_PEER, GAME_SESSION_PEER);
       assertThat(issuedRequests)
-          .singleElement()
-          .satisfies(request -> {
+          .hasSize(2)
+          .allSatisfy(request -> {
             assertThat(request.getPresentedInitialGsaCompactJwt(0)).isEqualTo(JWT);
             assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
                 .containsExactly(originalLease);
@@ -367,20 +376,28 @@ class AccountGameplayAdmissionLeaseClientTest {
             assertThat(request.getOriginalLeaseEvidenceUtf8(0).toByteArray())
                 .containsExactly(originalLease);
           });
-      assertThat(deadlines).hasSize(3);
-      assertThat(dispatchedDeadlines).hasSize(3);
-      assertThat(dispatchedRemainingNanos.subList(0, 2))
-          .allSatisfy(remaining -> assertThat(remaining).isBetween(4_500_000_000L, 5_000_000_000L));
-      assertThat(dispatchedDeadlines.get(2)).isSameAs(requestedBoundedDeadline);
-      assertThat(deadlines.subList(0, 2))
-          .allSatisfy(deadline -> {
-            long remainingMillis = deadline.timeRemaining(TimeUnit.MILLISECONDS);
-            assertThat(remainingMillis).isPositive().isLessThanOrEqualTo(5_000L);
-          });
+      assertThat(deadlines).hasSize(4);
+      assertThat(dispatchedDeadlines).hasSize(4);
+      assertThat(dispatchedRemainingNanos.get(0)).isBetween(4_500_000_000L, 5_000_000_000L);
+      assertThat(dispatchedRemainingNanos.get(1)).isBetween(2_500_000_000L, 3_000_000_000L);
+      assertThat(dispatchedRemainingNanos.get(2)).isBetween(4_000_000_000L, 5_000_000_000L);
+      assertThat(dispatchedRemainingNanos.get(3)).isBetween(2_000_000_000L, 3_000_000_000L);
+      assertThat(dispatchedDeadlines.get(1)).isSameAs(requestedIssueDeadline);
+      assertThat(dispatchedDeadlines.get(3)).isSameAs(requestedBoundedDeadline);
+      assertThat(deadlines.get(0).timeRemaining(TimeUnit.MILLISECONDS))
+          .isPositive()
+          .isLessThanOrEqualTo(5_000L);
+      assertThat(deadlines.get(1).timeRemaining(TimeUnit.MILLISECONDS))
+          .isPositive()
+          .isLessThanOrEqualTo(3_000L);
       assertThat(deadlines.get(2).timeRemaining(TimeUnit.MILLISECONDS))
+          .isPositive()
+          .isLessThanOrEqualTo(5_000L);
+      assertThat(deadlines.get(3).timeRemaining(TimeUnit.MILLISECONDS))
           .isPositive()
           .isLessThanOrEqualTo(3_000L);
       received.close();
+      boundedReceived.close();
       java.util.Arrays.fill(originalLease, (byte) 0);
     } finally {
       java.util.Arrays.fill(handle, (byte) 0);

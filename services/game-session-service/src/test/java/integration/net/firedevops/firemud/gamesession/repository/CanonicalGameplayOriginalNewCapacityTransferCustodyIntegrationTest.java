@@ -74,7 +74,11 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
       String url = POSTGRES.getJdbcUrl();
       String schema = proof.sql.fetchSingle("SELECT current_schema()").get(0, String.class);
       repeatableReadSource.setUrl(
-          url + (url.contains("?") ? "&" : "?") + "currentSchema=" + schema);
+          url
+              + (url.contains("?") ? "&" : "?")
+              + "currentSchema="
+              + schema
+              + "&connectTimeout=3&socketTimeout=5");
       repeatableReadSource.setUsername(POSTGRES.getUsername());
       repeatableReadSource.setPassword(POSTGRES.getPassword());
       AtomicInteger installIsolation = new AtomicInteger(-1);
@@ -111,6 +115,8 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
               observingDsl.transaction(configuration -> {
                 DSLContext tx = DSL.using(configuration);
                 tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+                tx.execute("SET LOCAL statement_timeout = '5s'");
+
                 tx.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
                     "game-session-region-owner-install:v1:" + tag);
@@ -126,7 +132,7 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
       }
 
       if (dispatchWhileWaiting) {
-        assertThatThrownBy(install::get)
+        assertThatThrownBy(() -> install.get(10, TimeUnit.SECONDS))
             .rootCause()
             .isInstanceOfSatisfying(
                 org.postgresql.util.PSQLException.class,
@@ -138,7 +144,7 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
         assertThat(proof.currentOwner()).isEqualTo(proof.prior);
         assertThat(proof.executionState(dispatched)).isEqualTo("INSTALL_DISPATCHED");
       } else {
-        install.get();
+        install.get(10, TimeUnit.SECONDS);
         var successor = proof.currentOwner();
         assertThat(successor.ownerInstanceId()).isEqualTo("repeatable-read-successor");
         assertThat(successor.executorFence()).isGreaterThan(proof.prior.executorFence());

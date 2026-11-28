@@ -424,29 +424,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             + " WHERE tenant_uuid=? AND request_id=? AND admission_id=?";
     assertThat(f.dsl.fetchSingle(countDeniedReservations, identity).get("n", Long.class)).isZero();
 
-    // Recovery claims are checked against live PostgreSQL time, not the frozen evaluation clock.
-    Clock recoveryClock = mock(Clock.class);
-    when(recoveryClock.instant())
-        .thenAnswer(invocation ->
-            f.dsl.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class).toInstant());
-    // The external no-execution observation is controlled; all Account storage mutations are real.
-    var recovery =
-        new AccountTenantCapacityRecoveryWorker(
-            f.capacityOwner,
-            f.dsl,
-            (occupying, reservation, deadline) ->
-                new AccountTenantCapacityRecoveryWorker.Observation(
-                    PEER,
-                    reservation,
-                    net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.preimage(
-                        occupying),
-                    AccountTenantCapacityRecoveryWorker.Disposition
-                        .NOT_EXECUTED_AFTER_AUTHORIZATION,
-                    occupying.admissionAttemptId(),
-                    7,
-                    "sha256:" + "e".repeat(64),
-                    "controlled-owner-no-execution".getBytes(StandardCharsets.US_ASCII)),
-            recoveryClock);
+    var recovery = capacityRecoveryWithControlledNoExecution(f);
     assertThat(
             recovery
                 .reconcile(
@@ -600,6 +578,87 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
                 .get(0, OffsetDateTime.class)
                 .toInstant()
                 .isBefore(expiry));
+  }
+
+  @Test
+  void exactRetainedOutcomeReplaysOnlyTheCurrentProofBackedRearmedAttempt() throws Exception {
+    Fixture f = fixture(true, true);
+    var original = capacityRequest(f);
+    var initial = f.capacityOwner.commit(original, PEER);
+    var next =
+        new TenantCapacityAdmission.Request(
+                original.identity(),
+                UUID.randomUUID(),
+                original.capacityRearmFence() + 1,
+                original.targetNamespace(),
+                original.context(),
+                original.operation(),
+                original.priorShape(),
+                original.requestedShape(),
+                original.evidence(),
+                original.capacityDelta(),
+                null)
+            .withDigest();
+
+    assertThatThrownBy(() -> f.capacityOwner.readRetainedAdmissionOutcome(next, PEER))
+        .isInstanceOfSatisfying(
+            CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.ENTITLEMENT_UNAVAILABLE));
+    var recovery = capacityRecoveryWithControlledNoExecution(f);
+    recovery.reconcile(
+        original, AccountTenantCapacityRecoveryWorker.NoCommitAction.RETAIN_FOR_REARM);
+    var rearmed = recovery.rearm(original, next);
+    assertThat(rearmed.reservationId()).isEqualTo(initial.reservationId());
+    assertThat(rearmed.reservationFence()).isEqualTo(initial.reservationFence() + 1);
+
+    String imageSql =
+        """
+        SELECT (
+            SELECT jsonb_agg(to_jsonb(r) ORDER BY r.reservation_id)
+            FROM account_tenant_capacity_reservations r
+        )::text, (
+            SELECT jsonb_agg(to_jsonb(d) ORDER BY d.decision_id)
+            FROM account_capacity_origin_decisions d
+        )::text, (
+            SELECT jsonb_agg(to_jsonb(u) ORDER BY u.tenant_uuid, u.owner_service)
+            FROM account_tenant_capacity_usage u
+        )::text
+        """;
+    var before = f.dsl.fetchSingle(imageSql).intoList();
+
+    var retained = f.capacityOwner.readRetainedAdmissionOutcome(next, PEER);
+    assertThat(retained.reservation()).isEqualTo(rearmed);
+    assertThat(retained.denial()).isNull();
+    assertThatThrownBy(() -> f.capacityOwner.readRetainedAdmissionOutcome(original, PEER))
+        .isInstanceOfSatisfying(
+            CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.ENTITLEMENT_UNAVAILABLE));
+    assertThat(f.dsl.fetchSingle(imageSql).intoList()).isEqualTo(before);
+  }
+
+  private static AccountTenantCapacityRecoveryWorker capacityRecoveryWithControlledNoExecution(
+      Fixture f) {
+    // Recovery claims are checked against live PostgreSQL time, not the frozen evaluation clock.
+    Clock recoveryClock = mock(Clock.class);
+    when(recoveryClock.instant())
+        .thenAnswer(invocation ->
+            f.dsl.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class).toInstant());
+    // The external no-execution observation is controlled; all Account storage mutations are real.
+    return new AccountTenantCapacityRecoveryWorker(
+        f.capacityOwner,
+        f.dsl,
+        (occupying, reservation, deadline) ->
+            new AccountTenantCapacityRecoveryWorker.Observation(
+                PEER,
+                reservation,
+                net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.preimage(
+                    occupying),
+                AccountTenantCapacityRecoveryWorker.Disposition.NOT_EXECUTED_AFTER_AUTHORIZATION,
+                occupying.admissionAttemptId(),
+                7,
+                "sha256:" + "e".repeat(64),
+                "controlled-owner-no-execution".getBytes(StandardCharsets.US_ASCII)),
+        recoveryClock);
   }
 
   private static TenantCapacityAdmission.Request capacityRequest(Fixture f) {

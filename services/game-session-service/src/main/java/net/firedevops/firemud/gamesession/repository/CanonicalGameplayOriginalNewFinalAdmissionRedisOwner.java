@@ -356,6 +356,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
         requireDeadline(clock.millis(), absoluteDeadlineMillis);
         requireCurrentOpenWindow(accountOpen, clock.millis());
         finalized = template.requireFinalizedReadback(finalBytes);
+        String finalizedSessionSha256 = digest("SHA-256", finalBytes);
         if (!candidate.equals(finalized.candidate())
             || finalized.canonicalSessionDurationMillis() != durationMillis) {
           throw unavailable();
@@ -367,14 +368,14 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
               source
                   .finalReceipt()
                   .orElseThrow(CanonicalGameplayOriginalNewFinalAdmissionRedisOwner::unavailable);
-          if (!receipt.finalSessionSha256().equals(digest("SHA-256", finalBytes))
+          if (!receipt.finalSessionSha256().equals(finalizedSessionSha256)
               || receipt.admissionAtMillis() != finalized.admissionAtMillis()
               || receipt.continuityExpiresAtMillis() != finalized.continuityExpiresAtMillis()
               || receipt.sessionDurationMillis() != finalized.canonicalSessionDurationMillis()) {
             throw unavailable();
           }
         }
-        Readback readback = new Readback(source, finalized, execution);
+        Readback readback = new Readback(source, finalized, execution, finalizedSessionSha256);
         finalized = null;
         return readback;
       } finally {
@@ -423,7 +424,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     try {
       finalized = CanonicalGameplayOriginalNewAuthenticatedSession.parseFinalized(bytes, clock);
       if (!candidate.equals(finalized.candidate())) throw unavailable();
-      Readback readback = new Readback(source, finalized, execution);
+      Readback readback = new Readback(source, finalized, execution, digest("SHA-256", bytes));
       finalized = null;
       return readback;
     } catch (RuntimeException failure) {
@@ -1443,7 +1444,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     private Readback(
         CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
         CanonicalGameplayOriginalNewAuthenticatedSession.Finalized session,
-        OriginalNewCapacityExecution execution) {
+        OriginalNewCapacityExecution execution,
+        String finalSessionSha256) {
       this.execution = Objects.requireNonNull(execution);
       this.source = Objects.requireNonNull(source, "durable final-admission source");
       this.session = Objects.requireNonNull(session, "finalized session");
@@ -1453,7 +1455,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
             .digest()
             .equals(JSON.readTree(exact).get("capacityExecutionDigest").textValue()))
           throw unavailable();
-        this.finalSessionSha256 = digest("SHA-256", exact);
+        this.finalSessionSha256 = Objects.requireNonNull(finalSessionSha256);
       } finally {
         wipe(exact);
       }

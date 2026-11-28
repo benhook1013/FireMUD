@@ -843,6 +843,16 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> replaceRegionOwner("successor-with-missing-committed-evidence"))
         .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () -> observeGuardedRegionReplacement("successor-with-missing-committed-evidence"))
+        .rootCause()
+        .isInstanceOfSatisfying(
+            org.postgresql.util.PSQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23514");
+              assertThat(failure.getMessage())
+                  .contains("Region owner replacement lacks exact transfer custody");
+            });
     assertThatThrownBy(() ->
             capacityOwner()
                 .readExact(controlledCapacity.request(), controlledCapacity.reservation()))

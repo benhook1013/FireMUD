@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(23);
+      assertThat(catalog.catalogEpoch()).isEqualTo(24);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -206,7 +206,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.9.2",
               "catalog-installation:1065.0.10",
               "catalog-installation:1065.0.11",
-              "catalog-installation:1065.0.11.1")
+              "catalog-installation:1065.0.11.1",
+              "catalog-installation:1065.0.11.2")
           .noneMatch(identity ->
               identity.contains(":1057:")
                   || identity.contains(":1058:")
@@ -230,7 +231,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   || identity.contains(":1065.0.9.2:")
                   || identity.contains(":1065.0.10:")
                   || identity.contains(":1065.0.11:")
-                  || identity.contains(":1065.0.11.1:"));
+                  || identity.contains(":1065.0.11.1:")
+                  || identity.contains(":1065.0.11.2:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -767,7 +769,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(23);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(24);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(fact ->
                 fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
@@ -899,59 +901,6 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThatThrownBy(() -> f.owner().readExact(original.request()))
           .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
     }
-    for (String version :
-        List.of(
-            "1057",
-            "1058",
-            "1059",
-            "1060",
-            "1061",
-            "1062",
-            "1063",
-            "1064",
-            "1065",
-            "1065.0.1",
-            "1065.0.2",
-            "1065.0.3",
-            "1065.0.4",
-            "1065.0.5",
-            "1065.0.6",
-            "1065.0.7",
-            "1065.0.8",
-            "1065.0.9",
-            "1065.0.9.1",
-            "1065.0.9.2",
-            "1065.0.10",
-            "1065.0.11",
-            "1065.0.11.1")) {
-      try (Fixture f = fixture(null)) {
-        var original =
-            f.dsl.fetchSingle(
-                "SELECT success,script,type FROM " + f.history + " WHERE version=?", version);
-        for (String change :
-            List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
-          try {
-            f.dsl.execute("UPDATE " + f.history + " SET " + change + " WHERE version=?", version);
-            assertThatThrownBy(() -> f.owner().capture(request()))
-                .hasMessageContaining("No durable Game Session catalog epoch");
-            assertThat(f.count(SNAPSHOTS)).isZero();
-          } finally {
-            f.dsl.execute(
-                "UPDATE " + f.history + " SET success=?,script=?,type=? WHERE version=?",
-                original.get("success", Boolean.class),
-                original.get("script", String.class),
-                original.get("type", String.class),
-                version);
-          }
-        }
-      }
-      try (Fixture f = fixture(null)) {
-        f.dsl.execute("DELETE FROM " + f.history + " WHERE version=?", version);
-        assertThatThrownBy(() -> f.owner().capture(request()))
-            .hasMessageContaining("No durable Game Session catalog epoch");
-        assertThat(f.count(SNAPSHOTS)).isZero();
-      }
-    }
     try (Fixture f = fixture(null)) {
       var original = f.owner().capture(request());
       f.dsl.execute(
@@ -962,44 +911,85 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThatThrownBy(() -> f.owner().readExact(original.request()))
           .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
     }
-    for (String version :
-        List.of(
-            "1057",
-            "1058",
-            "1059",
-            "1060",
-            "1061",
-            "1062",
-            "1063",
-            "1064",
-            "1065",
-            "1065.0.1",
-            "1065.0.2",
-            "1065.0.3",
-            "1065.0.4",
-            "1065.0.5",
-            "1065.0.6",
-            "1065.0.7",
-            "1065.0.8",
-            "1065.0.9",
-            "1065.0.9.1",
-            "1065.0.9.2",
-            "1065.0.10",
-            "1065.0.11",
-            "1065.0.11.1")) {
-      try (Fixture f = fixture(null)) {
-        f.dsl.execute(
-            "INSERT INTO "
-                + f.history
-                + "(installed_rank,version,description,type,script,checksum,installed_by,execution_time,success)"
-                + " SELECT 10000,version,description,type,script,checksum,installed_by,execution_time,success FROM "
-                + f.history
-                + " WHERE version=?",
-            version);
-        assertThatThrownBy(() -> f.owner().capture(request()))
-            .hasMessageContaining("No durable Game Session catalog epoch");
+    try (Fixture f = fixture(null)) {
+      for (String version :
+          List.of(
+              "1057",
+              "1058",
+              "1059",
+              "1060",
+              "1061",
+              "1062",
+              "1063",
+              "1064",
+              "1065",
+              "1065.0.1",
+              "1065.0.2",
+              "1065.0.3",
+              "1065.0.4",
+              "1065.0.5",
+              "1065.0.6",
+              "1065.0.7",
+              "1065.0.8",
+              "1065.0.9",
+              "1065.0.9.1",
+              "1065.0.9.2",
+              "1065.0.10",
+              "1065.0.11",
+              "1065.0.11.1",
+              "1065.0.11.2")) {
+        String columns =
+            "installed_rank,version,description,type,script,checksum,installed_by,execution_time,success";
+        var original =
+            f.dsl.fetchSingle(
+                "SELECT " + columns + " FROM " + f.history + " WHERE version=?", version);
+        for (String change :
+            List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
+          try {
+            f.dsl.execute("UPDATE " + f.history + " SET " + change + " WHERE version=?", version);
+            assertOwnInstallationHistoryUnqualified(f);
+          } finally {
+            f.dsl.execute(
+                "UPDATE " + f.history + " SET success=?,script=?,type=? WHERE version=?",
+                original.get("success", Boolean.class),
+                original.get("script", String.class),
+                original.get("type", String.class),
+                version);
+          }
+        }
+        try {
+          f.dsl.execute("DELETE FROM " + f.history + " WHERE version=?", version);
+          assertOwnInstallationHistoryUnqualified(f);
+        } finally {
+          f.dsl.execute(
+              "INSERT INTO " + f.history + "(" + columns + ") VALUES (?,?,?,?,?,?,?,?,?)",
+              original.intoArray());
+        }
+        try {
+          f.dsl.execute(
+              "INSERT INTO "
+                  + f.history
+                  + "("
+                  + columns
+                  + ")"
+                  + " SELECT 10000,version,description,type,script,checksum,installed_by,execution_time,success"
+                  + " FROM "
+                  + f.history
+                  + " WHERE version=?",
+              version);
+          assertOwnInstallationHistoryUnqualified(f);
+        } finally {
+          f.dsl.execute("DELETE FROM " + f.history + " WHERE installed_rank=10000");
+        }
       }
+      assertThat(f.owner().capture(request()).catalog().catalogEpoch()).isEqualTo(24);
     }
+  }
+
+  private static void assertOwnInstallationHistoryUnqualified(Fixture f) {
+    assertThatThrownBy(() -> f.owner().capture(request()))
+        .hasMessageContaining("No durable Game Session catalog epoch");
+    assertThat(f.count(SNAPSHOTS)).isZero();
   }
 
   @Test
@@ -1752,6 +1742,11 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   "Captured region transfer item lacks its full exact current receipt")),
           "game_session_original_new_capacity_execution.gs_capacity_close_after_final_receipt",
           "reject_gs_capacity_close_after_final_receipt()");
+      assertThat(
+              f.guards()
+                  .get(
+                      "game_session_original_new_capacity_execution.gs_capacity_close_after_final_receipt"))
+          .contains("BEFORE UPDATE ON ", " FOR EACH ROW EXECUTE FUNCTION ");
     }
   }
 
@@ -1972,6 +1967,26 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "game_session_capacity_evidence_charge.gs_capacity_evidence_charge_account_denial_kind",
               List.of("account_denial_kind IS NULL")),
           Map.of());
+    }
+  }
+
+  @Test
+  void exactCapacityCommitReceiptUpgradeRetainsPopulatedCatalogAtEpochTwentyFour() {
+    try (Fixture f = fixture("1065.0.11.1")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.11.2",
+          23,
+          "V1065.0.11.2__require_exact_capacity_commit_receipt.sql",
+          "reject_gs_capacity_close_after_final_receipt()",
+          null,
+          List.of(
+              "t.transition_id=OLD.transition_id",
+              "t.tenant_id=OLD.tenant_id",
+              "t.admission_request_id=OLD.request_id",
+              "t.status='COMMITTED'",
+              "t.original_new_capacity_execution_digest=OLD.execution_digest",
+              "Original NEW execution requires its exact committed final receipt"));
     }
   }
 

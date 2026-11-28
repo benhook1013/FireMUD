@@ -174,6 +174,64 @@ class AccountTenantCapacityClientMtlsTest {
   }
 
   @Test
+  void lostCommitReplyRecoversExactRetainedReservationWithoutAnotherCommit() throws Exception {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    var commits = new AtomicInteger();
+    var reads = new AtomicInteger();
+    var retainedResponse = new AtomicReference<CommitTenantCapacityAdmissionResponse>();
+    var retainedResult =
+        new TenantCapacityAdmission.Result(
+            request.identity(),
+            request.admissionAttemptId(),
+            request.capacityRearmFence(),
+            request.mutationDigest(),
+            UUID.randomUUID(),
+            1,
+            request.evidence().expiresAt(),
+            TenantCapacityAdmission.State.RESERVED,
+            request.evidence().snapshotIdentity(),
+            request.evidence().evaluationIdentity());
+    Server server =
+        startServer(
+            "account",
+            new AccountServiceGrpc.AccountServiceImplBase() {
+              @Override
+              public void commitTenantCapacityAdmission(
+                  CommitTenantCapacityAdmissionRequest wire,
+                  StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
+                commits.incrementAndGet();
+                var exactRequest = TenantCapacityAdmissionGrpcCodec.parseRequest(wire);
+                assertThat(exactRequest).isEqualTo(request);
+                retainedResponse.set(
+                    TenantCapacityAdmissionGrpcCodec.toResponse(exactRequest, retainedResult));
+                observer.onError(
+                    Status.UNAVAILABLE.withDescription("Reply lost").asRuntimeException());
+              }
+
+              @Override
+              public void readTenantCapacityAdmissionOutcome(
+                  CommitTenantCapacityAdmissionRequest wire,
+                  StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
+                reads.incrementAndGet();
+                assertThat(TenantCapacityAdmissionGrpcCodec.parseRequest(wire)).isEqualTo(request);
+                observer.onNext(Objects.requireNonNull(retainedResponse.get()));
+                observer.onCompleted();
+              }
+            });
+    try (var client = client(server)) {
+      client.init();
+      assertThatThrownBy(() -> client.commit(request, deadline()))
+          .isInstanceOf(StatusRuntimeException.class);
+      assertThat(client.readRetainedAdmissionOutcome(request, deadline()))
+          .isEqualTo(retainedResult);
+      assertThat(commits).hasValue(1);
+      assertThat(reads).hasValue(1);
+    } finally {
+      stop(server);
+    }
+  }
+
+  @Test
   void resolverRetryPolicyRetriesStandardChannelButNotCapacityCommit() throws Exception {
     AtomicInteger calls = new AtomicInteger();
     Server server =

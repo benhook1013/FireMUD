@@ -86,7 +86,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
         var template = credential.template();
         var bound = template.bindCapacityExecution(controlledCapacity);
         var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
-      long acquisitionDeadline = CLOCK.millis() + 1500;
+      long invocationStartedAt = CLOCK.millis();
+      long acquisitionDeadline = invocationStartedAt + 1500;
       var response =
           executor.submit(() -> {
             try (var ignored =
@@ -108,6 +109,9 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
         assertThatThrownBy(() -> response.get(3, java.util.concurrent.TimeUnit.SECONDS))
             .hasCauseInstanceOf(
                 CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+        assertThat(CLOCK.millis())
+            .as("the supplied 1.5 second deadline, not the five second fallback, ended the call")
+            .isLessThan(invocationStartedAt + 5_000L);
       } finally {
         allowAcquisition.countDown();
       }

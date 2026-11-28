@@ -2562,7 +2562,17 @@ public final class CanonicalGameplayBindingInventoryRepository {
     Objects.requireNonNull(actual, "actual");
     var source = actual.source();
     var candidate = source.candidate();
+    var execution = actual.execution();
     if (!candidate.equals(actual.session().originalCandidate())
+        || !candidate.transition().transitionId().equals(execution.transitionId())
+        || !source.candidateDigest().equals(execution.candidateDigest())
+        || !candidate.bindingIdentity().tenantId().equals(execution.request().identity().tenantId())
+        || !execution
+            .request()
+            .identity()
+            .requestId()
+            .toString()
+            .equals(candidate.leaseEvidence().carrier().get("requestId"))
         || source.candidateInstallationProvenance()
             != OriginalNewCandidateInstallationProvenance.HISTORICAL_READBACK_CONFIRMED
         || !source
@@ -2591,7 +2601,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
             actual.admissionAtMillis(),
             actual.continuityExpiresAtMillis(),
             actual.canonicalSessionDurationMillis()),
-        actual.execution());
+        execution);
   }
 
   private CanonicalGameplayBindingTransitionSnapshot commitVerifiedOriginalNewFinalAdmission(
