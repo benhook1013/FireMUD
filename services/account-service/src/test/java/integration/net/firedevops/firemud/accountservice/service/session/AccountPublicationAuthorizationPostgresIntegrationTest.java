@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -11,6 +12,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
@@ -25,6 +31,7 @@ import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.containers.GenericContainer;
@@ -282,6 +289,74 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                       order.operationId())
                   .get("receipt", byte[].class))
           .isEqualTo(receipt);
+    }
+  }
+
+  @Test
+  void concurrentExactSettlementReadsOneCommittedReceipt() throws Exception {
+    try (var fixture = fixture()) {
+      var issued = fixture.issueCreator();
+      var sources = issued.sources();
+      var proof = proof(sources, issued.environment());
+      var repository = new AccountPublicationAuthorizationRepository(sources.dsl);
+      var order =
+          new AccountPublicationAuthorizationService(issued.actors(), sources.fences, repository)
+              .authorize(issued.compact(), proof.selection(), issued.environment());
+      var operation = operation(order, proof.world());
+      var terminal =
+          terminal(operation, GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION);
+      var retry = new AtomicReference<Future<byte[]>>();
+      var retryBackend = new AtomicInteger();
+      var executor = Executors.newSingleThreadExecutor();
+
+      try {
+        byte[] original =
+            sources.tx(
+                () -> {
+                  int ownerBackend =
+                      sources.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+                  byte[] receipt =
+                      repository.settle(operation, terminal, "ABORTED", terminal.canonicalBytes());
+                  retry.set(
+                      executor.submit(
+                          () ->
+                              sources.tx(
+                                  () -> {
+                                    retryBackend.set(
+                                        sources
+                                            .dsl
+                                            .fetchSingle("SELECT pg_backend_pid()")
+                                            .get(0, Integer.class));
+                                    return repository.settle(
+                                        operation, terminal, "ABORTED", terminal.canonicalBytes());
+                                  })));
+                  Awaitility.await()
+                      .pollInSameThread()
+                      .atMost(Duration.ofSeconds(10))
+                      .until(
+                          () ->
+                              retryBackend.get() > 0
+                                  && Boolean.TRUE.equals(
+                                      sources
+                                          .dsl
+                                          .fetchSingle(
+                                              "SELECT ? = ANY(pg_blocking_pids(?))",
+                                              ownerBackend,
+                                              retryBackend.get())
+                                          .get(0, Boolean.class)));
+                  return receipt;
+                });
+        assertThat(retry.get().get(10, TimeUnit.SECONDS)).isEqualTo(original);
+        var retained =
+            sources.dsl.fetch(
+                "SELECT receipt FROM account_selected_publication_settlements WHERE operation_id = ?",
+                order.operationId());
+        assertThat(retained).hasSize(1);
+        assertThat(retained.getFirst().get("receipt", byte[].class)).isEqualTo(original);
+      } finally {
+        executor.shutdownNow();
+        assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+      }
     }
   }
 
