@@ -166,6 +166,42 @@ class ReportGrpcServiceTest {
   }
 
   @Test
+  void createReportRejectsNilTargetAccountIdBeforeDispatch() {
+    SessionContext.setContext(
+        "", List.of(), Map.of(), true, "social-groups-service", "test-instance");
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ReportGrpcService service = new ReportGrpcService(meterRegistry);
+
+    AtomicReference<CreateReportResponse> ref = new AtomicReference<>();
+    service.createReport(
+        CreateReportRequest.newBuilder()
+            .setTenantId("1")
+            .setReporterAccountId("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")
+            .setTargetAccountId("00000000-0000-0000-0000-000000000000")
+            .setType("BUG")
+            .setDescription("bad")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CreateReportResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("Malformed claim: targetAccountId", ref.get().getError().getMessage());
+  }
+
+  @Test
   void createReportRejectsMissingCallerBeforePersistence() {
     SessionContext.clear();
     ReportGrpcService service = new ReportGrpcService(new SimpleMeterRegistry());

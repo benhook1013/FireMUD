@@ -2848,6 +2848,8 @@ class AccountGrpcServiceTest {
                 observer));
 
     assertTrue(observer.response().getSuccess());
+    assertEquals(ACCOUNT_UUID, observer.response().getAccountId());
+    assertEquals("1", observer.response().getTenantId());
     org.mockito.ArgumentCaptor<net.firedevops.firemud.accountservice.dto.UpdateProfileRequest>
         requestCaptor =
             org.mockito.ArgumentCaptor.forClass(
@@ -2859,6 +2861,46 @@ class AccountGrpcServiceTest {
     assertEquals(
         ProfilePresenceVisibilityPolicy.valueOf(policyName),
         requestCaptor.getValue().presenceVisibilityPolicy());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"null", "account", "tenant"})
+  void updateProfileRejectsInvalidAuthorityOwnerWithoutEcho(String mismatch) {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    UUID accountUuid = UUID.fromString(ACCOUNT_UUID);
+    Mockito.when(accountService.resolveAccountStorageId(accountUuid)).thenReturn(2L);
+    var result =
+        "null".equals(mismatch)
+            ? null
+            : new net.firedevops.firemud.accountservice.dto.ProfileDto(
+                1L,
+                "tenant".equals(mismatch) ? 2L : 1L,
+                "account".equals(mismatch) ? "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" : ACCOUNT_UUID,
+                "demo",
+                "bio",
+                ProfilePresenceVisibilityPolicy.PRIVATE);
+    Mockito.when(accountService.updateProfile(Mockito.any())).thenReturn(result);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
+    RecordingObserver<UpdateProfileResponse> observer = new RecordingObserver<>();
+    withPeer(
+        SOCIAL_GROUPS_PEER,
+        () ->
+            service.updateProfile(
+                UpdateProfileRequest.newBuilder()
+                    .setTenantId("1")
+                    .setAccountId(ACCOUNT_UUID)
+                    .setProfileJson(
+                        "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
+                    .build(),
+                observer));
+    assertFalse(observer.response().getSuccess());
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals("", observer.response().getAccountId());
+    assertEquals("", observer.response().getTenantId());
+    Mockito.verify(accountService).updateProfile(Mockito.any());
   }
 
   @Test

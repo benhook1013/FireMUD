@@ -16,8 +16,112 @@ import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.common.account.AccountProfileJson;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import tools.jackson.databind.json.JsonMapper;
 
 class AccountRuntimeStubServerTest {
+  @Test
+  void profileIdentityUsesRegisteredAccountAndExactNumericRequestTenant() throws Exception {
+    try (var server = new AccountRuntimeStubServer(0)) {
+      server.mapAccountId("profile@example.com", 7L);
+      var channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        var stub = AccountServiceGrpc.newBlockingStub(channel);
+        String accountUuid = AccountRuntimeStubServer.accountUuidForTestFixture(7L);
+        // Different request tenants are fixture bindings, not proof of tenant membership.
+        for (long tenantId : new long[] {1L, 2L, Long.MAX_VALUE}) {
+          var response =
+              stub.getProfile(
+                  GetProfileRequest.newBuilder()
+                      .setAccountId(accountUuid)
+                      .setTenantId(Long.toString(tenantId))
+                      .build());
+          assertThat(response.hasError()).isFalse();
+          var json = JsonMapper.builder().build().readTree(response.getProfileJson());
+          assertThat(json.path("accountId").asString()).isEqualTo(accountUuid);
+          assertThat(json.path("accountId").asString())
+              .isNotEqualTo(AccountRuntimeStubServer.accountUuidForTestFixture(8L));
+          assertThat(json.path("tenantId").isIntegralNumber()).isTrue();
+          assertThat(json.path("tenantId").longValue()).isEqualTo(tenantId);
+          assertThat(json.path("displayName").asString()).isEqualTo("Demo-7");
+          assertThat(json.path("bio").isNull()).isTrue();
+          assertThat(json.path("presenceVisibilityPolicy").asString()).isEqualTo("FRIENDS_ONLY");
+        }
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "",
+        "0",
+        "-1",
+        "01",
+        "+1",
+        " 1",
+        "1 ",
+        "1.0",
+        "1e0",
+        "9223372036854775808",
+        "not-a-tenant"
+      })
+  void profileRejectsMalformedTenantWithoutIdentityProjection(String tenantId) throws Exception {
+    try (var server = new AccountRuntimeStubServer(0)) {
+      server.mapAccountId("profile@example.com", 7L);
+      var channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        var response =
+            AccountServiceGrpc.newBlockingStub(channel)
+                .getProfile(
+                    GetProfileRequest.newBuilder()
+                        .setTenantId(tenantId)
+                        .setAccountId(AccountRuntimeStubServer.accountUuidForTestFixture(7L))
+                        .build());
+        assertThat(response.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+        assertThat(response.getProfileJson()).isEmpty();
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "",
+        "7",
+        "0-0-0-0-1",
+        "00000000-0000-0000-0000-000000000000",
+        "00000000-0000-0000-0000-000000000001"
+      })
+  void profileRejectsUnknownOrNoncanonicalAccountWithoutIdentityProjection(String accountId)
+      throws Exception {
+    try (var server = new AccountRuntimeStubServer(0)) {
+      server.mapAccountId("profile@example.com", 7L);
+      var channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        var response =
+            AccountServiceGrpc.newBlockingStub(channel)
+                .getProfile(
+                    GetProfileRequest.newBuilder()
+                        .setTenantId("1")
+                        .setAccountId(accountId)
+                        .build());
+        assertThat(response.getError().getCode()).isEqualTo("ACCOUNT_NOT_FOUND");
+        assertThat(response.getProfileJson()).isEmpty();
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
   @Test
   void resetRetainsExplicitUuidRegistrationWithoutReauthentication() throws Exception {
     try (var server = new AccountRuntimeStubServer(0)) {
@@ -37,15 +141,35 @@ class AccountRuntimeStubServerTest {
                 AccountProfileJson.parse(profile.getProfileJson(), "PRIVATE")
                     .presenceVisibilityPolicy())
             .isEqualTo("FRIENDS_ONLY");
+        var update =
+            UpdateProfileRequest.newBuilder()
+                .setTenantId("1")
+                .setAccountId(accountUuid)
+                .setProfileJson("{\"presenceVisibilityPolicy\":\"PRIVATE\"}")
+                .build();
+        var result = stub.updateProfile(update);
+        assertThat(result.getSuccess()).isTrue();
+        assertThat(result.hasError()).isFalse();
+        assertThat(result.getAccountId()).isEqualTo(accountUuid);
+        assertThat(result.getTenantId()).isEqualTo("1");
+
+        var noncanonical =
+            stub.updateProfile(
+                update.toBuilder()
+                    .setTenantId("01")
+                    .setProfileJson("{\"presenceVisibilityPolicy\":\"PUBLIC\"}")
+                    .build());
+        assertThat(noncanonical.getSuccess()).isFalse();
+        assertThat(noncanonical.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+        assertThat(noncanonical.getAccountId()).isEmpty();
+        assertThat(noncanonical.getTenantId()).isEmpty();
+        var retained =
+            stub.getProfile(
+                GetProfileRequest.newBuilder().setTenantId("1").setAccountId(accountUuid).build());
         assertThat(
-                stub.updateProfile(
-                        UpdateProfileRequest.newBuilder()
-                            .setTenantId("1")
-                            .setAccountId(accountUuid)
-                            .setProfileJson("{\"presenceVisibilityPolicy\":\"PRIVATE\"}")
-                            .build())
-                    .getSuccess())
-            .isTrue();
+                AccountProfileJson.parse(retained.getProfileJson(), "FRIENDS_ONLY")
+                    .presenceVisibilityPolicy())
+            .isEqualTo("PRIVATE");
       } finally {
         channel.shutdownNow();
       }

@@ -396,6 +396,13 @@ class LoggingAdminApplicationIntegrationTest {
               + "('tenant', -9, 0, NULL, 'PAYMENT', 'retained negative tenant legacy row', "
               + "TIMESTAMP '2025-03-01 15:00:03')");
 
+      // V1005 intentionally links the receipts to new projections. The remaining migrations
+      // must preserve those linked rows and the legacy log rows without rewriting them.
+      var retainedReceipts = retainedAuditRows(schema, "account_audit_receipts");
+      var retainedLogs = retainedAuditRows(schema, "log_events");
+      assertThat(retainedReceipts).hasSize(4);
+      assertThat(retainedLogs).hasSize(9);
+
       Flyway.configure()
           .dataSource(dataSource)
           .locations("classpath:db/migration")
@@ -404,6 +411,10 @@ class LoggingAdminApplicationIntegrationTest {
           .placeholders(Map.of("serviceSchema", schema))
           .load()
           .migrate();
+
+      assertThat(retainedAuditRows(schema, "account_audit_receipts"))
+          .containsExactlyElementsOf(retainedReceipts);
+      assertThat(retainedAuditRows(schema, "log_events")).containsExactlyElementsOf(retainedLogs);
 
       assertThat(
               dsl.fetchSingle(
@@ -830,6 +841,16 @@ class LoggingAdminApplicationIntegrationTest {
         minimized ? null : originalPayload,
         minimized ? "MINIMIZED" : "COMMITTED",
         minimized ? "NON_REPLAYABLE" : "ACCEPTED");
+  }
+
+  private List<String> retainedAuditRows(String schema, String table) {
+    return dsl.fetch(
+            "SELECT jsonb_build_array(to_jsonb(retained), retained.xmin::text)::text FROM "
+                + schema
+                + "."
+                + table
+                + " AS retained ORDER BY retained.id")
+        .getValues(0, String.class);
   }
 
   private void assertBackfilledReceipt(

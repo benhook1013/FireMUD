@@ -457,6 +457,13 @@ public class TextPlayerOutputRenderer {
     if (output.friends().isEmpty() && "ALL".equalsIgnoreCase(output.filter())) {
       return "Friends [0]: no linked friends. Use FRIENDS ADD <friendAccountId|characterName>.";
     }
+    boolean disclosureFiltered =
+        "ONLINE".equalsIgnoreCase(output.filter()) || "RECENT".equalsIgnoreCase(output.filter());
+    if (output.friends().isEmpty() && disclosureFiltered) {
+      return "Friends "
+          + output.filter().toUpperCase(java.util.Locale.ROOT)
+          + ": no matching friends.";
+    }
     if (output.friends().isEmpty()) {
       return "Friends "
           + output.filter().toUpperCase(java.util.Locale.ROOT)
@@ -480,6 +487,9 @@ public class TextPlayerOutputRenderer {
             .collect(Collectors.joining("\n"));
     if ("ALL".equalsIgnoreCase(output.filter())) {
       return body;
+    }
+    if (disclosureFiltered) {
+      return "Friends " + output.filter().toUpperCase(java.util.Locale.ROOT) + ":\n" + body;
     }
     return "Friends "
         + output.filter().toUpperCase(java.util.Locale.ROOT)

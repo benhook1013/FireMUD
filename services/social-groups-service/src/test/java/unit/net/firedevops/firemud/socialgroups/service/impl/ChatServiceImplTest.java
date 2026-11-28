@@ -80,6 +80,34 @@ class ChatServiceImplTest {
   }
 
   @Test
+  void recentTellsRejectsInvalidAccountBeforeRedisAccess() {
+    String[] invalidAccounts = {
+      null,
+      "",
+      "123",
+      "not-a-uuid",
+      "00000000-0000-0000-0000-000000000000",
+      "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+      " " + accountUuid(2L)
+    };
+    for (String accountId : invalidAccounts) {
+      assertThrows(IllegalArgumentException.class, () -> service.getRecentTells(1L, accountId));
+    }
+    verifyNoInteractions(
+        redisTemplate, listOps, repository, moderationPolicyClient, loggingAdminClient);
+  }
+
+  @Test
+  void recentTellsPreservesCanonicalAccountAndTenantKey() {
+    String accountId = accountUuid(2L);
+    when(listOps.range("chat:tell:7:" + accountId, 0, -1)).thenReturn(List.of("hello", "again"));
+
+    assertEquals(List.of("hello", "again"), service.getRecentTells(7L, accountId));
+
+    verify(listOps).range("chat:tell:7:" + accountId, 0, -1);
+  }
+
+  @Test
   void sendMessageCachesMessageAndIncrementsMetrics() {
     SendMessageRequestDto req =
         new SendMessageRequestDto(

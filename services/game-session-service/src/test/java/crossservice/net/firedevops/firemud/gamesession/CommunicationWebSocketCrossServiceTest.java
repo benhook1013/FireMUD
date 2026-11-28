@@ -226,7 +226,7 @@ class CommunicationWebSocketCrossServiceTest {
         runCommunicationSequence(
             sessionId,
             "FRIENDS ONLINE",
-            "Friends ONLINE [1/1]:\n"
+            "Friends ONLINE:\n"
                 + "1) Sora [acct #"
                 + SORA_ACCOUNT_UUID
                 + "] - online in Demo World / Live Realm (idle)");
@@ -234,7 +234,7 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(responses)
         .anyMatch(
             response ->
-                response.contains("Friends ONLINE [1/1]:")
+                response.contains("Friends ONLINE:")
                     && response.contains(
                         "1) Sora [acct #"
                             + SORA_ACCOUNT_UUID
@@ -645,6 +645,9 @@ class CommunicationWebSocketCrossServiceTest {
                       .addPresences(
                           FriendPresenceEntry.newBuilder()
                               .setFriendAccountId(SORA_ACCOUNT_UUID)
+                              .setVisibilityPolicy(
+                                  FriendPresenceVisibilityPolicy
+                                      .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                               .setOnline(true)
                               .setCharacterId(ChatTestFixtures.PLAYER_SORA)
                               .setCharacterName("Sora")

@@ -306,6 +306,9 @@ message UpdateProfileRequest {
 message UpdateProfileResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
+  // Successful writes echo the exact persisted Account UUID and tenant selector.
+  string account_id = 3;
+  string tenant_id = 4;
 }
 
 message ExportAccountRequest {
