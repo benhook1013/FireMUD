@@ -13,6 +13,7 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.mkammerer.argon2.Argon2;
@@ -43,6 +44,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -71,6 +73,7 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentia
 import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBindingFixture;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.BoundTokenCandidate;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.GameplayLoginReplayState;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.PendingIntent;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.PendingRegistryCandidate;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.StaleAuthorityException;
@@ -128,6 +131,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -553,6 +557,160 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     assertThat(stored.get("caller_context_id", UUID.class)).isEqualTo(callerContextId);
     assertThat(harness.redis().registeredRecord()).isNotEmpty();
     assertThat(challenge.getId()).isNotNull();
+  }
+
+  @Test
+  void concurrentExactInitialLoginReplaysOneDurablePendingIntent() throws Exception {
+    TestContext context = newTestContext();
+    DSLContext dsl = context.dsl();
+    AccountAuthoritySourceEvidenceRepository sources =
+        sourceEvidence(dsl, new AccountAuthorityGenerationRepository(dsl));
+    Account account = createEmailOtpAccount(context, sources);
+    AccountEmailLoginChallengeRepository challenges =
+        spy(new AccountEmailLoginChallengeRepository(dsl));
+    AccountEmailLoginChallenge challenge =
+        persistEmailLoginChallenge(context, challenges, account.getId(), "123456");
+    UUID requestId = UUID.randomUUID();
+    UUID callerContextId = UUID.randomUUID();
+    CanonicalGameplayLoginRequest request =
+        canonicalLoginRequest(account.getEmail(), "123456", requestId, callerContextId);
+
+    CountDownLatch pendingWritten = new CountDownLatch(1);
+    CountDownLatch contenderReady = new CountDownLatch(1);
+    CountDownLatch releaseFirst = new CountDownLatch(1);
+    AtomicInteger firstPid = new AtomicInteger();
+    AtomicInteger contenderPid = new AtomicInteger();
+    AtomicReference<String> firstIntent = new AtomicReference<>();
+    AccountRepository accounts = spy(new AccountRepository(dsl, sources));
+    doAnswer(
+            invocation -> {
+              int pid =
+                  Objects.requireNonNull(
+                      dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+              if (!firstPid.compareAndSet(0, pid)) {
+                contenderPid.set(pid);
+                contenderReady.countDown();
+              }
+              return invocation.callRealMethod();
+            })
+        .when(accounts)
+        .findByIdForUpdate(account.getId());
+    doAnswer(
+            invocation -> {
+              invocation.callRealMethod();
+              // PENDING insertion and OTP consumption are visible on this connection only.
+              firstIntent.set(readLoginIntent(dsl, requestId));
+              pendingWritten.countDown();
+              assertThat(releaseFirst.await(30, TimeUnit.SECONDS)).isTrue();
+              return null;
+            })
+        .when(challenges)
+        .delete(any(AccountEmailLoginChallenge.class));
+
+    AccountGameplayDelegationIssuanceRepository issuance =
+        transactionalIssuanceOwner(
+            new AccountGameplayDelegationIssuanceRepository(dsl, sources), context.manager());
+    AccountGameplayDelegationIssuanceCommitService commitOwner =
+        mock(AccountGameplayDelegationIssuanceCommitService.class);
+    AccountGameplayDelegationResponseRecoveryOwner responseOwner =
+        mock(AccountGameplayDelegationResponseRecoveryOwner.class);
+    String stopBeforeSigning = "Controlled stop before signing the replayable PENDING intent";
+    when(commitOwner.commitPendingCandidate(requestId))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              throw new IllegalStateException(stopBeforeSigning);
+            });
+    AccountGameplayCredentialRequestDigestKeySource digestKeys = integrationDigestKeySource();
+    AccountGameplayCanonicalLoginOwner loginOwner =
+        new AccountGameplayCanonicalLoginOwner(
+            accounts,
+            issuance,
+            digestKeys,
+            commitOwner,
+            responseOwner,
+            context.manager(),
+            Clock.systemUTC());
+    AtomicInteger replayVerifierCalls = new AtomicInteger();
+    var replayVerifier = verifierMustNotRun(replayVerifierCalls);
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var first =
+          executor.submit(
+              () ->
+                  loginOwner.authenticate(
+                      request,
+                      CALLER_WORKLOAD,
+                      deterministicOtpCredentialVerifier(challenges, "123456")));
+      assertThat(pendingWritten.await(10, TimeUnit.SECONDS)).isTrue();
+      assertThat(firstIntent.get()).isNotNull();
+      assertThat(readLoginIntent(dsl, requestId)).isNull();
+      assertThat(challenges.findByAccountId(account.getId()).orElseThrow().getId())
+          .isEqualTo(challenge.getId());
+
+      var contender =
+          executor.submit(() -> loginOwner.authenticate(request, CALLER_WORKLOAD, replayVerifier));
+      assertThat(contenderReady.await(10, TimeUnit.SECONDS)).isTrue();
+      assertThat(firstPid.get()).isPositive();
+      assertThat(contenderPid.get()).isPositive().isNotEqualTo(firstPid.get());
+      assertThat(
+              waitUntilBlockedBy(
+                  dsl, contenderPid.get(), firstPid.get(), TimeUnit.SECONDS.toNanos(10)))
+          .as("exact LOGIN contender must wait on the first claimant's Account row")
+          .isTrue();
+      verifyNoInteractions(commitOwner, responseOwner);
+
+      releaseFirst.countDown();
+      assertThatThrownBy(() -> first.get(10, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .hasRootCauseMessage(stopBeforeSigning);
+      assertThatThrownBy(() -> contender.get(10, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .hasRootCauseMessage(stopBeforeSigning);
+    } finally {
+      releaseFirst.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+    }
+
+    assertThatThrownBy(() -> loginOwner.authenticate(request, CALLER_WORKLOAD, replayVerifier))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(stopBeforeSigning);
+    CanonicalGameplayLoginRequest changedCredential =
+        canonicalLoginRequest(account.getEmail(), "654321", requestId, callerContextId);
+    assertThatThrownBy(
+            () -> loginOwner.authenticate(changedCredential, CALLER_WORKLOAD, replayVerifier))
+        .isInstanceOf(
+            AccountGameplayDelegationResponseEnvelopeRepository.IdempotencyConflictException.class);
+    assertThat(replayVerifierCalls).hasValue(0);
+    verify(challenges).delete(any(AccountEmailLoginChallenge.class));
+    verify(commitOwner, times(3)).commitPendingCandidate(requestId);
+    verifyNoInteractions(responseOwner);
+    assertThat(challenges.findByAccountId(account.getId())).isEmpty();
+
+    var replay =
+        inTransaction(
+            context, () -> issuance.readCurrentGameplayLoginReplay(requestId).orElseThrow());
+    assertThat(replay.created()).isFalse();
+    assertThat(replay.state()).isEqualTo(GameplayLoginReplayState.PENDING);
+    assertThat(replay.operation().candidateBound()).isFalse();
+    assertThat(replay.identity().accountId()).isEqualTo(account.getAccountUuid());
+    assertThat(replay.identity().callerWorkload()).isEqualTo(CALLER_WORKLOAD);
+    assertThat(replay.identity().callerContextId()).isEqualTo(callerContextId);
+    assertThat(replay.identity().credentialRequestBinding())
+        .isEqualTo(
+            AccountGameplayCredentialRequestDigester.bind(
+                digestKeys.currentKey(),
+                request,
+                account.getEmail(),
+                CALLER_WORKLOAD,
+                account.getAccountUuid()));
+    assertThat(readLoginIntent(dsl, requestId)).isEqualTo(firstIntent.get());
+    assertThat(dsl.fetchCount(DSL.table("account_gameplay_delegation_issuance_operations")))
+        .isOne();
+    assertThat(dsl.fetchCount(DSL.table("account_gameplay_delegation_response_envelopes")))
+        .isZero();
+    assertThat(dsl.fetchCount(DSL.table("account_gameplay_token_identity_fences"))).isZero();
   }
 
   @Test
@@ -2362,6 +2520,14 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
             GameSessionAccountDelegationProfile.authorityTuple(issuerGeneration, 1L));
     tuple.put("accountAuthorityGeneration", accountGeneration);
     return tuple;
+  }
+
+  private static String readLoginIntent(DSLContext dsl, UUID requestId) {
+    return dsl.resultQuery(
+            "SELECT to_jsonb(issuance)::text FROM account_gameplay_delegation_issuance_operations "
+                + "issuance WHERE request_id = ?",
+            requestId)
+        .fetchOne(0, String.class);
   }
 
   private static RecordData readCandidate(DSLContext dsl, UUID requestId) {
