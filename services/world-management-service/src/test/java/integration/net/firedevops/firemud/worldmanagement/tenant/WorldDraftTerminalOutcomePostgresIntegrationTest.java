@@ -12,7 +12,10 @@ import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -192,6 +195,109 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
       releaseVerification.countDown();
       executor.shutdownNow();
     }
+  }
+
+  @Test
+  void v1011FunctionReplacementPreservesCommittedAbortEvidenceAndBlocksDelayedWrites()
+      throws Exception {
+    // Keep actual APPLIED history and nonzero epochs separate from the fresh aborted attempt.
+    Fixture appliedFixture = fixture();
+    WorldDraftGraphApplication appliedApplication = currentGraphApplication(appliedFixture);
+    var applications = controlledGraphApplicationService();
+    WorldDraftGraphAppliedResult applied = applications.apply(appliedApplication);
+    assertThat(
+            dsl.fetch(
+                    "SELECT draft_revision_epoch FROM world_design_aggregate_epoch "
+                        + "WHERE tenant_id = ? AND version_id = ?",
+                    appliedFixture.intake().localTenantKey(),
+                    appliedFixture.version().localVersionKey())
+                .getValues(0, Long.class))
+        .isNotEmpty()
+        .allSatisfy(epoch -> assertThat(epoch).isPositive());
+    assertThat(
+            dsl.fetch(
+                    "SELECT draft_scope_revision_epoch FROM world_design_scope_epoch "
+                        + "WHERE tenant_id = ? AND version_id = ?",
+                    appliedFixture.intake().localTenantKey(),
+                    appliedFixture.version().localVersionKey())
+                .getValues(0, Long.class))
+        .isNotEmpty()
+        .allSatisfy(epoch -> assertThat(epoch).isPositive());
+
+    Fixture abortedFixture = fixture();
+    WorldDraftGraphApplication abortedApplication = currentGraphApplication(abortedFixture);
+    WorldDraftTerminalOperation operation = abortedApplication.operation();
+    WorldDraftTerminalOutcome original = terminalService().recordDefinitiveAbort(operation);
+    assertThat(original.observedEpochs())
+        .extracting(WorldDraftTerminalOutcome.ObservedEpoch::epoch)
+        .isNotEmpty()
+        .containsOnly("0");
+
+    List<String> retainedBefore =
+        List.of(
+            retainedTerminalSourceFenceAndEpochSnapshot(appliedApplication.operation()),
+            retainedTerminalSourceFenceAndEpochSnapshot(operation));
+    long functionOid = worldAbortedAttemptGuardFunctionOid();
+    String catalogBefore = worldAbortedAttemptGuardCatalog();
+    assertThat(worldAbortedAttemptGuardBindings())
+        .containsExactly(
+            "world_authored_topology_identity:trg_world_topology_identity_aborted_attempt:O",
+            "world_region_draft_commit:trg_world_region_commit_aborted_attempt:O",
+            "world_region_draft_execution_manifest:trg_world_region_manifest_aborted_attempt:O",
+            "world_topology_draft_commit:trg_world_topology_commit_aborted_attempt:O");
+    assertThat(worldAbortedAttemptGuardHasPublicExecute()).isFalse();
+
+    // Adapted from donor 77fee51caf's V37 case. This exercises the owning V1010/V1011
+    // bodies against current-default retained rows, not an installed Flyway upgrade.
+    replaceV1010TerminalGuardWithV1011(catalogBefore);
+
+    assertThat(worldAbortedAttemptGuardFunctionOid()).isEqualTo(functionOid);
+    assertThat(worldAbortedAttemptGuardCatalog()).isEqualTo(catalogBefore);
+    assertThat(worldAbortedAttemptGuardHasPublicExecute()).isFalse();
+    assertThat(
+            List.of(
+                retainedTerminalSourceFenceAndEpochSnapshot(appliedApplication.operation()),
+                retainedTerminalSourceFenceAndEpochSnapshot(operation)))
+        .containsExactlyElementsOf(retainedBefore);
+
+    WorldDraftTerminalOutcome readback =
+        terminalService().readDefinitiveAbort(operation).orElseThrow();
+    assertThat(readback.canonicalBytes()).containsExactly(original.canonicalBytes());
+    assertThat(readback.observedEpochs()).containsExactlyElementsOf(original.observedEpochs());
+    assertThat(readback.recordedAt()).isEqualTo(original.recordedAt());
+    assertThat(
+            terminalRepository()
+                .readDefinitiveAbort(NAMESPACE, operation.accountBindingBytes())
+                .orElseThrow()
+                .canonicalBytes())
+        .containsExactly(original.canonicalBytes());
+    assertThat(
+            applications
+                .readCommitted(NAMESPACE, appliedApplication.operation().accountBindingBytes())
+                .orElseThrow()
+                .canonicalBytes())
+        .containsExactly(applied.canonicalBytes());
+
+    assertThatThrownBy(() -> applications.apply(abortedApplication))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("no-commit");
+    assertGuardedUuidTopologyFunctionDenied(abortedApplication);
+    assertThat(count("world_draft_graph_application", operation.requestId())).isZero();
+    assertThat(count("world_topology_draft_commit", operation.requestId())).isZero();
+    assertThat(count("world_authored_topology_identity", operation.requestId())).isZero();
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT count(*) FROM region WHERE tenant_id = ? AND version_id = ?",
+                        abortedFixture.intake().localTenantKey(),
+                        abortedFixture.version().localVersionKey()))
+                .get(0, Long.class))
+        .isZero();
+    assertThat(
+            List.of(
+                retainedTerminalSourceFenceAndEpochSnapshot(appliedApplication.operation()),
+                retainedTerminalSourceFenceAndEpochSnapshot(operation)))
+        .containsExactlyElementsOf(retainedBefore);
   }
 
   @Test
@@ -478,6 +584,189 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
       server.shutdownNow();
       assertThat(server.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
     }
+  }
+
+  private String retainedTerminalSourceFenceAndEpochSnapshot(
+      WorldDraftTerminalOperation operation) {
+    String snapshot =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    """
+                    SELECT jsonb_build_object(
+                        'intake', to_jsonb(intake),
+                        'identity', to_jsonb(version_identity),
+                        'owner', to_jsonb(owner_row),
+                        'terminal', (
+                            SELECT to_jsonb(terminal)
+                            FROM world_draft_terminal_outcome terminal
+                            WHERE terminal.operation_id = ?
+                        ),
+                        'application', (
+                            SELECT to_jsonb(application)
+                            FROM world_draft_graph_application application
+                            WHERE application.operation_id = ?
+                        ),
+                        'terminal_identity', (
+                            SELECT to_jsonb(terminal_identity)
+                            FROM world_draft_graph_terminal_identity terminal_identity
+                            WHERE terminal_identity.operation_id = ?
+                        ),
+                        'aggregate_epochs', COALESCE((
+                            SELECT jsonb_agg(
+                                to_jsonb(epoch) ORDER BY epoch.aggregate_type, epoch.aggregate_id
+                            )
+                            FROM world_design_aggregate_epoch epoch
+                            WHERE epoch.tenant_id = version_identity.local_tenant_key
+                              AND epoch.version_id = version_identity.local_version_key
+                        ), '[]'::jsonb),
+                        'scope_epochs', COALESCE((
+                            SELECT jsonb_agg(
+                                to_jsonb(epoch) ORDER BY epoch.scope_type, epoch.scope_id
+                            )
+                            FROM world_design_scope_epoch epoch
+                            WHERE epoch.tenant_id = version_identity.local_tenant_key
+                              AND epoch.version_id = version_identity.local_version_key
+                        ), '[]'::jsonb)
+                    )::text
+                    FROM world_authored_version_identity version_identity
+                    JOIN world_authored_source_intake intake
+                      ON intake.operation_id = version_identity.intake_operation_id
+                    JOIN world_design_publication_fence_owner owner_row
+                      ON owner_row.target_namespace = version_identity.target_namespace
+                     AND owner_row.canonical_tenant_id = version_identity.canonical_tenant_id
+                     AND owner_row.local_tenant_key = version_identity.local_tenant_key
+                     AND owner_row.version_id = version_identity.local_version_key
+                    WHERE version_identity.operation_id = ?
+                    """,
+                    operation.operationId(),
+                    operation.operationId(),
+                    operation.operationId(),
+                    operation.ownerBinding().versionIdentityOperationId()),
+                "retained World source/fence/outcome rows must exist")
+            .get(0, String.class);
+    // PostgreSQL to_jsonb retains BYTEA columns as their complete hexadecimal values.
+    return Objects.requireNonNull(snapshot, "retained World snapshot must exist");
+  }
+
+  private void replaceV1010TerminalGuardWithV1011(String expectedCatalog) throws IOException {
+    String serviceSchema =
+        Objects.requireNonNull(
+                dsl.fetchOne("SELECT current_schema()"), "World service schema row must exist")
+            .get(0, String.class);
+    Objects.requireNonNull(serviceSchema, "World service schema must be selected");
+    String v1010 = terminalGuardMigration("V1010__world_draft_terminal_outcomes.sql");
+    String declaration = "CREATE FUNCTION world_reject_aborted_draft_attempt()";
+    int start = v1010.indexOf(declaration);
+    assertThat(start).isGreaterThanOrEqualTo(0);
+    int end = v1010.indexOf("$$;", start);
+    assertThat(end).isGreaterThan(start);
+    String originalFunction =
+        v1010
+            .substring(start, end + "$$;".length())
+            .replaceFirst("^CREATE FUNCTION", "CREATE OR REPLACE FUNCTION")
+            .replace("${serviceSchema}", serviceSchema);
+    String replacementMigration =
+        terminalGuardMigration("V1011__world_draft_terminal_guard_namespace.sql")
+            .replace("${serviceSchema}", serviceSchema);
+
+    // Never commit the old ambiguous body. Failure rolls back both replacements.
+    // Execute V1011's own REVOKE too, rather than repairing grants in the test.
+    ownerTransaction()
+        .executeWithoutResult(
+            status -> {
+              dsl.execute(originalFunction);
+              assertThat(worldAbortedAttemptGuardCatalog()).isEqualTo(expectedCatalog);
+              dsl.execute(replacementMigration);
+              assertThat(worldAbortedAttemptGuardCatalog()).isEqualTo(expectedCatalog);
+              assertThat(worldAbortedAttemptGuardHasPublicExecute()).isFalse();
+            });
+  }
+
+  private String terminalGuardMigration(String resourceName) throws IOException {
+    try (InputStream resource =
+        WorldDraftTerminalOutcomePostgresIntegrationTest.class
+            .getClassLoader()
+            .getResourceAsStream("db/migration/" + resourceName)) {
+      if (resource == null) {
+        throw new IllegalStateException("World migration resource is missing: " + resourceName);
+      }
+      return new String(resource.readAllBytes(), StandardCharsets.UTF_8);
+    }
+  }
+
+  private long worldAbortedAttemptGuardFunctionOid() {
+    return Objects.requireNonNull(
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT 'world_reject_aborted_draft_attempt()'::regprocedure::oid::bigint"),
+                "World aborted-attempt guard function row must exist")
+            .get(0, Long.class),
+        "World aborted-attempt guard function must exist");
+  }
+
+  private List<String> worldAbortedAttemptGuardBindings() {
+    return dsl.fetch(
+            """
+            SELECT relation.relname || ':' || trigger_row.tgname || ':' || trigger_row.tgenabled::text
+            FROM pg_trigger trigger_row
+            JOIN pg_class relation ON relation.oid = trigger_row.tgrelid
+            WHERE trigger_row.tgfoid = 'world_reject_aborted_draft_attempt()'::regprocedure
+              AND NOT trigger_row.tgisinternal
+            ORDER BY relation.relname, trigger_row.tgname
+            """)
+        .getValues(0, String.class);
+  }
+
+  private String worldAbortedAttemptGuardCatalog() {
+    return Objects.requireNonNull(
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    """
+                    SELECT jsonb_build_object(
+                        'oid', function_row.oid,
+                        'owner', function_row.proowner,
+                        'security_definer', function_row.prosecdef,
+                        'config', function_row.proconfig,
+                        'acl', function_row.proacl,
+                        'triggers', (
+                            SELECT jsonb_agg(
+                                to_jsonb(trigger_row)
+                                ORDER BY trigger_row.tgrelid, trigger_row.tgname
+                            )
+                            FROM pg_trigger trigger_row
+                            WHERE trigger_row.tgfoid = function_row.oid
+                              AND NOT trigger_row.tgisinternal
+                        )
+                    )::text
+                    FROM pg_proc function_row
+                    WHERE function_row.oid =
+                        'world_reject_aborted_draft_attempt()'::regprocedure
+                    """),
+                "World aborted-attempt guard catalog row must exist")
+            .get(0, String.class),
+        "World aborted-attempt guard catalog must exist");
+  }
+
+  private boolean worldAbortedAttemptGuardHasPublicExecute() {
+    return Objects.requireNonNull(
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM pg_proc function_row
+                        CROSS JOIN LATERAL aclexplode(
+                            COALESCE(function_row.proacl, acldefault('f', function_row.proowner))
+                        ) acl_entry
+                        WHERE function_row.oid =
+                            'world_reject_aborted_draft_attempt()'::regprocedure
+                          AND acl_entry.grantee = 0
+                          AND acl_entry.privilege_type = 'EXECUTE'
+                    )
+                    """),
+                "World aborted-attempt guard ACL row must exist")
+            .get(0, Boolean.class),
+        "World aborted-attempt guard ACL must be readable");
   }
 
   private Race race(ThrowingRunnable commit, ThrowingRunnable abort) throws Exception {

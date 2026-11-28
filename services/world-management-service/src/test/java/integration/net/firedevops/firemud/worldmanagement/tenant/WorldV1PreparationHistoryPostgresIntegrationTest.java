@@ -362,6 +362,15 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
     var current = migration(source, schema, null);
     current.migrate();
     current.validate();
+    assertThat(
+            sql.fetchSingle(
+                    "SELECT EXISTS (SELECT 1 FROM "
+                        + "aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl "
+                        + "WHERE acl.grantee = 0::oid AND acl.privilege_type = 'EXECUTE') "
+                        + "FROM pg_proc p WHERE p.oid = "
+                        + "to_regprocedure('world_prepare_canonical_instance(text,text)')")
+                .get(0, Boolean.class))
+        .isFalse();
     assertThat(rows(sql, queries)).isEqualTo(before);
     assertThat(history(sql)).containsAll(historyAfterUpgrade);
     assertSelector(sql, selector);
