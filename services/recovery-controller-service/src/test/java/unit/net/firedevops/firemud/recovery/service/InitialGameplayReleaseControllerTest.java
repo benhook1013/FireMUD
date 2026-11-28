@@ -559,7 +559,7 @@ class InitialGameplayReleaseControllerTest {
     when(selected.effect()).thenReturn(effect);
     when(selected.state()).thenReturn(priorState);
     boolean pending = priorState == EffectOutboxState.PENDING;
-    int claimedOrdinal = pending ? 1 : 3;
+    int claimedOrdinal = pending ? 1 : 2;
     UUID previousAttempt = pending ? null : UUID.randomUUID();
     when(selected.attemptCount()).thenReturn(pending ? 0 : 1);
     when(selected.lastAttemptId()).thenReturn(previousAttempt);

@@ -1402,6 +1402,18 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   @ResourceLock("packaged-recovery-control-fixture-database")
   void transitionCreatedAtMustHaveRequiredShapeForJournalReadiness(String alteration)
       throws Exception {
+    assertTransitionColumnDriftKeepsJournalUnready("created_at", alteration);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"DROP NOT NULL", "TYPE varchar(16) USING tuple_payload::varchar(16)"})
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void transitionPayloadMustBeNotNullJsonbForJournalReadiness(String alteration) throws Exception {
+    assertTransitionColumnDriftKeepsJournalUnready("tuple_payload", alteration);
+  }
+
+  private static void assertTransitionColumnDriftKeepsJournalUnready(
+      String column, String alteration) throws Exception {
     String database = "firemud_recovery_control";
     String fixtureUrl = POSTGRES.getJdbcUrl();
     String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
@@ -1414,7 +1426,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       DSL.using(connection, SQLDialect.POSTGRES)
           .execute(
               "ALTER TABLE recovery_control.initial_gameplay_release_transition"
-                  + " ALTER COLUMN created_at "
+                  + " ALTER COLUMN "
+                  + column
+                  + " "
                   + alteration);
       var health = application.getBean(HealthEndpoint.class);
       assertThat(health.healthForPath("readiness"))
@@ -3413,9 +3427,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .hasMessageContaining("ck_release_outbox_pending_dispatch_timestamp");
 
     // Simulate disposable schema drift to exercise the journal checks as well.
-    dsl.execute(
-        "ALTER TABLE recovery_control.initial_gameplay_release_outbox"
-            + " DROP CONSTRAINT ck_release_outbox_pending_dispatch_timestamp");
+    String table = "recovery_control.initial_gameplay_release_outbox";
+    String constraint = "ck_release_outbox_pending_dispatch_timestamp";
+    String definition = installedConstraintDefinition(table, constraint);
+    dsl.execute("ALTER TABLE " + table + " DROP CONSTRAINT " + constraint);
     try {
       dsl.execute(setDispatchTime, base.atOffset(ZoneOffset.UTC), pending.outboxId());
       String malformed = storedOutbox(operationId, effectId);
@@ -3429,12 +3444,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(malformed);
     } finally {
       dsl.execute(setDispatchTime, null, pending.outboxId());
-      dsl.execute(
-          """
-          ALTER TABLE recovery_control.initial_gameplay_release_outbox
-            ADD CONSTRAINT ck_release_outbox_pending_dispatch_timestamp
-              CHECK (state <> 'pending' OR last_dispatched_at IS NULL)
-          """);
+      dsl.execute("ALTER TABLE " + table + " ADD CONSTRAINT " + constraint + " " + definition);
     }
     assertThat(journal.findNextEffect(operationId)).contains(pending);
     assertThat(
@@ -3501,13 +3511,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     // Simulate disposable schema drift so these tests still exercise the Java guards.
     String table = "recovery_control.initial_gameplay_release_outbox";
     String constraint = "ck_release_outbox_non_pending_attempt";
-    String definition =
-        dsl.fetchSingle(
-                "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
-                    + " WHERE conrelid = CAST(? AS regclass) AND conname = ?",
-                table,
-                constraint)
-            .get(0, String.class);
+    String definition = installedConstraintDefinition(table, constraint);
     OffsetDateTime timestamp =
         dsl.fetchSingle(
                 "SELECT last_dispatched_at FROM " + table + " WHERE outbox_id = ?",
@@ -3529,6 +3533,15 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           dispatch.outboxId());
       dsl.execute("ALTER TABLE " + table + " ADD CONSTRAINT " + constraint + " " + definition);
     }
+  }
+
+  private static String installedConstraintDefinition(String table, String constraint) {
+    return dsl.fetchSingle(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
+                + " WHERE conrelid = CAST(? AS regclass) AND conname = ?",
+            table,
+            constraint)
+        .get(0, String.class);
   }
 
   @Test

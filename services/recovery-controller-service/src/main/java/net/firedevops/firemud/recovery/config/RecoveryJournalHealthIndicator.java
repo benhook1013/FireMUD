@@ -397,6 +397,12 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               WHERE a.attrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
                 AND a.attname IN ('expected_phase', 'result_phase') AND NOT a.attisdropped
                 AND a.attnotnull AND a.atttypid = 'pg_catalog.varchar'::regtype AND a.atttypmod = 36)
+            AND EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_attribute a
+              WHERE a.attrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
+                AND a.attname = 'tuple_payload' AND NOT a.attisdropped AND a.attnotnull
+                AND a.atttypid = 'pg_catalog.jsonb'::regtype AND a.atttypmod = -1)
             AND NOT EXISTS (
               SELECT operation_id, operation_kind, target_namespace, playable_state_namespace_id,
                      peer_storage_binding, scope_payload, evidence_ref, scope_digest,
