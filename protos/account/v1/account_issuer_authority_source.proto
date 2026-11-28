@@ -10,6 +10,8 @@ option java_multiple_files = true;
 service AccountIssuerAuthoritySourceService {
   rpc ReadCurrentIssuerAuthoritySource(ReadCurrentIssuerAuthoritySourceRequest)
       returns (AccountIssuerAuthoritySourceSnapshot);
+  rpc ReadExactIssuerAuthorityEvent(ReadExactIssuerAuthorityEventRequest)
+      returns (ExactIssuerAuthorityEventReadback);
 }
 
 message ReadCurrentIssuerAuthoritySourceRequest {
@@ -34,4 +36,22 @@ message AccountIssuerAuthoritySourceSnapshot {
   string outbox_stream_key = 8;
   string last_committed_outbox_sequence = 9;
   optional bytes source_event = 10;
+}
+
+// Selects one immutable retained event at an exact positive issuer stream position.
+message ReadExactIssuerAuthorityEventRequest {
+  uint32 schema_version = 1;
+  string target_namespace = 2;
+  string reconciliation_operation_id = 3;
+  string issuer_id = 4;
+  string outbox_sequence = 5;
+  string expected_event_id = 6;
+  string expected_event_digest = 7;
+}
+
+// The current snapshot and the selected canonical issuer event come from one owner transaction.
+message ExactIssuerAuthorityEventReadback {
+  uint32 schema_version = 1;
+  AccountIssuerAuthoritySourceSnapshot current_snapshot = 2;
+  bytes selected_event = 3;
 }

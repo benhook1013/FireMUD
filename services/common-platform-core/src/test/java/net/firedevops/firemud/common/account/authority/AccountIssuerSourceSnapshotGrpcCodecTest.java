@@ -6,9 +6,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
 import java.math.BigInteger;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.AccountIssuerAuthoritySourceSnapshot;
+import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.IssuerEvent;
+import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotGrpcCodec.ExactEventRequest;
 import org.junit.jupiter.api.Test;
 
 class AccountIssuerSourceSnapshotGrpcCodecTest {
@@ -218,6 +221,154 @@ class AccountIssuerSourceSnapshotGrpcCodecTest {
             .build();
     assertThatThrownBy(() -> AccountIssuerSourceSnapshotGrpcCodec.fromWire(wrongSequence))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void exactReadPreservesHistoricalEventWhenCurrentCheckpointAdvances() {
+    UUID operation = UUID.randomUUID();
+    var selected = selectedEvent("retained-event", "1", "2");
+    var request = exactRequest(operation, selected);
+    var wire = AccountIssuerSourceSnapshotGrpcCodec.toExactEventRequest(request, NAMESPACE, CALLER);
+    assertThat(AccountIssuerSourceSnapshotGrpcCodec.fromExactEventRequest(wire, NAMESPACE, CALLER))
+        .isEqualTo(request);
+    var original = snapshot(operation, "2", "2", "1", Optional.of(selected.canonicalJson()));
+    var advanced = advanced(operation, "2", "3");
+    for (var current : List.of(original, advanced)) {
+      var response =
+          AccountIssuerSourceSnapshotGrpcCodec.toExactEventResponse(
+              current, selected, request, CALLER);
+      assertThat(response.getSelectedEvent())
+          .isEqualTo(ByteString.copyFromUtf8(selected.canonicalJson()));
+      var decoded =
+          AccountIssuerSourceSnapshotGrpcCodec.fromExactEventResponse(response, request, CALLER);
+      assertThat(decoded.currentSnapshot()).isEqualTo(current);
+      assertThat(decoded.selectedEvent()).isEqualTo(selected);
+    }
+  }
+
+  @Test
+  void exactReadRejectsNoncanonicalSelectorsAndAcceptsLargestOwnerSequence() {
+    UUID operation = UUID.randomUUID();
+    var selected = selectedEvent("retained-event", "1", "2");
+    var request = exactRequest(operation, selected);
+    var wire = AccountIssuerSourceSnapshotGrpcCodec.toExactEventRequest(request, NAMESPACE, CALLER);
+    for (String sequence :
+        List.of("0", "01", "+1", "-1", "1 ", "9223372036854775807", "9223372036854775808")) {
+      var malformed = wire.toBuilder().setOutboxSequence(sequence).build();
+      assertThatThrownBy(
+              () ->
+                  AccountIssuerSourceSnapshotGrpcCodec.fromExactEventRequest(
+                      malformed, NAMESPACE, CALLER))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    var largest = wire.toBuilder().setOutboxSequence(Long.toString(Long.MAX_VALUE - 1L)).build();
+    assertThat(
+            AccountIssuerSourceSnapshotGrpcCodec.fromExactEventRequest(largest, NAMESPACE, CALLER)
+                .outboxSequence())
+        .isEqualTo(Long.MAX_VALUE - 1L);
+
+    for (var malformed :
+        List.of(
+            wire.toBuilder().setExpectedEventId("retained-event ").build(),
+            wire.toBuilder().setExpectedEventId("a".repeat(513)).build(),
+            wire.toBuilder().setExpectedEventDigest("sha256:" + "A".repeat(64)).build(),
+            wire.toBuilder().setExpectedEventDigest("sha256:" + "a".repeat(63)).build(),
+            wire.toBuilder().setUnknownFields(oneUnknownField()).build())) {
+      assertThatThrownBy(
+              () ->
+                  AccountIssuerSourceSnapshotGrpcCodec.fromExactEventRequest(
+                      malformed, NAMESPACE, CALLER))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    var scopeWithExpected = request(operation, Optional.of(advanced(operation, "1", "2")));
+    assertThatThrownBy(
+            () ->
+                new ExactEventRequest(
+                    scopeWithExpected, 1L, selected.eventId(), selected.eventDigest()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("cannot carry an expected snapshot");
+  }
+
+  @Test
+  void exactReadRejectsMalformedOrSubstitutedSelectedEvidenceAndCurrentSnapshot() {
+    UUID operation = UUID.randomUUID();
+    var selected = selectedEvent("retained-event", "1", "2");
+    var request = exactRequest(operation, selected);
+    var current = advanced(operation, "2", "3");
+    var response =
+        AccountIssuerSourceSnapshotGrpcCodec.toExactEventResponse(
+            current, selected, request, CALLER);
+    var alternateHead = advanced(operation, "1", "2");
+    var baseline = snapshot(operation, "1", "1", "0", Optional.empty());
+    var otherScope = advanced(UUID.randomUUID(), "2", "3");
+    var unknownSnapshot =
+        response.getCurrentSnapshot().toBuilder().setUnknownFields(oneUnknownField()).build();
+    for (var invalidCurrent :
+        List.of(
+            unknownSnapshot,
+            AccountIssuerSourceSnapshotGrpcCodec.toWire(otherScope),
+            AccountIssuerSourceSnapshotGrpcCodec.toWire(baseline),
+            AccountIssuerSourceSnapshotGrpcCodec.toWire(alternateHead))) {
+      var malformed = response.toBuilder().setCurrentSnapshot(invalidCurrent).build();
+      assertThatThrownBy(
+              () ->
+                  AccountIssuerSourceSnapshotGrpcCodec.fromExactEventResponse(
+                      malformed, request, CALLER))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    for (var invalidEvent :
+        List.of(
+            ByteString.EMPTY,
+            ByteString.copyFrom(new byte[] {(byte) 0xc3, 0x28}),
+            ByteString.copyFrom(new byte[64 * 1024 + 1]),
+            ByteString.copyFromUtf8(" " + selected.canonicalJson()),
+            ByteString.copyFromUtf8(sealedIssuerEvent("replacement", "replacement", "1", "2")),
+            ByteString.copyFromUtf8(
+                sealedIssuerEvent("retained-event", "retained-event", "2", "3")))) {
+      var malformed = response.toBuilder().setSelectedEvent(invalidEvent).build();
+      assertThatThrownBy(
+              () ->
+                  AccountIssuerSourceSnapshotGrpcCodec.fromExactEventResponse(
+                      malformed, request, CALLER))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    var missingCurrent = response.toBuilder().clearCurrentSnapshot().build();
+    assertThatThrownBy(
+            () ->
+                AccountIssuerSourceSnapshotGrpcCodec.fromExactEventResponse(
+                    missingCurrent, request, CALLER))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("currentSnapshot");
+    var unknown = response.toBuilder().setUnknownFields(oneUnknownField()).build();
+    assertThatThrownBy(
+            () ->
+                AccountIssuerSourceSnapshotGrpcCodec.fromExactEventResponse(
+                    unknown, request, CALLER))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("unknown protobuf fields");
+    var wrongDigest =
+        new ExactEventRequest(request.scope(), 1L, selected.eventId(), "sha256:" + "0".repeat(64));
+    assertThatThrownBy(
+            () ->
+                AccountIssuerSourceSnapshotGrpcCodec.fromExactEventResponse(
+                    response, wrongDigest, CALLER))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  private static ExactEventRequest exactRequest(UUID operation, IssuerEvent selected) {
+    return new ExactEventRequest(
+        request(operation, Optional.empty()),
+        Long.parseLong(selected.outboxSequence()),
+        selected.eventId(),
+        selected.eventDigest());
+  }
+
+  private static IssuerEvent selectedEvent(String eventId, String sequence, String generation) {
+    return (IssuerEvent)
+        AccountAuthoritySourceEventV1Codec.verify(
+            sealedIssuerEvent(eventId, eventId, sequence, generation));
   }
 
   private static UnknownFieldSet oneUnknownField() {
