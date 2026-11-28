@@ -1,15 +1,11 @@
 package net.firedevops.firemud.worldmanagement.controller;
 
-import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -18,7 +14,6 @@ import java.util.Map;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.dto.GenerationRuleDto;
 import net.firedevops.firemud.worldmanagement.service.GenerationRuleService;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -89,10 +84,7 @@ class GenerationRuleControllerTest {
   }
 
   @Test
-  void saveDispatchesAuthorizedValidVersion() throws Exception {
-    var saved = new GenerationRuleDto(7L, 1L, 7L, "room", "ZONE_SUBTREE", "12", "{}");
-    when(generationRuleService.saveRule(any(GenerationRuleDto.class))).thenReturn(saved);
-
+  void saveRefusesAuthorizedValidVersionWithoutServiceDispatch() throws Exception {
     mockMvc
         .perform(
             post("/generation/rules")
@@ -101,37 +93,16 @@ class GenerationRuleControllerTest {
                     "{\"id\":7,\"tenantId\":1,\"versionId\":7,\"name\":\"room\","
                         + "\"scopeType\":\"ZONE_SUBTREE\",\"scopeId\":\"12\","
                         + "\"value\":\"{}\"}"))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("SUCCESS"));
-
-    verify(generationRuleService).saveRule(any(GenerationRuleDto.class));
-  }
-
-  @Test
-  void saveMapsPublicationOwnerConflictToSafeConflictResponse() throws Exception {
-    when(generationRuleService.saveRule(any(GenerationRuleDto.class)))
-        .thenThrow(
-            new WorldDesignPublicationFenceRepository.ConflictException(
-                "private owner details must not be returned"));
-
-    mockMvc
-        .perform(
-            post("/generation/rules")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(
-                    "{\"id\":7,\"tenantId\":1,\"versionId\":7,\"name\":\"room\","
-                        + "\"scopeType\":\"ZONE_SUBTREE\",\"scopeId\":\"12\","
-                        + "\"value\":\"{}\"}"))
-        .andExpect(status().isConflict())
+        .andExpect(status().isPreconditionFailed())
         .andExpect(jsonPath("$.status").value("ERROR"))
         .andExpect(jsonPath("$.data").doesNotExist())
-        .andExpect(jsonPath("$.error.code").value("CONFLICT"))
+        .andExpect(jsonPath("$.error.code").value("FAILED_PRECONDITION"))
         .andExpect(
             jsonPath("$.error.message")
-                .value("World design publication state conflicts with the request"))
-        .andExpect(content().string(not(containsString("private owner details"))));
+                .value(
+                    "Generation rule writes are unavailable without canonical Draft and Account commit authorization"));
 
-    verify(generationRuleService).saveRule(any(GenerationRuleDto.class));
+    verifyNoInteractions(generationRuleService);
   }
 
   @Test

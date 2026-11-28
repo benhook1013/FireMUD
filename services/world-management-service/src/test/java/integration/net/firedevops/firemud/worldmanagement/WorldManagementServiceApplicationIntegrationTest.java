@@ -147,6 +147,44 @@ class WorldManagementServiceApplicationIntegrationTest {
   }
 
   @Test
+  void saveRuleRequiresAuthenticationAndRefusesSignedValidWrite() throws Exception {
+    URI uri = URI.create("http://localhost:" + port + "/generation/rules");
+    String body =
+        """
+        {"tenantId":1,"versionId":7,"name":"room","scopeType":"ZONE_SUBTREE","scopeId":"12","value":"{}"}
+        """;
+    HttpRequest unauthenticatedRequest =
+        HttpRequest.newBuilder(uri)
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build();
+
+    HttpResponse<String> unauthenticatedResponse =
+        HTTP_CLIENT.send(unauthenticatedRequest, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(unauthenticatedResponse.statusCode()).isEqualTo(401);
+
+    String token =
+        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+    HttpRequest authenticatedRequest =
+        HttpRequest.newBuilder(uri)
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build();
+
+    HttpResponse<String> authenticatedResponse =
+        HTTP_CLIENT.send(authenticatedRequest, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(authenticatedResponse.statusCode()).isEqualTo(412);
+    assertThat(authenticatedResponse.body()).contains("\"status\":\"ERROR\"");
+    assertThat(authenticatedResponse.body()).contains("\"code\":\"FAILED_PRECONDITION\"");
+    assertThat(authenticatedResponse.body())
+        .contains(
+            "\"message\":\"Generation rule writes are unavailable without canonical Draft and Account commit authorization\"");
+  }
+
+  @Test
   @Transactional
   void worldEventDueQueryExcludesWeatherAndEnforcesScope() {
     long exactRegionId = insertRegion(101L, 1001L, 11L);
