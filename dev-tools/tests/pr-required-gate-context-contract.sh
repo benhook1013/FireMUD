@@ -3013,8 +3013,7 @@ for resolver_phase in preflight admit reconcile; do
   }
   case "$resolver_phase" in
     preflight) [[ "$(<"$tmp_dir/resolver-output-stale-pr")" == 'eligible=false' ]] ;;
-    admit) [[ "$(<"$tmp_dir/resolver-output-stale-pr")" == 'accepted_job_ids=[]' ]] ;;
-    reconcile) [[ ! -s "$tmp_dir/resolver-output-stale-pr" ]] ;;
+    admit|reconcile) [[ "$(<"$tmp_dir/resolver-output-stale-pr")" == 'accepted_job_ids=[]' ]] ;;
   esac
 done
 for scenario in source-transient-row-count source-transient-missing-source source-empty-then-complete; do
