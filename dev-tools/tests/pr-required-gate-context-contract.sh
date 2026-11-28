@@ -4405,7 +4405,7 @@ async function recoveredFinalFence(disposition, change = null) {
   const execute = new Function("matching", "repositoryName", "github", "owner", "repo", "canonicalSmokeJobName",
     "currentIdentity", "withTransientGitHubRetry", "verifyKnownPlayFailure", "isCurrentPullRequestObsolete",
     "TerminalGitHubRequestError", "core", "verifyFailedPullCanonicalRefresh", "context", "resolveCurrentIdentity",
-    "identityKey", "positiveInteger", "isCurrentCanonicalAttempt", "setTimeout", "sleepMs", "onResume",
+    "identityKey", "positiveInteger", "isCurrentCanonicalAttempt", "setTimeout", "sleepMs", "onResume", "Date", "started", "timeoutMs",
     `return (async () => { let requireCurrentIdentity = false, iterations = 0;
       let absentRefreshKey = null, discoveredRefreshKey = null, absentRefreshObservedAt = null;
       let incompleteRefreshKey = null, incompleteRefreshObservedAt = null, sameTupleCancellationDeadline = null;
@@ -4423,20 +4423,24 @@ async function recoveredFinalFence(disposition, change = null) {
       }
       return {...selectedIdentity, sourceEvent: "repository_dispatch",
         canonicalPlayEligible: change !== "label" || finalAttempts === 0,
-        ...(finalAttempts > 0 && change === "base" ? {baseSha: "e".repeat(40), mergeSha: "f".repeat(40)} : {})};
+        ...(finalAttempts > 0 && change === "base" || finalAttempts === 2 && change === "base-at-final-comparison"
+          ? {baseSha: "e".repeat(40), mergeSha: "f".repeat(40)} : {})};
     }, selected => JSON.stringify([selected.baseRef, selected.baseSha, selected.headSha, selected.mergeSha, selected.sourceEvent]),
     value => Number.isSafeInteger(value) && value > 0, async selected => {
       assert.deepEqual(selected, proofRun);
       finalAttempts++;
       return change !== "rerun-at-final-attempt" || finalAttempts < 2;
-    }, resolve => resolve(), 0, () => {resumedPolling = true;});
-  const rejectedIdentity = change !== null && change !== "rerun-at-final-attempt";
-  assert.equal(finalAttempts, disposition === "verified" ? 2 : 1 + Number(!rejectedIdentity));
-  assert.equal(postAttemptFences, disposition === "verified" && change === "rerun-at-final-attempt" ? 0 : 1);
+    }, resolve => resolve(), 0, () => {resumedPolling = true;}, {now: () => 0}, 0, 1000);
+  const reachedSecondAttempt = [null, "rerun-at-final-attempt", "base-at-final-comparison"].includes(change);
+  assert.equal(finalAttempts, disposition === "verified" ? 2 : 1 + Number(reachedSecondAttempt));
+  const expectedFences = disposition === "verified"
+    ? Number(change !== "rerun-at-final-attempt")
+    : 1 + Number([null, "base-at-final-comparison"].includes(change));
+  assert.equal(postAttemptFences, expectedFences);
   assert.deepEqual(failures, disposition === "verified" && change === "label"
     ? ["Canonical PLAY transition exception label is absent or no longer eligible."] : []);
   assert.deepEqual(outputs, disposition === "verified" && change === null ? [["known_play_exception", "true"]] : []);
-  assert.equal(resumedPolling, ["base", "unavailable", "rerun-at-final-attempt"].includes(change),
+  assert.equal(resumedPolling, ["base", "unavailable", "rerun-at-final-attempt", "base-at-final-comparison"].includes(change),
     "changed or unavailable final identity resumes polling; obsolete identity exits");
 }
 async function failedLegacyProof(stage, error, event = "pull_request") {
@@ -5483,7 +5487,7 @@ function markerAccepted(overrides = {}) {
   }
   for (const disposition of ["ordinary", "verified"]) {
     for (const change of [null, "base", "closed", "head", "retarget", "unavailable", "rerun-at-final-attempt",
-      ...(disposition === "verified" ? ["label"] : [])]) {
+      ...(disposition === "verified" ? ["label"] : ["base-at-final-comparison"])]) {
       await recoveredFinalFence(disposition, change);
     }
   }
