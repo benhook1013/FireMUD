@@ -523,6 +523,83 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
   }
 
   @Test
+  void graphApplicationAndChangedVersionAbortCanClaimOriginalOperationOnlyOnce() throws Exception {
+    var application = currentGraphApplication(fixture());
+    var source = application.operation();
+    var other = currentGraphApplication(fixture()).operation();
+    var otherBinding = DraftAuthorizationFenceBinding.fromStored(other.accountBindingBytes());
+    var competingBinding =
+        new DraftAuthorizationFenceBinding(
+                source.operationId(),
+                otherBinding.requestId(),
+                otherBinding.commitId(),
+                source.authorizationFenceId(),
+                otherBinding.actorAccountId(),
+                otherBinding.tenantId(),
+                otherBinding.versionId(),
+                otherBinding.baseCommitId(),
+                otherBinding.expectedDraftEpoch(),
+                otherBinding.gameDesignBinding(),
+                otherBinding.normalizedInput(),
+                otherBinding.inputDigest(),
+                otherBinding.sources())
+            .withRequiredOwners();
+    var competing =
+        new WorldDraftTerminalOperation(
+            source.operationId(),
+            other.requestId(),
+            other.commitId(),
+            source.authorizationFenceId(),
+            other.canonicalTenantId(),
+            other.canonicalVersionId(),
+            other.binding(),
+            other.ownerBinding(),
+            competingBinding.canonicalBytes());
+    assertThat(competing.canonicalVersionId()).isNotEqualTo(source.canonicalVersionId());
+
+    var apply = controlledGraphApplicationService();
+    var abort = terminalService();
+    Race result =
+        race(() -> apply.apply(application), () -> abort.recordDefinitiveAbort(competing));
+
+    assertThat(result.commitWon()).isNotEqualTo(result.abortWon());
+    var identity =
+        dsl.fetchSingle(
+            "SELECT request_id, authorization_fence_id, outcome, account_binding_bytes "
+                + "FROM world_draft_graph_terminal_identity WHERE operation_id = ?",
+            source.operationId());
+    var winner = result.commitWon() ? source : competing;
+    assertThat(identity.get("request_id", UUID.class)).isEqualTo(winner.requestId());
+    assertThat(identity.get("authorization_fence_id", UUID.class))
+        .isEqualTo(winner.authorizationFenceId());
+    assertThat(identity.get("account_binding_bytes", byte[].class))
+        .containsExactly(winner.accountBindingBytes());
+    assertThat(identity.get("outcome", String.class))
+        .isEqualTo(result.commitWon() ? "APPLIED" : "DEFINITIVELY_ABORTED");
+    for (String table :
+        List.of(
+            "world_draft_graph_application",
+            "world_topology_draft_commit",
+            "world_draft_start_location_receipt")) {
+      assertThat(count(table, source.requestId())).isEqualTo(result.commitWon() ? 1L : 0L);
+    }
+    assertThat(count("world_draft_terminal_outcome", competing.requestId()))
+        .isEqualTo(result.abortWon() ? 1L : 0L);
+    if (result.commitWon()) {
+      var retained = apply.readCommitted(NAMESPACE, source.accountBindingBytes()).orElseThrow();
+      assertThat(apply.apply(application).canonicalBytes())
+          .containsExactly(retained.canonicalBytes());
+      assertThatThrownBy(() -> abort.recordDefinitiveAbort(competing))
+          .isInstanceOf(RuntimeException.class);
+    } else {
+      var retained = abort.readDefinitiveAbort(competing).orElseThrow();
+      assertThat(abort.recordDefinitiveAbort(competing).canonicalBytes())
+          .containsExactly(retained.canonicalBytes());
+      assertThatThrownBy(() -> apply.apply(application)).isInstanceOf(RuntimeException.class);
+    }
+  }
+
+  @Test
   void absentReadbackIsUnknownChangedBindingsConflictAndRolledBackAbortLeavesNoRow()
       throws Exception {
     Fixture f = fixture();

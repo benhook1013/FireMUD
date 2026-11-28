@@ -700,6 +700,126 @@ class WorldSelectedPublicationPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void failureAfterGraphAndReceiptInsertionRollsBackEveryFamilyEpochAndHistory() throws Exception {
+    String schema = "world_applied_rollback_" + UUID.randomUUID().toString().replace("-", "");
+    var dataSource =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    dataSource.setSchema(schema);
+    var dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    var transactionManager = new DataSourceTransactionManager(dataSource);
+    var write = new TransactionTemplate(transactionManager);
+    write.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    Path root = repositoryRoot();
+    try {
+      Flyway flyway =
+          Flyway.configure()
+              .dataSource(dataSource)
+              .schemas(schema)
+              .defaultSchema(schema)
+              .table(HISTORY)
+              .placeholders(Map.of("serviceSchema", schema))
+              .locations(
+                  "filesystem:"
+                      + root.resolve(
+                          "services/world-management-service/src/main/resources/db/migration"),
+                  "filesystem:"
+                      + root.resolve("services/common-saga/src/main/resources/db/migration/saga"))
+              .load();
+      flyway.migrate();
+      flyway.validate();
+
+      var intakeRepository = new WorldAuthoredSourceIntakeRepository(dsl);
+      var versionRepository = new WorldAuthoredVersionIdentityRepository(dsl);
+      var fence = new WorldDesignPublicationFenceRepository(dsl, intakeRepository);
+      var mapper = JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build();
+      var topology = new WorldDraftTopologyCommitRepository(dsl, fence, mapper);
+      var applications = new WorldDraftGraphApplicationRepository(dsl, fence, mapper);
+      var service =
+          new WorldDraftGraphApplicationService(
+              applications,
+              transactionManager,
+              operation -> new WorldDraftGraphApplicationService.CommitOrderProof(operation));
+
+      OwnerFixture owner =
+          createOwner(intakeRepository, versionRepository, write, "applied-rollback");
+      WorldDraftTopologyCommitPlan plan = topologyPlan(owner, false);
+      WorldDraftGraphApplication application = application(plan);
+      Map<String, List<String>> beforeApply = snapshotMutationRows(dsl);
+      List<String> appliedTables =
+          List.of(
+              "region",
+              "zone",
+              "room",
+              "room_exit",
+              "generation_rule",
+              "world_entity_spawn_binding",
+              "world_design_aggregate_epoch",
+              "world_design_scope_epoch",
+              "world_authored_topology_identity",
+              "world_topology_draft_commit",
+              "world_draft_graph_application",
+              "world_draft_graph_terminal_identity",
+              "world_draft_start_location_receipt");
+      var failingRepository =
+          new WorldDraftGraphApplicationRepository(dsl, fence, mapper) {
+            @Override
+            WorldDraftGraphAppliedResult apply(
+                WorldDraftGraphApplication value,
+                WorldDraftGraphApplicationService.CommitOrderProof proof) {
+              WorldDraftGraphAppliedResult inserted = super.apply(value, proof);
+              assertThat(inserted.startLocationReceipt()).isPresent();
+              for (String table : appliedTables) {
+                assertThat(dsl.fetchSingle("SELECT count(*) FROM " + table).get(0, Long.class))
+                    .as("rows inserted in %s before failure", table)
+                    .isPositive();
+              }
+              throw new IllegalStateException("after exact receipt insertion");
+            }
+          };
+      var failingService =
+          new WorldDraftGraphApplicationService(
+              failingRepository,
+              transactionManager,
+              operation -> new WorldDraftGraphApplicationService.CommitOrderProof(operation));
+
+      assertThatThrownBy(() -> failingService.apply(application))
+          .hasMessageContaining("after exact receipt insertion");
+
+      assertThat(snapshotMutationRows(dsl)).isEqualTo(beforeApply);
+      for (String table : appliedTables) {
+        assertThat(dsl.fetchSingle("SELECT count(*) FROM " + table).get(0, Long.class))
+            .as("rows in %s after rollback", table)
+            .isZero();
+      }
+      assertThat(applications.readCommitted(application)).isEmpty();
+      assertThat(topology.readCommitted(plan)).isEmpty();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT count(*) FROM world_draft_terminal_outcome WHERE operation_id=?",
+                      application.operation().operationId())
+                  .get(0, Long.class))
+          .isZero();
+
+      WorldDraftGraphAppliedResult committed = service.apply(application);
+      assertThat(committed.status()).isEqualTo("APPLIED");
+      assertThat(committed.startLocationReceipt()).isPresent();
+      assertThat(applications.readCommitted(application).orElseThrow().canonicalBytes())
+          .containsExactly(committed.canonicalBytes());
+      assertThat(topology.readCommitted(plan).orElseThrow().graphBytes())
+          .containsExactly(committed.graphBytes());
+      Map<String, List<String>> afterSuccess = snapshotMutationRows(dsl);
+      WorldDraftGraphAppliedResult retry = service.apply(application);
+      assertThat(retry.canonicalBytes()).containsExactly(committed.canonicalBytes());
+      assertThat(retry.graphBytes()).containsExactly(committed.graphBytes());
+      assertThat(snapshotMutationRows(dsl)).isEqualTo(afterSuccess);
+    } finally {
+      dsl.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+    }
+  }
+
   /**
    * Actual retained PUBLISHED owner setup with controlled upstream evidence, no runtime authority.
    */
