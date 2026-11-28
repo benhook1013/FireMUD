@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,7 +51,7 @@ public final class GameSessionIssuerGenerationProjectionBootstrap {
                   "eventDigest", event.eventDigest()));
     }
     checkpoint.put("appliedSourceEvidence", appliedSourceEvidence);
-    return new InstallationCandidate(source, Map.copyOf(checkpoint));
+    return new InstallationCandidate(source, checkpoint);
   }
 
   /** Immutable source and projection checkpoint for a later fenced installation and readback. */
@@ -62,13 +63,16 @@ public final class GameSessionIssuerGenerationProjectionBootstrap {
         AccountIssuerSourceSnapshotEvidence sourceCheckpoint,
         Map<String, Object> projectionCheckpoint) {
       this.sourceCheckpoint = sourceCheckpoint;
-      this.projectionCheckpoint = projectionCheckpoint;
+      this.projectionCheckpoint = Map.copyOf(projectionCheckpoint);
     }
 
     public AccountIssuerSourceSnapshotEvidence sourceCheckpoint() {
       return sourceCheckpoint;
     }
 
+    @SuppressFBWarnings(
+        value = "EI_EXPOSE_REP",
+        justification = "Checkpoint values are strings and immutable lists of immutable maps.")
     public Map<String, Object> projectionCheckpoint() {
       return projectionCheckpoint;
     }
