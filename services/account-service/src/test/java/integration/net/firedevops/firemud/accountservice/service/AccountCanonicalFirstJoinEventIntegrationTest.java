@@ -157,6 +157,81 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
         .isEqualTo(1L);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = SourceKind.class,
+      names = {"ACCOUNT", "GLOBAL_ROLES"})
+  void globalWaitingIntentDeniesFirstJoinAndExactAbortedIntentAllowsTheOriginal(SourceKind kind) {
+    Fixture fixture = newFixture();
+    var change = fixture.retainWaitingSourceChange(kind, fixture.account.getAccountUuid());
+    var before = fixture.leaveRows();
+    var intentBefore = fixture.rows("account_join_operations");
+
+    assertThatThrownBy(fixture::commitFirstJoin)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Canonical first-JOIN Account source intent is unresolved");
+    assertThat(fixture.leaveRows()).isEqualTo(before);
+    assertThat(fixture.rows("account_join_operations")).isEqualTo(intentBefore);
+    assertThat(fixture.countAll("account_tenant_membership")).isZero();
+    assertThat(fixture.countAll("account_tenant_membership_role_snapshots")).isZero();
+    assertThat(fixture.countAll("account_audit_outbox")).isZero();
+
+    fixture.inTransaction(
+        () -> {
+          new DraftAuthorizationFenceRepository(fixture.dsl)
+              .markSourceAborted(
+                  change,
+                  DraftAuthorizationFenceRepository.SourceChangeAbortReason.DEFINITIVE_ABORT);
+          return null;
+        });
+    var committed = fixture.commitFirstJoin();
+    assertThat(fixture.commitFirstJoin()).isEqualTo(committed);
+  }
+
+  @Test
+  void securityWaitingIntentDeniesFirstJoinWithoutAnyJoinOwnerWrites() {
+    Fixture fixture = newFixture();
+    fixture.inTransaction(
+        () -> {
+          var current =
+              fixture.sourceEvidence.readCurrentIssuerAccountSources(
+                  ACCOUNT_ISSUER, fixture.account.getAccountUuid());
+          fixture.commitControlledClosedAccountSecurityChange(current.account(), true);
+          return null;
+        });
+    var before = fixture.leaveRows();
+    var intentBefore = fixture.rows("account_join_operations", "account_security_state_operations");
+    assertThat(fixture.countAll("account_security_state_operations")).isEqualTo(1L);
+    assertThatThrownBy(fixture::commitFirstJoin)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Canonical first-JOIN Account source intent is unresolved");
+    assertThat(fixture.leaveRows()).isEqualTo(before);
+    assertThat(fixture.rows("account_join_operations", "account_security_state_operations"))
+        .isEqualTo(intentBefore);
+  }
+
+  @Test
+  void unrelatedAccountAndTenantOnlyIntentAreNotGlobalDenialsAndCommittedReplayIsUnchanged() {
+    Fixture fixture = newFixture();
+    Account other = fixture.createAccount();
+    fixture.retainWaitingSourceChange(SourceKind.GLOBAL_ROLES, other.getAccountUuid());
+    fixture.retainWaitingSourceChange(SourceKind.TENANT, fixture.tenantUuid);
+    boolean pending =
+        fixture.inTransaction(
+            () -> {
+              fixture.operations.lockAccount(fixture.account.getId());
+              return fixture.operations.hasGlobalPendingIntent(fixture.account.getAccountUuid());
+            });
+    assertThat(pending).isFalse();
+
+    // This owner-local first JOIN still applies its existing tenant policy/source guards.
+    var committed = fixture.commitFirstJoin();
+    fixture.retainWaitingSourceChange(SourceKind.GLOBAL_ROLES, fixture.account.getAccountUuid());
+    var beforeReplay = fixture.leaveRows();
+    assertThat(fixture.commitFirstJoin()).isEqualTo(committed);
+    assertThat(fixture.leaveRows()).isEqualTo(beforeReplay);
+  }
+
   @Test
   void concurrentExactTerminalAttemptsShareOneMembershipEventAuditAndReceipt() throws Exception {
     Fixture fixture = newFixture();
@@ -2075,6 +2150,12 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
      */
     private void commitControlledClosedAccountSecurityChange(
         AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence currentSource) {
+      commitControlledClosedAccountSecurityChange(currentSource, false);
+    }
+
+    private void commitControlledClosedAccountSecurityChange(
+        AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence currentSource,
+        boolean retainWaiting) {
       var current = accounts.findByIdForUpdate(account.getId()).orElseThrow();
       var roleSource =
           Objects.requireNonNull(
@@ -2162,6 +2243,7 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
       var securityOperations = new AccountSecurityStateOperationRepository(dsl);
       assertThat(fences.requestSourceChange(change)).isTrue();
       assertThat(securityOperations.claim(request, capture).claimed()).isTrue();
+      if (retainWaiting) return;
       assertThat(fences.sourceMutationPermitted(change)).isTrue();
       var advanced =
           sourceEvidence.prepareClosedAccountAdvance(account.getAccountUuid(), currentSource);
@@ -2195,6 +2277,61 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
       assertThat(committed.capture().sourceChange().canonicalBytes())
           .isEqualTo(change.canonicalBytes());
       assertThat(fences.readSourceChange(change).status()).isEqualTo("SOURCE_COMMITTED");
+    }
+
+    /** Durable scoped owner snapshots, not an authenticated mutation producer or a guard bypass. */
+    private SourceChange retainWaitingSourceChange(SourceKind kind, UUID scopeId) {
+      return inTransaction(
+          () -> {
+            SourceEvidence source;
+            if (kind == SourceKind.TENANT) {
+              var event = tenantAuthorityEvents.readCurrentByTenant(scopeId);
+              source =
+                  new SourceEvidence(
+                      kind,
+                      scopeId.toString(),
+                      Long.toString(event.tenantAuthorityGeneration()),
+                      Long.toString(event.tenantAuthoritySourceVersion()),
+                      event.outboxStreamKey(),
+                      Long.toString(event.outboxSequence()),
+                      event.payload());
+            } else {
+              var state =
+                  generations.read(
+                      AccountAuthorityGenerationRepository.AuthorityScope.account(scopeId));
+              var row =
+                  dsl.fetchSingle(
+                      "SELECT r.global_role_source_version, "
+                          + "to_jsonb(a)::text AS account_evidence, to_jsonb(r)::text AS role_evidence "
+                          + "FROM accounts a JOIN account_global_role_sources r USING (account_uuid) "
+                          + "WHERE a.account_uuid = ?",
+                      scopeId);
+              source =
+                  new SourceEvidence(
+                      kind,
+                      scopeId.toString(),
+                      kind == SourceKind.ACCOUNT ? Long.toString(state.generation()) : null,
+                      Long.toString(
+                          kind == SourceKind.ACCOUNT
+                              ? state.sourceVersion()
+                              : row.get("global_role_source_version", Long.class)),
+                      null,
+                      null,
+                      row.get(
+                              kind == SourceKind.ACCOUNT ? "account_evidence" : "role_evidence",
+                              String.class)
+                          .getBytes(StandardCharsets.UTF_8));
+            }
+            var change =
+                new SourceChange(
+                    UUID.randomUUID(),
+                    List.of(source),
+                    "controlled pending mutation".getBytes(StandardCharsets.UTF_8));
+            var fences = new DraftAuthorizationFenceRepository(dsl);
+            assertThat(fences.requestSourceChange(change)).isTrue();
+            assertThat(fences.readSourceChange(change).status()).isEqualTo("WAITING");
+            return change;
+          });
     }
 
     private long membershipId() {
