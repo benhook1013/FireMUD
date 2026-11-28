@@ -4,15 +4,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.intThat;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.boot.health.contributor.Status;
@@ -38,15 +44,52 @@ class RecoveryJournalHealthIndicatorTest {
       when(rows.getBoolean(1)).thenReturn(true);
     }
 
-    var health = new RecoveryJournalHealthIndicator(source).health();
+    var indicator = new RecoveryJournalHealthIndicator(source);
+    try {
+      var health = indicator.health();
 
-    assertThat(health.getStatus()).isEqualTo(queryFails ? Status.DOWN : Status.UP);
-    var sequence = inOrder(connection, statement);
-    sequence.verify(connection).setNetworkTimeout(any(), eq(expectedTimeout));
-    sequence.verify(connection).prepareStatement(anyString());
-    sequence.verify(statement).setQueryTimeout(2);
-    sequence.verify(statement).executeQuery();
-    sequence.verify(connection).setNetworkTimeout(any(), eq(originalTimeout));
-    sequence.verify(connection).close();
+      assertThat(health.getStatus()).isEqualTo(queryFails ? Status.DOWN : Status.UP);
+      var sequence = inOrder(connection, statement);
+      sequence
+          .verify(connection)
+          .setNetworkTimeout(any(), intThat(timeout -> timeout > 0 && timeout <= expectedTimeout));
+      sequence.verify(connection).prepareStatement(anyString());
+      sequence.verify(statement).setQueryTimeout(2);
+      sequence.verify(statement).executeQuery();
+      sequence.verify(connection).setNetworkTimeout(any(), eq(originalTimeout));
+      sequence.verify(connection).close();
+    } finally {
+      indicator.stopProbes();
+    }
+  }
+
+  @Test
+  void readinessTimesOutWhileBorrowingAndDoesNotQueueASecondBorrow() throws SQLException {
+    DataSource source = mock(DataSource.class);
+    var acquiring = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var borrowFinished = new CountDownLatch(1);
+    when(source.getConnection())
+        .thenAnswer(ignored -> {
+          acquiring.countDown();
+          try {
+            release.await(10, TimeUnit.SECONDS);
+          } finally {
+            borrowFinished.countDown();
+          }
+          throw new SQLException("fixture database unavailable");
+        });
+
+    var indicator = new RecoveryJournalHealthIndicator(source);
+    try {
+      assertThat(indicator.health().getStatus()).isEqualTo(Status.DOWN);
+      assertThat(acquiring.getCount()).isZero();
+      assertThat(borrowFinished.getCount()).isEqualTo(1);
+      assertThat(indicator.health().getStatus()).isEqualTo(Status.DOWN);
+      verify(source, times(1)).getConnection();
+    } finally {
+      release.countDown();
+      indicator.stopProbes();
+    }
   }
 }

@@ -1175,6 +1175,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     "acknowledged_at, SET NOT NULL",
     "acknowledged_at, TYPE timestamptz(3)",
     "last_dispatched_at, TYPE timestamptz(3)",
+    "updated_at, TYPE timestamptz(3)",
+    "updated_at, TYPE timestamptz(6)",
     "preparation_observation_payload, SET DEFAULT jsonb_build_object()",
     "preparation_observation_digest, SET DEFAULT 'a'",
     "effect_id, DROP NOT NULL",
@@ -1209,7 +1211,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       assertThat(health.healthForPath("readiness"))
           .isNotNull()
           .extracting(result -> result.getStatus())
-          .isEqualTo(Status.DOWN);
+          .isEqualTo(
+              "updated_at".equals(column) && "TYPE timestamptz(6)".equals(alteration)
+                  ? Status.UP
+                  : Status.DOWN);
       assertThat(health.healthForPath("liveness"))
           .isNotNull()
           .extracting(result -> result.getStatus())
@@ -1411,8 +1416,14 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   @ValueSource(
       strings = {
         "operation_key",
+        "operation_revision_type",
+        "operation_revision_constraint",
+        "operation_evidence_digest_width",
         "transition_tuple_digest_width",
         "transition_tuple_digest_nullability",
+        "transition_missing_key",
+        "transition_operation_only_key",
+        "transition_equivalent_key",
         "outbox_operation_kind_key",
         "outbox_operation_tuple_digest_width",
         "preparation_key",
@@ -1441,12 +1452,40 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 ALTER TABLE recovery_control.initial_gameplay_release_operation
                   DROP CONSTRAINT initial_gameplay_release_operation_pkey CASCADE
                 """;
+            case "operation_revision_type" ->
+                "ALTER TABLE recovery_control.initial_gameplay_release_operation"
+                    + " ALTER COLUMN revision TYPE integer";
+            case "operation_revision_constraint" ->
+                "ALTER TABLE recovery_control.initial_gameplay_release_operation"
+                    + " DROP CONSTRAINT initial_gameplay_release_operation_revision_check";
+            case "operation_evidence_digest_width" ->
+                "ALTER TABLE recovery_control.initial_gameplay_release_operation"
+                    + " ALTER COLUMN evidence_digest TYPE char(32)";
             case "transition_tuple_digest_width" ->
                 "ALTER TABLE recovery_control.initial_gameplay_release_transition"
                     + " ALTER COLUMN tuple_digest TYPE CHAR(32)";
             case "transition_tuple_digest_nullability" ->
                 "ALTER TABLE recovery_control.initial_gameplay_release_transition"
                     + " ALTER COLUMN tuple_digest DROP NOT NULL";
+            case "transition_missing_key" ->
+                """
+                ALTER TABLE recovery_control.initial_gameplay_release_transition
+                  DROP CONSTRAINT initial_gameplay_release_transition_pkey
+                """;
+            case "transition_operation_only_key" ->
+                """
+                CREATE UNIQUE INDEX "fixture one transition per operation"
+                  ON recovery_control.initial_gameplay_release_transition (operation_id)
+                  INCLUDE (verb)
+                """;
+            case "transition_equivalent_key" ->
+                """
+                ALTER TABLE recovery_control.initial_gameplay_release_transition
+                  DROP CONSTRAINT initial_gameplay_release_transition_pkey,
+                  ALTER COLUMN operation_id SET NOT NULL,
+                  ALTER COLUMN verb SET NOT NULL,
+                  ADD CONSTRAINT "fixture equivalent transition key" UNIQUE (verb, operation_id)
+                """;
             case "outbox_operation_kind_key" ->
                 """
                 ALTER TABLE recovery_control.initial_gameplay_release_outbox
@@ -1485,12 +1524,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             default -> throw new AssertionError("Unexpected test fixture key");
           });
       assertCompletePackagedMigrationReceipts(packagedUrl);
-      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+      Status expected = "transition_equivalent_key".equals(drift) ? Status.UP : Status.DOWN;
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(expected);
       var health = application.getBean(HealthEndpoint.class);
       assertThat(health.healthForPath("readiness"))
           .isNotNull()
           .extracting(result -> result.getStatus())
-          .isEqualTo(Status.DOWN);
+          .isEqualTo(expected);
       assertThat(health.healthForPath("liveness"))
           .isNotNull()
           .extracting(result -> result.getStatus())
@@ -2101,6 +2141,73 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
+  void unresolvedHandoffRefreshesHeldPreparationWithoutRedispatch() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry preparation = authorizedDispatch(base);
+    UUID operationId = preparation.effect().operationId();
+    EffectReadback prepared =
+        readbackFor(
+            preparation,
+            preparation.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "prepared-before-handoff",
+            base.plusSeconds(5));
+    journal.recordEffectReadback(preparation, prepared, prepared.observedAt());
+    OutboxEntry pendingHandoff = journal.findNextEffect(operationId).orElseThrow();
+    OutboxEntry handoff =
+        journal.claimEffect(
+            operationId,
+            pendingHandoff.effect().effectId(),
+            UUID.randomUUID(),
+            base.plusSeconds(6));
+    EffectReadback partial =
+        readbackFor(
+            preparation,
+            preparation.lastAttemptId(),
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "preparation-became-partial",
+            base.plusSeconds(8));
+    journal.recordEffectReadback(preparation, partial, partial.observedAt());
+    EffectReadback unknown =
+        readbackFor(
+            handoff,
+            handoff.lastAttemptId(),
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "handoff-needs-preparation-refresh",
+            base.plusSeconds(9));
+    EffectReadback refreshed =
+        readbackFor(
+            preparation,
+            preparation.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "fresh-preparation-receipt",
+            base.plusSeconds(10));
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    when(port.readback(handoff.effect(), handoff.lastAttemptId(), handoff.attemptCount()))
+        .thenReturn(InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(unknown));
+    when(port.readback(
+            preparation.effect(), preparation.lastAttemptId(), preparation.attemptCount()))
+        .thenReturn(InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(refreshed));
+    var controller =
+        new InitialGameplayReleaseController(
+            journal, tupleCodec, mock(InitialGameplayReleaseEvidenceProvider.class), port);
+
+    assertThat(controller.reconcileNextEffect(operationId).phase()).isEqualTo(Phase.RELEASING);
+
+    verify(port).readback(handoff.effect(), handoff.lastAttemptId(), handoff.attemptCount());
+    verify(port)
+        .readback(preparation.effect(), preparation.lastAttemptId(), preparation.attemptCount());
+    verifyNoMoreInteractions(port);
+    assertThat(storedOutbox(operationId, preparation.effect().effectId()))
+        .contains(tupleCodec.digest(refreshed));
+    assertThat(journal.findHeldPreparationForRefresh(operationId)).isEmpty();
+    OutboxEntry retainedHandoff = journal.findNextEffect(operationId).orElseThrow();
+    assertThat(retainedHandoff.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
+    assertThat(retainedHandoff.lastAttemptId()).isEqualTo(handoff.lastAttemptId());
+    assertThat(retainedHandoff.attemptCount()).isEqualTo(handoff.attemptCount());
+  }
+
+  @Test
   void tupleConflictAndAmbiguousEffectNeverAdvanceOrRedispatch() {
     Instant base = Instant.now().truncatedTo(ChronoUnit.SECONDS).plusSeconds(60);
     Scope scope = scope();
@@ -2708,6 +2815,36 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
+  void operationCreationKeepsTheWireEvidenceReferenceLimitAndExactBytes() {
+    Scope original = scope();
+    String exactReference = "\u00e9".repeat(256);
+    Scope tooLarge =
+        new Scope(
+            original.operationId(),
+            original.canonicalTenantId(),
+            original.targetNamespace(),
+            original.playableStateNamespaceId(),
+            original.peerStorageBinding(),
+            exactReference + "a");
+    UUID lock = UUID.randomUUID();
+    assertThatThrownBy(() -> journal.create(tooLarge, lock))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Operation evidence reference exceeds its UTF-8 limit");
+    assertThat(journal.find(original.operationId())).isEmpty();
+
+    Scope bounded =
+        new Scope(
+            original.operationId(),
+            original.canonicalTenantId(),
+            original.targetNamespace(),
+            original.playableStateNamespaceId(),
+            original.peerStorageBinding(),
+            exactReference);
+    assertThat(journal.create(bounded, lock).scope().evidenceRef()).isEqualTo(exactReference);
+    assertThat(journal.find(original.operationId()).orElseThrow().scope()).isEqualTo(bounded);
+  }
+
+  @Test
   void scopeReaderRejectsResealedScopeForAnotherRowKey() {
     Scope original = scope();
     journal.create(original, UUID.randomUUID());
@@ -3202,6 +3339,28 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(storedOutbox(operationId, prepare.effect().effectId())).isEqualTo(retainedPrepare);
     assertThat(storedOutbox(operationId, effectId)).isEqualTo(incomplete);
     verifyNoInteractions(port);
+  }
+
+  @Test
+  void dispatchClaimReportsAWriteSuppressedByDatabaseDrift() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry pending = authorizedPending(journal, base);
+    UUID operationId = pending.effect().operationId();
+    UUID effectId = pending.effect().effectId();
+    String retained = storedOutbox(operationId, effectId);
+
+    withSuppressedOutboxUpdate(() ->
+        assertThatThrownBy(() ->
+                journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(4)))
+            .isInstanceOf(InitialGameplayReleaseConflictException.class)
+            .hasMessageContaining("effect dispatch claim was not recorded"));
+
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+    assertThat(
+            journal
+                .claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(5))
+                .state())
+        .isEqualTo(EffectOutboxState.DISPATCHED);
   }
 
   @Test
@@ -4017,6 +4176,49 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         journal.claimEffect(operationId, effectId, dispatch.lastAttemptId(), base.plusSeconds(10));
     assertThat(replacement.attemptCount()).isEqualTo(dispatch.attemptCount() + 1);
     assertThat(replacement.state()).isEqualTo(EffectOutboxState.DISPATCHED);
+  }
+
+  @Test
+  void ambiguousDispatchRetainsAContradictoryDefinitiveReceiptForOwnerReview() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatch = authorizedDispatch(base);
+    UUID operationId = dispatch.effect().operationId();
+    UUID effectId = dispatch.effect().effectId();
+    journal.recordAmbiguousEffectForDispatch(dispatch, "TRANSPORT_UNCERTAIN", base.plusSeconds(5));
+    EffectReadback retained =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.PREPARED_FENCED,
+            "retained-preparation",
+            base.plusSeconds(6));
+    // Model a restored row that contradicts its own recorded definitive receipt.
+    assertThat(
+            dsl.execute(
+                """
+                UPDATE recovery_control.initial_gameplay_release_outbox
+                SET readback_identity = ?, readback_payload = CAST(? AS jsonb), readback_digest = ?
+                WHERE outbox_id = ?
+                """,
+                retained.readbackIdentity(),
+                tupleCodec.toJson(retained),
+                tupleCodec.digest(retained),
+                dispatch.outboxId()))
+        .isEqualTo(1);
+    String before = storedOutbox(operationId, effectId);
+    EffectReadback partial =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "new-partial-observation",
+            base.plusSeconds(7));
+
+    assertThatThrownBy(() -> journal.recordEffectReadback(dispatch, partial, base.plusSeconds(7)))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("nonterminal effect unexpectedly retains a definitive readback");
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(before);
+    assertThat(journal.find(operationId).orElseThrow().phase()).isEqualTo(Phase.RESUME_AUTHORIZED);
   }
 
   @ParameterizedTest
@@ -5479,8 +5681,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @ParameterizedTest(name = "V6 preparation observation retained: {0}")
-  @ValueSource(booleans = {false, true})
-  void v7RequiresCompletePreparationReceiptHistory(boolean retainObservation) throws Exception {
+  @ValueSource(strings = {"absent", "UNKNOWN_OR_PARTIAL", "PREPARED_FENCED"})
+  void v7RequiresCompletePreparationReceiptHistory(String retainedState) throws Exception {
+    boolean retainObservation = !"absent".equals(retainedState);
     String database = "legacy_receipts_" + UUID.randomUUID().toString().replace("-", "");
     dsl.execute("CREATE DATABASE " + database);
     String fixtureUrl = POSTGRES.getJdbcUrl();
@@ -5508,7 +5711,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             readbackFor(
                 dispatch,
                 dispatch.lastAttemptId(),
-                EffectReadbackState.UNKNOWN_OR_PARTIAL,
+                retainObservation
+                    ? EffectReadbackState.valueOf(retainedState)
+                    : EffectReadbackState.UNKNOWN_OR_PARTIAL,
                 "v6-observation",
                 base.plusSeconds(2));
         Operation resumeAuthorized = legacyJournal.find(V1_OPERATION_ID).orElseThrow();

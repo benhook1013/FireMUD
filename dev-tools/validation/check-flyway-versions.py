@@ -30,6 +30,7 @@ RECOVERY_RESOURCE_ROOT = f"services/{RECOVERY_PROJECT}/src/main/resources"
 RECOVERY_CONFIG_DIRECTORY = f"{RECOVERY_RESOURCE_ROOT}/config"
 RECOVERY_SQL_ROOT = f"{RECOVERY_RESOURCE_ROOT}/db/recovery-control-migration/"
 RECOVERY_JAVA_ROOT = f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration/"
+RECOVERY_APP_JAVA_ROOT = f"services/{RECOVERY_PROJECT}/src/main/java/net/firedevops/firemud/recovery/"
 RECOVERY_MIGRATION_ROOTS = (RECOVERY_SQL_ROOT, RECOVERY_JAVA_ROOT)
 RECOVERY_MIGRATION_ANCESTORS = {
     path.as_posix()
@@ -155,6 +156,8 @@ def recovery_config_path(path: str) -> bool:
 
 def relevant_path(path: str) -> bool:
     return path == RECOVERY_CONFIG_DIRECTORY or path in RECOVERY_MIGRATION_ANCESTORS or bool(migration_path(path)) or (
+        path.startswith(RECOVERY_APP_JAVA_ROOT) and path.endswith(".java")
+    ) or (
         path.startswith("services/")
         and (path.endswith("/build.gradle.kts")
              or PACKAGED_CONFIG_RE.search(path))
@@ -177,6 +180,7 @@ def current_snapshot(repo_root: Path) -> Snapshot:
              *repo_root.glob("services/*/src/main/resources/config/application*.xml"),
              *repo_root.glob("services/*/src/main/resources/db/migration/**/*"),
              *repo_root.glob("services/*/src/main/java/db/migration/**/*"),
+             *repo_root.glob(f"{RECOVERY_APP_JAVA_ROOT}**/*.java"),
              *repo_root.glob("buildSrc/**/*.kt"), *repo_root.glob("buildSrc/**/*.kts")]
     for root in RECOVERY_MIGRATION_ROOTS:
         if not root.startswith(linked_prefixes):
@@ -255,6 +259,13 @@ def recovery_input_issues(snapshot: Snapshot) -> list[str]:
     """Apply the SQL-only Recovery input policy to either side of a comparison."""
     issues = []
     for path in sorted(snapshot):
+        if path.startswith(RECOVERY_APP_JAVA_ROOT) and path.endswith(".java"):
+            source = snapshot[path].decode("utf-8", errors="replace")
+            if re.search(r"\b(?:JavaMigration|BaseJavaMigration)\b", source):
+                issues.append(
+                    f"{path}: Recovery JavaMigration classes and beans are unsupported; "
+                    "migration version authority must remain SQL-only"
+                )
         if snapshot[path] == SYMLINK_SNAPSHOT and (
             path in RECOVERY_MIGRATION_ANCESTORS or path.startswith(RECOVERY_MIGRATION_ROOTS)
         ):
@@ -609,6 +620,74 @@ def recovery_flyway_config(
                 for path in indexed_location_paths:
                     properties.pop(path)
                     ambiguous.discard(path)
+            schemas_property = "spring.flyway.schemas"
+            indexed_schema_paths = {
+                path for path in properties
+                if path.startswith((schemas_property + "[", schemas_property + "."))
+            }
+            schema_value = properties.get(schemas_property)
+            if indexed_schema_paths or isinstance(schema_value, dict):
+                if schemas_property in ambiguous:
+                    return None
+                indexed_values: dict[int, object] = {}
+                if isinstance(schema_value, dict):
+                    if not schema_value or any(type(key) is not int for key in schema_value):
+                        return None
+                    indexed_values.update(schema_value)
+                elif schemas_property in properties:
+                    return None
+                index_pattern = re.compile(r"^spring\.flyway\.schemas\[(0|[1-9][0-9]*)\]$")
+                for path in indexed_schema_paths:
+                    match = index_pattern.fullmatch(path)
+                    if match is None or path in ambiguous:
+                        return None
+                    index = int(match.group(1))
+                    if index in indexed_values:
+                        return None
+                    indexed_values[index] = properties[path]
+                if set(indexed_values) != set(range(len(indexed_values))) or not all(
+                        isinstance(value, str) for value in indexed_values.values()):
+                    return None
+                properties[schemas_property] = [indexed_values[index] for index in range(len(indexed_values))]
+                for path in indexed_schema_paths:
+                    properties.pop(path)
+                    ambiguous.discard(path)
+            ignore_patterns_property = "spring.flyway.ignoremigrationpatterns"
+            indexed_ignore_pattern_paths = {
+                path for path in properties
+                if path.startswith((ignore_patterns_property + "[", ignore_patterns_property + "."))
+            }
+            ignore_pattern_value = properties.get(ignore_patterns_property)
+            if indexed_ignore_pattern_paths or isinstance(ignore_pattern_value, dict):
+                if ignore_patterns_property in ambiguous:
+                    return None
+                indexed_values: dict[int, object] = {}
+                if isinstance(ignore_pattern_value, dict):
+                    if not ignore_pattern_value or any(type(key) is not int for key in ignore_pattern_value):
+                        return None
+                    indexed_values.update(ignore_pattern_value)
+                elif ignore_patterns_property in properties:
+                    return None
+                index_pattern = re.compile(
+                    r"^spring\.flyway\.ignoremigrationpatterns\[(0|[1-9][0-9]*)\]$"
+                )
+                for path in indexed_ignore_pattern_paths:
+                    match = index_pattern.fullmatch(path)
+                    if match is None or path in ambiguous:
+                        return None
+                    index = int(match.group(1))
+                    if index in indexed_values:
+                        return None
+                    indexed_values[index] = properties[path]
+                if set(indexed_values) != set(range(len(indexed_values))) or not all(
+                        isinstance(value, str) for value in indexed_values.values()):
+                    return None
+                properties[ignore_patterns_property] = [
+                    indexed_values[index] for index in range(len(indexed_values))
+                ]
+                for path in indexed_ignore_pattern_paths:
+                    properties.pop(path)
+                    ambiguous.discard(path)
             exact_guard_paths = {auto_configuration_switch, pool_init_sql, pool_test_query,
                                  datasource_type, *credential_paths, *driver_paths,
                                  "spring.flyway.validateonmigrate",
@@ -623,6 +702,7 @@ def recovery_flyway_config(
                                  "spring.flyway.skipexecutingmigrations",
                                  "spring.flyway.dryrunoutput",
                                  "spring.flyway.encoding", "spring.flyway.detectencoding",
+                                 "spring.flyway.ignoremigrationpatterns",
                                  "spring.flyway.callbacklocations", "spring.flyway.initsqls",
                                  placeholder_replacement, "spring.flyway.placeholderprefix",
                                  "spring.flyway.placeholdersuffix",
@@ -698,7 +778,8 @@ def recovery_flyway_config(
         return None
     for sql_property in (pool_init_sql, pool_test_query):
         pool_sql = effective_settings.get(sql_property)
-        if pool_sql is not None and (not isinstance(pool_sql, str) or pool_sql.strip()):
+        if pool_sql is not None and (
+                not isinstance(pool_sql, str) or pool_sql.strip(JAVA_TRIM_CHARACTERS)):
             return None
     if spring_boolean(flyway.get("mixed", False)) is not False:
         return None
@@ -709,32 +790,38 @@ def recovery_flyway_config(
     if "dryrunoutput" in flyway:
         return None
     encoding = flyway.get("encoding", "UTF-8")
-    if (not isinstance(encoding, str) or encoding.strip().lower() != "utf-8"
+    # The pinned Java UTF-8 charset deliberately has a different alias set from Python.
+    if (not isinstance(encoding, str)
+            or encoding.strip(JAVA_TRIM_CHARACTERS).lower()
+            not in {"utf-8", "utf8", "unicode-1-1-utf-8"}
             or spring_boolean(flyway.get("detectencoding", False)) is not False):
         return None
     if "callbacklocations" in flyway:
         return None
+    ignore_patterns = flyway.get("ignoremigrationpatterns", ["*:future"])
+    if isinstance(ignore_patterns, str):
+        ignore_patterns = [] if not ignore_patterns else ignore_patterns.split(",")
+    if not isinstance(ignore_patterns, list) or any(
+            not isinstance(pattern, str)
+            or pattern.strip(JAVA_TRIM_CHARACTERS).lower()
+            not in {"*:future", "versioned:future", "repeatable:future"}
+            for pattern in ignore_patterns):
+        return None
     # Spring Boot loads a YAML null and an empty YAML sequence as an empty scalar.
     if flyway.get("initsqls") not in (None, [], ""):
         return None
-    replacement = flyway.get("placeholderreplacement", True)
-    if isinstance(replacement, str):
-        replacement = replacement.strip().lower()
-        if replacement in {"true", "on", "yes", "1"}:
-            replacement = True
-        elif replacement in {"false", "off", "no", "0"}:
-            replacement = False
-    if not isinstance(replacement, bool) or require_current_configuration and replacement:
+    replacement = spring_boolean(flyway.get("placeholderreplacement", True))
+    if replacement is None or require_current_configuration and replacement:
+        return None
+    prefix = flyway.get("placeholderprefix", "${")
+    suffix = flyway.get("placeholdersuffix", "}")
+    # Runtime substitutions in a delimiter make the parent's rules unknown.
+    # The standard prefix itself is an unmatched Spring placeholder opener.
+    if (not isinstance(prefix, str) or not prefix or prefix != "${" and "${" in prefix
+            or not isinstance(suffix, str) or not suffix or "${" in suffix):
         return None
     placeholder_delimiters = None
     if replacement:
-        prefix = flyway.get("placeholderprefix", "${")
-        suffix = flyway.get("placeholdersuffix", "}")
-        # Runtime substitutions in a delimiter make the parent's rules unknown.
-        # The standard prefix itself is an unmatched Spring placeholder opener.
-        if (not isinstance(prefix, str) or not prefix or prefix != "${" and "${" in prefix
-                or not isinstance(suffix, str) or not suffix or "${" in suffix):
-            return None
         placeholder_delimiters = (prefix.encode(), suffix.encode())
     locations = flyway.get("locations", ["classpath:db/migration"])
     if isinstance(locations, str):
@@ -755,7 +842,7 @@ def recovery_flyway_config(
             return None
         schemas = flyway.get("schemas", [])
         if isinstance(schemas, str):
-            schemas = [schema.strip() for schema in schemas.split(",")]
+            schemas = [schema.strip(JAVA_TRIM_CHARACTERS) for schema in schemas.split(",")]
         if schemas != [RECOVERY_SCHEMA]:
             return None
         history_schema = flyway.get("defaultschema")
@@ -959,6 +1046,7 @@ def run_self_test() -> None:
 
     recovery = RECOVERY_SQL_ROOT
     recovery_config = "services/recovery-controller-service/src/main/resources/application.yml"
+    recovery_config_override = recovery_config.replace("/application.yml", "/config/application.yml")
     recovery_table_setting = (
         b"    schemas: recovery_control\n"
         b"    default-schema: recovery_control\n"
@@ -973,6 +1061,22 @@ def run_self_test() -> None:
     )
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    recovery_java_migration = RECOVERY_APP_JAVA_ROOT + "config/RecoveryMigrationConfiguration.java"
+    if not relevant_path(recovery_java_migration):
+        raise AssertionError("Recovery application-package Java sources must be snapshotted")
+    with tempfile.TemporaryDirectory() as fixture_root:
+        source_path = Path(fixture_root) / recovery_java_migration
+        source_path.parent.mkdir(parents=True)
+        source_path.write_text("class RecoveryApplicationSource {}", encoding="utf-8")
+        if recovery_java_migration not in current_snapshot(Path(fixture_root)):
+            raise AssertionError("Recovery application-package Java source was omitted from snapshot")
+    check("Recovery JavaMigration beans cannot override SQL version authority", {
+        **recovery_history,
+        recovery_java_migration: (
+            b"import org.flywaydb.core.api.migration.JavaMigration;\n"
+            b"@Bean JavaMigration recoveryMigration() { return migration; }\n"
+        ),
+    }, recovery_history, "JavaMigration classes and beans are unsupported")
     check("comma-delimited Flyway scalar trims its location entry", {
         **recovery_history,
         recovery_config: recovery_settings.replace(
@@ -1092,11 +1196,29 @@ def run_self_test() -> None:
         check("Recovery placeholder replacement must be explicitly disabled", {
             **recovery_history, recovery_config: replacement_config,
         }, recovery_history, "historical effective migration no longer applied")
+    for false_value in ("false", "OFF", "no", "0", " false "):
+        check(f"Spring Boolean false placeholder replacement accepts {false_value!r}", {
+            **recovery_history,
+            recovery_config_override: f"spring.flyway.placeholder-replacement: '{false_value}'\n".encode(),
+        }, recovery_history, None)
+    for true_value in ("true", "ON", "yes", "1"):
+        check(f"Spring Boolean true placeholder replacement is rejected: {true_value!r}", {
+            **recovery_history,
+            recovery_config_override: f"spring.flyway.placeholder-replacement: '{true_value}'\n".encode(),
+        }, recovery_history, "historical effective migration no longer applied")
     check("higher-priority placeholder replacement cannot be enabled", {
         **recovery_history,
         recovery_config.replace("/application.yml", "/config/application.yml"):
             b"spring.flyway.placeholder-replacement: true\n",
     }, recovery_history, "historical effective migration no longer applied")
+    for bad_delimiter in (
+        b"spring.flyway.placeholder-prefix: '@${runtime}'\n",
+        b"spring.flyway.placeholder-suffix: '${runtime}'\n",
+    ):
+        check("placeholder delimiters are validated even when replacement is disabled", {
+            **recovery_history,
+            recovery_config_override: bad_delimiter,
+        }, recovery_history, "historical effective migration no longer applied")
     legacy_replacement_enabled = recovery_settings.replace(b"    placeholder-replacement: false\n", b"")
     check("disabling placeholder replacement preserves token-free SQL", recovery_history, {
         **recovery_history, recovery_config: legacy_replacement_enabled,
@@ -1199,7 +1321,6 @@ def run_self_test() -> None:
         **recovery_history,
         recovery_config: recovery_settings + b"    init-sqls: []\n",
     }, recovery_history, None)
-    recovery_config_override = recovery_config.replace("/application.yml", "/config/application.yml")
     check("nonblank effective Hikari initialization SQL cannot qualify recovery history", {
         **recovery_history,
         recovery_config_override: b"spring.datasource.hikari.connection-init-sql: SET application_name = fixture\n",
@@ -1208,6 +1329,10 @@ def run_self_test() -> None:
         **recovery_history,
         recovery_config_override: b"spring.datasource.hikari.connection-init-sql: '   '\n",
     }, recovery_history, None)
+    check("non-Java whitespace Hikari SQL is nonempty to the Java startup guard", {
+        **recovery_history,
+        recovery_config_override: "spring.datasource.hikari.connection-init-sql: '\u00a0'\n".encode(),
+    }, recovery_history, "historical effective migration no longer applied")
     for setting in ("init-sqls", "callback-locations"):
         check(f"higher-priority empty Flyway {setting} replaces a non-empty root list", {
             **recovery_history,
@@ -1281,6 +1406,27 @@ def run_self_test() -> None:
         check(f"higher-priority recovery history {setting} cannot point at public", {
             **recovery_history,
             recovery_override_config: f"spring.flyway.{setting}: public\n".encode(),
+        }, recovery_history, "historical effective migration no longer applied")
+    check("scalar Recovery schema uses Java trim semantics", {
+        **recovery_history,
+        recovery_override_config: b"spring.flyway.schemas: ' \trecovery_control\t '\n",
+    }, recovery_history, None)
+    check("non-Java whitespace in scalar Recovery schema remains significant", {
+        **recovery_history,
+        recovery_override_config: "spring.flyway.schemas: '\u00a0recovery_control'\n".encode(),
+    }, recovery_history, "historical effective migration no longer applied")
+    check("indexed Recovery schema override remains eligible", {
+        **recovery_history,
+        recovery_override_config: b"spring.flyway.schemas[0]: recovery_control\n",
+    }, recovery_history, None)
+    for malformed_schema_override in (
+        b"spring.flyway.schemas[1]: recovery_control\n",
+        b"spring.flyway.schemas[0]: public\nspring.flyway.schemas[1]: recovery_control\n",
+        b"spring.flyway.schemas.0: recovery_control\n",
+    ):
+        check("malformed or noncanonical indexed Recovery schema is rejected", {
+            **recovery_history,
+            recovery_override_config: malformed_schema_override,
         }, recovery_history, "historical effective migration no longer applied")
     for setting in ("url", "user", "password"):
         check(f"Flyway {setting} cannot separate Recovery migration from the journal datasource", {
@@ -1562,7 +1708,7 @@ def run_self_test() -> None:
             + recovery_settings
         )),
         ("nested numeric", (
-            b"spring:\n  autoconfigure:\n    exclude:\n"
+            datasource_setting + b"spring:\n  autoconfigure:\n    exclude:\n"
             b"      0: org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration\n"
             b"  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
         )),
@@ -1643,6 +1789,25 @@ def run_self_test() -> None:
     check("incompatible Flyway encoding cannot qualify recovery history", {
         **recovery_history, recovery_config: recovery_settings + b"    encoding: UTF-16\n",
     }, recovery_history, "historical effective migration no longer applied")
+    for alias in ("UTF8", "unicode-1-1-utf-8"):
+        check("Java UTF-8 charset alias qualifies recovery history", {
+            **recovery_history,
+            recovery_config: recovery_settings + f"    encoding: {alias}\n".encode(),
+        }, recovery_history, None)
+    for ignored_patterns in ("['versioned:*']", "['*:missing']", "['*:future', '*:pending']"):
+        check("custom Flyway ignore patterns cannot disable applied checksum validation", {
+            **recovery_history,
+            recovery_config: recovery_settings + f"    ignore-migration-patterns: {ignored_patterns}\n".encode(),
+        }, recovery_history, "historical effective migration no longer applied")
+    for ignored_patterns in ("[]", "['*:future']", "['versioned:future']"):
+        check("Flyway ignore pattern leaves applied checksum validation intact", {
+            **recovery_history,
+            recovery_config: recovery_settings + f"    ignore-migration-patterns: {ignored_patterns}\n".encode(),
+        }, recovery_history, None)
+    check("indexed default future-only Flyway ignore pattern preserves checksum validation", {
+        **recovery_history,
+        recovery_config_override: b"spring.flyway.ignore-migration-patterns[0]: '*:future'\n",
+    }, recovery_history, None)
     check("explicit UTF-8 Flyway encoding qualifies recovery history", {
         **recovery_history, recovery_config: recovery_settings + b"    encoding: UTF-8\n",
     }, recovery_history, None)

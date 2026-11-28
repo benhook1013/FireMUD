@@ -1,10 +1,13 @@
 package net.firedevops.firemud.recovery.config;
 
 import java.net.URI;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import org.springframework.boot.EnvironmentPostProcessor;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.context.properties.bind.Bindable;
@@ -136,6 +139,19 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
       throw new SafeOverrideException(
           "spring.flyway.placeholder-replacement must be disabled for the recovery migrations");
     }
+    String placeholderPrefix =
+        binder.bind("spring.flyway.placeholder-prefix", String.class).orElse("${");
+    String placeholderSuffix =
+        binder.bind("spring.flyway.placeholder-suffix", String.class).orElse("}");
+    if (placeholderPrefix == null
+        || placeholderSuffix == null
+        || placeholderPrefix.isEmpty()
+        || (!"${".equals(placeholderPrefix) && placeholderPrefix.contains("${"))
+        || placeholderSuffix.isEmpty()
+        || placeholderSuffix.contains("${")) {
+      throw new SafeOverrideException(
+          "spring.flyway placeholder delimiters must not contain runtime substitutions");
+    }
     if (Boolean.TRUE.equals(binder.bind("spring.flyway.mixed", Boolean.class).orElse(null))) {
       throw new SafeOverrideException(
           "spring.flyway.mixed must be disabled for the recovery migrations");
@@ -181,13 +197,35 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
           "spring.flyway.init-sqls must be empty for the recovery migrations");
     }
     String encoding = binder.bind("spring.flyway.encoding", String.class).orElse(null);
-    if (encoding != null && !"UTF-8".equalsIgnoreCase(encoding.trim())) {
-      throw new SafeOverrideException(
-          "spring.flyway.encoding must be UTF-8 for the recovery migrations");
+    if (encoding != null) {
+      try {
+        if (!StandardCharsets.UTF_8.equals(Charset.forName(encoding.trim()))) {
+          throw new SafeOverrideException(
+              "spring.flyway.encoding must be UTF-8 for the recovery migrations");
+        }
+      } catch (java.nio.charset.IllegalCharsetNameException
+          | java.nio.charset.UnsupportedCharsetException invalidEncoding) {
+        throw new SafeOverrideException(
+            "spring.flyway.encoding must be UTF-8 for the recovery migrations");
+      }
     }
     if (binder.bind("spring.flyway.callback-locations", Bindable.listOf(String.class)).isBound()) {
       throw new SafeOverrideException(
           "spring.flyway.callback-locations is unsupported for the recovery migrations");
+    }
+    List<String> ignoreMigrationPatterns =
+        binder
+            .bind("spring.flyway.ignore-migration-patterns", Bindable.listOf(String.class))
+            .orElse(List.of("*:future"));
+    Set<String> futureOnlyPatterns = Set.of("*:future", "versioned:future", "repeatable:future");
+    if (ignoreMigrationPatterns == null
+        || ignoreMigrationPatterns.stream()
+            .anyMatch(pattern ->
+                pattern == null
+                    || !futureOnlyPatterns.contains(
+                        pattern.trim().toLowerCase(java.util.Locale.ROOT)))) {
+      throw new SafeOverrideException(
+          "spring.flyway.ignore-migration-patterns may only ignore future migrations");
     }
     if (!"flyway_schema_history_recovery_control"
         .equals(binder.bind("spring.flyway.table", String.class).orElse(null))) {

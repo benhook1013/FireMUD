@@ -34,6 +34,7 @@ import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseConflictExc
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal.RetrySource;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseTupleCodec;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.ContinueRecovery;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.Resume;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.InitialGameplayReleaseEvidence;
@@ -64,7 +65,7 @@ class InitialGameplayReleaseControllerTest {
   private static final String DIGEST = "c".repeat(64);
 
   @Test
-  void readinessAndReconciliationRefuseCallerTransactionBeforeJournalOrOwnerInteraction()
+  void readinessTransitionsAndReconciliationRefuseCallerTransactionBeforeOwnerInteraction()
       throws SQLException {
     DataSource dataSource = mock(DataSource.class);
     Connection connection = mock(Connection.class);
@@ -88,6 +89,15 @@ class InitialGameplayReleaseControllerTest {
       assertThatThrownBy(() -> controller.reconcileNextEffect(operationId))
           .isInstanceOf(OwnerBoundaryUnavailableException.class)
           .hasMessage("INITIAL_GAMEPLAY_RELEASE_RECONCILIATION_REQUIRES_NO_CALLER_TRANSACTION");
+      assertThatThrownBy(() ->
+              controller.continueRecovery(
+                  new ContinueRecovery(operationId, Phase.READY_TO_REOPEN, lock, "evidence")))
+          .isInstanceOf(OwnerBoundaryUnavailableException.class)
+          .hasMessage("INITIAL_GAMEPLAY_RELEASE_TRANSITION_REQUIRES_NO_CALLER_TRANSACTION");
+      assertThatThrownBy(() ->
+              controller.resume(new Resume(operationId, Phase.AWAITING_RESUME, lock, "evidence")))
+          .isInstanceOf(OwnerBoundaryUnavailableException.class)
+          .hasMessage("INITIAL_GAMEPLAY_RELEASE_TRANSITION_REQUIRES_NO_CALLER_TRANSACTION");
       status.setRollbackOnly();
     });
     verify(connection).rollback();
