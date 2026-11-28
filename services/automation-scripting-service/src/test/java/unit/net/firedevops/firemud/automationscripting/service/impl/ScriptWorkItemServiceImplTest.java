@@ -78,6 +78,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 class ScriptWorkItemServiceImplTest {
+  private static final String ABILITY_SCHEMA_DIGEST = "sha256:" + "a".repeat(64);
+
   @Test
   void replayAuthorityPreflightIsOutsideTheTransactionAndDurablePhaseGetsItsOwn() {
     try (AnnotationConfigApplicationContext context =
@@ -531,18 +533,24 @@ class ScriptWorkItemServiceImplTest {
                         .build())
                 .build());
     when(client.getPublishedReleaseBundle(Mockito.anyString(), Mockito.eq(7L)))
-        .thenReturn(
-            GetPublishedReleaseBundleResponse.newBuilder()
-                .setBundle(
-                    PublishedReleaseBundle.newBuilder()
-                        .addParticipantDigests(
-                            ParticipantDigest.newBuilder()
-                                .setParticipantKey("AUTOMATION_SCRIPTING")
-                                .setContentDigest("ability-1")
-                                .build())
-                        .build())
-                .build());
+        .thenReturn(releaseBundle(7L));
     return client;
+  }
+
+  private static GetPublishedReleaseBundleResponse releaseBundle(long versionId) {
+    return GetPublishedReleaseBundleResponse.newBuilder()
+        .setBundle(
+            PublishedReleaseBundle.newBuilder()
+                .setVersionId(versionId)
+                .addParticipantDigests(
+                    ParticipantDigest.newBuilder()
+                        .setParticipantKey("GAME_LOGIC")
+                        .setScopeValue(Long.toString(versionId))
+                        .setAppliedCommitId("commit-1")
+                        .setDigestSchemaVersion(1)
+                        .setContentDigest("b".repeat(64))
+                        .setAbilitySchemaDigest(ABILITY_SCHEMA_DIGEST)))
+        .build();
   }
 
   private static ScriptPatchReadinessProjectionService readinessProjectionService() {
@@ -1957,8 +1965,9 @@ class ScriptWorkItemServiceImplTest {
     verify(workItemRepository, never()).deleteOldestByStatus(Mockito.anyString(), Mockito.anyInt());
   }
 
-  @Test
-  void summarizesPatchStatusFromReadinessProjection() {
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void summarizesPatchStatusWithOnlyDedicatedAbilitySchemaEvidence(boolean hasOwnerEvidence) {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     ScriptPatchReadinessProjectionService readinessProjectionService =
@@ -1975,6 +1984,19 @@ class ScriptWorkItemServiceImplTest {
                     "",
                     200L)));
     GameDesignControlPlaneClient gameDesignControlPlaneClient = gameDesignClient();
+    if (!hasOwnerEvidence) {
+      when(gameDesignControlPlaneClient.getPublishedReleaseBundle("1", 7L))
+          .thenReturn(
+              GetPublishedReleaseBundleResponse.newBuilder()
+                  .setBundle(
+                      PublishedReleaseBundle.newBuilder()
+                          .setVersionId(7L)
+                          .addParticipantDigests(
+                              ParticipantDigest.newBuilder()
+                                  .setParticipantKey("AUTOMATION_SCRIPTING")
+                                  .setContentDigest(ABILITY_SCHEMA_DIGEST)))
+                  .build());
+    }
     ScriptWorkItemService service =
         service(
             workItemRepository,
@@ -1998,7 +2020,8 @@ class ScriptWorkItemServiceImplTest {
     assertThat(status.get().statusReason()).isEqualTo("tenant_readiness_running");
     assertThat(status.get().lastChangedAtMs()).isEqualTo(200L);
     assertThat(status.get().baseVersionId()).isEqualTo(7L);
-    assertThat(status.get().abilitySchemaDigest()).isEqualTo("ability-1");
+    assertThat(status.get().abilitySchemaDigest())
+        .isEqualTo(hasOwnerEvidence ? ABILITY_SCHEMA_DIGEST : "");
     assertThat(status.get().publication().versionId()).isEqualTo(17L);
     verify(gameDesignControlPlaneClient).getPublishedScriptPatchVersion("1", 7L, "patch-1");
   }
@@ -3283,17 +3306,7 @@ class ScriptWorkItemServiceImplTest {
                         .build())
                 .build());
     when(gameDesignControlPlaneClient.getPublishedReleaseBundle("1", 11L))
-        .thenReturn(
-            GetPublishedReleaseBundleResponse.newBuilder()
-                .setBundle(
-                    PublishedReleaseBundle.newBuilder()
-                        .addParticipantDigests(
-                            ParticipantDigest.newBuilder()
-                                .setParticipantKey("AUTOMATION_SCRIPTING")
-                                .setContentDigest("ability-1")
-                                .build())
-                        .build())
-                .build());
+        .thenReturn(releaseBundle(11L));
     ScriptWorkItemService service =
         service(
             workItemRepository,

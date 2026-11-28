@@ -110,6 +110,8 @@ import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -213,9 +215,10 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
     compose(Failure.ACCOUNT_REFUSED);
   }
 
-  @Test
-  void durableGameDesignDeliveryAcknowledgesExactWorldReceiptAcrossAuthenticatedSockets()
-      throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void durableGameDesignDeliveryAcknowledgesExactWorldReceiptAcrossAuthenticatedSockets(
+      boolean loseRemoteAcknowledgement) throws Exception {
     var gd = gameDesign();
     var world = store(WORLD, "world-management");
     var pki = new GenuineWorldSourceProofPki(temporary.resolve("pki"));
@@ -279,6 +282,7 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
       assertThat(intakes.read(NAMESPACE, claim.request().intakeRequestId())).isEmpty();
       assertThat(claim.acknowledgedReceipt()).isEmpty();
       var intakeCalls = new AtomicInteger();
+      var lostWorldResponse = new AtomicBoolean(loseRemoteAcknowledgement);
 
       try (var sourceClient =
               new AuthoredWorldSourceClient(
@@ -294,11 +298,46 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
                         sourceClient, intakes, world.transactions(), NAMESPACE),
                     NAMESPACE),
                 new GrpcPeerIdentityInterceptor(),
-                countDeliveryIntakes(intakeCalls)));
+                observeDeliveryIntakes(intakeCalls, lostWorldResponse)));
         intakeClient.init();
         var delivery =
             new GameAuthoredWorldSourceDeliveryService(
                 deliveries, intakeClient, gd.store().transactions(), NAMESPACE);
+        if (loseRemoteAcknowledgement) {
+          assertThatThrownBy(() -> delivery.deliver(source.operationId()))
+              .isInstanceOf(io.grpc.StatusRuntimeException.class)
+              .satisfies(
+                  failure ->
+                      assertThat(Status.fromThrowable(failure).getCode())
+                          .isEqualTo(Status.Code.UNAVAILABLE));
+          assertThat(lostWorldResponse).isFalse();
+          assertThat(intakeCalls).hasValue(1);
+          assertThat(deliveries.read(source.operationId())).contains(claim);
+          var committed = intakes.read(NAMESPACE, claim.request().intakeRequestId()).orElseThrow();
+          assertThat(committed.source()).isEqualTo(source);
+          try (var restartedClient =
+              new WorldAuthoredSourceIntakeClient(
+                  endpoints,
+                  pki.client("game-design-service"),
+                  new GrpcChannelFactory(),
+                  NAMESPACE)) {
+            restartedClient.init();
+            var restartedDelivery =
+                new GameAuthoredWorldSourceDeliveryService(
+                    new GameAuthoredWorldSourceDeliveryRepository(gd.store().dsl()),
+                    restartedClient,
+                    gd.store().transactions(),
+                    NAMESPACE);
+            var recovered = restartedDelivery.deliver(source.operationId());
+            assertThat(recovered.request()).isEqualTo(claim.request());
+            assertThat(recovered.acknowledgedReceipt().orElseThrow().receiptDigest())
+                .isEqualTo(committed.receiptDigest());
+            assertThat(intakes.read(NAMESPACE, claim.request().intakeRequestId())).contains(committed);
+            assertThat(deliveries.read(source.operationId())).contains(recovered);
+            assertThat(restartedDelivery.deliver(source.operationId())).isEqualTo(recovered);
+            assertThat(intakeCalls).hasValue(2);
+          }
+        }
         var acknowledged = delivery.deliver(source.operationId());
         var receipt = acknowledged.acknowledgedReceipt().orElseThrow();
         var worldReceipt = intakes.read(NAMESPACE, claim.request().intakeRequestId()).orElseThrow();
@@ -311,7 +350,7 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         assertThat(deliveries.readPending(NAMESPACE, null, 2))
             .singleElement()
             .satisfies(remaining -> assertThat(remaining.source()).isEqualTo(secondSource));
-        assertThat(intakeCalls).hasValue(1);
+        assertThat(intakeCalls).hasValue(loseRemoteAcknowledgement ? 2 : 1);
 
         var lostAcknowledgement = new AtomicBoolean();
         var recoveryDelivery =
@@ -331,7 +370,7 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         assertThat(recoveredReceipt.receiptDigest()).isEqualTo(recoveredWorld.receiptDigest());
         assertThat(deliveries.read(secondSource.operationId())).contains(recovered);
         assertThat(recoveryDelivery.deliver(secondSource.operationId())).isEqualTo(recovered);
-        assertThat(intakeCalls).hasValue(2);
+        assertThat(intakeCalls).hasValue(loseRemoteAcknowledgement ? 3 : 2);
         assertThat(deliveries.readPending(NAMESPACE, null, 2)).isEmpty();
       }
     } finally {
@@ -734,16 +773,19 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
     }
   }
 
-  private static ServerInterceptor countDeliveryIntakes(AtomicInteger calls) {
+  private static ServerInterceptor observeDeliveryIntakes(
+      AtomicInteger calls, AtomicBoolean loseWorldResponse) {
     String method =
         WorldAuthoredSourceIntakeServiceGrpc.getIntakeAuthoredWorldSourceMethod()
             .getFullMethodName();
+    ServerInterceptor fault = failureInterceptor(Failure.LOST_ACKNOWLEDGEMENT, loseWorldResponse);
     return new ServerInterceptor() {
       @Override
       public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
           ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
         if (method.equals(call.getMethodDescriptor().getFullMethodName())) {
           calls.incrementAndGet();
+          return fault.interceptCall(call, headers, next);
         }
         return next.startCall(call, headers);
       }
