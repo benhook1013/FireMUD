@@ -409,15 +409,36 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
                     CanonicalGameplayOriginalNewCapacityExecutionOwner.class, "CONNECTS"));
     long completedBefore = connectors.getCompletedTaskCount();
 
-    for (int attempt = 0; attempt < maximum; attempt++)
-      assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
+    for (int attempt = 0; attempt < maximum; attempt++) {
+      int priorAttempts = failedAttempts.get();
+      // A completed executor task can precede readiness for the next synchronous handoff.
+      Awaitility.await()
+          .atMost(2, TimeUnit.SECONDS)
+          .until(() -> {
+            assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
+            int observedAttempts = failedAttempts.get();
+            if (observedAttempts == priorAttempts) return false;
+            assertThat(observedAttempts).isEqualTo(priorAttempts + 1);
+            return true;
+          });
+    }
+    Awaitility.await()
+        .atMost(2, TimeUnit.SECONDS)
+        .until(() -> {
+          try {
+            assertThat(owner.connectForRead()).isSameAs(connection);
+            return true;
+          } catch (IllegalStateException refused) {
+            if (failedAttempts.get() != maximum) throw refused;
+            return false;
+          }
+        });
     Awaitility.await()
         .atMost(2, TimeUnit.SECONDS)
         .untilAsserted(() -> {
           assertThat(connectors.getActiveCount()).isZero();
-          assertThat(connectors.getCompletedTaskCount()).isEqualTo(completedBefore + maximum);
+          assertThat(connectors.getCompletedTaskCount()).isEqualTo(completedBefore + maximum + 1);
         });
-    assertThat(owner.connectForRead()).isSameAs(connection);
     connection.closeAsync();
     verify(redis, org.mockito.Mockito.times(maximum + 1)).connect(ByteArrayCodec.INSTANCE);
   }

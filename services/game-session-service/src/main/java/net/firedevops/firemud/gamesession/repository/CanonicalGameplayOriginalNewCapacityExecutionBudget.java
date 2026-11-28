@@ -678,36 +678,44 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     void retire(Connection connection) throws SQLException;
   }
 
-  private static void retireConfiguredConnection(ConnectionProvider provider, Connection raw)
-      throws SQLException {
-    if (provider instanceof ConnectionRetirer testRetirer) {
-      testRetirer.retire(raw);
-      return;
+  private static ConnectionRetirer captureConnectionRetirer(
+      ConnectionProvider provider, Connection raw) {
+    if (provider instanceof ConnectionRetirer testRetirer) return testRetirer;
+    try {
+      return capturePooledConnection(provider, raw);
+    } catch (SQLException | RuntimeException | Error unproved) {
+      // Preserve acquisition and release semantics for providers without a qualified retirement
+      // path. Whenever retirement is required, this connection retains its admission permit.
+      return ignored -> {
+        throw unproved;
+      };
     }
+  }
+
+  private static ConnectionRetirer capturePooledConnection(
+      ConnectionProvider provider, Connection raw) throws SQLException {
     if (!(provider instanceof DataSourceConnectionProvider dataSourceProvider)) {
       throw new SQLException("Unsupported capacity SQL connection provider");
     }
     HikariDataSource pool = requireHikariDataSource(dataSourceProvider.dataSource());
-    Connection pooled = raw;
-    if (raw instanceof ConnectionProxy springProxy) {
-      pooled = springProxy.getTargetConnection();
-    }
+    Connection pooled =
+        raw instanceof ConnectionProxy springProxy ? springProxy.getTargetConnection() : raw;
     if (!(pooled instanceof ProxyConnection)
-        || !pooled
-            .getClass()
-            .getName()
-            .startsWith("com.zaxxer.hikari.pool.HikariProxyConnection")) {
+        || !pooled.getClass().getName().equals("com.zaxxer.hikari.pool.HikariProxyConnection")) {
       throw new SQLException("Unsupported capacity SQL pooled connection");
     }
-    PgConnection driver = pooled.unwrap(PgConnection.class);
-    driver.abort(Runnable::run);
-    if (!driver.isClosed()) {
-      throw new SQLException("PostgreSQL connection remained open after abort");
-    }
-    // Hikari's proxy abort delegates to PostgreSQL but does not evict its PoolEntry. Evict only
-    // after the driver confirms its executor/socket is closed, and before this connection can be
-    // released to the pool or a delayed statement invocation can resume.
-    pool.evictConnection(pooled);
+    PgConnection driver = Objects.requireNonNull(pooled.unwrap(PgConnection.class));
+    // Hikari can swap its delegate for a closed sentinel during JDBC work. Capture the actual
+    // driver before handing the proxy to the borrower, while both still identify this loan.
+    return ignored -> {
+      if (!driver.isClosed()) {
+        driver.abort(Runnable::run);
+        if (!driver.isClosed()) {
+          throw new SQLException("PostgreSQL connection remained open after abort");
+        }
+      }
+      pool.evictConnection(pooled);
+    };
   }
 
   static void requireRetireableSql(DSLContext sql) {
@@ -740,6 +748,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     private final ConnectionProvider provider;
     private final Connection raw;
     private final Connection proxy;
+    private final ConnectionRetirer retirer;
     private boolean returned;
     private boolean releaseAttempted;
     private boolean retired;
@@ -749,6 +758,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     OwnedConnection(ConnectionProvider provider, Connection raw) {
       this.provider = provider;
       this.raw = raw;
+      retirer = captureConnectionRetirer(provider, raw);
       proxy =
           (Connection)
               Proxy.newProxyInstance(
@@ -899,7 +909,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
           throw unavailable();
         }
         try {
-          retireConfiguredConnection(provider, raw);
+          retirer.retire(raw);
           retired = true;
         } catch (SQLException | RuntimeException | Error unproved) {
           retirementFailed = true;

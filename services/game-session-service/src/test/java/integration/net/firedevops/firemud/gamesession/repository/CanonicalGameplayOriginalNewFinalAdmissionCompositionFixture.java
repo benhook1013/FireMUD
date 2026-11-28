@@ -882,8 +882,9 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             binding.dsl(), coordination, scripts, prechargeClock, tags);
     long deadline = prechargeClock.millis() + 5_000L;
     var selectedOwner = owner.requireRequestBinding(source, request, deadline);
-    if (owner.precharge(source, request, selectedOwner, deadline) != null)
-      throw new IllegalStateException("Expected a held charge without a retained denial");
+    var retained = owner.precharge(source, request, selectedOwner, deadline);
+    if (retained != null && retained.accountDenial() != null)
+      throw new IllegalStateException("Exact retained capacity charge is terminally denied");
   }
 
   /** Actual Account commit followed by a controlled selected-owner movement before GS binding. */
@@ -926,7 +927,8 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         java.util.List.of(
             "game_session_canonical_binding_transition",
             "game_session_capacity_evidence_charge",
-            "game_session_original_new_capacity_execution")) {
+            "game_session_original_new_capacity_execution",
+            "game_session_region_runtime_status")) {
       String rows =
           binding
               .dsl()

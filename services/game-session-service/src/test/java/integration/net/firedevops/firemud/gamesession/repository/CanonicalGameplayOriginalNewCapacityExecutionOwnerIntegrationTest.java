@@ -629,8 +629,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
   }
 
   @Test
-  void failedInstallConnectRetainsDispatchAndNeverPermitsReinstallationOrNegativeProof()
-      throws Exception {
+  void failedInstallConnectPreservesChargeAndAllowsTheOriginalInstall() throws Exception {
     repairAccountMember();
     bridge(false);
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
@@ -652,6 +651,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
         var template = raw.bindCapacityExecution(controlledCapacity)) {
       var account = controlledAccountOpen();
       var issuer = issuerOpen();
+      String before = sqlImage();
       assertThatThrownBy(() ->
               failedOwner.authorize(
                   source, template, account, issuer, controlledCapacity, deadline()))
@@ -660,23 +660,23 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
       assertThat(
               fixture
                   .dsl()
+                  .fetchOne(
+                      "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                      controlledCapacity.digest()))
+          .isNull();
+      assertThat(admin.type(ascii(key))).isEqualTo("none");
+      assertThat(sqlImage()).isEqualTo(before);
+
+      capacityOwner().authorize(source, template, account, issuer, controlledCapacity, deadline());
+      assertThat(
+              fixture
+                  .dsl()
                   .fetchSingle(
                       "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
                       controlledCapacity.digest())
                   .get(0, String.class))
-          .isEqualTo("INSTALL_DISPATCHED");
-      String retained = sqlImage();
-      assertThatThrownBy(() ->
-              capacityOwner()
-                  .authorize(source, template, account, issuer, controlledCapacity, deadline()))
-          .isInstanceOf(IllegalStateException.class);
-      assertThatThrownBy(() ->
-              capacityOwner()
-                  .closeOriginalAttempt(
-                      controlledCapacity.request(), controlledCapacity.reservation()))
-          .isInstanceOf(IllegalStateException.class);
-      assertThat(admin.type(ascii(key))).isEqualTo("none");
-      assertThat(sqlImage()).isEqualTo(retained);
+          .isEqualTo("AUTHORIZED");
+      assertThat(admin.type(ascii(key))).isEqualTo("hash");
     }
   }
 
@@ -1121,6 +1121,15 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> replaceRegionOwner("successor-before-closure"))
         .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> observeGuardedRegionReplacement("successor-before-closure"))
+        .rootCause()
+        .isInstanceOfSatisfying(
+            org.postgresql.util.PSQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23514");
+              assertThat(failure.getMessage())
+                  .contains("Region owner replacement lacks exact transfer custody");
+            });
     // The positive continuation cannot turn an unexecuted/missing final result into proof.
     assertThatThrownBy(() ->
             capacityOwner()
@@ -1131,6 +1140,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     assertThat(physicalImage()).isEqualTo(physical);
     capacityOwner()
         .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
+    String closedRows = sqlImage();
+    var closedPhysical = physicalImage();
     assertThatThrownBy(() -> replaceRegionOwner("successor-after-closure"))
         .isInstanceOf(IllegalStateException.class);
     assertThat(
@@ -1138,5 +1149,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                 .readExact(controlledCapacity.request(), controlledCapacity.reservation())
                 .disposition())
         .isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
+    var observed = observeGuardedRegionReplacement("successor-after-closure");
+    assertThat(observed.ownerInstanceId()).isEqualTo("successor-after-closure");
+    assertThat(observed.executorFence())
+        .isGreaterThan(regionBinding.installation().status.executorFence());
+    assertThat(sqlImage()).isEqualTo(closedRows);
+    assertThat(physicalImage()).isEqualTo(closedPhysical);
   }
 }

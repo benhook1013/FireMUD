@@ -151,6 +151,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         String rows = session.durableImage();
         String capacity = session.capacityImage();
         String decisions = session.capacityDecisionImage();
+        var reservation =
+            session.dsl.fetchSingle("SELECT state FROM account_tenant_capacity_reservations");
+        assertThat(reservation.get("state", String.class)).isEqualTo("RESERVED");
         var physical = new java.util.TreeMap<>(session.gs.capacityStateImage());
         var physicalLeases = session.gs.capacityLeaseOwnerImage();
         var physicalWithoutLeaseValues = withoutLeaseValues(physical);
@@ -710,6 +713,12 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         var refusal = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
         denialId = assertExactAccountQuotaDenial(session, request, refusal);
         assertThat(
+                session.capacityClient.readRetainedAdmissionDenial(
+                    request, CLOCK.millis() + 5_000L))
+            .isEqualTo(
+                new TenantCapacityAdmissionGrpcCodec.Refusal(
+                    Failure.CAPACITY_QUOTA_EXCEEDED, denialId));
+        assertThat(
                 sql.fetchSingle("SELECT is_called FROM controlled_settlement_rollback_attempt")
                     .get(0, Boolean.class))
             .isTrue();
@@ -753,6 +762,10 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       var request = session.capacityRequest;
       byte[] candidate = session.gs.physicalSession();
       session.gs.prechargeCapacityForControlledRecovery(request, CLOCK);
+      var held = session.gs.capacityStateImage();
+      session.gs.prechargeCapacityForControlledRecovery(request, CLOCK);
+      assertThat(session.gs.capacityStateImage()).isEqualTo(held);
+
       var observed = new DropFirstCapacityDenialResponse(request, Failure.CAPACITY_QUOTA_EXCEEDED);
       session.startCapacityClient(observed.channels());
 
@@ -842,21 +855,11 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       session.startCapacityServer();
       session.startCapacityClient(fault.channels());
 
-      // Only the coordinator's OPEN-window check sees the advanced clock. The retained
-      // charge, authenticated Account read and PostgreSQL settlement use their actual clocks.
-      Clock afterOpen = Clock.offset(CLOCK, Duration.ofSeconds(60));
+      session.gs.removeInitialBarrierForFault();
+      assertThat(session.gs.initialBarrierAbsent()).isTrue();
       var exactRetry =
-          assertThrows(
-              CapacityRefusedException.class,
-              () ->
-                  session.gs.completeWithCoordinatorClock(
-                      session.client,
-                      session.jwks,
-                      session.jwt,
-                      afterOpen.millis() + 10_000L,
-                      session.capacityClient,
-                      request,
-                      afterOpen));
+          assertThrows(CapacityRefusedException.class, () -> session.complete(request));
+      assertThat(session.gs.initialBarrierAbsent()).isTrue();
       assertThat(assertExactAccountQuotaDenial(session, request, exactRetry))
           .isEqualTo(committedId);
       assertThat(fault.calls.get()).isEqualTo(1);
@@ -884,18 +887,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
           .isZero();
 
       session.stopCapacityServer();
-      var replay =
-          assertThrows(
-              CapacityRefusedException.class,
-              () ->
-                  session.gs.completeWithCoordinatorClock(
-                      session.client,
-                      session.jwks,
-                      session.jwt,
-                      afterOpen.millis() + 10_000L,
-                      session.capacityClient,
-                      request,
-                      afterOpen));
+      var replay = assertThrows(CapacityRefusedException.class, () -> session.complete(request));
       assertThat(replay.durableDenialId()).isEqualTo(committedId);
       assertThat(fault.calls.get()).isEqualTo(1);
       assertThat(fault.denialReads.get()).isEqualTo(1);
@@ -917,7 +909,13 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       var request = session.retainControlledEvaluation(true, "0");
       var fault = new DropFirstCapacityDenialResponse(request, Failure.CAPACITY_QUOTA_EXCEEDED);
       session.startCapacityClient(fault.channels());
-      assertThrows(IllegalStateException.class, () -> session.complete(request));
+      // Retain the original Game Session charge and deliver exactly one request to Account.
+      session.gs.prechargeCapacityForControlledRecovery(request, CLOCK);
+      var lostResponse =
+          assertThrows(
+              StatusRuntimeException.class,
+              () -> session.capacityClient.commit(request, CLOCK.millis() + 5_000L));
+      assertThat(lostResponse.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE);
       assertThat(fault.successfullyDropped.get()).isTrue();
       UUID denialId = fault.observedDenial.get();
       assertExactAccountDenial(session, request, Failure.CAPACITY_QUOTA_EXCEEDED, denialId);
@@ -938,6 +936,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       // Intercept the authenticated read response after the Account SELECT, before gRPC
       // delivers it to the coordinator. Commit the controlled fence movement in that gap.
       var delivery = new CompletableFuture<TenantCapacityAdmissionGrpcCodec.Refusal>();
+      String runtimeStatusKey = "sql:game_session_region_runtime_status";
+      var expectedAfterDelivery = new java.util.TreeMap<>(gsBefore);
       fault.beforeRetainedDenialDelivery =
           response -> {
             try {
@@ -959,6 +959,10 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                                 session.gs.decisionId(),
                                 fencesBefore.getFirst()))
                     .isOne();
+                // The fixture owns this one row update, including the changed PostgreSQL xmin.
+                // Use its committed image as the expected runtime status after settlement.
+                expectedAfterDelivery.put(
+                    runtimeStatusKey, session.gs.capacityStateImage().get(runtimeStatusKey));
               }
               delivery.complete(denial);
             } catch (RuntimeException | AssertionError failure) {
@@ -982,20 +986,20 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
           .isEqualTo(
               new TenantCapacityAdmissionGrpcCodec.Refusal(
                   Failure.CAPACITY_QUOTA_EXCEEDED, denialId));
+      assertThat(result)
+          .isInstanceOfSatisfying(
+              CapacityRefusedException.class,
+              refusal -> {
+                assertThat(refusal.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+                assertThat(refusal.durableDenialId()).isEqualTo(denialId);
+              });
       if (advanceFence) {
-        assertThat(result)
-            .isExactlyInstanceOf(IllegalStateException.class)
-            .hasRootCauseMessage("Original NEW capacity execution is indeterminate");
         assertThat(regionFenceImage(session)).containsExactly(fencesBefore.getFirst() + 1);
-        assertThat(withoutLeaseValues(session.gs.capacityStateImage())).isEqualTo(gsBefore);
+        assertThat(expectedAfterDelivery.get(runtimeStatusKey))
+            .isNotEqualTo(gsBefore.get(runtimeStatusKey));
+        assertThat(withoutLeaseValues(session.gs.capacityStateImage()))
+            .isEqualTo(expectedAfterDelivery);
       } else {
-        assertThat(result)
-            .isInstanceOfSatisfying(
-                CapacityRefusedException.class,
-                refusal -> {
-                  assertThat(refusal.code()).isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
-                  assertThat(refusal.durableDenialId()).isEqualTo(denialId);
-                });
         assertThat(regionFenceImage(session)).isEqualTo(fencesBefore);
         var settled = session.gs.dsl().fetchSingle(chargeSql, request.admissionAttemptId());
         assertThat(settled.get("account_denial_id", UUID.class)).isEqualTo(denialId);

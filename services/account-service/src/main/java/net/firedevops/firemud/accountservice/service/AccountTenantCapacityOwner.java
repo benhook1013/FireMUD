@@ -110,8 +110,7 @@ public final class AccountTenantCapacityOwner {
         .equals(authenticatedCaller)) throw new CapacityException(Failure.PERMISSION_DENIED);
     request.requireStructurallyValid();
     requireSupportedShape(request);
-    if (request.capacityRearmFence() != 1 || !request.evidence().permitsCreation())
-      throw unavailable();
+    if (!request.evidence().permitsCreation()) throw unavailable();
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()
         || Context.current().isCancelled()) throw unavailable();
@@ -131,7 +130,7 @@ public final class AccountTenantCapacityOwner {
               reservation.requireBinding(request);
               return new AdmissionOutcome(reservation, null);
             }
-            if (reservation != null) throw unavailable();
+            if (reservation != null || request.capacityRearmFence() != 1) throw unavailable();
             return new AdmissionOutcome(
                 null, AccountCapacityOriginDecisionRepository.admissionDenial(decision));
           });

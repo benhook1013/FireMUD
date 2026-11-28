@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -16,6 +17,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.pool.HikariProxyConnection;
 import io.grpc.Context;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.ConnectionFuture;
@@ -32,6 +35,7 @@ import java.net.InetSocketAddress;
 import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -55,13 +59,18 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
+import org.awaitility.Awaitility;
 import org.jooq.ConnectionProvider;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DataSourceConnectionProvider;
 import org.jooq.impl.DefaultConfiguration;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.postgresql.jdbc.PgConnection;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /** Controlled acquisition/driver behavior, not database or owner-evidence qualification. */
@@ -107,6 +116,54 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     } finally {
       background.release(maximumBackground);
     }
+  }
+
+  @Test
+  void rollbackRetiresCapturedDriverWhenThePoolProxyLosesItsDelegate() throws SQLException {
+    var dataSource = mock(HikariDataSource.class);
+    var pooled = mock(HikariProxyConnection.class);
+    var driver = mock(PgConnection.class);
+    var delegateAvailable = new AtomicBoolean(true);
+    when(dataSource.getConnection()).thenReturn(pooled);
+    when(pooled.unwrap(PgConnection.class))
+        .thenAnswer(invocation -> {
+          if (!delegateAvailable.get()) throw new SQLException("delegate no longer available");
+          return driver;
+        });
+    doAnswer(
+            invocation -> {
+              delegateAvailable.set(false);
+              throw new SQLException("controlled rollback failure");
+            })
+        .when(pooled)
+        .rollback();
+    when(driver.isClosed()).thenReturn(false, true);
+    DSLContext source =
+        DSL.using(new DataSourceConnectionProvider(dataSource), SQLDialect.POSTGRES);
+
+    CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+        CLOCK,
+        Long.MAX_VALUE,
+        budget -> {
+          var provider = budget.sql(source).configuration().connectionProvider();
+          Connection borrowed = provider.acquire();
+          try {
+            assertThatThrownBy(borrowed::rollback)
+                .isInstanceOf(SQLException.class)
+                .hasMessage("controlled rollback failure");
+          } finally {
+            provider.release(borrowed);
+          }
+          return null;
+        });
+
+    var retirement = inOrder(pooled, driver, dataSource);
+    retirement.verify(pooled).unwrap(PgConnection.class);
+    retirement.verify(pooled).rollback();
+    retirement.verify(driver).abort(any());
+    retirement.verify(driver).isClosed();
+    retirement.verify(dataSource).evictConnection(pooled);
+    retirement.verify(pooled).close();
   }
 
   @Test
@@ -848,8 +905,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                 "123456".getBytes(java.nio.charset.StandardCharsets.US_ASCII)));
   }
 
-  @Test
-  void successfulTransferReadbackRetainsAdmissionUntilAsyncRedisCloseCompletes() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void transferReadbackRetainsAdmissionUntilAsyncRedisCloseCompletes(boolean cancelCaller)
+      throws Exception {
     RedisClient redis = mock();
     StatefulRedisConnection<byte[], byte[]> connection = mock();
     ClientOptions options = ClientOptions.builder().autoReconnect(false).build();
@@ -862,7 +921,12 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     when(connection.async()).thenReturn(commands);
     when(commands.aclWhoami()).thenReturn(principal);
     when(principal.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn("gamesession_coord_app");
-    when(connection.closeAsync()).thenReturn(close);
+    var closeStarted = new CountDownLatch(1);
+    when(connection.closeAsync())
+        .thenAnswer(invocation -> {
+          closeStarted.countDown();
+          return close;
+        });
     DSLContext dsl = source(mock());
     var owner =
         new CanonicalGameplayOriginalNewCapacityExecutionOwner(
@@ -889,31 +953,52 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     int backgroundMaximum =
         CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS;
 
-    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+    try (var context = Context.current().withCancellation();
+        var executor = Executors.newVirtualThreadPerTaskExecutor()) {
       var caller =
           executor.submit(() ->
-              CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                  CLOCK,
-                  CLOCK.millis() + 4000,
-                  budget -> {
-                    owner
-                        .forTransferBudget(budget)
-                        .withTransferReadback(ignored -> readbackReturned.countDown());
-                    return true;
-                  }));
+              context.call(() ->
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                      CLOCK,
+                      CLOCK.millis() + 4000,
+                      budget -> {
+                        owner
+                            .forTransferBudget(budget)
+                            .withTransferReadback(ignored -> readbackReturned.countDown());
+                        return true;
+                      })));
       try {
         assertThat(readbackReturned.await(2, TimeUnit.SECONDS)).isTrue();
-        verify(connection, timeout(1000)).closeAsync();
+        assertThat(closeStarted.await(2, TimeUnit.SECONDS)).isTrue();
         assertPermitRemainsHeld(operations, operationMaximum);
         assertPermitRemainsHeld(background, backgroundMaximum);
+        assertThat(close).isNotDone();
         assertThat(caller.isDone()).isFalse();
+        assertThat(operations.availablePermits()).isEqualTo(operationMaximum - 1);
+        assertThat(background.availablePermits()).isEqualTo(backgroundMaximum - 1);
 
-        close.complete(null);
-        assertThat(caller.get(2, TimeUnit.SECONDS)).isTrue();
+        if (cancelCaller) {
+          context.cancel(null);
+          assertThatThrownBy(() -> caller.get(2, TimeUnit.SECONDS))
+              .hasCauseInstanceOf(
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+          assertThat(close).isNotDone();
+          assertThat(operations.availablePermits()).isEqualTo(operationMaximum - 1);
+          assertThat(background.availablePermits()).isEqualTo(backgroundMaximum - 1);
+        }
+        assertThat(close.complete(null)).isTrue();
+        if (!cancelCaller) assertThat(caller.get(2, TimeUnit.SECONDS)).isTrue();
+        Awaitility.await()
+            .atMost(2, TimeUnit.SECONDS)
+            .untilAsserted(() -> {
+              assertThat(operations.availablePermits()).isEqualTo(operationMaximum);
+              assertThat(background.availablePermits()).isEqualTo(backgroundMaximum);
+            });
       } finally {
         close.complete(null);
       }
     }
+    verify(connection).closeAsync();
   }
 
   private static void assertPermitRemainsHeld(Semaphore permits, int maximum)
@@ -1489,21 +1574,27 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
           .isExactlyInstanceOf(
               CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
 
-      assertThat(close).isNotDone();
-      assertThat(operations.availablePermits()).isEqualTo(priorOperations - 1);
-      assertThat(background.availablePermits()).isEqualTo(priorBackground - 1);
-      assertThat(retained).hasValue(priorRetained + 1);
-      assertThat(
-              registry
-                  .get("original_new_capacity_redis_close_failure_retained_operations")
-                  .gauge()
-                  .value())
-          .isEqualTo(priorRetained + 1);
+      var gauge =
+          registry.get("original_new_capacity_redis_close_failure_retained_operations").gauge();
+      Awaitility.await()
+          .atMost(2, TimeUnit.SECONDS)
+          .untilAsserted(() -> {
+            assertThat(retained).hasValue(priorRetained + 1);
+            assertThat(gauge.value()).isEqualTo(priorRetained + 1);
+            assertThat(close).isNotDone();
+            assertThat(operations.availablePermits()).isEqualTo(priorOperations - 1);
+            assertThat(background.availablePermits()).isEqualTo(priorBackground - 1);
+          });
 
       assertThat(close.complete(null)).isTrue();
-      assertThat(operations.availablePermits()).isEqualTo(priorOperations);
-      assertThat(background.availablePermits()).isEqualTo(priorBackground);
-      assertThat(retained).hasValue(priorRetained);
+      Awaitility.await()
+          .atMost(2, TimeUnit.SECONDS)
+          .untilAsserted(() -> {
+            assertThat(operations.availablePermits()).isEqualTo(priorOperations);
+            assertThat(background.availablePermits()).isEqualTo(priorBackground);
+            assertThat(retained).hasValue(priorRetained);
+            assertThat(gauge.value()).isEqualTo(priorRetained);
+          });
     } finally {
       close.complete(null);
       Metrics.removeRegistry(registry);
@@ -1957,7 +2048,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
               return deadline;
             });
 
-    assertThat(retainedDeadline).isBetween(initial + 1, initial + 5000);
+    assertThat(retainedDeadline).isEqualTo(initial + 5_000L);
   }
 
   @Test
