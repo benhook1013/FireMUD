@@ -2325,6 +2325,16 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
                 "caller_bound_after_validation", route["membership_creation"]
             )
 
+    def test_account_join_routes_declare_invalid_scope_denial(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        for route_name in (
+            "POST /auth/bootstrap/join",
+            "JoinPublicProductionMembership",
+        ):
+            with self.subTest(route_name=route_name):
+                route = route_for(document, "account-service", route_name)
+                self.assertIn("CONNECT_SCOPE_INVALID", route["canonical_errors"]["any_of"])
+
     def test_membership_writer_requires_current_account_state_and_pending_deletion_gate(self):
         baseline = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         self.assertNotIn(
