@@ -107,6 +107,18 @@ public final class AccountTenantCapacityRepository {
 
   private Record find(Identity id, String query) {
     transaction();
+    return select(id, query);
+  }
+
+  /** Reconciles the exact original binding without taking a mutation lock. */
+  public Result readExactReservation(Request request) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()) throw unavailable();
+    Record row = select(request.identity(), FIND_RESERVATION);
+    return row == null ? null : exactResult(request, row);
+  }
+
+  private Record select(Identity id, String query) {
     return dsl.fetchOne(query, id.tenantId(), id.requestId(), id.admissionId());
   }
 
@@ -122,6 +134,11 @@ public final class AccountTenantCapacityRepository {
   }
 
   public Result exact(Request request, Record row) {
+    transaction();
+    return exactResult(request, row);
+  }
+
+  private Result exactResult(Request request, Record row) {
     if (!request.mutationDigest().equals(row.get("mutation_digest", String.class))
         || !request.admissionAttemptId().equals(row.get("admission_attempt_id", UUID.class))
         || request.capacityRearmFence() != number(row, "capacity_rearm_fence")
@@ -129,7 +146,7 @@ public final class AccountTenantCapacityRepository {
             CapacityAdmissionDigest.preimage(request), row.get("canonical_payload", byte[].class))
         || !request.evidence().callerWorkload().equals(row.get("caller_workload", String.class)))
       throw conflict();
-    return result(row);
+    return selectResult(row);
   }
 
   public void requirePriorHistory(Request prior, Request next) {
@@ -213,6 +230,10 @@ public final class AccountTenantCapacityRepository {
 
   public Result result(Record row) {
     transaction();
+    return selectResult(row);
+  }
+
+  private Result selectResult(Record row) {
     Record evaluation =
         dsl.fetchOne(
             "SELECT snapshot_identity FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",

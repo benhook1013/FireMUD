@@ -245,6 +245,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       String changedKey = session.gs.setPhysicalSessionExpiryForFault();
       var after = new java.util.TreeMap<>(session.gs.capacityStateImage());
       assertThat(session.gs.physicalSession()).containsExactly(candidate);
+      assertThat(before).containsKey(changedKey);
+      assertThat(after).containsKey(changedKey);
       assertThat(after.get(changedKey)).isNotEqualTo(before.get(changedKey));
       before.remove(changedKey);
       after.remove(changedKey);
@@ -746,6 +748,32 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void retainedChargeWaitsForExactPositiveAccountOutcomeBeforeFinalAdmission() throws Exception {
+    try (Session session = session()) {
+      var request = session.capacityRequest;
+      byte[] candidate = session.gs.physicalSession();
+      session.gs.prechargeCapacityForControlledRecovery(request, CLOCK);
+      var observed = new DropFirstCapacityDenialResponse(request, Failure.CAPACITY_QUOTA_EXCEEDED);
+      session.startCapacityClient(observed.channels());
+
+      assertThatThrownBy(() -> session.complete(request)).isInstanceOf(IllegalStateException.class);
+      assertThat(observed.calls.get()).isZero();
+      assertThat(observed.denialReads.get()).isOne();
+      assertProvisionalUnchanged(session, candidate);
+
+      // Deliver the original request whose precharge the fixture retained.
+      var reservation = session.capacityClient.commit(request, CLOCK.millis() + 5_000L);
+      assertThat(reservation.state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
+      String retainedOrigin = session.capacityDecisionImage();
+
+      session.complete(request);
+      assertThat(observed.calls.get()).isOne();
+      assertThat(observed.denialReads.get()).isEqualTo(2);
+      assertThat(session.capacityDecisionImage()).isEqualTo(retainedOrigin);
+    }
+  }
+
+  @Test
   void lostCommittedQuotaResponseKeepsReserveUntilExactRetry() throws Exception {
     try (Session session = session(CLOCK, 1, 2);
         OriginalNewCredential credential = session.issue()) {
@@ -999,6 +1027,11 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       // both owner clocks establish expiry of the original, unmodified evaluation.
       session.dsl.fetchSingle(
           "SELECT pg_sleep_until(?::timestamptz)", request.evidence().expiresAt().toString());
+      long clockWaitDeadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+      while (CLOCK.instant().isBefore(request.evidence().expiresAt())
+          && System.nanoTime() < clockWaitDeadline) {
+        Thread.sleep(10);
+      }
       assertThat(CLOCK.instant()).isAfterOrEqualTo(request.evidence().expiresAt());
       var fault = new DropFirstCapacityDenialResponse(request, Failure.CAPACITY_EVALUATION_EXPIRED);
       session.startCapacityClient(fault.channels());
@@ -1138,7 +1171,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         MethodDescriptor<ReqT, RespT> method, CallOptions options, Channel next) {
       var delegate = next.newCall(method, options);
       if (net.firedevops.firemud.account.v1.AccountServiceGrpc
-          .getReadTenantCapacityAdmissionDenialMethod()
+          .getReadTenantCapacityAdmissionOutcomeMethod()
           .getFullMethodName()
           .equals(method.getFullMethodName())) {
         denialReads.incrementAndGet();

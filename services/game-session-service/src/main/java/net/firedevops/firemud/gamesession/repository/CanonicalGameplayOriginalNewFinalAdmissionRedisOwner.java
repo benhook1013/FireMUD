@@ -343,7 +343,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
                 durationMillis,
                 accountJson,
                 issuerJson,
-                absoluteDeadlineMillis,
+                Math.min(absoluteDeadlineMillis, accountOpen.expiresAtEpochMillis()),
                 issuerPayload,
                 execution,
                 "FINAL");
@@ -531,51 +531,105 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     }
   }
 
-  long dispatchCapacityAction(
+  PreparedCapacityInstall prepareCapacityInstall(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       CanonicalGameplayOriginalNewAuthenticatedSession.Template template,
       CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen,
       CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
       OriginalNewCapacityExecution execution,
-      String action,
       long deadline) {
     PreparedInstall prepared =
-        prepareInstall(source, template, accountOpen, issuerOpen, execution, action, deadline);
+        prepareInstall(source, template, accountOpen, issuerOpen, execution, "INSTALL", deadline);
     byte[] script = scriptSource(requireDescriptor());
-    byte[] bytes = template.finalCasTemplateBytes();
+    byte[] templateBytes = null;
+    StatefulRedisConnection<byte[], byte[]> connection = null;
+    boolean preparedSuccessfully = false;
     try {
-      return execute(
-          script,
-          prepared.keys(),
-          prepared.candidate(),
-          prepared.assignment(),
-          prepared.candidate().canonicalBytes(),
-          characterProjection(prepared.candidate()),
-          bytes,
-          template.canonicalSessionDurationMillis(),
-          canonicalJson(accountOpen.exactFields()),
-          issuerMetadataJson(prepared.issuerValue()),
-          Math.min(deadline, accountOpen.expiresAtEpochMillis()),
-          issuerOpen.exactPhysicalPayload(),
-          execution,
-          action);
+      templateBytes = template.finalCasTemplateBytes();
+      byte[] candidateBytes = prepared.candidate().canonicalBytes();
+      byte[] characterBytes = characterProjection(prepared.candidate());
+      byte[] accountJson = canonicalJson(accountOpen.exactFields());
+      byte[] issuerJson = issuerMetadataJson(prepared.issuerValue());
+      byte[] issuerPayload = issuerOpen.exactPhysicalPayload();
+      long durationMillis = template.canonicalSessionDurationMillis();
+      long wireDeadline = Math.min(deadline, accountOpen.expiresAtEpochMillis());
+      commandWaitMillis();
+      connection = scopedConnection.get();
+      var commands = requireCommands(connection);
+      String sha = loadScript(commands, script);
+      byte[] retainedTemplateBytes = templateBytes;
+      var install =
+          new PreparedCapacityInstall(
+              connection,
+              retainedTemplateBytes,
+              wireDeadline,
+              () ->
+                  executeLoaded(
+                      commands,
+                      sha,
+                      prepared.keys(),
+                      prepared.candidate(),
+                      prepared.assignment(),
+                      candidateBytes,
+                      characterBytes,
+                      retainedTemplateBytes,
+                      durationMillis,
+                      accountJson,
+                      issuerJson,
+                      wireDeadline,
+                      issuerPayload,
+                      execution,
+                      "INSTALL"));
+      preparedSuccessfully = true;
+      return install;
+    } catch (RuntimeException preparationFailure) {
+      throw unavailable();
     } finally {
       wipe(script);
-      wipe(bytes);
+      if (!preparedSuccessfully) {
+        wipe(templateBytes);
+        if (connection != null) closeScopedConnection(connection);
+      }
     }
   }
 
-  /** Checks deterministic INSTALL inputs without reading or mutating Redis. */
-  void validateInstallInputs(
-      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
-      CanonicalGameplayOriginalNewAuthenticatedSession.Template template,
-      CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen,
-      CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
-      OriginalNewCapacityExecution execution,
-      long deadline) {
-    prepareInstall(source, template, accountOpen, issuerOpen, execution, "INSTALL", deadline);
-    byte[] script = scriptSource(requireDescriptor());
-    wipe(script);
+  final class PreparedCapacityInstall implements AutoCloseable {
+    private final StatefulRedisConnection<byte[], byte[]> connection;
+    private final byte[] templateBytes;
+    private final long wireDeadline;
+    private final java.util.function.LongSupplier command;
+
+    private PreparedCapacityInstall(
+        StatefulRedisConnection<byte[], byte[]> connection,
+        byte[] templateBytes,
+        long wireDeadline,
+        java.util.function.LongSupplier command) {
+      this.connection = connection;
+      this.templateBytes = templateBytes;
+      this.wireDeadline = wireDeadline;
+      this.command = command;
+    }
+
+    void requireReady() {
+      requireDeadline(clock.millis(), wireDeadline);
+      if (!connection.isOpen()) throw unavailable();
+    }
+
+    long dispatch() {
+      requireNoAmbientTransaction();
+      try {
+        requireReady();
+        return command.getAsLong();
+      } catch (RuntimeException dispatchFailure) {
+        throw unavailable();
+      }
+    }
+
+    @Override
+    public void close() {
+      wipe(templateBytes);
+      closeScopedConnection(connection);
+    }
   }
 
   private PreparedInstall prepareInstall(
@@ -949,52 +1003,91 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       commandWaitMillis();
       connection = scopedConnection.get();
       RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
-      requirePrincipal(awaitCommand(commands::aclWhoami));
-      String sha = awaitCommand(() -> commands.scriptLoad(script));
-      if (!digest("SHA-1", script).equals(sha)) throw unavailable();
+      String sha = loadScript(commands, script);
       long wireDeadlineMillis =
           switch (action) {
             case "FINAL", "CLOSE", "FENCE" ->
                 Math.min(absoluteDeadlineMillis, operationDeadlineMillis);
             default -> absoluteDeadlineMillis;
           };
-      Long result =
-          awaitCommand(() ->
-              commands.evalsha(
-                  sha,
-                  ScriptOutputType.INTEGER,
-                  keyBytes(keys),
-                  ascii(assignment.tenantId().toString()),
-                  ascii(assignment.accountId().toString()),
-                  ascii(assignment.playableStateNamespaceId().toString()),
-                  ascii(candidate.bindingIdentity().characterId().toString()),
-                  ascii(assignment.gameInstanceId().toString()),
-                  ascii(assignment.sessionId()),
-                  ascii(candidate.transition().bindingGeneration().toString()),
-                  ascii(assignment.tenantGameplayTag()),
-                  candidateBytes,
-                  characterBytes,
-                  templateBytes,
-                  ascii(Long.toString(durationMillis)),
-                  accountJson,
-                  issuerJson,
-                  ascii(Long.toString(wireDeadlineMillis)),
-                  issuerPayload,
-                  execution.canonicalBytes(),
-                  ascii(action),
-                  ascii(execution.digest())));
-      return result;
+      return executeLoaded(
+          commands,
+          sha,
+          keys,
+          candidate,
+          assignment,
+          candidateBytes,
+          characterBytes,
+          templateBytes,
+          durationMillis,
+          accountJson,
+          issuerJson,
+          wireDeadlineMillis,
+          issuerPayload,
+          execution,
+          action);
     } catch (RuntimeException failure) {
       throw unavailable();
     } finally {
-      if (connection != null) {
-        try {
-          scopedClose.accept(
-              CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
-        } catch (RuntimeException cleanupFailure) {
-          throw unavailable();
-        }
-      }
+      if (connection != null) closeScopedConnection(connection);
+    }
+  }
+
+  private String loadScript(RedisAsyncCommands<byte[], byte[]> commands, byte[] script) {
+    requirePrincipal(awaitCommand(commands::aclWhoami));
+    String sha = awaitCommand(() -> commands.scriptLoad(script));
+    if (!digest("SHA-1", script).equals(sha)) throw unavailable();
+    return sha;
+  }
+
+  private long executeLoaded(
+      RedisAsyncCommands<byte[], byte[]> commands,
+      String sha,
+      Keys keys,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      byte[] candidateBytes,
+      byte[] characterBytes,
+      byte[] templateBytes,
+      long durationMillis,
+      byte[] accountJson,
+      byte[] issuerJson,
+      long wireDeadlineMillis,
+      byte[] issuerPayload,
+      OriginalNewCapacityExecution execution,
+      String action) {
+    return awaitCommand(() ->
+        commands.evalsha(
+            sha,
+            ScriptOutputType.INTEGER,
+            keyBytes(keys),
+            ascii(assignment.tenantId().toString()),
+            ascii(assignment.accountId().toString()),
+            ascii(assignment.playableStateNamespaceId().toString()),
+            ascii(candidate.bindingIdentity().characterId().toString()),
+            ascii(assignment.gameInstanceId().toString()),
+            ascii(assignment.sessionId()),
+            ascii(candidate.transition().bindingGeneration().toString()),
+            ascii(assignment.tenantGameplayTag()),
+            candidateBytes,
+            characterBytes,
+            templateBytes,
+            ascii(Long.toString(durationMillis)),
+            accountJson,
+            issuerJson,
+            ascii(Long.toString(wireDeadlineMillis)),
+            issuerPayload,
+            execution.canonicalBytes(),
+            ascii(action),
+            ascii(execution.digest())));
+  }
+
+  private void closeScopedConnection(StatefulRedisConnection<byte[], byte[]> connection) {
+    try {
+      scopedClose.accept(
+          CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+    } catch (RuntimeException cleanupFailure) {
+      throw unavailable();
     }
   }
 

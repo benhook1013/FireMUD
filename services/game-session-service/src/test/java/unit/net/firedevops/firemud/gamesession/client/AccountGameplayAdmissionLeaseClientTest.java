@@ -4,9 +4,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.ByteString;
+import io.grpc.CallOptions;
+import io.grpc.Channel;
+import io.grpc.ClientCall;
+import io.grpc.ClientInterceptor;
+import io.grpc.ClientInterceptors;
+import io.grpc.ConnectivityState;
 import io.grpc.Context;
 import io.grpc.Deadline;
+import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
@@ -232,6 +240,8 @@ class AccountGameplayAdmissionLeaseClientTest {
       throws Exception {
     var observed = new CopyOnWriteArrayList<String>();
     var deadlines = new CopyOnWriteArrayList<Deadline>();
+    var dispatchedDeadlines = new CopyOnWriteArrayList<Deadline>();
+    var dispatchedRemainingNanos = new CopyOnWriteArrayList<Long>();
     var issuedRequests = new CopyOnWriteArrayList<IssueOriginalNewGameplayCredentialRequest>();
     var signedBoundJwts = new CopyOnWriteArrayList<String>();
     var confirmationRequests =
@@ -319,7 +329,7 @@ class AccountGameplayAdmissionLeaseClientTest {
                 observer.onCompleted();
               }
             });
-    try (var client = client(server)) {
+    try (var client = client(server, dispatchedDeadlines, dispatchedRemainingNanos)) {
       client.init();
       byte[] originalLease = lease().canonicalJson().getBytes(StandardCharsets.UTF_8);
       OriginalNewCredential received =
@@ -334,9 +344,9 @@ class AccountGameplayAdmissionLeaseClientTest {
       assertThat(received.toString())
           .doesNotContain(JWT, signedBoundJwts.getFirst(), HexFormat.of().formatHex(handle));
       var confirmation = client.confirmOriginalNewGameplayAdmission(JWT, originalLease);
+      var requestedBoundedDeadline = Deadline.after(3, TimeUnit.SECONDS);
       var boundedConfirmation =
-          client.confirmOriginalNewGameplayAdmission(
-              JWT, originalLease, Deadline.after(3, TimeUnit.SECONDS));
+          client.confirmOriginalNewGameplayAdmission(JWT, originalLease, requestedBoundedDeadline);
 
       assertThat(boundedConfirmation).usingRecursiveComparison().isEqualTo(confirmation);
       assertThat(observed).containsExactly(GAME_SESSION_PEER, GAME_SESSION_PEER, GAME_SESSION_PEER);
@@ -358,6 +368,10 @@ class AccountGameplayAdmissionLeaseClientTest {
                 .containsExactly(originalLease);
           });
       assertThat(deadlines).hasSize(3);
+      assertThat(dispatchedDeadlines).hasSize(3);
+      assertThat(dispatchedRemainingNanos.subList(0, 2))
+          .allSatisfy(remaining -> assertThat(remaining).isBetween(4_500_000_000L, 5_000_000_000L));
+      assertThat(dispatchedDeadlines.get(2)).isSameAs(requestedBoundedDeadline);
       assertThat(deadlines.subList(0, 2))
           .allSatisfy(deadline -> {
             long remainingMillis = deadline.timeRemaining(TimeUnit.MILLISECONDS);
@@ -728,13 +742,110 @@ class AccountGameplayAdmissionLeaseClientTest {
   }
 
   private static AccountGameplayAdmissionLeaseClient client(Server server) throws Exception {
+    return client(server, null, null);
+  }
+
+  private static AccountGameplayAdmissionLeaseClient client(
+      Server server, List<Deadline> dispatchedDeadlines, List<Long> dispatchedRemainingNanos)
+      throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setAccountService("localhost:" + server.getPort());
+    GrpcChannelFactory channels = new GrpcChannelFactory();
+    if (dispatchedDeadlines != null) {
+      channels =
+          new GrpcChannelFactory() {
+            @Override
+            public ManagedChannel buildChannel(
+                String target,
+                int defaultPort,
+                CommonGrpcClientProperties properties,
+                boolean keepAlive)
+                throws javax.net.ssl.SSLException {
+              ManagedChannel delegate =
+                  super.buildChannel(target, defaultPort, properties, keepAlive);
+              Channel intercepted =
+                  ClientInterceptors.intercept(
+                      delegate,
+                      new ClientInterceptor() {
+                        @Override
+                        public <RequestT, ResponseT> ClientCall<RequestT, ResponseT> interceptCall(
+                            MethodDescriptor<RequestT, ResponseT> method,
+                            CallOptions callOptions,
+                            Channel next) {
+                          Deadline dispatched =
+                              java.util.Objects.requireNonNull(callOptions.getDeadline());
+                          dispatchedDeadlines.add(dispatched);
+                          dispatchedRemainingNanos.add(
+                              dispatched.timeRemaining(TimeUnit.NANOSECONDS));
+                          return next.newCall(method, callOptions);
+                        }
+                      });
+              Channel finalIntercepted = intercepted;
+              return new ManagedChannel() {
+                @Override
+                public <RequestT, ResponseT> ClientCall<RequestT, ResponseT> newCall(
+                    MethodDescriptor<RequestT, ResponseT> method, CallOptions callOptions) {
+                  return finalIntercepted.newCall(method, callOptions);
+                }
+
+                @Override
+                public String authority() {
+                  return delegate.authority();
+                }
+
+                @Override
+                public ManagedChannel shutdown() {
+                  delegate.shutdown();
+                  return this;
+                }
+
+                @Override
+                public ManagedChannel shutdownNow() {
+                  delegate.shutdownNow();
+                  return this;
+                }
+
+                @Override
+                public boolean isShutdown() {
+                  return delegate.isShutdown();
+                }
+
+                @Override
+                public boolean isTerminated() {
+                  return delegate.isTerminated();
+                }
+
+                @Override
+                public boolean awaitTermination(long timeout, TimeUnit unit)
+                    throws InterruptedException {
+                  return delegate.awaitTermination(timeout, unit);
+                }
+
+                @Override
+                public ConnectivityState getState(boolean requestConnection) {
+                  return delegate.getState(requestConnection);
+                }
+
+                @Override
+                public void notifyWhenStateChanged(ConnectivityState source, Runnable callback) {
+                  delegate.notifyWhenStateChanged(source, callback);
+                }
+
+                @Override
+                public void resetConnectBackoff() {
+                  delegate.resetConnectBackoff();
+                }
+
+                @Override
+                public void enterIdle() {
+                  delegate.enterIdle();
+                }
+              };
+            }
+          };
+    }
     return new AccountGameplayAdmissionLeaseClient(
-        endpoints,
-        pki.clientProperties(directory, pki.identity("client")),
-        new GrpcChannelFactory(),
-        NAMESPACE);
+        endpoints, pki.clientProperties(directory, pki.identity("client")), channels, NAMESPACE);
   }
 
   private static Server server(

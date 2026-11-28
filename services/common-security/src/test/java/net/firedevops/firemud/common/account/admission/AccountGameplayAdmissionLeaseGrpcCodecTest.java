@@ -38,6 +38,8 @@ import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfil
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.gamesession.v1.CanonicalPlayableTargetEvidence;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import tools.jackson.databind.json.JsonMapper;
 
 /** Shape and tuple checks only; these carriers grant no Account or gameplay authority. */
@@ -55,8 +57,12 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
   private static final UUID HOLD_FENCE = UUID.fromString("66666666-6666-4666-8666-666666666666");
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
-  @Test
-  void committedCapacityConfirmationRequiresExactPairedRequestAndQualifiedResult() {
+  @ParameterizedTest
+  @EnumSource(
+      value = TenantCapacityAdmission.State.class,
+      names = {"RESERVED", "FINALIZED"})
+  void committedCapacityConfirmationRequiresExactPairedRequestAndQualifiedResult(
+      TenantCapacityAdmission.State state) {
     var original = lease();
     byte[] leaseBytes = original.canonicalJson().getBytes(StandardCharsets.UTF_8);
     var attempt = CapacityAdmissionTestFixture.playerRequest();
@@ -77,7 +83,7 @@ class AccountGameplayAdmissionLeaseGrpcCodecTest {
             OTHER,
             1,
             attempt.evidence().expiresAt(),
-            TenantCapacityAdmission.State.RESERVED,
+            state,
             attempt.evidence().snapshotIdentity(),
             attempt.evidence().evaluationIdentity());
     var response =

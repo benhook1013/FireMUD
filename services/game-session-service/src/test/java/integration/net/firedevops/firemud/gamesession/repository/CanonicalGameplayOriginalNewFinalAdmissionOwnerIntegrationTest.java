@@ -86,18 +86,28 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
         var template = credential.template();
         var bound = template.bindCapacityExecution(controlledCapacity);
         var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+      long acquisitionDeadline = CLOCK.millis() + 1500;
       var response =
           executor.submit(() -> {
             try (var ignored =
                 owner.finalizeOriginalNewOnce(
-                    source, bound, account, issuer, controlledCapacity, CLOCK.millis() + 1500)) {
+                    source, bound, account, issuer, controlledCapacity, acquisitionDeadline)) {
               throw new AssertionError("Expired acquisition must not return FINAL authority");
             }
           });
       try {
         assertThat(acquiring.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        assertThat(
+                allowAcquisition.await(
+                    Math.max(1, acquisitionDeadline - CLOCK.millis()),
+                    java.util.concurrent.TimeUnit.MILLISECONDS))
+            .as("acquisition remains blocked through the supplied operation deadline")
+            .isFalse();
+        assertThat(CLOCK.millis()).isGreaterThanOrEqualTo(acquisitionDeadline);
+        assertThat(allowAcquisition.getCount()).isEqualTo(1);
         assertThatThrownBy(() -> response.get(3, java.util.concurrent.TimeUnit.SECONDS))
-            .hasCauseInstanceOf(IllegalStateException.class);
+            .hasCauseInstanceOf(
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
       } finally {
         allowAcquisition.countDown();
       }
