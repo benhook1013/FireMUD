@@ -36,6 +36,7 @@ function admissionFixture() {
   const outputs = new Map();
   const runs = [];
   const admissionRuns = new Map();
+  const admissionAttempts = new Map();
   const claimRefs = new Map();
   const claimTags = new Map();
   const receiverJobs = new Map();
@@ -95,6 +96,14 @@ function admissionFixture() {
         const run = runs.find(run => run.id === run_id);
         return {data: state.refreshProducer ? state.refreshProducer(run) : run};
       },
+      getWorkflowRunAttempt: async ({owner, repo, run_id, attempt_number}) => {
+        assert.equal(owner, 'example');
+        assert.equal(repo, 'FireMUD');
+        const key = `${run_id}:${attempt_number}`;
+        state.ownerAttemptReads ??= [];
+        state.ownerAttemptReads.push(key);
+        return {status: 200, data: admissionAttempts.get(key)};
+      },
       listJobsForWorkflowRunAttempt: async ({run_id, attempt_number}) => {
         const jobs = receiverJobs.get(`${run_id}:${attempt_number}`) || [];
         return {data: {total_count: jobs.length, jobs}};
@@ -148,7 +157,7 @@ function admissionFixture() {
     state.afterWait?.();
     if (!state.keepHidden && state.newRun && !runs.includes(state.newRun)) runs.push(state.newRun);
   }};
-  return {admission, makeRun, makePullRequestRun, runs, admissionRuns, sent, state,
+  return {admission, makeRun, makePullRequestRun, runs, admissionRuns, admissionAttempts, sent, state,
     warnings, messages, outputs, claimRefs, claimTags, receiverJobs};
 }
 
@@ -799,6 +808,96 @@ test('final identity failure before dispatch records a distinct native claim rec
   f.state.base = B;
   assert.equal(await admitOrdinaryRefresh(f), 'dispatched-observed');
   assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['2']);
+});
+
+async function historicalOwnerReceiptFixture(kind = 'pre-send-unavailable') {
+  const f = admissionFixture();
+  let restoreIdentity;
+  if (kind === 'unsent') preparePreviewRefusal(f);
+  else if (kind === 'rejected') f.state.dispatchError = dispatchValidationError();
+  else restoreIdentity = failFinalIdentityRead(f);
+  assert.equal(await admitRuntimeRefresh(f.admission),
+    {unsent: 'obsolete', rejected: 'dispatch-rejected', 'pre-send-unavailable': kind}[kind]);
+  restoreIdentity?.();
+  delete f.state.dispatchError;
+
+  const {run, job} = completeOwnerReceiptAttempt(f, kind);
+  const latest = {...run, run_attempt: 2, status: 'completed', conclusion: 'failure'};
+  f.admissionRuns.set(run.id, latest);
+  f.admissionAttempts.set('600:1', run);
+  return {f, run, job, latest};
+}
+
+test('exact native pre-send-unavailable proof survives a stable newer owner attempt', async t => {
+  for (const state of [{status: 'completed', conclusion: 'failure'}, {status: 'in_progress', conclusion: null}]) {
+    await t.test(state.status, async () => {
+      const {f, latest} = await historicalOwnerReceiptFixture();
+      Object.assign(latest, state);
+      assert.equal(await admitOrdinaryRefresh(f), 'dispatched-observed');
+      assert.deepEqual(f.state.ownerAttemptReads, ['600:1']);
+      assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['2']);
+    });
+  }
+});
+
+test('historical owner evidence holds the claim when attribution or the no-send proof is uncertain', async t => {
+  const failures = {
+    'missing attempt': ({f}) => f.admissionAttempts.clear(),
+    'unavailable attempt': ({f}) => {
+      f.admission.github.rest.actions.getWorkflowRunAttempt = async () => {
+        throw Object.assign(new Error('temporarily unavailable'), {status: 503});
+      };
+    },
+    'wrong attempt': ({run}) => { run.run_attempt = 2; },
+    'wrong owner revision': ({run, job}) => { run.head_sha = E; job.head_sha = E; },
+    'unsuccessful exact attempt': ({run}) => { run.conclusion = 'cancelled'; },
+    'missing exact-attempt jobs': ({f}) => f.receiverJobs.clear(),
+    'wrong job attempt': ({job}) => { job.run_attempt = 2; },
+    'absent marker': ({job}) => { job.steps = []; },
+    'wrong marker attempt': ({job}) => { job.steps[0].name = job.steps[0].name.replace('attempt 1', 'attempt 2'); },
+    'wrong marker generation': ({job}) => { job.steps[0].name = job.steps[0].name.replace('generation 1', 'generation 2'); },
+    'ambiguous outcome': ({job}) => {
+      job.steps.push({...job.steps[0], name: job.steps[0].name.replace('pre-send-unavailable', 'rejected')});
+    },
+    'malformed latest state': ({latest}) => { latest.conclusion = 'unknown'; },
+    'wrong latest owner revision': ({latest}) => { latest.head_sha = E; },
+    'latest attempt advances during proof': ({f, latest}) => {
+      const read = f.admission.github.rest.actions.listJobsForWorkflowRunAttempt;
+      f.admission.github.rest.actions.listJobsForWorkflowRunAttempt = async request => {
+        latest.run_attempt++;
+        return read(request);
+      };
+    },
+    'legacy claim': ({f}) => {
+      const [tag] = f.claimTags.values();
+      const annotation = JSON.parse(tag.message);
+      delete annotation.owner_revision;
+      tag.message = JSON.stringify(annotation) + '\n';
+      tag.object.sha = A;
+    },
+  };
+  for (const [name, change] of Object.entries(failures)) {
+    await t.test(name, async () => {
+      const fixture = await historicalOwnerReceiptFixture();
+      const {f} = fixture;
+      change(fixture);
+      assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+      assert.deepEqual(f.sent, []);
+      assert.equal(f.claimTags.size, 1);
+    });
+  }
+});
+
+test('historical unsent and rejected receipts stay held despite exact successful native evidence', async t => {
+  for (const kind of ['unsent', 'rejected']) {
+    await t.test(kind, async () => {
+      const {f} = await historicalOwnerReceiptFixture(kind);
+      assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+      assert.equal(f.state.ownerAttemptReads, undefined);
+      assert.equal(f.claimTags.size, 1);
+      assert.equal(f.sent.length, kind === 'rejected' ? 1 : 0);
+    });
+  }
 });
 
 test('an unacknowledged final identity failure receipt leaves the claim held', async () => {

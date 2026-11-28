@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKFLOW="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
 RUNTIME_WORKFLOW="$ROOT_DIR/.github/workflows/runtime-images.yml"
+RUNTIME_REGISTRY="$ROOT_DIR/dev-tools/hosted/shared/protected-runtime-image-registry.sh"
 
 # The contract intentionally uses Python assertions; never report success when disabled.
 python3 -c 'import sys; sys.exit(0 if __debug__ else "Runtime image publication contract requires Python assertions; unset PYTHONOPTIMIZE.")'
@@ -41,22 +42,38 @@ import yaml
 
 jobs = yaml.load(source, Loader=yaml.BaseLoader)["jobs"]
 
-def admitted_branch_job(condition, event, branch):
+def admitted_branch_job(condition, event, branch, *, digests="", results=None):
     assert condition.startswith("${{") and condition.endswith("}}"), condition
     expression = condition[3:-2].strip()
     expression = expression.replace("&&", " and ").replace("||", " or ")
     expression = expression.replace("always()", "True")
+    expression = expression.replace("!cancelled()", "True")
     expression = expression.replace("github.event_name", repr(event))
     expression = expression.replace("needs.image-meta.outputs.head_branch", repr(branch))
-    expression = re.sub(r"needs\.[a-z0-9-]+\.result", repr("success"), expression)
+    expression = expression.replace("needs.select-protected-runtime-digests.outputs.runtime_digests", repr(digests))
+    expression = re.sub(r"needs\.([a-z0-9-]+)\.result",
+                        lambda match: repr((results or {}).get(match[1], "success")), expression)
     return bool(eval(expression, {"__builtins__": {}}))
 
 for job in ("build-base-image", "build-runtime-images", "build-backup-verifier", "publish-backup-verifier",
+            "select-protected-runtime-digests",
             "build-hosted-identity-controller", "publish-hosted-identity-controller", "publish-runtime-images"):
     guard = jobs[job]["if"]
     assert not admitted_branch_job(guard, "workflow_run", ""), (job, guard)
     for branch in ("develop", "main"):
         assert admitted_branch_job(guard, "workflow_run", branch), (job, guard, branch)
+
+for branch in ("develop", "main"):
+    build = jobs["build-runtime-images"]["if"]
+    assert not admitted_branch_job(build, "workflow_run", branch, digests="complete")
+    for job in ("smoke-full", "publish-runtime-images"):
+        guard = jobs[job]["if"]
+        assert admitted_branch_job(guard, "workflow_run", branch, digests="complete",
+                                   results={"build-runtime-images": "skipped"})
+        assert not admitted_branch_job(guard, "workflow_run", branch,
+                                       results={"build-runtime-images": "skipped"})
+        assert not admitted_branch_job(guard, "workflow_run", branch, digests="complete",
+                                       results={"select-protected-runtime-digests": "failure", "build-runtime-images": "skipped"})
 
 # Run the actual branch metadata step with current, obsolete and unverifiable branch heads.
 meta = re.search(r"^      - name: Derive image tags\n.*?^        run: \|\n((?:^          [^\n]*\n|^\n)+)",
@@ -175,9 +192,11 @@ def push_callback(branch, conclusion, run_id, attempt, head_sha="older"):
 
 for branch in ("main", "develop"):
     event = push_callback(branch, "success", 91, 2)
-    check(event, f"branch-{branch}-sha-older-ci-91-attempt-2-required")
+    check(event, "protected-sha-older-required")
     check(push_callback(branch, "success", 97, 1, "newer"),
-          f"branch-{branch}-sha-newer-ci-97-attempt-1-required")
+          "protected-sha-newer-required")
+    check({**base, "event_name": "workflow_dispatch", "ref": f"refs/heads/{branch}", "sha": "older"},
+          "protected-sha-older-required")
     for conclusion, run_id, attempt in (("failure", 92, 1), ("cancelled", 93, 2),
                                        ("timed_out", 94, 3), (None, 95, 1)):
         event = push_callback(branch, conclusion, run_id, attempt)
@@ -185,9 +204,9 @@ for branch in ("main", "develop"):
 
 nonprotected = push_callback("feature/x", "success", 96, 2)
 check(nonprotected, "ci-push-run-96-attempt-2-required")
-assert evaluate(push_callback("Develop", "success", 98, 1)).lower() != \
+assert evaluate(push_callback("Develop", "success", 98, 1)).lower() == \
        evaluate(push_callback("develop", "success", 97, 1)).lower()
-assert evaluate(push_callback("develop", "success", 91, 2)).lower() != \
+assert evaluate(push_callback("develop", "success", 91, 2)).lower() == \
        evaluate(push_callback("main", "success", 91, 2)).lower()
 
 for value in [0, False, "", None]:
@@ -262,7 +281,7 @@ fi
 
 runtime_require_contains() {
   local expected="$1"
-  grep -Fq -- "$expected" "$RUNTIME_WORKFLOW" || {
+  grep -Fq -- "$expected" "$RUNTIME_WORKFLOW" "$RUNTIME_REGISTRY" || {
     echo "runtime publisher workflow must contain: $expected" >&2
     exit 1
   }
@@ -271,7 +290,7 @@ runtime_require_contains() {
 runtime_require_contains 'registry_manifest_state()'
 runtime_require_contains '--head'
 runtime_require_contains '--connect-timeout 10 --max-time 30'
-if grep -Fq -- '--request HEAD' "$RUNTIME_WORKFLOW"; then
+if grep -Fq -- '--request HEAD' "$RUNTIME_WORKFLOW" "$RUNTIME_REGISTRY"; then
   echo "runtime manifest probe must use curl --head" >&2
   exit 1
 fi
@@ -1690,7 +1709,14 @@ if [[ -n "${RUNTIME_CURL_STATUS:-}" ]]; then
 fi
 case "${RUNTIME_TARGET_MODE:-}" in
   missing) printf '404\n' ;;
-  matching|different) printf '200\n' ;;
+  matching|different|fixed-reuse|inspect-failure) printf '200\n' ;;
+  late-fixed-conflict)
+    if [[ "$*" == *world-management-service/manifests/"$HEAD_SHA" ]]; then
+      printf '200\n'
+    else
+      printf '404\n'
+    fi
+    ;;
   non404) printf '503\n' ;;
   *) echo "unexpected runtime target mode" >&2; exit 2 ;;
 esac
@@ -1705,8 +1731,14 @@ if [[ "${1:-}" == buildx && "${2:-}" == imagetools && "${3:-}" == inspect ]]; th
   tag="${service##*:}"
   service="${service%%:*}"
   digest='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-  if [[ "${RUNTIME_TARGET_MODE:-}" == different && "$tag" == "$HEAD_SHA" ]]; then
+  if [[ "${RUNTIME_TARGET_MODE:-}" =~ ^(different|late-fixed-conflict)$ && "$tag" == "$HEAD_SHA" ]]; then
     digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  fi
+  if [[ "${RUNTIME_TARGET_MODE:-}" == fixed-reuse ]]; then
+    if [[ "$tag" == "$HEAD_SHA" || "$image" == *@sha256:* ]] ||
+        { [[ -f "$RUNTIME_REGISTRY_MARKER" ]] && grep -Fq -- "--tag $image " "$RUNTIME_REGISTRY_MARKER"; }; then
+      digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    fi
   fi
   python3 - "$digest" <<'PY'
 import sys
@@ -1749,7 +1781,7 @@ runtime_common_env=(
 run_runtime() {
   : > "$fixture_dir/runtime-head-reads"
   rm -f "$fixture_dir/runtime-head-moved"
-  env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" RUNTIME_HEAD_MODE="${2:-unchanged}" bash "$runtime_script"
+  (cd "$ROOT_DIR" && env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" RUNTIME_HEAD_MODE="${2:-unchanged}" RUNTIME_DIGESTS="${3:-}" bash "$runtime_script")
 }
 
 # Unchanged A remains eligible for immutable A, develop and latest publication.
@@ -1816,6 +1848,38 @@ if [[ -e "$fixture_dir/runtime-registry-marker" ]]; then
   echo "runtime publisher overwrote a differing immutable SHA tag" >&2
   exit 1
 fi
+
+rm -f "$fixture_dir/runtime-registry-marker"
+if run_runtime late-fixed-conflict; then
+  echo "runtime publisher accepted a differing fixed tag on the last service" >&2
+  exit 1
+fi
+[[ ! -e "$fixture_dir/runtime-registry-marker" ]]
+
+# The branch must smoke a complete fixed digest set and keep using exactly those
+# bytes even when the branch's own staging tag points to a different candidate.
+select_runtime() {
+  : > "$fixture_dir/runtime-selection"
+  env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" GITHUB_OUTPUT="$fixture_dir/runtime-selection" \
+    bash -euo pipefail -c 'source "$1"; select_existing_fixed_digests' bash "$RUNTIME_REGISTRY"
+}
+select_runtime late-fixed-conflict
+[[ $(< "$fixture_dir/runtime-selection") == 'runtime_digests=' ]]
+select_runtime fixed-reuse
+fixed_map=$(sed -n 's/^runtime_digests=//p' "$fixture_dir/runtime-selection")
+fixed_digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+jq -e --arg digest "$fixed_digest" 'length==11 and all(.[]; .==$digest)' <<<"$fixed_map" >/dev/null
+run_runtime fixed-reuse unchanged "$fixed_map"
+[[ $(wc -l < "$fixture_dir/runtime-registry-marker") -eq 22 ]]
+! grep -Fq ":$head_sha " "$fixture_dir/runtime-registry-marker"
+! grep -Fq ':candidate' "$fixture_dir/runtime-registry-marker"
+[[ $(grep -Fc "@$fixed_digest" "$fixture_dir/runtime-registry-marker") -eq 22 ]]
+rm -f "$fixture_dir/runtime-registry-marker"
+if run_runtime fixed-reuse unchanged "$(jq '.["account-service"]="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' <<<"$fixed_map")"; then
+  echo "runtime publisher accepted a fixed set that changed after smoke" >&2
+  exit 1
+fi
+[[ ! -e "$fixture_dir/runtime-registry-marker" ]]
 
 rm -f "$fixture_dir/runtime-registry-marker"
 inspect_status=0

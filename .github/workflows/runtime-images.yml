@@ -55,9 +55,9 @@ permissions:
   contents: read
 
 # Serialize each exact PR tuple without replacing a queued claim-backed receiver.
-# Duplicate trusted push deliveries also wait instead of preempting an active run.
+# Protected branches sharing a commit serialize selection, smoke and publication.
 concurrency:
-  group: runtime-images-${{ github.workflow }}-${{ (github.event_name == 'pull_request' && format('pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha)) || (github.event_name == 'repository_dispatch' && github.event.client_payload.pr_number != '' && github.event.client_payload.base_sha != '' && github.event.client_payload.head_sha != '' && github.event.client_payload.merge_sha != '' && format('pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.client_payload.pr_number, github.event.client_payload.base_sha, github.event.client_payload.head_sha, github.event.client_payload.merge_sha)) || (github.event_name == 'repository_dispatch' && format('repository-dispatch-run-{0}', github.run_id)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && format('ci-pr-run-{0}-attempt-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') && format('branch-{0}-sha-{1}-ci-{2}-attempt-{3}', github.event.workflow_run.head_branch, github.event.workflow_run.head_sha, github.event.workflow_run.id, github.event.workflow_run.run_attempt)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && format('ci-push-run-{0}-attempt-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt)) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
+  group: runtime-images-${{ github.workflow }}-${{ (github.event_name == 'pull_request' && format('pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha)) || (github.event_name == 'repository_dispatch' && github.event.client_payload.pr_number != '' && github.event.client_payload.base_sha != '' && github.event.client_payload.head_sha != '' && github.event.client_payload.merge_sha != '' && format('pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.client_payload.pr_number, github.event.client_payload.base_sha, github.event.client_payload.head_sha, github.event.client_payload.merge_sha)) || (github.event_name == 'repository_dispatch' && format('repository-dispatch-run-{0}', github.run_id)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && format('ci-pr-run-{0}-attempt-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') && format('protected-sha-{0}', github.event.workflow_run.head_sha)) || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && format('protected-sha-{0}', github.sha)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && format('ci-push-run-{0}-attempt-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt)) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
   cancel-in-progress: false
   queue: max
 
@@ -1218,8 +1218,8 @@ jobs:
 
   build-runtime-images:
     name: Build Runtime Images (${{ matrix.service }})
-    needs: [image-meta, build-base-image]
-    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
+    needs: [image-meta, build-base-image, select-protected-runtime-digests]
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.select-protected-runtime-digests.result == 'success' && needs.select-protected-runtime-digests.outputs.runtime_digests == '' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
     runs-on: ubuntu-latest
     permissions:
       # This job publishes only unique staging service tags. Canonical aliases
@@ -2025,6 +2025,52 @@ jobs:
           set -euo pipefail
           bash ./dev-tools/hosted/controller/smoke-paused-controller-image.sh "$CONTROLLER_IMAGE" >/dev/null
 
+  select-protected-runtime-digests:
+    name: Select Existing Complete Runtime Digest Set
+    needs: [image-meta]
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      runtime_digests: ${{ steps.select.outputs.runtime_digests }}
+    env:
+      HEAD_SHA: ${{ needs.image-meta.outputs.head_sha }}
+      HEAD_BRANCH: ${{ needs.image-meta.outputs.head_branch }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout trusted runtime selection source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c581273ba90b1 # v7
+        with:
+          ref: ${{ needs.image-meta.outputs.checkout_ref }}
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to GHCR with read access
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read the fixed digest inventory
+        id: select
+        env:
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          source ./dev-tools/hosted/shared/protected-runtime-image-registry.sh
+          select_existing_fixed_digests
+
   dispatch-pr-runtime-publication:
     name: Dispatch Trusted PR Runtime Publication
     needs: [image-meta, pr-local-smoke, pr-controller-smoke]
@@ -2052,8 +2098,8 @@ jobs:
 
   smoke-full:
     name: Published Runtime Full-Stack Smoke
-    needs: [image-meta, build-runtime-images]
-    if: ${{ always() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.build-runtime-images.result == 'success' }}
+    needs: [image-meta, build-runtime-images, select-protected-runtime-digests]
+    if: ${{ always() && !cancelled() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.select-protected-runtime-digests.result == 'success' && ((needs.select-protected-runtime-digests.outputs.runtime_digests == '' && needs.build-runtime-images.result == 'success') || (needs.select-protected-runtime-digests.outputs.runtime_digests != '' && needs.build-runtime-images.result == 'skipped')) }}
     permissions:
       # The trusted branch smoke workflow only pulls the staged candidate images.
       contents: read
@@ -2064,12 +2110,13 @@ jobs:
       head_sha: ${{ needs.image-meta.outputs.head_sha }}
       checkout_ref: ${{ needs.image-meta.outputs.checkout_ref }}
       image_tag: ${{ needs.image-meta.outputs.candidate_tag }}
+      runtime_digests: ${{ needs.select-protected-runtime-digests.outputs.runtime_digests }}
     secrets: inherit
 
   publish-runtime-images:
     name: Promote Smoke-Tested Runtime Images
-    needs: [image-meta, build-runtime-images, smoke-full]
-    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.build-runtime-images.result == 'success' && needs.smoke-full.result == 'success' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
+    needs: [image-meta, build-runtime-images, select-protected-runtime-digests, smoke-full]
+    if: ${{ always() && !cancelled() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.select-protected-runtime-digests.result == 'success' && ((needs.select-protected-runtime-digests.outputs.runtime_digests == '' && needs.build-runtime-images.result == 'success') || (needs.select-protected-runtime-digests.outputs.runtime_digests != '' && needs.build-runtime-images.result == 'skipped')) && needs.smoke-full.result == 'success' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:
@@ -2084,6 +2131,7 @@ jobs:
       HEAD_SHA: ${{ needs.image-meta.outputs.head_sha }}
       HEAD_BRANCH: ${{ needs.image-meta.outputs.head_branch }}
       CANDIDATE_TAG: ${{ needs.image-meta.outputs.candidate_tag }}
+      RUNTIME_DIGESTS: ${{ needs.select-protected-runtime-digests.outputs.runtime_digests }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
@@ -2117,97 +2165,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          services=(
-            account-service
-            automation-scripting-service
-            entity-management-service
-            game-design-service
-            game-logic-service
-            game-session-service
-            logging-admin-service
-            social-groups-service
-            spring-cloud-gateway
-            tcp-proxy-service
-            world-management-service
-          )
-
-          declare -A registry_tokens=()
-          registry_manifest_state() {
-            local image="$1"
-            local image_path="${image#ghcr.io/}"
-            local repository_path="${image_path%:*}"
-            local tag="${image_path##*:}"
-            local manifest_url="https://ghcr.io/v2/${repository_path}/manifests/${tag}"
-            local registry_token="${registry_tokens[$repository_path]:-}"
-            local status
-
-            [[ -n "${GHCR_USERNAME:-}" && -n "${GHCR_TOKEN:-}" ]] || {
-              echo "GHCR credentials are unavailable for authenticated manifest preflight: $image" >&2
-              return 1
-            }
-            if [[ -z "$registry_token" ]]; then
-              if ! registry_token="$(curl --silent --show-error --location --fail \
-                --connect-timeout 10 --max-time 30 \
-                --user "${GHCR_USERNAME}:${GHCR_TOKEN}" \
-                --get \
-                --data-urlencode 'service=ghcr.io' \
-                --data-urlencode "scope=repository:${repository_path}:pull" \
-                --header 'Accept: application/json' \
-                'https://ghcr.io/token' | jq -er '.token // .access_token // empty')"; then
-                echo "GHCR bearer-token exchange failed for $image; refusing to infer absence." >&2
-                return 1
-              fi
-              registry_tokens["$repository_path"]="$registry_token"
-            fi
-            # `docker manifest inspect "$image"` conflates a 404 with auth,
-            # registry, and network failures, so it is never an absence check.
-            if ! status="$(curl --silent --show-error --location --head \
-              --connect-timeout 10 --max-time 30 \
-              --header "Authorization: Bearer ${registry_token}" \
-              --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-              --output /dev/null --write-out '%{http_code}' "$manifest_url")"; then
-              echo "Authenticated OCI manifest HEAD failed for $image; refusing to infer absence." >&2
-              return 1
-            fi
-            case "$status" in
-              200) printf 'existing\n' ;;
-              404) printf 'missing\n' ;;
-              *)
-                echo "Authenticated OCI manifest HEAD returned HTTP ${status} for $image; refusing to push." >&2
-                return 1
-                ;;
-            esac
-          }
-
-          registry_digest() {
-            local image="$1"
-            local inspect_output inspect_status
-            local digest
-            if inspect_output="$(docker buildx imagetools inspect "$image")"; then
-              :
-            else
-              inspect_status=$?
-              echo "Unable to inspect exact registry digest for $image (imagetools exit $inspect_status); refusing to publish." >&2
-              return "$inspect_status"
-            fi
-            digest="$(awk '$1 == "Digest:" && $2 ~ /^sha256:[0-9a-f]{64}$/ { print $2; exit }' <<<"$inspect_output")"
-            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
-              echo "Registry manifest for $image has no exact digest." >&2
-              return 1
-            }
-            printf '%s\n' "$digest"
-          }
-
-          assert_current_branch_head() {
-            local current_sha
-            current_sha="$(gh api \
-              "repos/${GITHUB_REPOSITORY}/git/ref/heads/${HEAD_BRANCH}" \
-              --jq '.object.sha')"
-            [[ "$current_sha" == "$HEAD_SHA" ]] || {
-              echo "Refusing canonical runtime publication: ${HEAD_BRANCH} moved from ${HEAD_SHA} to ${current_sha}." >&2
-              exit 1
-            }
-          }
+          source ./dev-tools/hosted/shared/protected-runtime-image-registry.sh
 
           promote_alias() {
             local source="$1" target="$2" fixed="$3"
@@ -2219,6 +2177,10 @@ jobs:
               exit 1
             fi
             if [[ "$target_state" == missing ]]; then
+              if [[ "$fixed" == true && -n "${RUNTIME_DIGESTS:-}" ]]; then
+                echo "Fixed runtime tag $target disappeared after smoke qualification." >&2
+                exit 1
+              fi
               docker buildx imagetools create --tag "$target" "$source"
             else
               existing_digest="$(registry_digest "$target")"
@@ -2237,8 +2199,9 @@ jobs:
             }
           }
 
+          preflight_fixed_digest_set
           for service in "${services[@]}"; do
-            candidate="ghcr.io/benhook1013/${service}:${CANDIDATE_TAG}"
+            candidate="${smoke_sources[$service]}"
             sha_tag="ghcr.io/benhook1013/${service}:${HEAD_SHA}"
             branch_tag="ghcr.io/benhook1013/${service}:${HEAD_BRANCH}"
 

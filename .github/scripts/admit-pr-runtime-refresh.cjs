@@ -387,14 +387,32 @@ module.exports = async function admitPrRuntimeRefresh({
       if (workflow?.path !== admissionPath || !isPositiveInteger(workflow.id)) return false;
 
       const getRun = async () => dataOf(await github.rest.actions.getWorkflowRun({...contextRepo, run_id: runId}));
-      const isSuccessfulOwner = run => run?.id === runId && run.workflow_id === workflow.id &&
-        run.run_attempt === attempt && run.event === 'repository_dispatch' &&
+      const isAttributableOwner = run => run?.id === runId && run.workflow_id === workflow.id &&
+        run.event === 'repository_dispatch' &&
         run.repository?.full_name === fullName && run.head_repository?.full_name === fullName &&
         run.head_branch === defaultBranch && isSha(run.head_sha) &&
         (claim.ownerRevision === undefined || run.head_sha === claim.ownerRevision) &&
-        [admissionPath, `${admissionPath}@${defaultBranch}`, `${admissionPath}@refs/heads/${defaultBranch}`].includes(run.path) &&
+        [admissionPath, `${admissionPath}@${defaultBranch}`, `${admissionPath}@refs/heads/${defaultBranch}`].includes(run.path);
+      const isSuccessfulOwner = run => isAttributableOwner(run) && run.run_attempt === attempt &&
         run.status === 'completed' && run.conclusion === 'success';
-      const run = await getRun();
+      const latestBefore = await getRun();
+      if (!isAttributableOwner(latestBefore) || !isPositiveInteger(latestBefore.run_attempt)) return false;
+      const {run_attempt: latestAttempt, path: latestPath, status: latestStatus, conclusion: latestConclusion} = latestBefore;
+      const historical = latestAttempt > attempt;
+      let run = latestBefore;
+      if (historical) {
+        // Only this typed failure proves the owner stopped before invoking dispatch.
+        if (kind !== preSendUnavailable.kind || claim.ownerRevision === undefined) return false;
+        const terminalConclusions = ['success', 'failure', 'neutral', 'cancelled', 'skipped',
+          'timed_out', 'action_required', 'stale', 'startup_failure'];
+        if (latestStatus === 'completed' ? !terminalConclusions.includes(latestConclusion) :
+          !activeStatuses.has(latestStatus) || latestConclusion !== null) return false;
+        const response = await github.rest.actions.getWorkflowRunAttempt({
+          ...contextRepo, run_id: runId, attempt_number: attempt,
+        });
+        if (response?.status !== 200) return false;
+        run = dataOf(response);
+      }
       if (!isSuccessfulOwner(run)) return false;
 
       const inventory = dataOf(await github.rest.actions.listJobsForWorkflowRunAttempt({
@@ -410,8 +428,16 @@ module.exports = async function admitPrRuntimeRefresh({
       const markers = job.steps.filter(step => step.name.startsWith(markerPrefix));
       if (markers.length !== 1 || markers[0].status !== 'completed' || markers[0].conclusion !== 'success' ||
           markers[0].name !== `${markerPrefix} ${ownerReceiptIdentity(claim, runId, attempt)}`) return false;
+      if (historical && job.steps.some(step =>
+        [unsent, dispatchRejection].some(outcome => step.name.startsWith(`Runtime refresh ${outcome.kind} claim`)) &&
+        (step.status !== 'completed' || step.conclusion !== 'skipped'))) return false;
 
       const latest = await getRun();
+      if (historical) {
+        // Close the read against the same attributable latest attempt observed at entry.
+        return isAttributableOwner(latest) && latest.run_attempt === latestAttempt &&
+          latest.path === latestPath && latest.status === latestStatus && latest.conclusion === latestConclusion;
+      }
       return isSuccessfulOwner(latest) && latest.head_sha === run.head_sha;
     } catch {
       // An uncertain locator or marker cannot release a claim.
