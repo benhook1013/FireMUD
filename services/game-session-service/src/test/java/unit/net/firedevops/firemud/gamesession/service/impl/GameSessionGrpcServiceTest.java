@@ -14,6 +14,7 @@ import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -86,6 +87,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import tools.jackson.databind.json.JsonMapper;
 
 class GameSessionGrpcServiceTest {
@@ -815,7 +819,9 @@ class GameSessionGrpcServiceTest {
   void invalidFirstTenantSnapshotCannotBeReplacedByALaterHealthyRead() {
     var selected = authorityPointer("demo", "selected", 7L, 44L, true, true);
     List<List<GameplayAdmissionPointerSnapshot>> invalidSnapshots =
-        List.of(
+        java.util.Arrays.asList(
+            null,
+            List.of(),
             List.of(selected, selected),
             List.of(selected, authorityPointer("other", "live", 7L, 55L, true, true)),
             List.of(authorityPointer("demo", "selected", 7L, 44L, true, false)),
@@ -837,29 +843,82 @@ class GameSessionGrpcServiceTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void getAdmissionPointerReturnsTypedUnavailableForStorageFailures(boolean translated) {
+  @ValueSource(strings = {"08006", "57014", "22000"})
+  void getAdmissionPointerSeparatesAuthorityOutagesFromInvalidEvidence(String sqlState) {
     var authority = Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    RuntimeException storageFailure =
-        translated
-            ? new org.springframework.dao.DataAccessResourceFailureException(
-                "internal storage detail")
-            : new org.jooq.exception.DataAccessException("internal storage detail");
-    Mockito.when(authority.listPointersByTenant(7L)).thenThrow(storageFailure);
+    Mockito.when(authority.listPointersByTenant(7L))
+        .thenThrow(
+            new org.jooq.exception.DataAccessException(
+                "internal storage detail", new SQLException("private SQL detail", sqlState)));
 
     var response = admissionPointer(catalogService(authority), "demo", "selected");
 
-    assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.getError().getCode());
+    assertEquals(
+        "22000".equals(sqlState) ? "ADMISSION_POINTER_UNAVAILABLE" : "AUTH_UNAVAILABLE",
+        response.getError().getCode());
     assertEquals(
         "Authoritative gameplay pointer storage is unavailable", response.getError().getMessage());
     assertFalse(response.hasAdmissionPointer());
     Mockito.verify(authority).listPointersByTenant(7L);
-    Mockito.verify(authority, Mockito.never()).listPointers();
+    Mockito.verifyNoMoreInteractions(authority);
+  }
+
+  @Test
+  void pointerReadDistinguishesTransactionConnectionFailureFromConfigurationFailure() {
+    var authority = Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authority.listPointersByTenant(7L))
+        .thenThrow(
+            new CannotCreateTransactionException(
+                "internal storage detail", new SQLException("private SQL detail", "08006")),
+            new CannotCreateTransactionException("private configuration detail"));
+    var service = catalogService(authority);
+
+    var connectionFailure = admissionPointer(service, "demo", "selected");
+    var configurationFailure = admissionPointer(service, "demo", "selected");
+
+    assertEquals("AUTH_UNAVAILABLE", connectionFailure.getError().getCode());
+    assertEquals(
+        "Authoritative gameplay pointer storage is unavailable",
+        connectionFailure.getError().getMessage());
+    assertFalse(connectionFailure.hasAdmissionPointer());
+    assertEquals("INTERNAL", configurationFailure.getError().getCode());
+    assertFalse(configurationFailure.hasAdmissionPointer());
+    Mockito.verify(authority, Mockito.times(2)).listPointersByTenant(7L);
+    Mockito.verifyNoMoreInteractions(authority);
+  }
+
+  @Test
+  void publicDiscoveryReturnsTypedErrorsForAuthorityOutageAndInvalidEvidence() {
+    var authority = Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authority.listPointers())
+        .thenThrow(
+            new DataAccessResourceFailureException("private storage detail"),
+            new QueryTimeoutException("private timeout detail"))
+        .thenReturn(null);
+    var service = catalogService(authority);
+
+    var worlds = listGameplayWorlds(service);
+    var realms = listGameplayRealms(service, "demo");
+    var invalidEvidence = listGameplayRealms(service, "demo");
+
+    assertEquals("AUTH_UNAVAILABLE", worlds.getError().getCode());
+    assertEquals(
+        "Authoritative gameplay pointer storage is unavailable", worlds.getError().getMessage());
+    assertEquals(0, worlds.getWorldsCount());
+    assertEquals("AUTH_UNAVAILABLE", realms.getError().getCode());
+    assertEquals(
+        "Authoritative gameplay pointer storage is unavailable", realms.getError().getMessage());
+    assertEquals(0, realms.getRealmsCount());
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", invalidEvidence.getError().getCode());
+    assertEquals(0, invalidEvidence.getRealmsCount());
+    Mockito.verify(authority, Mockito.times(3)).listPointers();
+    Mockito.verifyNoMoreInteractions(authority);
   }
 
   private static GetAdmissionPointerResponse admissionPointer(
       GameSessionGrpcService service, String worldSlug, String realmSlug) {
     AtomicReference<GetAdmissionPointerResponse> response = new AtomicReference<>();
+    AtomicBoolean completed = new AtomicBoolean();
     service.getAdmissionPointer(
         GetAdmissionPointerRequest.newBuilder()
             .setTenantId("7")
@@ -869,7 +928,7 @@ class GameSessionGrpcServiceTest {
         new StreamObserver<>() {
           @Override
           public void onNext(GetAdmissionPointerResponse value) {
-            response.set(value);
+            assertTrue(response.compareAndSet(null, value));
           }
 
           @Override
@@ -878,8 +937,11 @@ class GameSessionGrpcServiceTest {
           }
 
           @Override
-          public void onCompleted() {}
+          public void onCompleted() {
+            assertTrue(completed.compareAndSet(false, true));
+          }
         });
+    assertTrue(completed.get());
     return response.get();
   }
 

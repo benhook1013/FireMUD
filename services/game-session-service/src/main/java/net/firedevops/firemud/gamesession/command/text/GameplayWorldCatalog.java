@@ -3,6 +3,11 @@ package net.firedevops.firemud.gamesession.command.text;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.SQLException;
+import java.sql.SQLNonTransientConnectionException;
+import java.sql.SQLRecoverableException;
+import java.sql.SQLTimeoutException;
+import java.sql.SQLTransientConnectionException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -25,7 +30,12 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapsh
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import org.jooq.exception.DataAccessException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionTimedOutException;
 
 /** Resolves the canonical public world list and selector forms used by WORLDS/PLAY. */
 @Component
@@ -52,7 +62,7 @@ public final class GameplayWorldCatalog {
     this(
         () -> {
           var pointers = readAuthorityPointers(authorityService::listPointers);
-          return toWorlds(healthyTenantPointers(validateAuthoritySnapshot(pointers)));
+          return toHealthyWorlds(validateAuthoritySnapshot(pointers));
         },
         authorityService::listPointers,
         authorityService::listPointersByTenant);
@@ -109,6 +119,13 @@ public final class GameplayWorldCatalog {
       return selector == null || selector.isBlank()
           ? Optional.empty()
           : GameplayWorldCatalog.this.resolveWorld(selector, snapshot);
+    }
+
+    /** Resolves only a world whose sole public realm is currently discoverable. */
+    public Optional<WorldView> resolvePublicWorld(String selector) {
+      return selector == null || selector.isBlank()
+          ? Optional.empty()
+          : GameplayWorldCatalog.this.resolveWorld(selector, publicDiscoveryWorlds(snapshot));
     }
 
     public Optional<RealmView> resolveDefaultRealm(WorldView world) {
@@ -528,7 +545,7 @@ public final class GameplayWorldCatalog {
       GameplayAdmissionPointerSnapshot expectedPointer) {
     RealmView expectedRealm = toRealmView(expectedPointer);
     boolean resolvesUniquely =
-        toWorlds(pointers).stream()
+        toWorlds(pointers, ambiguousWorldSlugs(pointers)).stream()
             .filter(
                 world -> selectorKey(expectedPointer.worldSlug()).equals(selectorKey(world.slug())))
             .flatMap(world -> world.realms().stream())
@@ -647,7 +664,7 @@ public final class GameplayWorldCatalog {
       return loadWorldSnapshot();
     }
     List<GameplayAdmissionPointerSnapshot> pointers = List.copyOf(loadAuthorityPointers());
-    return catalogSnapshot(toWorlds(healthyTenantPointers(pointers)), pointers);
+    return catalogSnapshot(toHealthyWorlds(pointers), pointers);
   }
 
   private static CatalogSnapshot catalogSnapshot(List<WorldView> sourceWorlds) {
@@ -754,7 +771,12 @@ public final class GameplayWorldCatalog {
         .toList();
   }
 
-  private static List<WorldView> toWorlds(List<GameplayAdmissionPointerSnapshot> pointers) {
+  private static List<WorldView> toHealthyWorlds(List<GameplayAdmissionPointerSnapshot> pointers) {
+    // A tenant's unhealthy catalog cannot release its claim to a shared unqualified world slug.
+    return toWorlds(healthyTenantPointers(pointers), ambiguousWorldSlugs(pointers));
+  }
+
+  private static Set<String> ambiguousWorldSlugs(List<GameplayAdmissionPointerSnapshot> pointers) {
     Map<String, Set<Long>> tenantsByWorldSlug = new HashMap<>();
     for (GameplayAdmissionPointerSnapshot pointer : pointers) {
       if (hasCompleteAuthorityPointer(pointer)) {
@@ -764,12 +786,14 @@ public final class GameplayWorldCatalog {
             .add(pointer.tenantId());
       }
     }
-    Set<String> ambiguousWorldSlugs =
-        tenantsByWorldSlug.entrySet().stream()
-            .filter(entry -> entry.getValue().size() > 1)
-            .map(Map.Entry::getKey)
-            .collect(Collectors.toUnmodifiableSet());
+    return tenantsByWorldSlug.entrySet().stream()
+        .filter(entry -> entry.getValue().size() > 1)
+        .map(Map.Entry::getKey)
+        .collect(Collectors.toUnmodifiableSet());
+  }
 
+  private static List<WorldView> toWorlds(
+      List<GameplayAdmissionPointerSnapshot> pointers, Set<String> ambiguousWorldSlugs) {
     Map<String, MutableWorldAccumulator> worlds = new LinkedHashMap<>();
     for (GameplayAdmissionPointerSnapshot pointer : pointers) {
       if (!hasCompleteAuthorityPointer(pointer)
@@ -846,8 +870,45 @@ public final class GameplayWorldCatalog {
       return reader.get();
     } catch (DataAccessException | org.springframework.dao.DataAccessException failure) {
       throw new AuthorityPointerUnavailableException(
-          "Authoritative gameplay pointer storage is unavailable", failure);
+          "Authoritative gameplay pointer storage is unavailable",
+          failure,
+          isAuthorityAvailabilityFailure(failure));
+    } catch (CannotCreateTransactionException | TransactionTimedOutException failure) {
+      if (!isAuthorityAvailabilityFailure(failure)) {
+        throw failure;
+      }
+      throw new AuthorityPointerUnavailableException(
+          "Authoritative gameplay pointer storage is unavailable", failure, true);
     }
+  }
+
+  private static boolean isAuthorityAvailabilityFailure(Throwable failure) {
+    Throwable cause = failure;
+    for (int depth = 0; cause != null && depth < 32; depth++, cause = cause.getCause()) {
+      if (cause instanceof DataAccessResourceFailureException
+          || cause instanceof QueryTimeoutException
+          || cause instanceof TransientDataAccessResourceException
+          || cause instanceof TransactionTimedOutException
+          || cause instanceof SQLNonTransientConnectionException
+          || cause instanceof SQLRecoverableException
+          || cause instanceof SQLTimeoutException
+          || cause instanceof SQLTransientConnectionException) {
+        return true;
+      }
+      if (cause instanceof SQLException sql && sql.getSQLState() != null) {
+        String state = sql.getSQLState();
+        if (state.startsWith("08")
+            || "57014".equals(state)
+            || "HYT00".equals(state)
+            || "HYT01".equals(state)
+            || "57P01".equals(state)
+            || "57P02".equals(state)
+            || "57P03".equals(state)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   private List<GameplayAdmissionPointerSnapshot> loadAuthorityPointers() {
@@ -888,12 +949,20 @@ public final class GameplayWorldCatalog {
   }
 
   public static final class AuthorityPointerUnavailableException extends RuntimeException {
+    private final boolean authorityUnavailable;
+
     public AuthorityPointerUnavailableException(String message) {
-      super(message);
+      this(message, null, false);
     }
 
-    private AuthorityPointerUnavailableException(String message, Throwable cause) {
+    private AuthorityPointerUnavailableException(
+        String message, Throwable cause, boolean authorityUnavailable) {
       super(message, cause);
+      this.authorityUnavailable = authorityUnavailable;
+    }
+
+    public boolean authorityUnavailable() {
+      return authorityUnavailable;
     }
   }
 

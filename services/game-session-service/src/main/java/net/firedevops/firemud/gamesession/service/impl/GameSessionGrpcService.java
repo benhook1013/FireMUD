@@ -677,11 +677,7 @@ public final class GameSessionGrpcService
       responseObserver.onCompleted();
     } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       ListGameplayWorldsResponse response =
-          ListGameplayWorldsResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
-              .build();
+          ListGameplayWorldsResponse.newBuilder().setError(admissionPointerError(ex)).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -716,11 +712,7 @@ public final class GameSessionGrpcService
     } catch (AuthorityProjectionUnavailableException
         | GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       ListGameplayRealmsResponse response =
-          ListGameplayRealmsResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
-              .build();
+          ListGameplayRealmsResponse.newBuilder().setError(admissionPointerError(ex)).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -748,6 +740,9 @@ public final class GameSessionGrpcService
     try {
       long tenantId =
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
+      if (request.getWorldSlug().isBlank() || request.getRealmSlug().isBlank()) {
+        throw new IllegalArgumentException("Unknown gameplay realm selection");
+      }
       GameplayAdmissionPointerSnapshot realm =
           gameplayWorldCatalog
               .findAdmissionPointerFromAuthoritySnapshot(
@@ -755,7 +750,10 @@ public final class GameSessionGrpcService
                   request.getWorldSlug(),
                   request.getRealmSlug(),
                   () -> gameplayAdmissionPointerAuthorityService.listPointersByTenant(tenantId))
-              .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay realm selection"));
+              .orElseThrow(
+                  () ->
+                      new GameplayWorldCatalog.AuthorityPointerUnavailableException(
+                          "Authoritative gameplay realm selection is missing"));
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
               .setAdmissionPointer(
@@ -784,11 +782,7 @@ public final class GameSessionGrpcService
     } catch (AuthorityProjectionUnavailableException
         | GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       GetAdmissionPointerResponse response =
-          GetAdmissionPointerResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
-              .build();
+          GetAdmissionPointerResponse.newBuilder().setError(admissionPointerError(ex)).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -982,6 +976,15 @@ public final class GameSessionGrpcService
         .setPlayableStateNamespaceId(
             requireIdentity(realm.playableStateNamespaceId(), "playableStateNamespaceId"))
         .build();
+  }
+
+  private ErrorDetail admissionPointerError(RuntimeException failure) {
+    String code =
+        failure instanceof GameplayWorldCatalog.AuthorityPointerUnavailableException unavailable
+                && unavailable.authorityUnavailable()
+            ? "AUTH_UNAVAILABLE"
+            : "ADMISSION_POINTER_UNAVAILABLE";
+    return GrpcAppErrors.error(meterRegistry, code, failure.getMessage());
   }
 
   private static String requireWorldSelector(String worldSelector) {
