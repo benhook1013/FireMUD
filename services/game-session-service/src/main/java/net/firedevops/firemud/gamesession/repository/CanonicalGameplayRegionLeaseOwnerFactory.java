@@ -38,6 +38,7 @@ final class CanonicalGameplayRegionLeaseOwnerFactory {
     if (leaseTtl.compareTo(Duration.ofMillis(installationMillis + 1)) < 0) {
       throw new IllegalArgumentException("leaseTtl must exceed the bounded installation window");
     }
+    CanonicalGameplayOriginalNewCapacityExecutionBudget.requireRetireableSql(dsl);
     return new CanonicalGameplayRegionLeaseOwner(
         new CanonicalGameplayBindingInventoryRepository(dsl),
         new CanonicalGameplayRegionRuntimeStatusRepository(dsl),

@@ -66,7 +66,10 @@ if not tag1 or tag1 ~= tag2
   or not string.match(sourceDigest, '^[0-9a-f]+$') or string.len(sourceDigest) ~= 64
   or not positiveInt64(ttl)
   or (mayCreate ~= '0' and mayCreate ~= '1')
-  or not positiveInt64(absoluteDeadlineMillis) then return -1 end
+  or not positiveInt64(absoluteDeadlineMillis)
+  or string.len(absoluteDeadlineMillis) > 16
+  or (string.len(absoluteDeadlineMillis) == 16 and absoluteDeadlineMillis > '9007199254740991')
+  then return -1 end
 
 -- Check TIME before any mutation. A permission change after PROBE still leaves a
 -- definite no-write outcome for this exact initialization claim.
@@ -123,7 +126,8 @@ if metaType == 'none' then
     'current_tick_state', 'APPLIED',
     'first_timeline_operation_id', operationId,
     'first_timeline_source_digest', sourceDigest)
-elseif not validTimelineMeta() then
+elseif not validTimelineMeta() or leaseType == 'none' then
+  -- Existing metadata without its original live lease cannot authorize a different grant.
   return 0
 end
 

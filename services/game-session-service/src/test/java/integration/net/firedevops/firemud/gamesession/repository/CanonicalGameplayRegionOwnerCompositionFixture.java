@@ -1169,8 +1169,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                 dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId());
         RegionRedisState redisBeforeExpiredGrant =
             snapshotRegionRedisState(redis, redisKey, initialMetaKey);
-        String bindingType = redis.admin().type(secondBindingKey);
-        if (!"none".equals(bindingType)) {
+        byte[] bindingBeforeExpiredGrant = redis.admin().dump(secondBindingKey);
+        if (bindingBeforeExpiredGrant != null) {
           throw new IllegalStateException("Fixture requires an unbridged second Redis binding");
         }
         boolean bridgeRejectedAtCurrentGrantCheck = false;
@@ -1179,13 +1179,19 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         } catch (IllegalStateException expected) {
           bridgeRejectedAtCurrentGrantCheck = failedRedisGrantCheck(expected, "renew");
         }
-        if (!bridgeRejectedAtCurrentGrantCheck
-            || !bindingType.equals(redis.admin().type(secondBindingKey))
-            || !sqlBeforeExpiredGrant.equals(
+        boolean bridgePreservedSql =
+            sqlBeforeExpiredGrant.equals(
                 snapshotRegionOwnerSqlState(
-                    dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId()))
-            || !redisBeforeExpiredGrant.equals(
-                snapshotRegionRedisState(redis, redisKey, initialMetaKey))) {
+                    dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId()));
+        boolean bridgePreservedRedis =
+            redisBeforeExpiredGrant.equals(
+                snapshotRegionRedisState(redis, redisKey, initialMetaKey));
+        boolean bridgePreservedBinding =
+            Arrays.equals(bindingBeforeExpiredGrant, redis.admin().dump(secondBindingKey));
+        if (!bridgeRejectedAtCurrentGrantCheck
+            || !bridgePreservedSql
+            || !bridgePreservedRedis
+            || !bridgePreservedBinding) {
           throw new IllegalStateException(
               "Bridge did not refuse the expired second grant without changing SQL or Redis");
         }
@@ -1196,13 +1202,20 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         } catch (IllegalStateException expected) {
           rejectedAtCurrentGrantCheck = failedRedisGrantCheck(expected, "requireCurrent");
         }
+        boolean reinstallPreservedSql =
+            sqlBeforeExpiredGrant.equals(
+                snapshotRegionOwnerSqlState(
+                    dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId()));
+        boolean reinstallPreservedRedis =
+            redisBeforeExpiredGrant.equals(
+                snapshotRegionRedisState(redis, redisKey, initialMetaKey));
+        boolean reinstallPreservedBinding =
+            Arrays.equals(bindingBeforeExpiredGrant, redis.admin().dump(secondBindingKey));
         boolean expiredProvisionalGrantRejectedWithoutStateChange =
             rejectedAtCurrentGrantCheck
-                && sqlBeforeExpiredGrant.equals(
-                    snapshotRegionOwnerSqlState(
-                        dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId()))
-                && redisBeforeExpiredGrant.equals(
-                    snapshotRegionRedisState(redis, redisKey, initialMetaKey));
+                && reinstallPreservedSql
+                && reinstallPreservedRedis
+                && reinstallPreservedBinding;
         if (!expiredProvisionalGrantRejectedWithoutStateChange) {
           throw new IllegalStateException(
               "Expired provisional grant did not fail at currentness without state changes");
@@ -1892,6 +1905,20 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                 tenantId,
                 gameInstanceId,
                 regionId)
+            .getValues("image", String.class),
+        dsl.fetch(
+                "SELECT to_jsonb(inventory)::text AS image"
+                    + " FROM game_session_canonical_gameplay_binding_inventory inventory"
+                    + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?"
+                    + " ORDER BY binding_ref",
+                tenantId,
+                gameInstanceId,
+                regionId)
+            .getValues("image", String.class),
+        dsl.fetch(
+                "SELECT to_jsonb(clock)::text AS image"
+                    + " FROM game_session_canonical_binding_inventory_clock clock"
+                    + " ORDER BY singleton_id")
             .getValues("image", String.class));
   }
 
@@ -1921,10 +1948,15 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
   }
 
   private static boolean failedRedisGrantCheck(IllegalStateException failure, String method) {
-    return Arrays.stream(failure.getStackTrace())
-        .anyMatch(frame ->
-            frame.getClassName().equals(CanonicalGameplayRegionLeaseRedisOwner.class.getName())
-                && frame.getMethodName().equals(method));
+    StackTraceElement[] frames = failure.getStackTrace();
+    String owner = CanonicalGameplayRegionLeaseRedisOwner.class.getName();
+    return failure.getCause() == null
+        && "Canonical Game Session region lease is unavailable".equals(failure.getMessage())
+        && frames.length >= 2
+        && owner.equals(frames[0].getClassName())
+        && "unavailable".equals(frames[0].getMethodName())
+        && owner.equals(frames[1].getClassName())
+        && method.equals(frames[1].getMethodName());
   }
 
   private static RegionBridgeRedisState snapshotRegionBridgeRedisState(

@@ -290,6 +290,28 @@ public final class CanonicalGameplayBindingInventoryRepository {
     });
   }
 
+  void lockInitialTimelineBindingScope(
+      DSLContext transaction, CanonicalGameplayBindingProvisionalCasEvidence expected) {
+    lockInventoryRevision(transaction);
+    lockLeaseBoundRuntimeBeforeTransition(
+        transaction,
+        expected.transition().transitionId(),
+        expected.candidate().bindingRef().bytes(),
+        null);
+  }
+
+  void requireCurrentInitialTimelineBinding(
+      DSLContext transaction, CanonicalGameplayBindingProvisionalCasEvidence expected) {
+    var current =
+        loadProvisionalCasEvidence(transaction, expected.transition().transitionId(), true);
+    if (current.transition().status()
+            != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+        || current.expectedPrior() != null) {
+      throw conflict("Initial timeline claim requires the exact provisional first binding");
+    }
+    requireSameProvisionalSource(expected, current);
+  }
+
   /** Irreversibly selects one still-PREPARED dispatch claim without inferring any Redis outcome. */
   public CanonicalGameplayOriginalNewAbandonmentSource selectOriginalNewAbandonment(
       UUID transitionId) {

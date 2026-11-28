@@ -137,7 +137,9 @@ failure_body() {
 
 contains_http_429() {
   # Read the complete stream so failure_body can still validate its framing.
-  grep -E '^[[:space:]]*(> )?Received status code 429 from server: Too Many Requests[[:space:]]*$' "$@" >/dev/null
+  # Match the same status prefix used by retry_delay_seconds; the server's
+  # human-readable reason is not stable across repositories.
+  grep -E '^[[:space:]]*(> )?Received status code 429 from server([[:space:]]|:)' "$@" >/dev/null
 }
 
 classify_failure_body() {
@@ -322,10 +324,14 @@ classify_failure_body() {
       # Gradle 9.9 can resolve main or cross-service classpaths while
       # serializing JavaCompile.classpath. Match the exact task and source set.
       if (line ~ /^Configuration cache state could not be cached: field `classpath` of task `:[[:alnum:]-]+:compile(Java|CrossServiceTestJava)` of type `org\.gradle\.api\.tasks\.compile\.JavaCompile`: error writing value of type \047org\.gradle\.api\.internal\.artifacts\.configurations\.DefaultResolvableConfiguration\047$/) {
-        module = line
-        sub(/^.* of task `/, "", module)
-        cross_service = module ~ /:compileCrossServiceTestJava`/
-        sub(/:compile(Java|CrossServiceTestJava)`.*$/, "", module)
+        task_reference = line
+        sub(/^.* of task `/, "", task_reference)
+        sub(/`.*$/, "", task_reference)
+        if (cache_task != "" && cache_task != task_reference) invalid++
+        cache_task = task_reference
+        module = task_reference
+        cross_service = module ~ /:compileCrossServiceTestJava$/
+        sub(/:compile(Java|CrossServiceTestJava)$/, "", module)
         if (compile_classpath_module != "" && compile_classpath_module != module) invalid++
         compile_classpath_module = module
         expected_compile_configuration = module (cross_service ? ":crossServiceTestCompileClasspath" : ":compileClasspath")
@@ -377,6 +383,8 @@ classify_failure_body() {
           line ~ /^- Task `:[^`]+:compile[A-Za-z0-9]+` of type .*JavaCompile.*: error writing value of type .*DefaultResolvableConfiguration/) {
         if (match(line, /`:[^`]+:compile[A-Za-z0-9]+`/)) {
           task_reference = substr(line, RSTART, RLENGTH)
+          sub(/^`/, "", task_reference)
+          sub(/`$/, "", task_reference)
           if (cache_task != "" && cache_task != task_reference) {
             invalid++
           }

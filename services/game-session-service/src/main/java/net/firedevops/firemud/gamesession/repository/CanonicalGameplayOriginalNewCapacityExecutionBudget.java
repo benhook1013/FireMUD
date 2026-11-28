@@ -710,6 +710,20 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     pool.evictConnection(pooled);
   }
 
+  static void requireRetireableSql(DSLContext sql) {
+    if (!(sql.configuration().connectionProvider()
+        instanceof DataSourceConnectionProvider provider)) {
+      throw new IllegalArgumentException(
+          "region lease SQL requires a retireable Hikari data source");
+    }
+    try {
+      requireHikariDataSource(provider.dataSource());
+    } catch (SQLException unsupported) {
+      throw new IllegalArgumentException(
+          "region lease SQL requires a retireable Hikari data source", unsupported);
+    }
+  }
+
   private static HikariDataSource requireHikariDataSource(DataSource source) throws SQLException {
     DataSource current = source;
     while (current instanceof DelegatingDataSource delegating) {

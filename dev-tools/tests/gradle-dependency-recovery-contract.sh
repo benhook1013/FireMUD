@@ -209,6 +209,17 @@ assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2
 assert_output_contains "Connection reset"
 assert_output_contains "refresh-complete"
 
+# A second cache diagnostic is valid when it names the same exact compile
+# task, and must be rejected when it names another task.
+cp "$CASE_DIR/gradlew" "$TEMP_DIR/netty-reset-wrapper"
+new_case netty-reset-different-cache-task
+cp "$TEMP_DIR/netty-reset-wrapper" "$CASE_DIR/gradlew"
+# The backticks are literal Gradle task delimiters in the generated log.
+# shellcheck disable=SC2016
+sed -i 's/- Task `:load-testing:compileJava`/- Task `:common-platform-core:compileJava`/' "$CASE_DIR/gradlew"
+run_case load-testing 1
+assert_no_retry
+
 # Preserve the c515-style pinned missing-artifact recovery path without
 # claiming the miss is stale: a passing refreshed full check is still required.
 new_case absent-pinned-artifact
@@ -975,6 +986,18 @@ run_case common-web-support 0
 assert_call_count 2
 assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-web-support:check -PfullCheck --profile --info --console=plain"
 [[ "$(cat "$CASE_DIR/sleeps")" == 5 ]] || fail "HTTP 429 did not observe Retry-After"
+
+# The same accepted 429 prefix controls cached-metadata retry mode even when
+# the server uses a different reason phrase.
+cp "$CASE_DIR/gradlew" "$TEMP_DIR/http-429-wrapper"
+new_case http-429-rate-limit-reason
+cp "$TEMP_DIR/http-429-wrapper" "$CASE_DIR/gradlew"
+sed -i 's/Too Many Requests/Rate limit exceeded/' "$CASE_DIR/gradlew"
+run_case common-web-support 0
+assert_call_count 2
+assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-web-support:check -PfullCheck --profile --info --console=plain"
+[[ "$(cat "$CASE_DIR/sleeps")" == 5 ]] || fail "alternate HTTP 429 reason did not observe Retry-After"
+assert_output_contains "Rate limit exceeded"
 
 # Retain the PR 3220 buildSrc configuration failure, including the plugin
 # repository disabling itself and a parent POM failing after a redirect.

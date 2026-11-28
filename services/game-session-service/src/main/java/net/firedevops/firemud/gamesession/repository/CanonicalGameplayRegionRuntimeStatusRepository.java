@@ -305,6 +305,32 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       TimelinePreparation preparation,
       Instant now,
       Consumer<CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof> noWriteRecovery) {
+    return claimInitialTimeline(preparation, now, noWriteRecovery, null, null);
+  }
+
+  Optional<InitialInitializationPermit> beginInitialTimeline(
+      TimelinePreparation preparation,
+      Instant now,
+      CanonicalGameplayBindingInventoryRepository bindingInventory,
+      CanonicalGameplayBindingProvisionalCasEvidence expectedBinding,
+      Consumer<CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof> noWriteRecovery) {
+    Objects.requireNonNull(bindingInventory, "bindingInventory");
+    Objects.requireNonNull(expectedBinding, "expectedBinding");
+    if (!preparation.transitionId.equals(expectedBinding.transition().transitionId())
+        || !Arrays.equals(preparation.bindingRef, expectedBinding.candidate().bindingRef().bytes())
+        || !preparation.bindingGeneration.equals(expectedBinding.candidate().bindingGeneration())) {
+      throw unavailable();
+    }
+    return claimInitialTimeline(
+        preparation, now, noWriteRecovery, bindingInventory, expectedBinding);
+  }
+
+  private Optional<InitialInitializationPermit> claimInitialTimeline(
+      TimelinePreparation preparation,
+      Instant now,
+      Consumer<CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof> noWriteRecovery,
+      CanonicalGameplayBindingInventoryRepository bindingInventory,
+      CanonicalGameplayBindingProvisionalCasEvidence expectedBinding) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(preparation, "preparation");
     Objects.requireNonNull(now, "now");
@@ -313,6 +339,10 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     try {
       return dsl.transactionResult(configuration -> {
         DSLContext transaction = DSL.using(configuration);
+        // Match bridge authorization: inventory and instance runtime before region, then binding.
+        if (bindingInventory != null) {
+          bindingInventory.lockInitialTimelineBindingScope(transaction, expectedBinding);
+        }
         lockRegionScope(transaction, preparation.tenantRegionTag);
         if (transaction.fetchOne(
                 "SELECT 1 FROM "
@@ -334,6 +364,9 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         TimelinePreparation current = toTimelinePreparation(row);
         if (!samePreparation(preparation, current)) throw unavailable();
         if (current.phase != TimelinePreparationPhase.PREPARED) return Optional.empty();
+        if (bindingInventory != null) {
+          bindingInventory.requireCurrentInitialTimelineBinding(transaction, expectedBinding);
+        }
         // Lock waits and source checks cannot consume the installation deadline and still
         // grant irreversible permission to create Redis meta.
         if (installationBudget != null) installationBudget.check();
@@ -377,35 +410,9 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     Objects.requireNonNull(preparation, "preparation");
     Objects.requireNonNull(now, "now");
     if (proof == null) throw unavailable();
-    if (!proof.consumeFor(preparation)) {
-      // A commit may have succeeded before its completion signal failed. Reconcile only an
-      // already-consumed exact capability against durable PREPARED state; never restore or
-      // re-use it to mutate a later INITIALIZING claim.
-      if (!proof.consumedFor(preparation)) throw unavailable();
-      dsl.transaction(configuration -> {
-        DSLContext transaction = DSL.using(configuration);
-        lockRegionScope(transaction, preparation.tenantRegionTag);
-        Record row =
-            transaction.fetchOne(
-                "SELECT * FROM "
-                    + PREPARATION_TABLE
-                    + " WHERE initialization_operation_id = ? FOR UPDATE",
-                preparation.operationId);
-        if (row == null) throw unavailable();
-        TimelinePreparation current = toTimelinePreparation(row);
-        if (!samePreparation(preparation, current)
-            || current.phase != TimelinePreparationPhase.PREPARED
-            || transaction.fetchExists(
-                DSL.selectOne()
-                    .from(DSL.table(TABLE))
-                    .where(DSL.field("tenant_id").eq(preparation.source.tenantId()))
-                    .and(DSL.field("game_instance_id").eq(preparation.source.gameInstanceId()))
-                    .and(DSL.field("region_id").eq(preparation.source.regionId())))) {
-          throw unavailable();
-        }
-      });
-      return;
-    }
+    // A caller that found an already consumed proof may only reconcile a completed cleanup.
+    boolean reconcileOnly = proof.consumedFor(preparation);
+    var consumedHere = new java.util.concurrent.atomic.AtomicBoolean();
     var provider = dsl.configuration().transactionProvider();
     var guardedProvider =
         new org.jooq.TransactionProvider() {
@@ -413,13 +420,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
 
           @Override
           public void begin(org.jooq.TransactionContext context) {
-            try {
-              provider.begin(context);
-            } catch (RuntimeException failure) {
-              // No transaction body or preparation mutation has executed yet.
-              proof.restoreAfterConfirmedRollback();
-              throw failure;
-            }
+            provider.begin(context);
           }
 
           @Override
@@ -441,7 +442,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
           public void rollback(org.jooq.TransactionContext context) {
             if (installationBudget == null) {
               provider.rollback(context);
-              if (!commitAttempted) proof.restoreAfterConfirmedRollback();
+              if (consumedHere.get() && !commitAttempted) proof.restoreAfterConfirmedRollback();
               return;
             }
             long previousRollbacks = installationBudget.jdbcConfirmedRollbacks();
@@ -450,7 +451,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
             } finally {
               // The driver can confirm rollback before the provider throws on pool return.
               // An attempted commit remains ambiguous even if the driver later rolls back.
-              if (!commitAttempted
+              if (consumedHere.get()
+                  && !commitAttempted
                   && installationBudget.jdbcConfirmedRollbacks() != previousRollbacks) {
                 proof.restoreAfterConfirmedRollback();
               }
@@ -477,14 +479,26 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                       .and(DSL.field("game_instance_id").eq(preparation.source.gameInstanceId()))
                       .and(DSL.field("region_id").eq(preparation.source.regionId()))))
             throw unavailable();
-          // A rolled-back claim may never have changed PREPARED. Settle the proof without a write.
-          if (current.phase == TimelinePreparationPhase.PREPARED) return;
+          // A rolled-back claim (or a cleanup with lost acknowledgement) can leave PREPARED.
+          if (current.phase == TimelinePreparationPhase.PREPARED) {
+            if (reconcileOnly) return;
+            if (proof.consumeFor(preparation)) {
+              consumedHere.set(true);
+            } else if (!proof.consumedFor(preparation)) {
+              throw unavailable();
+            }
+            return;
+          }
           if (current.phase != TimelinePreparationPhase.INITIALIZING
               || !proof
                   .generation()
                   .equals(row.get("initialization_claim_generation", UUID.class))) {
             throw unavailable();
           }
+          // Keep the capability available through acquisition and the region lock. Consume it
+          // only on this exact generation, immediately before the first possible SQL write.
+          if (reconcileOnly || !proof.consumeFor(preparation)) throw unavailable();
+          consumedHere.set(true);
           int changed =
               transaction.execute(
                   "UPDATE "

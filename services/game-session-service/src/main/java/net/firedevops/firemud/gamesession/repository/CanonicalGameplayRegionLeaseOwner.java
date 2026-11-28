@@ -390,6 +390,8 @@ final class CanonicalGameplayRegionLeaseOwner {
                   statusRepository.beginInitialTimeline(
                       preparation,
                       clock.instant(),
+                      bindingInventory,
+                      beforeClaimEvidence,
                       proof -> {
                         retainNoWriteProof(claimedPreparation, retained, proof);
                         recoverNoWrite(claimedPreparation, retained);

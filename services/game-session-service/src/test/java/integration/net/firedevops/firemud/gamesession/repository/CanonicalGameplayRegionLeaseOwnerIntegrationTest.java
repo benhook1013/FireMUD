@@ -539,6 +539,12 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
       assertThat(redis.admin().type(metaKey)).isEqualTo("none");
 
+      arguments[8] = ascii("9007199254740993");
+      Long unrepresentable = redis.admin().eval(script, ScriptOutputType.INTEGER, keys, arguments);
+      assertThat(unrepresentable).isEqualTo(-1L);
+      assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
+      assertThat(redis.admin().type(metaKey)).isEqualTo("none");
+
       long submittedDeadline = redisTimeMillis(redis.admin()) + 10_000L;
       arguments[8] = ascii(Long.toString(submittedDeadline));
       Long initialized = redis.admin().eval(script, ScriptOutputType.INTEGER, keys, arguments);
@@ -548,6 +554,70 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           .isPositive()
           .isLessThanOrEqualTo(submittedDeadline);
       assertThat(redis.admin().pttl(metaKey)).isEqualTo(-1L);
+
+      byte[] retainedMeta = redis.admin().dump(metaKey);
+      assertThat(redis.admin().pexpire(leaseKey, 0)).isTrue();
+      arguments[2] = ascii("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+      arguments[7] = ascii("0");
+      arguments[8] = ascii(Long.toString(redisTimeMillis(redis.admin()) + 10_000L));
+      Long retainedWithoutLease =
+          redis.admin().eval(script, ScriptOutputType.INTEGER, keys, arguments);
+      assertThat(retainedWithoutLease).isZero();
+      assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
+      assertThat(redis.admin().dump(metaKey)).containsExactly(retainedMeta);
+      assertThat(redis.admin().pttl(metaKey)).isEqualTo(-1L);
+    }
+  }
+
+  @Test
+  void installationRefusesCapturedBindingWithoutDurableClaimEvidence() throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try (RedisFixture redis = RedisFixture.open()) {
+      var statusRepository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+      var redisOwner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+      WorldFixture world = WorldFixture.open();
+      var incarnationSource = new ControlledStableIncarnationSource();
+      var evidence = provisionalEvidence(world.request());
+      var inventory =
+          org.mockito.Mockito.spy(
+              new CanonicalGameplayBindingInventoryRepository(testSchema.dsl()));
+      // Preflight compares two reads of the same synthetic evidence. Claim requalification
+      // still locks and reads the real SQL rows.
+      org.mockito.Mockito.doReturn(evidence)
+          .when(inventory)
+          .readProvisionalCasEvidence(TRANSITION_ID);
+      org.mockito.Mockito.doNothing()
+          .when(inventory)
+          .requireSameProvisionalSource(
+              org.mockito.ArgumentMatchers.same(evidence),
+              org.mockito.ArgumentMatchers.same(evidence));
+      var source = source(world.originalEvidence());
+      var incarnation =
+          incarnationSource.readCurrent(
+              CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+      var preparation =
+          statusRepository.prepareInitialTimeline(
+              evidence,
+              world.request(),
+              world.resolver().resolve(world.request()),
+              source,
+              incarnation,
+              redisOwner.requireTimelineAbsent(source, incarnation),
+              NOW);
+      var owner =
+          owner(
+              inventory, statusRepository, redisOwner, world, "missing-binding", incarnationSource);
+
+      assertThatThrownBy(() -> owner.installForTransition(TRANSITION_ID, world.request()))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessage("Durable binding transition does not exist");
+      assertPreparedTimelineUnchanged(
+          testSchema.dsl(), statusRepository, redis, source, preparation);
+    } finally {
+      dropSchema(testSchema.schema());
     }
   }
 
@@ -1757,6 +1827,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                           return;
                         }
                         if (mode == 6) {
+                          assertPreLockRefusalLeavesProofAvailable(
+                              testSchema, repository, preparation, retained);
                           assertPreCommitDeadlineRestoresProof(
                               testSchema, repository, preparation, retained);
                           return;
@@ -1941,6 +2013,41 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     } finally {
       dropSchema(testSchema.schema());
     }
+  }
+
+  private static void assertPreLockRefusalLeavesProofAvailable(
+      TestSchema schema,
+      CanonicalGameplayRegionRuntimeStatusRepository repository,
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof) {
+    var attemptedLock = new java.util.concurrent.atomic.AtomicBoolean();
+    var beforeLock =
+        new org.jooq.impl.DefaultExecuteListener() {
+          @Override
+          public void executeStart(org.jooq.ExecuteContext context) {
+            String sql = context.sql();
+            if (sql != null && sql.contains("pg_advisory_xact_lock")) {
+              attemptedLock.set(true);
+              assertThat(proof.consumedFor(preparation)).isFalse();
+              throw new IllegalStateException(
+                  "Controlled cleanup admission refusal before the lock");
+            }
+          }
+        };
+    var interrupted =
+        new CanonicalGameplayRegionRuntimeStatusRepository(
+            DSL.using(
+                schema
+                    .dsl()
+                    .configuration()
+                    .derive(new org.jooq.impl.DefaultExecuteListenerProvider(beforeLock))));
+    assertThatThrownBy(() -> interrupted.releaseInitialTimelineNoWrite(preparation, proof, NOW))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(attemptedLock).isTrue();
+    assertThat(proof.consumedFor(preparation)).isFalse();
+    assertThat(repository.findTimelinePreparation(preparation.source()).orElseThrow().phase())
+        .isEqualTo(
+            CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INITIALIZING);
   }
 
   private static void assertPreCommitDeadlineRestoresProof(

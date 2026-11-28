@@ -34,6 +34,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
@@ -316,10 +317,30 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         .hasMessage("leaseTtl must exceed the bounded installation window");
   }
 
+  @Test
+  void manualFactoryRefusesSqlConnectionsThatCannotBeRetired() {
+    RedisClient client = mock();
+    when(client.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
+    var unsupported =
+        DSL.using(
+            new org.springframework.jdbc.datasource.DriverManagerDataSource(), SQLDialect.POSTGRES);
+    assertThatThrownBy(() -> composeManualLeaseOwner(client, Duration.ofSeconds(30), unsupported))
+        .isExactlyInstanceOf(IllegalArgumentException.class)
+        .hasMessage("region lease SQL requires a retireable Hikari data source");
+  }
+
   private static CanonicalGameplayRegionLeaseOwner composeManualLeaseOwner(
       RedisClient client, Duration leaseTtl) {
+    return composeManualLeaseOwner(
+        client,
+        leaseTtl,
+        DSL.using(mock(com.zaxxer.hikari.HikariDataSource.class), SQLDialect.POSTGRES));
+  }
+
+  private static CanonicalGameplayRegionLeaseOwner composeManualLeaseOwner(
+      RedisClient client, Duration leaseTtl, DSLContext dsl) {
     return CanonicalGameplayRegionLeaseOwnerFactory.compose(
-        mock(DSLContext.class),
+        dsl,
         client,
         RedisURI.create("redis://localhost:6379"),
         mock(RedisScriptCatalog.class),
@@ -415,19 +436,24 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                     "BACKGROUND_OPERATIONS"));
     int maximum = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS;
 
+    var earliestDeadlineReturn = new AtomicLong();
     try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
       var caller =
-          executor.submit(() ->
-              assertThatThrownBy(() ->
-                      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                          CLOCK,
-                          CLOCK.millis() + 500,
-                          budget ->
-                              ReflectionTestUtils.invokeMethod(owner, "openConnection", budget)))
-                  .isInstanceOf(IllegalStateException.class));
+          executor.submit(() -> {
+            earliestDeadlineReturn.set(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(400));
+            assertThatThrownBy(() ->
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                        CLOCK,
+                        CLOCK.millis() + 500,
+                        budget ->
+                            ReflectionTestUtils.invokeMethod(owner, "openConnection", budget)))
+                .isInstanceOf(IllegalStateException.class);
+          });
       try {
         assertThat(connected.await(2, TimeUnit.SECONDS)).isTrue();
         caller.get(2, TimeUnit.SECONDS);
+        assertThat(System.nanoTime()).isGreaterThanOrEqualTo(earliestDeadlineReturn.get());
+        assertThat(handshake.isDone()).isFalse();
         assertPermitRemainsHeld(permits, maximum);
 
         handshake.complete(connection);
@@ -667,7 +693,23 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     }
     String loadedSha = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(script));
     when(scriptLoad.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(loadedSha);
-    stubRedisTime(commands);
+    var localMillis = new AtomicLong(CLOCK.millis());
+    var sampledTime = new java.util.concurrent.atomic.AtomicBoolean();
+    Clock delayedSampleClock = mock();
+    when(delayedSampleClock.millis()).thenAnswer(ignored -> localMillis.get());
+    when(delayedSampleClock.instant())
+        .thenAnswer(ignored -> Instant.ofEpochMilli(localMillis.get()));
+    long samplingDelayMillis = 2_000L;
+    RedisFuture<List<byte[]>> redisTime = mock();
+    when(commands.time()).thenReturn(redisTime);
+    when(redisTime.get(anyLong(), eq(TimeUnit.MILLISECONDS)))
+        .thenAnswer(ignored -> {
+          localMillis.addAndGet(samplingDelayMillis);
+          sampledTime.set(true);
+          return List.of(
+              "1700000000".getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+              "123456".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        });
     when(connection.closeAsync()).thenReturn(close);
     when(commands.<Long>evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
         .thenReturn(initialized);
@@ -708,14 +750,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     CompletableFuture<Boolean> otherBackground = null;
     CompletableFuture<?> initialization = null;
     long handoffBudgetMillis = 4_000L;
-    long handoffDeadline = CLOCK.millis() + handoffBudgetMillis;
+    long handoffDeadline = delayedSampleClock.millis() + handoffBudgetMillis;
     try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
       try {
         otherBackground =
             CompletableFuture.supplyAsync(
                 () ->
                     CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                        CLOCK,
+                        delayedSampleClock,
                         handoffDeadline,
                         budget -> {
                           otherBackgroundStarted.countDown();
@@ -729,12 +771,12 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
               CompletableFuture.supplyAsync(
                   () ->
                       CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                          CLOCK,
+                          delayedSampleClock,
                           handoffDeadline,
                           budget -> {
                             try (var session =
                                 owner
-                                    .forInstallation(CLOCK, budget)
+                                    .forInstallation(delayedSampleClock, budget)
                                     .prepareTimelineInitialization(
                                         preparation, Duration.ofSeconds(30), identity)) {
                               return session.initialize(permit);
@@ -744,7 +786,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         } else {
           prepared =
               owner
-                  .forHandoffDeadline(CLOCK, handoffDeadline)
+                  .forHandoffDeadline(delayedSampleClock, handoffDeadline)
                   .prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity);
           var session = prepared;
           initialization =
@@ -770,8 +812,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         assertThat(arguments[8]).containsExactly(probe[8]);
         long redisDeadline =
             Long.parseLong(new String(arguments[8], java.nio.charset.StandardCharsets.US_ASCII));
+        assertThat(sampledTime).isTrue();
         assertThat(redisDeadline)
-            .isBetween(REDIS_TIME_MILLIS + 1, REDIS_TIME_MILLIS + handoffBudgetMillis);
+            .isBetween(
+                REDIS_TIME_MILLIS + 1,
+                REDIS_TIME_MILLIS + handoffBudgetMillis - samplingDelayMillis);
         assertThat(initialization.isDone()).isFalse();
         assertThat(background.availablePermits()).isZero();
         assertThat(operations.availablePermits()).isEqualTo(operationMaximum - 2);

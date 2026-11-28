@@ -229,6 +229,46 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
   }
 
   @Test
+  void redisRefusesLateRenewalWithoutChangingTheLiveLease() throws IOException {
+    try (RedisFixture redis = RedisFixture.open();
+        var connection = redis.ownerClient().connect(ByteArrayCodec.INSTANCE);
+        var input =
+            getClass()
+                .getClassLoader()
+                .getResourceAsStream(
+                    CanonicalGameplayRegionLeaseRedisScriptContribution.RENEW_PATH)) {
+      var source = source(GAME_INSTANCE_ID_A);
+      seedMeta(redis.admin(), source);
+      var owner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.redisUri(PRINCIPAL, PASSWORD), redis.catalog());
+      var grant = owner.acquire(source, 7L, Duration.ofSeconds(30), identity("late-renewal"));
+      byte[] leaseKey = ascii(grant.key());
+      byte[] token = redis.admin().get(leaseKey);
+      long expiry = redis.admin().pexpiretime(leaseKey);
+      assertThat(token).isNotNull();
+      assertThat(redis.admin().pttl(leaseKey)).isPositive();
+
+      var commands = connection.sync();
+      String sha = commands.scriptLoad(input.readAllBytes());
+      byte[][] keys = {
+        leaseKey,
+        ascii(
+            CanonicalGameplayRegionRedisKeys.meta(
+                source.tenantId(), source.gameInstanceId(), source.regionId()))
+      };
+      // A deadline at the start of the Unix epoch is already elapsed in Redis time.
+      byte[][] args = {ascii("gs_region_lease/v2"), token, ascii("7"), ascii("60000"), ascii("1")};
+      Long result = commands.evalsha(sha, io.lettuce.core.ScriptOutputType.INTEGER, keys, args);
+
+      assertThat(result).isZero();
+      assertThat(redis.admin().get(leaseKey)).containsExactly(token);
+      assertThat(redis.admin().pexpiretime(leaseKey)).isEqualTo(expiry);
+      assertThat(redis.admin().pttl(leaseKey)).isPositive();
+    }
+  }
+
+  @Test
   void acceptsTickZeroAndRejectsExpiringTimelineMetadata() {
     try (RedisFixture redis = RedisFixture.open()) {
       var owner =
