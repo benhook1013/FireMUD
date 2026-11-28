@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: redis-exporter
-          image: bitnami/redis-exporter:latest@sha256:5f475f283dbce0ae1513a7a4e9afed51ffa7fdacfb19e9d248468a09971c60f9
+          image: bitnami/redis-exporter:latest@sha256:0438a00ed4312e0a6d4918a5810ea40e90065b88c73cc403d2eae1d8ea69e927
           args:
             - '--redis.addr=redis:6379'
           ports:
