@@ -524,6 +524,9 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   @ParameterizedTest
   @CsvSource({
     "spring.flyway.execute-in-transaction, false",
+    "spring.flyway.validate-on-migrate, false",
+    "spring.flyway.validate-on-migrate, ''",
+    "spring.datasource.hikari.connection-test-query, SELECT 1",
     "spring.flyway.skip-default-resolvers, true",
     "spring.flyway.sql-migration-prefix, fixture",
     "spring.flyway.sql-migration-separator, fixture",
@@ -552,6 +555,8 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
     var environment =
         fixtureEnvironment()
             .withProperty("spring.flyway.execute-in-transaction", "true")
+            .withProperty("spring.flyway.validate-on-migrate", "true")
+            .withProperty("spring.datasource.hikari.connection-test-query", " \t")
             .withProperty("spring.flyway.skip-default-resolvers", "false")
             .withProperty("spring.flyway.sql-migration-prefix", "V")
             .withProperty("spring.flyway.sql-migration-separator", "__")
@@ -592,6 +597,45 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageStartingWith("spring.datasource.hikari.connection-init-sql must be empty")
         .hasMessageNotContaining("SELECT 1")
+        .hasNoCause();
+  }
+
+  @Test
+  void refusesEffectiveHikariConnectionTestQueryForEnabledFlyway() {
+    var environment =
+        fixtureEnvironment().withProperty("spring.datasource.hikari.connection-test-query", "");
+    environment
+        .getPropertySources()
+        .addFirst(
+            new SystemEnvironmentPropertySource(
+                "test-systemEnvironment",
+                Map.of("SPRING_DATASOURCE_HIKARI_CONNECTIONTESTQUERY", "SELECT 1")));
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.datasource.hikari.connection-test-query must be empty")
+        .hasMessageNotContaining("SELECT 1")
+        .hasNoCause();
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "false, spring.flyway.validate-on-migrate must be enabled",
+    "fixture-invalid, Recovery database overrides must retain"
+  })
+  void refusesEffectiveFlywayValidationOverride(String value, String message) {
+    var environment =
+        fixtureEnvironment().withProperty("spring.flyway.validate-on-migrate", "true");
+    environment
+        .getPropertySources()
+        .addFirst(
+            new SystemEnvironmentPropertySource(
+                "test-systemEnvironment", Map.of("SPRING_FLYWAY_VALIDATEONMIGRATE", value)));
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith(message)
+        .hasMessageNotContaining("fixture-invalid")
         .hasNoCause();
   }
 

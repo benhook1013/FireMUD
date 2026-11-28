@@ -679,7 +679,8 @@ class InitialGameplayReleaseModelTest {
             .withConfiguration(AutoConfigurations.of(JacksonAutoConfiguration.class))
             .withUserConfiguration(InitialGameplayReleaseTupleCodec.class);
     runner.run(defaults -> {
-      String defaultJson = defaults.getBean(JsonMapper.class).writeValueAsString(original);
+      String defaultJson =
+          defaults.getBean(InitialGameplayReleaseTupleCodec.class).toJson(original);
       String defaultDigest =
           defaults.getBean(InitialGameplayReleaseTupleCodec.class).digest(original);
       runner

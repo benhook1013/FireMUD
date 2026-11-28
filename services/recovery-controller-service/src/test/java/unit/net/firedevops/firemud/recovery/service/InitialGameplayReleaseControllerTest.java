@@ -354,20 +354,32 @@ class InitialGameplayReleaseControllerTest {
 
   private void assertPendingClaimHandling(
       boolean ownsClaim, EffectApplyResult applyResult, RetrySource expectedRetrySource) {
-    assertClaimHandling(EffectOutboxState.PENDING, ownsClaim, applyResult, expectedRetrySource);
+    assertClaimHandling(
+        EffectOutboxState.PENDING, ownsClaim, applyResult, expectedRetrySource, true);
   }
 
   @Test
   void retryableEffectAppliesWithTheNewAttemptAndNextOrdinal() {
     assertClaimHandling(
-        EffectOutboxState.RETRYABLE, true, EffectApplyResult.ambiguous("OWNER_PENDING"), null);
+        EffectOutboxState.RETRYABLE,
+        true,
+        EffectApplyResult.ambiguous("OWNER_PENDING"),
+        null,
+        true);
+  }
+
+  @Test
+  void supersededAmbiguousDispatchReturnsCurrentOperationWithoutFurtherOwnerCalls() {
+    assertClaimHandling(
+        EffectOutboxState.PENDING, true, EffectApplyResult.ambiguous("OWNER_PENDING"), null, false);
   }
 
   private void assertClaimHandling(
       EffectOutboxState priorState,
       boolean ownsClaim,
       EffectApplyResult applyResult,
-      RetrySource expectedRetrySource) {
+      RetrySource expectedRetrySource,
+      boolean outcomeRecorded) {
     var journal = mock(InitialGameplayReleaseJournal.class);
     var port = mock(InitialGameplayReleaseEffectPort.class);
     var operation = mock(Operation.class);
@@ -435,7 +447,7 @@ class InitialGameplayReleaseControllerTest {
               any()))
           .thenAnswer(invocation -> {
             snapshot.set(after);
-            return true;
+            return outcomeRecorded;
           });
     } else if (ownsClaim) {
       when(journal.recordRetryableEffectForDispatch(

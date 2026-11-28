@@ -65,9 +65,10 @@ EOF_WRAPPER
 run_case() {
   local module="$1"
   local expected_status="$2"
+  shift 2
   local -a command=(bash ./.github/scripts/run-gradle-module-checks.sh "$module")
   if [[ "$module" == :compileBufGeneratedJava ]]; then
-    command=(bash ./dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- compileBufGeneratedJava)
+    command=(bash ./dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- compileBufGeneratedJava "$@")
   fi
   local actual_status=0
   if (
@@ -1131,6 +1132,19 @@ for scope in buildsrc buf checkstyle; do
       assert_no_retry
     fi
   done
+done
+
+# An explicit caller refresh flag remains effective on both attempts.
+for refresh_flag in --refresh-dependencies -U; do
+  new_case "explicit-buf-refresh-${refresh_flag#-}"
+  write_cold_jar_429_cause buf
+  # shellcheck disable=SC2016
+  write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi'
+  run_case :compileBufGeneratedJava 0 "$refresh_flag"
+  assert_call_count 2
+  assert_call 1 "compileBufGeneratedJava $refresh_flag"
+  assert_call 2 "compileBufGeneratedJava $refresh_flag"
+  assert_output_contains "with the caller-requested dependency metadata refresh"
 done
 
 # A Retry-After beyond the short retry budget fails closed without waiting.

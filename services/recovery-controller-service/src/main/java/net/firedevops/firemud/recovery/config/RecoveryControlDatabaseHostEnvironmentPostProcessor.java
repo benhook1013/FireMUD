@@ -125,6 +125,12 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
       throw new SafeOverrideException(
           "spring.flyway.skip-executing-migrations must be disabled for the recovery migrations");
     }
+    String validateOnMigrate = "spring.flyway.validate-on-migrate";
+    if (binder.bind(validateOnMigrate, String.class).isBound()
+        && !binder.bind(validateOnMigrate, Boolean.class).orElse(false)) {
+      throw new SafeOverrideException(
+          "spring.flyway.validate-on-migrate must be enabled for the recovery migrations");
+    }
     if (Boolean.TRUE.equals(binder.bind("spring.flyway.mixed", Boolean.class).orElse(null))) {
       throw new SafeOverrideException(
           "spring.flyway.mixed must be disabled for the recovery migrations");
@@ -156,6 +162,13 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
     if (!connectionInitSql.isBlank()) {
       throw new SafeOverrideException(
           "spring.datasource.hikari.connection-init-sql must be empty for the recovery migrations");
+    }
+    String connectionTestQuery =
+        binder.bind("spring.datasource.hikari.connection-test-query", String.class).orElse("");
+    // Hikari trims the query and uses JDBC connection validation when it is empty.
+    if (!connectionTestQuery.trim().isEmpty()) {
+      throw new SafeOverrideException(
+          "spring.datasource.hikari.connection-test-query must be empty for the recovery migrations");
     }
     var initSqls = binder.bind("spring.flyway.init-sqls", Bindable.listOf(String.class));
     if (initSqls.isBound() && !initSqls.get().isEmpty()) {
