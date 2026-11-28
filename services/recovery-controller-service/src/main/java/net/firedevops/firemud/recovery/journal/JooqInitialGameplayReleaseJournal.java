@@ -17,6 +17,7 @@ import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.
 import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TypedEffect;
 import static net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.requiredDigest;
 
+import java.text.Normalizer;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -91,6 +92,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     if (GameTenantCreationDigest.utf8ByteLength(scope.evidenceRef())
         > InitialGameplayRecoverRequest.MAX_EVIDENCE_REFERENCE_BYTES) {
       throw new IllegalArgumentException("Operation evidence reference exceeds its UTF-8 limit");
+    }
+    if (!Normalizer.isNormalized(scope.evidenceRef(), Normalizer.Form.NFC)) {
+      throw new IllegalArgumentException("Operation evidence reference must be NFC");
     }
     String scopeDigest = tupleCodec.digest(scope);
     JSONB scopePayload = JSONB.valueOf(tupleCodec.toJson(scope));

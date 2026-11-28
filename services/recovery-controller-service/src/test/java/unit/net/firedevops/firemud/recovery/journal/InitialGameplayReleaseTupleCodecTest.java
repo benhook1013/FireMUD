@@ -127,6 +127,34 @@ class InitialGameplayReleaseTupleCodecTest {
   }
 
   @ParameterizedTest
+  @ValueSource(strings = {"0", "0.0"})
+  void persistedReadbackObservationRequiresCanonicalTimestampText(String numericEpoch) {
+    JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
+    var original =
+        new EffectReadback(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1,
+            EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+            "a".repeat(64),
+            "b".repeat(64),
+            EffectReadbackState.PREPARED_FENCED,
+            EffectReadbackAuthority.GAME_SESSION_DURABLE_CURRENT_STATE,
+            "owner-receipt",
+            Instant.EPOCH);
+    String json = codec.toJson(original);
+    ObjectNode altered = (ObjectNode) mapper.readTree(json);
+    assertThat(altered.get("observedAt").isTextual()).isTrue();
+    assertThat(codec.readEffectReadback(json)).isEqualTo(original);
+
+    altered.set("observedAt", mapper.readTree(numericEpoch));
+    assertThatThrownBy(() -> codec.readEffectReadback(mapper.writeValueAsString(altered)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("noncanonical shape");
+  }
+
+  @ParameterizedTest
   @ValueSource(strings = {"0", "0.0", "\"0\"", "true"})
   void persistedReadbackEnumsRequireTextualNames(String replacement) {
     JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();

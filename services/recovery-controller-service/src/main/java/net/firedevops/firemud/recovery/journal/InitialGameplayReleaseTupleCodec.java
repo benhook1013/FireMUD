@@ -245,6 +245,10 @@ public final class InitialGameplayReleaseTupleCodec {
       if (readback == null) {
         throw new IllegalStateException("Persisted initial gameplay release readback is null");
       }
+      if (!hasCanonicalJsonShape(persisted, readback)) {
+        throw new IllegalStateException(
+            "Persisted initial gameplay release readback has a noncanonical shape");
+      }
       return readback;
     } catch (JacksonException exception) {
       throw new IllegalStateException(

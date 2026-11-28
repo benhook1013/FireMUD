@@ -48,6 +48,10 @@ RECOVERY_DATASOURCE_URL = (
     "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended"
 )
 RECOVERY_DATABASE_PORT = "firemudrecoverycontroldbport"
+RECOVERY_DATABASE_CREDENTIAL_SELECTORS = {
+    "firemudrecoverycontroldbuser",
+    "firemudrecoverycontroldbpassword",
+}
 PACKAGED_CONFIG_RE = re.compile(r"/src/main/resources/(?:config/)?application[^/]*\.(?:ya?ml|properties|xml)$")
 RUNTIME_DEPENDENCY_RE = re.compile(
     r'(?:implementation|api|runtimeOnly)\s*\(\s*project\(\s*":([^\"]+)"'
@@ -302,13 +306,73 @@ def parent_snapshot(repo_root: Path, base_ref: str) -> Snapshot:
     return snapshot
 
 
+def java_code_tokens(source: str) -> str:
+    """Blank Java comments and literals so policy checks see code tokens only."""
+    characters = list(source)
+
+    def blank(start: int, end: int) -> None:
+        for position in range(start, end):
+            if characters[position] not in "\r\n":
+                characters[position] = " "
+
+    index = 0
+    while index < len(source):
+        if source.startswith("//", index):
+            end = index + 2
+            while end < len(source) and source[end] not in "\r\n":
+                end += 1
+            blank(index, end)
+            index = end
+            continue
+        if source.startswith("/*", index):
+            close = source.find("*/", index + 2)
+            end = len(source) if close < 0 else close + 2
+            blank(index, end)
+            index = end
+            continue
+        if source.startswith('"""', index):
+            end = index + 3
+            while end < len(source):
+                if source[end] == "\\":
+                    end += 2
+                elif source.startswith('"""', end):
+                    end += 3
+                    break
+                else:
+                    end += 1
+            blank(index, min(end, len(source)))
+            index = min(end, len(source))
+            continue
+        if source[index] in {'"', "'"}:
+            quote = source[index]
+            end = index + 1
+            while end < len(source):
+                if source[end] == "\\":
+                    end += 2
+                elif source[end] == quote:
+                    end += 1
+                    break
+                elif source[end] in "\r\n":
+                    break
+                else:
+                    end += 1
+            blank(index, min(end, len(source)))
+            index = min(end, len(source))
+            continue
+        index += 1
+    return "".join(characters)
+
+
 def recovery_input_issues(snapshot: Snapshot) -> list[str]:
     """Apply the SQL-only Recovery input policy to either side of a comparison."""
     issues = []
     for path in sorted(snapshot):
         if path.startswith(RECOVERY_APP_JAVA_ROOT) and path.endswith(".java"):
             source = snapshot[path].decode("utf-8", errors="replace")
-            if re.search(r"\b(?:JavaMigration|BaseJavaMigration)\b", source):
+            if re.search(
+                r"(?<![\w$])(?:JavaMigration|BaseJavaMigration)(?![\w$])",
+                java_code_tokens(source),
+            ):
                 issues.append(
                     f"{path}: Recovery JavaMigration classes and beans are unsupported; "
                     "migration version authority must remain SQL-only"
@@ -577,6 +641,13 @@ def recovery_flyway_config(
             properties: dict[str, object] = {}
             ambiguous: set[str] = set()
             flatten_properties(document, (), properties, ambiguous)
+            obsolete_profile_index = re.compile(
+                r"^spring\.profiles(?:\[[^]]+\]|\.[0-9]+)(?:\.|$)"
+            )
+            if (("spring.profiles" in properties and not isinstance(properties["spring.profiles"], dict))
+                    or "spring.profiles" in ambiguous
+                    or any(obsolete_profile_index.match(path) for path in properties)):
+                return None
             if any(path == override or path.startswith((override + ".", override + "["))
                    for path in properties for override in datasource_overrides):
                 return None
@@ -595,13 +666,9 @@ def recovery_flyway_config(
             }
             if exclusion_paths:
                 activation = properties.get("spring.config.activate")
-                legacy_profile_activation = (
-                    "spring.profiles" in properties
-                    and not isinstance(properties["spring.profiles"], dict)
-                )
                 if config_path in profile_paths or (isinstance(activation, dict) and activation) or any(
                     path.startswith("spring.config.activate.") for path in properties
-                ) or legacy_profile_activation:
+                ):
                     return None
                 if exclusion_paths & ambiguous:
                     return None
@@ -642,76 +709,15 @@ def recovery_flyway_config(
             if not decode_indexed_string_list(properties, ambiguous, suffixes_property):
                 return None
             schemas_property = "spring.flyway.schemas"
-            indexed_schema_paths = {
-                path for path in properties
-                if path.startswith((schemas_property + "[", schemas_property + "."))
-            }
-            schema_value = properties.get(schemas_property)
-            if indexed_schema_paths or isinstance(schema_value, dict):
-                if schemas_property in ambiguous:
-                    return None
-                indexed_values: dict[int, object] = {}
-                if isinstance(schema_value, dict):
-                    if not schema_value or any(type(key) is not int for key in schema_value):
-                        return None
-                    indexed_values.update(schema_value)
-                elif schemas_property in properties:
-                    return None
-                index_pattern = re.compile(r"^spring\.flyway\.schemas\[(0|[1-9][0-9]*)\]$")
-                for path in indexed_schema_paths:
-                    match = index_pattern.fullmatch(path)
-                    if match is None or path in ambiguous:
-                        return None
-                    index = int(match.group(1))
-                    if index in indexed_values:
-                        return None
-                    indexed_values[index] = properties[path]
-                if set(indexed_values) != set(range(len(indexed_values))) or not all(
-                        isinstance(value, str) for value in indexed_values.values()):
-                    return None
-                properties[schemas_property] = [indexed_values[index] for index in range(len(indexed_values))]
-                for path in indexed_schema_paths:
-                    properties.pop(path)
-                    ambiguous.discard(path)
+            if not decode_indexed_string_list(properties, ambiguous, schemas_property):
+                return None
             ignore_patterns_property = "spring.flyway.ignoremigrationpatterns"
-            indexed_ignore_pattern_paths = {
-                path for path in properties
-                if path.startswith((ignore_patterns_property + "[", ignore_patterns_property + "."))
-            }
-            ignore_pattern_value = properties.get(ignore_patterns_property)
-            if indexed_ignore_pattern_paths or isinstance(ignore_pattern_value, dict):
-                if ignore_patterns_property in ambiguous:
-                    return None
-                indexed_values: dict[int, object] = {}
-                if isinstance(ignore_pattern_value, dict):
-                    if not ignore_pattern_value or any(type(key) is not int for key in ignore_pattern_value):
-                        return None
-                    indexed_values.update(ignore_pattern_value)
-                elif ignore_patterns_property in properties:
-                    return None
-                index_pattern = re.compile(
-                    r"^spring\.flyway\.ignoremigrationpatterns\[(0|[1-9][0-9]*)\]$"
-                )
-                for path in indexed_ignore_pattern_paths:
-                    match = index_pattern.fullmatch(path)
-                    if match is None or path in ambiguous:
-                        return None
-                    index = int(match.group(1))
-                    if index in indexed_values:
-                        return None
-                    indexed_values[index] = properties[path]
-                if set(indexed_values) != set(range(len(indexed_values))) or not all(
-                        isinstance(value, str) for value in indexed_values.values()):
-                    return None
-                properties[ignore_patterns_property] = [
-                    indexed_values[index] for index in range(len(indexed_values))
-                ]
-                for path in indexed_ignore_pattern_paths:
-                    properties.pop(path)
-                    ambiguous.discard(path)
+            if not decode_indexed_string_list(properties, ambiguous, ignore_patterns_property):
+                return None
             exact_guard_paths = {auto_configuration_switch, pool_init_sql, pool_test_query,
                                  datasource_type, *credential_paths, *driver_paths,
                                  recovery_database_host, RECOVERY_DATABASE_PORT,
+                                 *RECOVERY_DATABASE_CREDENTIAL_SELECTORS,
                                  "spring.flyway.validateonmigrate",
                                  "spring.datasource.url", "spring.datasource.hikari.jdbcurl",
                                  "spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
@@ -743,13 +749,9 @@ def recovery_flyway_config(
                 return None
 
             activation = properties.get("spring.config.activate")
-            legacy_profile_activation = (
-                "spring.profiles" in properties
-                and not isinstance(properties["spring.profiles"], dict)
-            )
             if config_path in profile_paths or (isinstance(activation, dict) and activation) or any(
                 path.startswith("spring.config.activate.") for path in properties
-            ) or legacy_profile_activation:
+            ):
                 # The active profile/cloud environment is unknown, so the checker
                 # cannot qualify an activation-dependent override of these guards.
                 return None
@@ -785,6 +787,11 @@ def recovery_flyway_config(
     if require_current_configuration and RECOVERY_DATABASE_PORT in effective_settings:
         # The packaged URL keeps the canonical 5432 fallback, while the actual
         # port remains a deployment environment override guarded by the runtime.
+        return None
+    if (require_current_configuration
+            and RECOVERY_DATABASE_CREDENTIAL_SELECTORS & effective_settings.keys()):
+        # Recovery credentials must come from the deployment environment, not a
+        # packaged default that the runtime guard and datasource would both accept.
         return None
     if any(effective_settings[path] != reference for path, reference in credential_paths.items()
            if path in effective_settings):
@@ -885,7 +892,7 @@ def recovery_flyway_config(
             return None
     suffixes = flyway.get("sqlmigrationsuffixes", [".sql"])
     if isinstance(suffixes, str):
-        suffixes = [suffixes]
+        suffixes = [suffix.strip(JAVA_TRIM_CHARACTERS) for suffix in suffixes.split(",")]
     if not isinstance(suffixes, list) or suffixes != [".sql"]:
         return None
     if (flyway.get("sqlmigrationprefix", "V") != "V"
@@ -1131,6 +1138,14 @@ def run_self_test() -> None:
         **recovery_history,
         recovery_config: recovery_settings + b"FIREMUD_RECOVERY_CONTROL_DB_PORT: 0\n",
     }, recovery_history, "historical effective migration no longer applied")
+    for selector, value in (
+        ("FIREMUD_RECOVERY_CONTROL_DB_USER", "packaged-user"),
+        ("FIREMUD_RECOVERY_CONTROL_DB_PASSWORD", "packaged-password"),
+    ):
+        check(f"packaged Recovery credential selector {selector} cannot qualify history", {
+            **recovery_history,
+            recovery_config: recovery_settings + f"{selector}: {value}\n".encode(),
+        }, recovery_history, "historical effective migration no longer applied")
     if ":${FIREMUD_RECOVERY_CONTROL_DB_PORT:5432}" not in RECOVERY_DATASOURCE_URL:
         raise AssertionError("Recovery datasource URL must retain its canonical 5432 fallback")
     check("global auto-configuration accepts ordinary Java-trim padding", {
@@ -1150,6 +1165,21 @@ def run_self_test() -> None:
         source_path.write_text("class RecoveryApplicationSource {}", encoding="utf-8")
         if recovery_java_migration not in current_snapshot(Path(fixture_root)):
             raise AssertionError("Recovery application-package Java source was omitted from snapshot")
+    check("Java comments and literals do not create migration declarations", {
+        **recovery_history,
+        recovery_java_migration: (
+            b"// JavaMigration in a line comment\n"
+            b"/* BaseJavaMigration in a block comment */\n"
+            b"class RecoveryNotes {\n"
+            b"  String ordinary = \"JavaMigration /* not a comment */\";\n"
+            b"  String holder$JavaMigration = \"\";\n"
+            b"  char character = 'x';\n"
+            b"  String block = \"\"\"\n"
+            b"      BaseJavaMigration // text block content\n"
+            b"      \"\"\";\n"
+            b"}\n"
+        ),
+    }, recovery_history, None)
     check("Recovery JavaMigration beans cannot override SQL version authority", {
         **recovery_history,
         recovery_java_migration: (
@@ -1508,6 +1538,10 @@ def run_self_test() -> None:
             **recovery_history,
             recovery_override_config: malformed_schema_override,
         }, recovery_history, "historical effective migration no longer applied")
+    check("integer-key Recovery schema list binds through the indexed-list decoder", {
+        **recovery_history,
+        recovery_override_config: b"spring.flyway.schemas: {0: recovery_control}\n",
+    }, recovery_history, None)
     for setting in ("url", "user", "password"):
         check(f"Flyway {setting} cannot separate Recovery migration from the journal datasource", {
             **recovery_history,
@@ -1843,10 +1877,41 @@ def run_self_test() -> None:
         **recovery_history,
         recovery_config.replace("/application.yml", "/application-dev.yml"): disabled_auto_configuration,
     }, recovery_history, "historical effective migration no longer applied")
+    check("obsolete scalar spring.profiles fails even in an unrelated YAML document", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"---\nspring.profiles: dev\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    for obsolete_profiles in (
+        b"spring.profiles[0]: dev\n",
+        b"spring:\n  profiles:\n    '0': dev\n",
+    ):
+        check("obsolete indexed spring.profiles fails before unrelated-document skip", {
+            **recovery_history,
+            recovery_config: recovery_settings + b"---\n" + obsolete_profiles,
+        }, recovery_history, "historical effective migration no longer applied")
+    check("modern spring.profiles properties and unrelated YAML remain eligible", {
+        **recovery_history,
+        recovery_config: recovery_settings + (
+            b"---\nspring:\n  profiles:\n    active: dev\n    default: local\n"
+            b"    include: ops\n    group:\n      dev: local\nserver:\n  port: 9000\n"
+        ),
+    }, recovery_history, None)
     check("Flyway SQL suffix override cannot disconnect the recovery journal", {
         **recovery_history,
         recovery_config: recovery_settings + b"    sql-migration-suffixes: [.ddl]\n",
     }, recovery_history, "packaged Spring configuration must enable Flyway")
+    check("scalar Flyway SQL suffix uses Java trim semantics", {
+        **recovery_history,
+        recovery_override_config: b"spring.flyway.sql-migration-suffixes: ' \t.sql\t '\n",
+    }, recovery_history, None)
+    check("non-Java whitespace in scalar Flyway SQL suffix remains significant", {
+        **recovery_history,
+        recovery_override_config: "spring.flyway.sql-migration-suffixes: '\u00a0.sql'\n".encode(),
+    }, recovery_history, "historical effective migration no longer applied")
+    check("YAML-list Flyway SQL suffix entries remain exact", {
+        **recovery_history,
+        recovery_override_config: b"spring.flyway.sql-migration-suffixes: [' .sql ']\n",
+    }, recovery_history, "historical effective migration no longer applied")
     check("default Flyway SQL resolvers remain enabled for the recovery journal", {
         **recovery_history,
         recovery_config: recovery_settings + b"    skip-default-resolvers: true\n",
@@ -1902,6 +1967,19 @@ def run_self_test() -> None:
         **recovery_history,
         recovery_config_override: b"spring.flyway.ignore-migration-patterns[0]: '*:future'\n",
     }, recovery_history, None)
+    check("integer-key default future-only ignore pattern binds through the indexed-list decoder", {
+        **recovery_history,
+        recovery_config_override: b"spring.flyway.ignore-migration-patterns: {0: '*:future'}\n",
+    }, recovery_history, None)
+    for malformed_ignore_patterns in (
+        b"spring.flyway.ignore-migration-patterns[1]: '*:future'\n",
+        b"spring.flyway.ignore-migration-patterns.0: '*:future'\n",
+        b"spring.flyway.ignore-migration-patterns[0]: '*:missing'\n",
+    ):
+        check("malformed indexed ignore pattern cannot qualify Recovery history", {
+            **recovery_history,
+            recovery_config_override: malformed_ignore_patterns,
+        }, recovery_history, "historical effective migration no longer applied")
     check("explicit UTF-8 Flyway encoding qualifies recovery history", {
         **recovery_history, recovery_config: recovery_settings + b"    encoding: UTF-8\n",
     }, recovery_history, None)
