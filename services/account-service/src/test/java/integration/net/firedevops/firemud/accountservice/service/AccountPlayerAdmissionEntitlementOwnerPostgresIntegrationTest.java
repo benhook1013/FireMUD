@@ -382,8 +382,11 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     TenantCapacityAdmission.Request firstHold = null;
     for (long used = 0; used < quota; used++) {
       var occupying = capacityRequest(f);
-      assertThat(f.capacityOwner.commit(occupying, PEER).state())
-          .isEqualTo(TenantCapacityAdmission.State.RESERVED);
+      var reserved = f.capacityOwner.commit(occupying, PEER);
+      assertThat(reserved.state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
+      var retained = f.capacityOwner.readRetainedAdmissionOutcome(occupying, PEER);
+      assertThat(retained.reservation()).isEqualTo(reserved);
+      assertThat(retained.denial()).isNull();
       if (firstHold == null) {
         firstHold = occupying;
       }
@@ -573,7 +576,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
               decisionId.set(error.durableDenialId());
             });
 
-    var retained = f.capacityOwner.readRetainedAdmissionDenial(request, PEER);
+    var retained = f.capacityOwner.readRetainedAdmissionOutcome(request, PEER).denial();
     assertThat(retained.code()).isEqualTo(Failure.CAPACITY_EVALUATION_EXPIRED);
     assertThat(retained.durableDenialId()).isEqualTo(decisionId.get());
     assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))

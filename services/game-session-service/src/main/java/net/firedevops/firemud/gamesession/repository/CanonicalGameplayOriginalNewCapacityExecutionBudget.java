@@ -725,6 +725,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     private boolean releaseAttempted;
     private boolean retired;
     private boolean retirementFailed;
+    private boolean rollbackFailed;
 
     OwnedConnection(ConnectionProvider provider, Connection raw) {
       this.provider = provider;
@@ -742,18 +743,21 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
                     if (method.getName().equals("unwrap")
                         && ((Class<?>) args[0]).isInstance(OwnedConnection.this.proxy))
                       return OwnedConnection.this.proxy;
-                    boolean cleanup =
-                        method.getName().equals("rollback")
-                            || method.getName().equals("isClosed")
-                            || (method.getName().equals("setAutoCommit")
-                                && Boolean.TRUE.equals(args[0]));
-                    if (cleanup) {
+                    if (method.getName().equals("rollback")) return rollback(method, args);
+                    boolean isClosed = method.getName().equals("isClosed");
+                    boolean resetAutoCommit =
+                        method.getName().equals("setAutoCommit") && Boolean.TRUE.equals(args[0]);
+                    if (isClosed || resetAutoCommit) {
                       synchronized (resources) {
-                        // Even a throwing release may already have transferred ownership.
-                        // jOOQ must never roll back or reset a possibly reborrowed connection.
-                        if (releaseAttempted) {
-                          if (method.getName().equals("isClosed")) return true;
-                          throw new java.sql.SQLException("Connection is no longer owned");
+                        if (rollbackFailed && resetAutoCommit) {
+                          // Enabling auto-commit can commit pending writes on a live connection.
+                          // Release must retire this connection instead of resetting it.
+                          return null;
+                        }
+                        // A throwing release may already have transferred ownership.
+                        if (releaseAttempted || retired || retirementFailed) {
+                          if (isClosed) return true;
+                          throw new SQLException("Connection is no longer owned");
                         }
                         return invoke(raw, method, args);
                       }
@@ -779,6 +783,24 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
                     }
                     return value;
                   });
+    }
+
+    private Object rollback(Method method, Object[] args) throws Throwable {
+      synchronized (resources) {
+        if (releaseAttempted || retired || retirementFailed || rollbackFailed) {
+          throw new SQLException("Connection is no longer available for rollback");
+        }
+      }
+      // The resource worker still owns pool return. Cancellation can abort this exact connection
+      // while the driver is waiting for rollback to finish.
+      try {
+        return invoke(raw, method, args);
+      } catch (Throwable failure) {
+        synchronized (resources) {
+          rollbackFailed = true;
+        }
+        throw failure;
+      }
     }
 
     private Object statement(Statement rawStatement) {
@@ -822,13 +844,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       // Detach cancellation before pool return, serialized against a cancellation already running.
       synchronized (resources) {
         if (returned || releaseAttempted) return;
-        if (cancelled.get() && !retired) {
-          try {
-            retire();
-          } catch (RuntimeException unproved) {
-            throw unproved;
-          }
-        }
+        if ((cancelled.get() || rollbackFailed) && !retired) retire();
         releaseAttempted = true;
         if (activeConnection == this) {
           active = null;

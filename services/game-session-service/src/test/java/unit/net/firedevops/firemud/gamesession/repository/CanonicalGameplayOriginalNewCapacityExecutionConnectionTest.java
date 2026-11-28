@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.grpc.Context.CancellableContext;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
@@ -243,32 +244,32 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
         RedisScriptCatalog.fromContributions(
             List.of(new CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution()));
     var foregroundOwner = owner(dsl, redis, tags);
-    var scheduler = Executors.newSingleThreadScheduledExecutor();
     var callerThreads = Executors.newFixedThreadPool(backgroundMaximum);
     var callers = new java.util.ArrayList<java.util.concurrent.Future<Void>>();
+    var callerContexts = new java.util.ArrayList<CancellableContext>();
     try {
-      for (int index = 0; index < backgroundMaximum; index++)
+      for (int index = 0; index < backgroundMaximum; index++) {
+        var context = Context.current().withCancellation();
+        callerContexts.add(context);
         callers.add(
             callerThreads.submit(() -> {
               ready.countDown();
               start.await();
-              try (var context =
-                  Context.current().withDeadlineAfter(600, TimeUnit.MILLISECONDS, scheduler)) {
-                assertThatThrownBy(() ->
-                        context.call(() ->
-                            CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-                                Clock.systemUTC(),
-                                Long.MAX_VALUE,
-                                budget ->
-                                    budgetOwner(dsl, redis, scripts, tags, budget)
-                                        .connectForRead())))
-                    .isInstanceOf(IllegalStateException.class);
-              }
+              assertThatThrownBy(() ->
+                      context.call(() ->
+                          CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                              Clock.systemUTC(),
+                              Long.MAX_VALUE,
+                              budget ->
+                                  budgetOwner(dsl, redis, scripts, tags, budget).connectForRead())))
+                  .isInstanceOf(IllegalStateException.class);
               return null;
             }));
+      }
       assertThat(ready.await(2, TimeUnit.SECONDS)).isTrue();
       start.countDown();
       assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+      callerContexts.forEach(context -> context.cancel(null));
       for (var caller : callers) caller.get(3, TimeUnit.SECONDS);
       assertThat(operationPermits.availablePermits())
           .isEqualTo(operationMaximum - backgroundMaximum);
@@ -308,7 +309,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
       start.countDown();
       foregroundRelease.countDown();
       release.countDown();
-      scheduler.shutdownNow();
+      callerContexts.forEach(context -> context.cancel(null));
       callerThreads.shutdownNow();
     }
 

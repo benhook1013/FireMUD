@@ -32,6 +32,15 @@ local function exactNumber(value)
   if not number or number > 9007199254740991 or string.format('%.0f', number) ~= value then return nil end
   return number
 end
+local function validCommittedEvidence(key, fields)
+  if fields ~= 6 then return false end
+  local sessionSha1 = redis.call('HGET', key, 'sessionSha1')
+  local admissionAt = exactNumber(redis.call('HGET', key, 'admissionAt'))
+  local continuity = exactNumber(redis.call('HGET', key, 'continuityExpiresAt'))
+  return type(sessionSha1) == 'string' and #sessionSha1 == 40
+    and string.match(sessionSha1, '^[0-9a-f]+$') ~= nil and admissionAt ~= nil and continuity ~= nil
+    and continuity > admissionAt and continuity - admissionAt <= 300000
+end
 local function objectWithFields(value, fields)
   if type(value) ~= 'table' then return false end
   local count = 0
@@ -119,12 +128,7 @@ if action == 'FENCE' then
         or redis.call('HGET', KEYS[7], 'digest') ~= capacityDigest then return -1 end
     local state, fields = redis.call('HGET', KEYS[7], 'state'), redis.call('HLEN', KEYS[7])
     if state == 'COMMITTED' then
-      local sessionSha1 = redis.call('HGET', KEYS[7], 'sessionSha1')
-      local admissionAt = exactNumber(redis.call('HGET', KEYS[7], 'admissionAt'))
-      local continuity = exactNumber(redis.call('HGET', KEYS[7], 'continuityExpiresAt'))
-      if fields ~= 6 or type(sessionSha1) ~= 'string' or #sessionSha1 ~= 40
-          or not string.match(sessionSha1, '^[0-9a-f]+$') or not admissionAt or not continuity
-          or continuity <= admissionAt or continuity - admissionAt > 300000 then return -1 end
+      if not validCommittedEvidence(KEYS[7], fields) then return -1 end
       return 9
     end
     -- Completed exact outcomes are read-only, even after the operation deadline.
@@ -159,7 +163,10 @@ if action == 'CLOSE' then
       or redis.call('HGET', KEYS[7], 'digest') ~= capacityDigest then return -1 end
   local state = redis.call('HGET', KEYS[7], 'state')
   if state == 'CLOSED' and redis.call('HLEN', KEYS[7]) == 3 then return 7 end
-  if state == 'COMMITTED' and redis.call('HLEN', KEYS[7]) == 6 then return 9 end
+  if state == 'COMMITTED' then
+    if not validCommittedEvidence(KEYS[7], redis.call('HLEN', KEYS[7])) then return -1 end
+    return 9
+  end
   if state ~= 'AUTHORIZED' or redis.call('HLEN', KEYS[7]) ~= 3
       or redis.call('TYPE', KEYS[1]).ok ~= 'string' or redis.call('PTTL', KEYS[1]) ~= -1
       or redis.call('GET', KEYS[1]) ~= candidateBytes
@@ -270,6 +277,7 @@ if (capacityState == 'AUTHORIZED' and redis.call('HLEN', KEYS[7]) ~= 3)
     or (capacityState == 'COMMITTED' and redis.call('HLEN', KEYS[7]) ~= 6) then return -1 end
 if action == 'INSTALL' then
   if capacityState == 'AUTHORIZED' then return 6 end
+  if not validCommittedEvidence(KEYS[7], redis.call('HLEN', KEYS[7])) then return -1 end
   return 9
 end
 local observed = redis.call('GET', KEYS[1])

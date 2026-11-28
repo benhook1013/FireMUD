@@ -332,7 +332,7 @@ class AccountTenantCapacityClientMtlsTest {
               }
 
               @Override
-              public void readTenantCapacityAdmissionDenial(
+              public void readTenantCapacityAdmissionOutcome(
                   CommitTenantCapacityAdmissionRequest wire,
                   StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
                 reads.incrementAndGet();

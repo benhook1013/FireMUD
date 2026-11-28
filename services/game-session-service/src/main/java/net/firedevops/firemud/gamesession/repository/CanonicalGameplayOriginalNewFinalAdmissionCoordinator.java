@@ -116,6 +116,17 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       requireOriginalSource(source, originalDecision);
       var selectedOwner =
           capacityExecution.requireRequestBinding(source, capacityRequest, absoluteDeadlineMillis);
+      CanonicalGameplayCapacityEvidenceBudget.RetainedCharge priorCharge = null;
+      if (source.transitionStatus() == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+          && capacityRequest.evidence().permitsCreation()) {
+        priorCharge =
+            capacityExecution.findExistingCharge(
+                source, capacityRequest, selectedOwner, absoluteDeadlineMillis);
+        if (priorCharge != null && priorCharge.accountDenial() != null) {
+          requireDenialScope(source, privateRegionInstallation, selectedOwner);
+          throw CapacityRefusedException.retainedAdmissionDenial(priorCharge.accountDenial());
+        }
+      }
       var accountOpen = readAccountOpen(source);
       if (clock.millis() >= accountOpen.expiresAtEpochMillis()
           && source.transitionStatus()
@@ -132,6 +143,22 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource currentSource =
           readSameSource(source, originalDecision, false);
       source = currentSource;
+
+      TenantCapacityAdmission.Result retainedReservation = null;
+      if (priorCharge != null) {
+        try {
+          retainedReservation =
+              capacityClient.readRetainedAdmissionOutcome(capacityRequest, absoluteDeadlineMillis);
+        } catch (CapacityRefusedException refusal) {
+          settleAuthenticatedDenial(
+              source,
+              capacityRequest,
+              selectedOwner,
+              new Refusal(refusal.code(), refusal.durableDenialId()),
+              absoluteDeadlineMillis);
+          throw refusal;
+        }
+      }
 
       CanonicalGameplayOriginalNewCapacityExecutionOwner.CommittedCapacitySource committedCapacity =
           null;
@@ -184,36 +211,37 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
               capacityRequest.evidence().permitsCreation()
                   && source.transitionStatus()
                       != CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED;
-          if (precharge) {
-            var retainedDenial =
-                capacityExecution.precharge(
-                    source, capacityRequest, selectedOwner, absoluteDeadlineMillis);
-            if (retainedDenial != null)
-              throw CapacityRefusedException.retainedAdmissionDenial(retainedDenial);
-          }
+          var retainedCharge =
+              precharge
+                  ? capacityExecution.precharge(
+                      source, capacityRequest, selectedOwner, absoluteDeadlineMillis)
+                  : null;
+          if (retainedCharge != null && retainedCharge.accountDenial() != null)
+            throw CapacityRefusedException.retainedAdmissionDenial(retainedCharge.accountDenial());
           final TenantCapacityAdmission.Result reservation;
           try {
-            reservation =
-                recoveredConfirmation == null
-                    ? capacityClient.commit(capacityRequest, absoluteDeadlineMillis)
-                    : recoveredConfirmation.committedCapacityResult();
+            if (recoveredConfirmation != null) {
+              reservation = recoveredConfirmation.committedCapacityResult();
+            } else if (retainedReservation != null) {
+              if (retainedCharge == null) throw unavailable();
+              reservation = retainedReservation;
+            } else if (retainedCharge != null) {
+              reservation =
+                  capacityClient.readRetainedAdmissionOutcome(
+                      capacityRequest, absoluteDeadlineMillis);
+            } else {
+              reservation = capacityClient.commit(capacityRequest, absoluteDeadlineMillis);
+            }
           } catch (CapacityRefusedException refusal) {
             if (precharge
                 && refusal.code().supportsDurableDenial()
                 && refusal.durableDenialId() != null) {
-              try {
-                capacityExecution.settleDeniedCharge(
-                    source,
-                    capacityRequest,
-                    selectedOwner,
-                    new Refusal(refusal.code(), refusal.durableDenialId()),
-                    absoluteDeadlineMillis);
-              } catch (RuntimeException settlementFailure) {
-                // This remains local and indeterminate; the authenticated Account denial has
-                // already completed, and settlement failure must not rewrite that outcome.
-                LOG.warn(
-                    "Original NEW Account denial received; local evidence settlement unconfirmed");
-              }
+              settleAuthenticatedDenial(
+                  source,
+                  capacityRequest,
+                  selectedOwner,
+                  new Refusal(refusal.code(), refusal.durableDenialId()),
+                  absoluteDeadlineMillis);
             }
             throw refusal;
           }
@@ -332,6 +360,21 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       TenantCapacityAdmission.Request request,
       CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selectedOwner,
       long deadline) {
+    requireDenialScope(source, installation, selectedOwner);
+    var charge = capacityExecution.findExistingCharge(source, request, selectedOwner, deadline);
+    if (charge == null) throw unavailable();
+    var denial = charge.accountDenial();
+    if (denial == null) {
+      denial = capacityClient.readRetainedAdmissionDenial(request, deadline);
+      settleAuthenticatedDenial(source, request, selectedOwner, denial, deadline);
+    }
+    return CapacityRefusedException.retainedAdmissionDenial(denial);
+  }
+
+  private static void requireDenialScope(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayRegionLeaseOwner.Installation installation,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selectedOwner) {
     var candidate = source.candidate();
     if (!candidate.bindingDecisionId().equals(installation.transitionId)
         || !candidate.matchesProvisionalSources(installation.evidence)
@@ -339,13 +382,20 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
         || selectedOwner.fence() != installation.status.executorFence().longValueExact()) {
       throw unavailable();
     }
-    var charge = capacityExecution.requireExistingCharge(source, request, selectedOwner, deadline);
-    var denial = charge.accountDenial();
-    if (denial == null) {
-      denial = capacityClient.readRetainedAdmissionDenial(request, deadline);
+  }
+
+  private void settleAuthenticatedDenial(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      TenantCapacityAdmission.Request request,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selectedOwner,
+      Refusal denial,
+      long deadline) {
+    try {
       capacityExecution.settleDeniedCharge(source, request, selectedOwner, denial, deadline);
+    } catch (RuntimeException settlementFailure) {
+      // Keep the authenticated Account outcome. The exact request can retry local settlement.
+      LOG.warn("Original NEW Account denial received; local evidence settlement unconfirmed");
     }
-    return CapacityRefusedException.retainedAdmissionDenial(denial);
   }
 
   private CanonicalGameplayAccountInitialOpenProof.CurrentOpen readAccountOpen(

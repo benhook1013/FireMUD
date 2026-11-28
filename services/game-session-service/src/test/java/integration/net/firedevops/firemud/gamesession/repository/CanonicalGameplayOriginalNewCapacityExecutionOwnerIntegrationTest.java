@@ -826,10 +826,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                       controlledCapacity.digest())
                   .get(0, String.class))
           .isEqualTo("AUTHORIZED");
-      authorized.closeOriginalAttempt(
+      var recreated = capacityOwner();
+      recreated.closeOriginalAttempt(
           controlledCapacity.request(), controlledCapacity.reservation());
       var proof =
-          authorized.readExact(controlledCapacity.request(), controlledCapacity.reservation());
+          recreated.readExact(controlledCapacity.request(), controlledCapacity.reservation());
       assertThat(proof.disposition()).isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
       assertThat(proof.currentOwnerFence())
           .isGreaterThanOrEqualTo(controlledCapacity.selectedOwnerFence());
@@ -844,7 +845,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                       deadline()))
           .isInstanceOf(IllegalStateException.class);
       assertThat(
-              authorized
+              recreated
                   .readExact(controlledCapacity.request(), controlledCapacity.reservation())
                   .canonicalReadback())
           .containsExactly(proof.canonicalReadback());

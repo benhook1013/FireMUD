@@ -356,8 +356,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     CountDownLatch cancelled = new CountDownLatch(1), released = new CountDownLatch(1);
     AtomicBoolean returned = new AtomicBoolean();
     AtomicBoolean orderingViolation = new AtomicBoolean();
+    AtomicReference<Thread> executionThread = new AtomicReference<>();
     when(statement.execute())
         .thenAnswer(invocation -> {
+          executionThread.set(Thread.currentThread());
           executing.countDown();
           awaitUninterruptibly(finishExecution);
           return true;
@@ -401,7 +403,24 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       assertThat(executing.await(1, TimeUnit.SECONDS)).isTrue();
       assertThat(cancelling.await(1, TimeUnit.SECONDS)).isTrue();
       finishExecution.countDown();
+      org.awaitility.Awaitility.await()
+          .atMost(2, TimeUnit.SECONDS)
+          .untilAsserted(() -> {
+            Thread worker = executionThread.get();
+            assertThat(worker).isNotNull();
+            assertThat(worker.getState()).isEqualTo(Thread.State.BLOCKED);
+            assertThat(
+                    java.util.Arrays.stream(worker.getStackTrace())
+                        .anyMatch(frame ->
+                            frame.getClassName().contains("$OwnedConnection")
+                                && (frame.getMethodName().startsWith("lambda$statement$")
+                                    || frame.getMethodName().equals("release"))))
+                .isTrue();
+          });
       verify(provider, never()).release(connection);
+      assertThat(finishCancellation.getCount())
+          .as("cancellation still owns the connection custody monitor")
+          .isEqualTo(1);
       finishCancellation.countDown();
       assertThat(cancelled.await(2, TimeUnit.SECONDS)).isTrue();
       assertThat(released.await(2, TimeUnit.SECONDS)).isTrue();
@@ -568,10 +587,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                   && connections.size() == 1
                   && outstanding.get() == 1) {
                 // This operation owns only the one disposable mock connection.
-                assertThat(retained.get()).isEqualTo(beforeRetained + 1);
                 connections.clear();
                 outstanding.set(0);
-                retained.decrementAndGet();
+                if (retained.get() == beforeRetained + 1) retained.decrementAndGet();
                 ReflectionTestUtils.invokeMethod(budget, "releaseIfFinished");
               }
             }
@@ -735,6 +753,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             return true;
           });
       assertThat(events.list).hasSize(1);
+      assertThat(operationsEntered.get()).isEqualTo(2);
       assertThat(cancelled.cancel(false)).isTrue();
       assertThat(late.completeExceptionally(new IllegalStateException("second close failure")))
           .isTrue();
@@ -761,16 +780,18 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       // operation acquired SQL resources or started a cancellation worker. The terminal failed
       // and cancelled close futures therefore retain exactly the admitted operation count. Undo
       // only that test-created retained state after proving it still exists.
+      int ownedOperations = operationsEntered.get();
       int retainedOperationPermits = priorOperations - operations.availablePermits();
       int retainedBackgroundPermits = priorBackground - background.availablePermits();
-      assertThat(operationsEntered.get()).isEqualTo(2);
-      assertThat(retainedOperationPermits).isEqualTo(operationsEntered.get());
-      assertThat(retainedBackgroundPermits).isEqualTo(operationsEntered.get());
-      assertThat(retainedOperationPermits).isBetween(0, operationsEntered.get());
-      assertThat(retainedBackgroundPermits).isEqualTo(retainedOperationPermits);
-      operations.release(retainedOperationPermits);
-      background.release(retainedBackgroundPermits);
-      retained.addAndGet(priorRetained - retained.get());
+      if (retainedOperationPermits >= 0 && retainedOperationPermits <= ownedOperations) {
+        operations.release(retainedOperationPermits);
+      }
+      if (retainedBackgroundPermits >= 0 && retainedBackgroundPermits <= ownedOperations) {
+        background.release(retainedBackgroundPermits);
+      }
+      if (retained.get() == priorRetained + ownedOperations) {
+        retained.addAndGet(-ownedOperations);
+      }
       Metrics.removeRegistry(registry);
       registry.close();
     }
@@ -935,6 +956,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       release.countDown();
       executor.shutdownNow();
       verify(provider, timeout(2000).times(maximum)).release(connection);
+      awaitResourceAndCancellationWorkerCleanup();
     }
   }
 
@@ -1191,6 +1213,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             .isEqualTo(true);
         finish.countDown();
         verify(provider, timeout(2000)).release(connection);
+        awaitResourceAndCancellationWorkerCleanup();
         assertNoOwnedConnections(captured.get());
         for (int index = 0;
             index

@@ -201,7 +201,7 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
         var restarted = proof.capacity(proof.sql);
         assertThat(
                 restarted
-                    .requireExistingCharge(
+                    .findExistingCharge(
                         proof.admission, original.request(), selected, transferDeadline())
                     .accountDenial())
             .isEqualTo(denial);
@@ -239,13 +239,14 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
           execution ->
               proof.sql.transactionResult(configuration ->
                   CanonicalGameplayCapacityEvidenceBudget.precharge(
-                      DSL.using(configuration),
-                      execution.request(),
-                      execution.candidateDigest(),
-                      selected,
-                      tag,
-                      Clock.fixed(
-                          execution.request().evidence().expiresAt(), java.time.ZoneOffset.UTC)));
+                          DSL.using(configuration),
+                          execution.request(),
+                          execution.candidateDigest(),
+                          selected,
+                          tag,
+                          Clock.fixed(
+                              execution.request().evidence().expiresAt(), java.time.ZoneOffset.UTC))
+                      .accountDenial());
       assertThatThrownBy(() -> precharge.apply(fresh))
           .isExactlyInstanceOf(IllegalStateException.class)
           .hasMessage("Original NEW capacity evidence budget is unavailable");
