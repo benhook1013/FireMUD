@@ -38,6 +38,7 @@ import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteListener;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeAll;
@@ -217,6 +218,82 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
             () -> fixture.inTransaction(() -> fixture.coordinator().claim(binding, changed)))
         .isInstanceOf(DraftCommitCoordinatorRepository.DraftCommitIdentityConflictException.class);
     assertThat(retainedOperation.accountBindingBytes()).containsExactly(account.canonicalBytes());
+  }
+
+  @Test
+  void accountOperationClaimedAfterValidationRollsBackCompetingVersion() {
+    DraftCommitBinding contender = binding(fixture.newTarget());
+    DraftCommitBinding winner = binding(fixture.newTarget());
+    DraftAuthorizationFenceBinding contenderAccount =
+        accountBinding(contender, "stipulated-contender");
+    UUID operationId = contenderAccount.operationId();
+    DraftAuthorizationFenceBinding winnerAccount =
+        accountBinding(
+            winner,
+            operationId,
+            UUID.randomUUID(),
+            contenderAccount.actorAccountId(),
+            "stipulated-winner");
+    var independentTransaction =
+        new TransactionTemplate(
+            fixture.transaction().getTransactionManager(), fixture.transaction());
+    independentTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    String operationLookupSql =
+        "SELECT * FROM game_design_draft_terminal_operation WHERE operation_id = ? FOR UPDATE";
+    var operationLookups = new AtomicInteger();
+    var listener =
+        ExecuteListener.onExecuteStart(
+            context -> {
+              if (operationLookupSql.equals(context.sql())
+                  && operationLookups.incrementAndGet() == 3) {
+                // Both validation lookups missed. The contender has inserted its Draft and owners.
+                assertThat(draftClaimImages(contender.target()))
+                    .hasSize(1 + contender.requiredOwners().size());
+                independentTransaction.execute(
+                    status -> fixture.coordinator().claim(winner, winnerAccount));
+              }
+            });
+    DSLContext observed = DSL.using(fixture.dsl().configuration().deriveAppending(listener));
+    var contenderCoordinator = new DraftCommitCoordinatorRepository(observed);
+
+    assertThatThrownBy(
+            () ->
+                fixture.inTransaction(
+                    () -> contenderCoordinator.claim(contender, contenderAccount)))
+        .isExactlyInstanceOf(
+            DraftCommitCoordinatorRepository.DraftCommitIdentityConflictException.class)
+        .hasMessage("Account operation identity was reused with changed original canonical bytes");
+    assertThat(operationLookups).hasValue(3);
+    assertThat(draftClaimImages(contender.target())).isEmpty();
+
+    var persisted =
+        new GameDesignDraftTerminalOutcomeRepository(fixture.dsl())
+            .readOperation(operationId)
+            .orElseThrow();
+    assertThat(persisted.accountBindingBytes()).containsExactly(winnerAccount.canonicalBytes());
+    assertThat(persisted.gameDesignBinding().canonicalBytes())
+        .containsExactly(winner.canonicalBytes());
+    String operationImage = operationClaimImage(operationId);
+    List<String> winnerImages = draftClaimImages(winner.target());
+    assertThat(winnerImages).hasSize(1 + winner.requiredOwners().size());
+
+    var replay = fixture.inTransaction(() -> fixture.coordinator().claim(winner, winnerAccount));
+    assertThat(replay.binding().canonicalBytes()).containsExactly(winner.canonicalBytes());
+    assertThat(operationClaimImage(operationId)).isEqualTo(operationImage);
+    assertThat(draftClaimImages(winner.target())).isEqualTo(winnerImages);
+  }
+
+  private static String operationClaimImage(UUID operationId) {
+    return fixture
+        .dsl()
+        .fetchSingle(
+            """
+            SELECT retained.xmin::text || '/' || to_jsonb(retained)::text
+              FROM game_design_draft_terminal_operation retained
+             WHERE retained.operation_id = ?
+            """,
+            operationId)
+        .get(0, String.class);
   }
 
   @Test

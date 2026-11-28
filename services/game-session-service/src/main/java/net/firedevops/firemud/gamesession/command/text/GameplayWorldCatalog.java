@@ -587,10 +587,7 @@ public final class GameplayWorldCatalog {
       RealmView publicRealm = world.realms().getFirst();
       entries.add(
           new WorldsViewOutput.WorldEntry(
-              world.slug(),
-              world.displayName(),
-              publicRealm.gameInstanceId(),
-              publicRealm.requiresCharacterSelection()));
+              world.slug(), world.displayName(), publicRealm.requiresCharacterSelection()));
     }
     return List.copyOf(entries);
   }
@@ -603,7 +600,6 @@ public final class GameplayWorldCatalog {
           new RealmBrowseViewOutput.RealmEntry(
               realm.slug(),
               realm.displayName(),
-              realm.gameInstanceId(),
               realm.requiresCharacterSelection(),
               realm.stateScope(),
               realm.characterCreationPolicy()));

@@ -236,7 +236,7 @@ class WebSocketOutputProjectorTest {
             session,
             PlayerOutput.view(
                 new WorldsViewOutput(
-                    List.of(new WorldsViewOutput.WorldEntry("123", "Numeric World", 41L, false)))),
+                    List.of(new WorldsViewOutput.WorldEntry("123", "Numeric World", false)))),
             "en-NZ",
             presentation);
     JsonNode worlds = objectMapper.readTree(worldsPayload);
@@ -244,6 +244,8 @@ class WebSocketOutputProjectorTest {
 
     assertThat(worlds.path("outputs").get(0).path("payloadType").asText()).isEqualTo("worlds_view");
     assertThat(world.path("slug").asText()).isEqualTo("123");
+    assertThat(world.path("displayName").asText()).isEqualTo("Numeric World");
+    assertThat(world.has("gameInstanceId")).isFalse();
     assertThat(world.has("ordinal")).isFalse();
 
     String realmsPayload =
@@ -254,7 +256,7 @@ class WebSocketOutputProjectorTest {
                     "123",
                     List.of(
                         new RealmBrowseViewOutput.RealmEntry(
-                            "456", "Numeric Realm", 41L, false, "SHARED", "ALLOW_NEW")))),
+                            "456", "Numeric Realm", false, "SHARED", "ALLOW_NEW")))),
             "en-NZ",
             presentation);
     JsonNode realms = objectMapper.readTree(realmsPayload);
@@ -264,6 +266,8 @@ class WebSocketOutputProjectorTest {
     assertThat(realms.path("outputs").get(0).path("payload").path("worldSlug").asText())
         .isEqualTo("123");
     assertThat(realm.path("realmSlug").asText()).isEqualTo("456");
+    assertThat(realm.path("displayName").asText()).isEqualTo("Numeric Realm");
+    assertThat(realm.has("gameInstanceId")).isFalse();
     assertThat(realm.has("ordinal")).isFalse();
   }
 
