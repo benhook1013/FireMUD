@@ -777,6 +777,7 @@ def recovery_flyway_config(
                                  recovery_database_host, RECOVERY_DATABASE_PORT,
                                  *RECOVERY_DATABASE_CREDENTIAL_SELECTORS,
                                  "spring.flyway.validateonmigrate",
+                                 "spring.flyway.connectretries",
                                  "spring.datasource.url", "spring.datasource.hikari.jdbcurl",
                                  "spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
                                  "spring.flyway.table", "spring.flyway.schemas", "spring.flyway.defaultschema",
@@ -892,6 +893,16 @@ def recovery_flyway_config(
     if "tablespace" in flyway:
         # The checker cannot establish that an explicit history tablespace exists.
         return None
+    connect_retries = flyway.get("connectretries")
+    if connect_retries is not None:
+        if type(connect_retries) is int:
+            parsed_connect_retries = connect_retries
+        elif isinstance(connect_retries, str) and re.fullmatch(r"\+?[0-9]+", connect_retries):
+            parsed_connect_retries = int(connect_retries)
+        else:
+            return None
+        if not 0 <= parsed_connect_retries <= 2**31 - 1:
+            return None
     encoding = flyway.get("encoding", "UTF-8")
     # The pinned Java UTF-8 charset deliberately has a different alias set from Python.
     if (not isinstance(encoding, str)
@@ -1573,6 +1584,9 @@ def run_self_test() -> None:
         ("spring.datasource.hikari.username", "${OTHER_FIXTURE_USER}", "historical effective migration no longer applied"),
         ("spring.datasource.hikari.password", "literal-test-value", "historical effective migration no longer applied"),
         ("spring.flyway.validate-on-migrate", "false", "historical effective migration no longer applied"),
+        ("spring.flyway.connect-retries", "-1", "historical effective migration no longer applied"),
+        ("spring.flyway.connect-retries", "0", None),
+        ("spring.flyway.connect-retries", "3", None),
         ("spring.flyway.tablespace", "recovery_fast", "historical effective migration no longer applied"),
         ("spring.flyway.group", "true", "historical effective migration no longer applied"),
         ("spring.flyway.group", "false", None),

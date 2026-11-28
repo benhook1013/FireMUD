@@ -103,6 +103,7 @@ import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.availability.ApplicationAvailability;
 import org.springframework.boot.availability.LivenessState;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.flyway.autoconfigure.FlywayConfigurationCustomizer;
 import org.springframework.boot.health.actuate.endpoint.HealthEndpoint;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.health.contributor.Status;
@@ -801,6 +802,98 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
   @Test
   @ResourceLock("packaged-recovery-control-fixture-database")
+  void packagedFlywayBoundsOutboxLockWaitAndRetriesWithoutLeakingSessionTimeout() throws Exception {
+    String database = "firemud_recovery_control";
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try {
+      // Bound the fixture independently if the migration loses its narrower lock timeout.
+      dsl.execute("ALTER DATABASE " + database + " SET statement_timeout TO '20s'");
+      journalFlyway(packagedUrl, "5").migrate();
+      try (var inspection =
+          DriverManager.getConnection(
+              packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        inspection.setAutoCommit(false);
+        var inspector = DSL.using(inspection, SQLDialect.POSTGRES);
+        inspector.execute(
+            "LOCK TABLE recovery_control.initial_gameplay_release_outbox IN ACCESS SHARE MODE");
+        try {
+          assertThatThrownBy(
+                  () -> {
+                    try (var ignored = startPackagedApplication(true)) {
+                      throw new AssertionError("Migration must time out while the lock is held");
+                    }
+                  })
+              .hasStackTraceContaining("canceling statement due to lock timeout");
+          assertThat(
+                  inspector
+                      .fetchSingle(
+                          "SELECT max(version::integer) FROM recovery_control.flyway_schema_history_recovery_control WHERE success")
+                      .get(0, Integer.class))
+              .isEqualTo(5);
+        } finally {
+          inspection.rollback();
+        }
+      }
+      try (var application =
+          startPackagedApplication(true, "--spring.datasource.hikari.maximum-pool-size=1")) {
+        assertCompletePackagedMigrationReceipts(packagedUrl);
+        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+        try (var pooledConnection = application.getBean(HikariDataSource.class).getConnection()) {
+          assertThat(
+                  DSL.using(pooledConnection, SQLDialect.POSTGRES)
+                      .fetchSingle("SHOW lock_timeout")
+                      .get(0, String.class))
+              .isEqualTo("0");
+        }
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void packagedFlywayRejectsChangedLocationsFromCustomizerBeforeMigration() throws Exception {
+    String database = "firemud_recovery_control";
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try {
+      assertThatThrownBy(
+              () -> {
+                try (var ignored =
+                    startPackagedApplication(true, DriftedFlywayLocationsConfiguration.class)) {
+                  throw new AssertionError("Effective Flyway location drift must refuse startup");
+                }
+              })
+          .hasStackTraceContaining(
+              "Recovery Flyway locations must contain only classpath:db/recovery-control-migration");
+      try (var connection =
+          DriverManager.getConnection(
+              packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        assertThat(
+                DSL.using(connection, SQLDialect.POSTGRES)
+                    .fetchSingle("SELECT to_regnamespace('recovery_control') IS NULL")
+                    .get(0, Boolean.class))
+            .isTrue();
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @TestConfiguration(proxyBeanMethods = false)
+  static class DriftedFlywayLocationsConfiguration {
+    @Bean
+    FlywayConfigurationCustomizer driftedFlywayLocations() {
+      return configuration -> configuration.locations("classpath:unqualified-recovery-migrations");
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
   void packagedFlywayRefusesMixedModeAfterAllMigrationsAreApplied() throws Exception {
     String database = "firemud_recovery_control";
     dsl.execute("CREATE DATABASE " + database);
@@ -1307,6 +1400,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     "effect_id, DROP NOT NULL",
     "effect_id, TYPE text USING effect_id::text",
     "readback_identity, TYPE varchar(4)",
+    "readback_identity, SET DEFAULT 'fixture-default'",
     "readback_digest, TYPE char(63)",
     "readback_digest, SET NOT NULL"
   })
@@ -5246,6 +5340,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .isInstanceOf(InitialGameplayReleaseConflictException.class)
           .hasMessageContaining("preparation observation compare-and-set lost");
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+      assertThat(
+              dsl.fetchCount(
+                  DSL.table("recovery_control.initial_gameplay_release_preparation_receipt"),
+                  DSL.field("outbox_id", UUID.class).eq(preparation.outboxId()),
+                  DSL.field("identity_digest", String.class)
+                      .eq(tupleCodec.digest(fresh.readbackIdentity()))))
+          .isZero();
     } finally {
       dsl.execute(
           "DROP TRIGGER IF EXISTS fixture_skip_preparation_observation"

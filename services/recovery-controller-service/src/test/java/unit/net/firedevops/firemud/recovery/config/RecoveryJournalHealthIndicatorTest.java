@@ -92,7 +92,7 @@ class RecoveryJournalHealthIndicatorTest {
         .thenAnswer(ignored -> {
           acquiring.countDown();
           try {
-            release.await(5, TimeUnit.SECONDS);
+            release.await();
           } finally {
             borrowFinished.countDown();
           }
@@ -220,9 +220,7 @@ class RecoveryJournalHealthIndicatorTest {
     doAnswer(
             ignored -> {
               closing.countDown();
-              if (!release.await(5, TimeUnit.SECONDS)) {
-                throw new SQLException("fixture cleanup was not released");
-              }
+              release.await();
               closeFinished.countDown();
               return null;
             })
