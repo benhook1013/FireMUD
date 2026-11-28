@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(35);
+      assertThat(catalog.catalogEpoch()).isEqualTo(37);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -218,6 +218,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.11",
               "catalog-installation:1065.0.11.1",
               "catalog-installation:1065.0.11.2",
+              "catalog-installation:1065.0.11.3",
+              "catalog-installation:1065.0.11.4",
               "catalog-installation:1065.0.12",
               "catalog-installation:1065.0.13",
               "catalog-installation:1065.0.14",
@@ -254,6 +256,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   || identity.contains(":1065.0.11:")
                   || identity.contains(":1065.0.11.1:")
                   || identity.contains(":1065.0.11.2:")
+                  || identity.contains(":1065.0.11.3:")
+                  || identity.contains(":1065.0.11.4:")
                   || identity.contains(":1065.0.12:")
                   || identity.contains(":1065.0.13:")
                   || identity.contains(":1065.0.14:")
@@ -801,7 +805,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(35);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(37);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(fact ->
                 fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
@@ -970,6 +974,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "1065.0.11",
               "1065.0.11.1",
               "1065.0.11.2",
+              "1065.0.11.3",
+              "1065.0.11.4",
               "1065.0.12",
               "1065.0.13",
               "1065.0.14",
@@ -1025,7 +1031,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           f.dsl.execute("DELETE FROM " + f.history + " WHERE installed_rank=10000");
         }
       }
-      assertThat(f.owner().capture(request()).catalog().catalogEpoch()).isEqualTo(35);
+      assertThat(f.owner().capture(request()).catalog().catalogEpoch()).isEqualTo(37);
     }
   }
 
@@ -1790,6 +1796,19 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   .get(
                       "game_session_original_new_capacity_execution.gs_capacity_close_after_final_receipt"))
           .contains("BEFORE UPDATE ON ", " FOR EACH ROW EXECUTE FUNCTION ");
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT t.tgqual IS NULL"
+                          + " FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid"
+                          + " JOIN pg_namespace n ON n.oid=c.relnamespace"
+                          + " WHERE n.nspname=? AND c.relname=? AND t.tgname=?"
+                          + " AND NOT t.tgisinternal",
+                      f.schema,
+                      "game_session_original_new_capacity_execution",
+                      "gs_capacity_close_after_final_receipt")
+                  .get(0, Boolean.class))
+          .isTrue();
     }
   }
 
@@ -2034,8 +2053,73 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
-  void opaqueRuntimeOwnerIdentityUpgradePreservesRetainedRowsAndCatalogEvidence() {
+  void regionTransferInstallationAndIncarnationUpgradeRetainsPopulatedCatalogAtEpochTwentyFive() {
     try (Fixture f = fixture("1065.0.11.2")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.11.3",
+          24,
+          "V1065.0.11.3__bind_region_transfer_installation_and_incarnation.sql",
+          Map.of(
+              "require_gs_region_transfer_successor_installation()",
+              List.of(
+                  "s.region_epoch=NEW.region_epoch",
+                  "s.owner_instance_id=NEW.new_owner_id",
+                  "s.executor_fence=NEW.new_owner_fence",
+                  "s.lease_token_correlation=NEW.new_lease_correlation"),
+              "require_gs_region_transfer_dispatch_incarnation()",
+              List.of("i.fence_dispatch_incarnation IS DISTINCT FROM NEW.incarnation_digest"),
+              "preserve_gs_region_fence_dispatch()",
+              List.of(
+                  "WHERE transfer_id=NEW.transfer_id FOR UPDATE",
+                  "SET incarnation_digest=NEW.fence_dispatch_incarnation")),
+          Map.of(
+              "game_session_region_owner_transfer.gs_region_transfer_successor_installation",
+              "require_gs_region_transfer_successor_installation()",
+              "game_session_region_owner_transfer.gs_region_transfer_dispatch_incarnation",
+              "require_gs_region_transfer_dispatch_incarnation()"),
+          Map.of(
+              "game_session_region_owner_transfer.gs_region_transfer_successor_installation",
+              List.of("TRIGGER")),
+          Map.of());
+      assertThat(
+              f.guards()
+                  .get(
+                      "game_session_region_owner_transfer.gs_region_transfer_successor_installation"))
+          .contains("DEFERRABLE INITIALLY DEFERRED");
+    }
+  }
+
+  @Test
+  void regionTransferSuccessorAndFenceReceiptUpgradePreservesEpochTwentySix() {
+    try (Fixture f = fixture("1065.0.11.3")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.11.4",
+          25,
+          "V1065.0.11.4__qualify_region_transfer_successor_and_fence_receipts.sql",
+          Map.of(
+              "require_gs_region_transfer_successor_installation()",
+              List.of(
+                  "s.owner_service='game-session-service' AND NOT s.paused",
+                  "s.owner_instance_id=NEW.new_owner_id",
+                  "s.executor_fence=NEW.new_owner_fence",
+                  "s.lease_token_correlation=NEW.new_lease_correlation")),
+          Map.of(),
+          Map.of(
+              "game_session_region_owner_transfer_item.gs_region_fence_receipt_dispatch_incarnation",
+              List.of(
+                  "CHECK(fence_dispatch_id IS NULL OR ("
+                      + "fence_dispatch_id <> '00000000-0000-0000-0000-000000000000'::uuid"
+                      + " AND (fence_readback IS NULL OR (incarnation_digest IS NOT NULL"
+                      + " AND incarnation_digest = fence_dispatch_incarnation)))):true")),
+          Map.of());
+    }
+  }
+
+  @Test
+  void opaqueRuntimeOwnerIdentityUpgradePreservesRetainedRowsAndCatalogEvidence() {
+    try (Fixture f = fixture("1065.0.11.4")) {
       f.populatePredecessor();
       var original = f.owner().capture(request());
       var before = f.rows(f.tables());
@@ -2049,7 +2133,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(f.historyRows(false)).hasSize(history.size() + 1);
       assertThat(f.evidence(original.request())).isEqualTo(evidence);
       assertThat(f.dsl.fetchSingle("SELECT max(catalog_epoch) FROM " + EPOCHS).get(0, Long.class))
-          .isEqualTo(25L);
+          .isEqualTo(27L);
       for (String table :
           List.of(
               "game_session_original_new_capacity_execution",
@@ -2066,12 +2150,12 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
-  void projectionRepairUpgradePreservesPopulatedCatalogAtEpochTwentySix() {
+  void projectionRepairUpgradePreservesPopulatedCatalogAtEpochTwentyEight() {
     try (Fixture f = fixture("1065.0.12")) {
       assertCapacityCatalogGuardUpgrade(
           f,
           "1065.0.13",
-          25,
+          27,
           "V1065.0.13__repair_frozen_required_member_projection.sql",
           Map.of(),
           Map.of(),
@@ -2085,7 +2169,17 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     try (Fixture f = fixture("1065.0.16")) {
       f.populatePredecessor();
       var original = f.owner().capture(request());
-      assertThat(original.catalog().catalogEpoch()).isEqualTo(29);
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(31);
+      // The SQL generator projects the installed schema and migration inventory.
+      // Reconstruct each frontier while its matching generator is installed.
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT catalog_bytes=gs_runtime_family_catalog_bytes(31) FROM "
+                          + EPOCHS
+                          + " WHERE catalog_epoch=31")
+                  .get(0, Boolean.class))
+          .isTrue();
       var rowsBefore = f.rows(f.tables());
       rowsBefore.remove(f.history);
       rowsBefore.remove(EPOCHS);
@@ -2116,7 +2210,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   .fetch(
                       "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
                           + EPOCHS
-                          + " e WHERE catalog_epoch<=29 ORDER BY catalog_epoch")
+                          + " e WHERE catalog_epoch<=31 ORDER BY catalog_epoch")
                   .getValues(0, String.class))
           .isEqualTo(epochsBefore);
       assertThat(
@@ -2167,14 +2261,14 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           .contains("Execution custody prevents capacity evidence charge changes");
 
       var current = f.owner().capture(request());
-      assertThat(current.catalog().catalogEpoch()).isEqualTo(30);
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(32);
       assertThat(f.owner().readExact(current.request())).isEqualTo(current);
       assertThat(
               f.dsl
                   .fetchSingle(
-                      "SELECT catalog_bytes=gs_runtime_family_catalog_bytes(29) FROM "
+                      "SELECT catalog_bytes=gs_runtime_family_catalog_bytes(32) FROM "
                           + EPOCHS
-                          + " WHERE catalog_epoch=29")
+                          + " WHERE catalog_epoch=32")
                   .get(0, Boolean.class))
           .isTrue();
       migration(f.source, f.schema, f.history, "1065.0.17").validate();
@@ -2187,7 +2281,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertCapacityCatalogGuardUpgrade(
           f,
           "1065.0.18",
-          30,
+          32,
           "V1065.0.18__require_exact_region_transfer_receipt_custody.sql",
           Map.of(
               "guard_gs_region_owner_transfer_item()",
@@ -2210,7 +2304,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertCapacityCatalogGuardUpgrade(
           f,
           "1065.0.19",
-          31,
+          33,
           "V1065.0.19__bind_region_transfer_workload_namespace.sql",
           Map.of(
               "guard_gs_region_owner_transfer_item()",
@@ -2222,12 +2316,12 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
-  void typedDenialAndSendCustodyUpgradePreservesPopulatedCatalogAtEpochThirtyThree() {
+  void typedDenialAndSendCustodyUpgradePreservesPopulatedCatalogAtEpochThirtyFive() {
     try (Fixture f = fixture("1065.0.19")) {
       assertCapacityCatalogGuardUpgrade(
           f,
           "1065.0.20",
-          32,
+          34,
           "V1065.0.20__combine_typed_capacity_denial_and_send_custody.sql",
           Map.of(
               "settle_gs_capacity_evidence_charge()",
@@ -2243,12 +2337,12 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
-  void exactChargeRequestUpgradePreservesPopulatedCatalogAtEpochThirtyFour() {
+  void exactChargeRequestUpgradePreservesPopulatedCatalogAtEpochThirtySix() {
     try (Fixture f = fixture("1065.0.20")) {
       assertCapacityCatalogGuardUpgrade(
           f,
           "1065.0.21",
-          33,
+          35,
           "V1065.0.21__bind_capacity_evidence_charge_request.sql",
           Map.of(
               "guard_gs_capacity_evidence_charge()",
@@ -2342,6 +2436,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     var guards = f.guards();
     changedTriggers.keySet().forEach(guards::remove);
     var constraints = f.constraints();
+    addedConstraints.keySet().forEach(constraints::remove);
     var indexes = f.indexes();
     var routines = f.routines();
     var routineIdentities = List.copyOf(routines.keySet());
@@ -2449,6 +2544,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             case "reject_gs_capacity_close_after_final_receipt()",
                 "require_gs_region_fence_dispatch_completion()" ->
                 "BEFORE UPDATE";
+            case "require_gs_region_transfer_successor_installation()" -> "AFTER UPDATE";
+            case "require_gs_region_transfer_dispatch_incarnation()" ->
+                "BEFORE UPDATE OF incarnation_digest";
             default -> "BEFORE INSERT";
           };
       assertThat(installedGuards.get(trigger))

@@ -33,6 +33,25 @@ fi
 [[ "$(git -C "$helper_dir" rev-parse HEAD)" == "$target_sha" ]] ||
   fail "the checked-out probe source does not match the target"
 
+cluster_route() {
+  kubectl --kubeconfig "$1" config view --raw --flatten --minify -o json |
+    jq -ce '
+      .clusters | select(length == 1) | .[0].cluster
+      | select((.server | type == "string" and startswith("https://"))
+          and (."certificate-authority-data" | type == "string" and length > 0)
+          and ((."insecure-skip-tls-verify" // false) == false))
+      | {server, ca: ."certificate-authority-data",
+          tlsName: (."tls-server-name" // ""), proxy: (."proxy-url" // "")}
+    '
+}
+
+manager_route="$(cluster_route "$DEV_NAMESPACE_MANAGER_KUBECONFIG")" ||
+  fail "the namespace manager credential must identify a TLS-verified cluster"
+runtime_route="$(cluster_route "$KUBECONFIG")" ||
+  fail "the runtime credential must identify a TLS-verified cluster"
+[[ "$manager_route" == "$runtime_route" ]] ||
+  fail "the namespace manager and runtime credentials must address the same cluster"
+
 verify_namespace() {
   kubectl --kubeconfig "$DEV_NAMESPACE_MANAGER_KUBECONFIG" --request-timeout=10s get namespace "$namespace" -o json |
     jq -e --arg namespace "$namespace" --arg uid "$namespace_uid" --arg deployed "$deployed_sha" '
@@ -59,7 +78,11 @@ image="$(kubectl --request-timeout=10s -n "$namespace" get deployment postgres -
     | .spec.template.spec.containers | map(select(.name == "postgres"))
     | select(length == 1) | .[0].image | select(type == "string")')" ||
   fail "the retained PostgreSQL image is unavailable"
-[[ "$image" =~ ^postgres:[0-9][a-zA-Z0-9._-]*@sha256:[0-9a-f]{64}$ ]] ||
+image_ref="${image%@sha256:*}"
+image_basename="${image_ref##*/}"
+image_tag="${image_basename##*:}"
+[[ "$image" =~ @sha256:[0-9a-f]{64}$ &&
+  "$image_basename" == postgres:* && "$image_tag" =~ ^[0-9][a-zA-Z0-9._-]*$ ]] ||
   fail "the retained PostgreSQL image is not an approved digest-pinned client"
 
 probe_source="$(<"$helper_dir/probe-dev-account-v1040-4.sh")"
@@ -75,6 +98,46 @@ read_owned_job_uid() {
       and .metadata.annotations["firemud.dev/probe-target"] == $target)
     | .metadata.uid | select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"))
   '
+}
+
+read_probe_pod() {
+  kubectl --request-timeout=10s -n "$namespace" get pods \
+    --selector "batch.kubernetes.io/controller-uid=$job_uid" -o json |
+    jq -cer --arg job "$job_name" --arg job_uid "$job_uid" --arg namespace "$namespace" '
+      select((.kind == "PodList" or .kind == "List") and (.items | type == "array" and length == 1))
+      | .items[0]
+      | select(.kind == "Pod" and .metadata.namespace == $namespace
+          and .metadata.deletionTimestamp == null
+          and any(.metadata.ownerReferences[]?;
+            .apiVersion == "batch/v1" and .kind == "Job" and .name == $job
+            and .uid == $job_uid and .controller == true))
+      | .metadata
+      | select((.name | type == "string" and test("^[a-z0-9][a-z0-9.-]{0,252}$"))
+          and (.uid | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")))
+      | [.name, .uid]
+    '
+}
+
+verify_probe_job() {
+  local observed_job
+  observed_job="$(kubectl --request-timeout=10s -n "$namespace" get job "$job_name" -o json)" ||
+    return 1
+  [[ "$(read_owned_job_uid <<<"$observed_job")" == "$job_uid" ]] || return 1
+  if [[ "$1" == complete ]]; then
+    jq -e 'any(.status.conditions[]?; .type == "Complete" and .status == "True")' \
+      <<<"$observed_job" >/dev/null
+  fi
+}
+
+read_probe_logs() {
+  local completion="$1" pod_identity pod_name logs
+  shift
+  verify_probe_job "$completion" || return 1
+  pod_identity="$(read_probe_pod)" || return 1
+  pod_name="$(jq -er '.[0]' <<<"$pod_identity")" || return 1
+  logs="$(kubectl --request-timeout=10s -n "$namespace" logs "pod/$pod_name" -c probe "$@")" || return 1
+  [[ "$(read_probe_pod)" == "$pod_identity" ]] && verify_probe_job "$completion" || return 1
+  printf '%s\n' "$logs"
 }
 
 remove_probe_job() {
@@ -97,9 +160,14 @@ remove_probe_job() {
       if observed_uid="$(jq -er --arg name "$job_name" --arg namespace "$namespace" '
         select(.kind == "Job" and .metadata.name == $name and .metadata.namespace == $namespace)
         | .metadata.uid | select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"))
-      ' <<<"$observed")" && [[ "$observed_uid" != "$job_uid" ]]; then
-        job_uid=""
-        return 0
+      ' <<<"$observed")"; then
+        if [[ "$observed_uid" != "$job_uid" ]]; then
+          job_uid=""
+          return 0
+        fi
+        if jq -e '.metadata.deletionTimestamp | type == "string" and length > 0' <<<"$observed" >/dev/null; then
+          delete_accepted=true
+        fi
       fi
     fi
     [[ "$delete_accepted" == true ]] && (( SECONDS < deadline )) || return 1
@@ -151,7 +219,7 @@ fi
 
 if [[ "$check_permissions" == true ]]; then
   for required in 'get jobs.batch' 'list jobs.batch' 'watch jobs.batch' 'delete jobs.batch' \
-    'list pods' 'get pods --subresource=log'; do
+    'get pods' 'list pods' 'get pods --subresource=log' 'list replicasets.apps'; do
     read -ra permission <<<"$required"
     if ! kubectl --request-timeout=10s -n "$namespace" auth can-i "${permission[@]}" >/dev/null; then
       fail "the runtime credential cannot $required before writer quiescence"
@@ -174,7 +242,7 @@ fi
 job_uid="$(read_owned_job_uid <<<"$created_job")" || fail "Kubernetes did not return the owned probe Job UID"
 
 if ! kubectl --request-timeout=10s -n "$namespace" wait --for=condition=complete --timeout=75s "job/$job_name" >/dev/null; then
-  probe_error="$(kubectl --request-timeout=10s -n "$namespace" logs "job/$job_name" --tail=1 2>/dev/null || true)"
+  probe_error="$(read_probe_logs any --tail=1 2>/dev/null || true)"
   case "$probe_error" in
     'Account V1040.4 probe found duplicate retained admission attempts. Account-owned disposition is required.'|\
     'Account V1040.4 probe refused an unverified database state (unverified-account-history).'|\
@@ -187,11 +255,8 @@ if ! kubectl --request-timeout=10s -n "$namespace" wait --for=condition=complete
       ;;
   esac
 fi
-observed_job="$(kubectl --request-timeout=10s -n "$namespace" get job "$job_name" -o json)" ||
-  fail "the completed probe Job is unavailable"
-[[ "$(read_owned_job_uid <<<"$observed_job")" == "$job_uid" ]] || fail "the probe Job was replaced"
-receipt="$(kubectl --request-timeout=10s -n "$namespace" logs "job/$job_name")" ||
-  fail "the probe receipt is unavailable"
+receipt="$(read_probe_logs complete)" ||
+  fail "the completed probe Job, its owned Pod, or their bound receipt could not be verified"
 outcome=retained-no-duplicates
 if [[ "$origin_prefix" == 0 ]]; then
   outcome=first-origin-migration

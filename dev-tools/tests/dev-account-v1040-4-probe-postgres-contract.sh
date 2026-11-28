@@ -18,10 +18,20 @@ for var in ${!PG@}; do
 done
 umask 077
 rig=$(mktemp -d)
-started=false
+postgres_launch_owned=false
 cleanup() {
-  if [[ "$started" == true ]]; then
-    "$bin/pg_ctl" -D "$rig/data" -m fast -w stop >/dev/null || return
+  if [[ "$postgres_launch_owned" == true ]]; then
+    local postgres_status=0
+    "$bin/pg_ctl" -D "$rig/data" status >/dev/null 2>&1 || postgres_status=$?
+    if (( postgres_status == 0 )); then
+      "$bin/pg_ctl" -D "$rig/data" -m fast -w stop >/dev/null || true
+      postgres_status=0
+      "$bin/pg_ctl" -D "$rig/data" status >/dev/null 2>&1 || postgres_status=$?
+    fi
+    if (( postgres_status != 3 )); then
+      echo "could not confirm the owned PostgreSQL fixture stopped; retaining its data directory at $rig" >&2
+      return 1
+    fi
   fi
   rm -rf -- "$rig"
 }
@@ -31,13 +41,13 @@ printf '%s\n' "$password" >"$rig/password"
 "$bin/initdb" -L "$share" -D "$rig/data" --no-locale --encoding=UTF8 \
   -A scram-sha-256 --pwfile="$rig/password" -U local_fixture_user >"$rig/init.log"
 port=$((30000 + RANDOM % 25000))
+postgres_launch_owned=true
 if ! "$bin/pg_ctl" -D "$rig/data" -l "$rig/postgres.log" \
   -o "-c listen_addresses=127.0.0.1 -c unix_socket_directories='' -c port=$port" \
   -w start >"$rig/start.log"; then
   cat "$rig/postgres.log" >&2
   exit 1
 fi
-started=true
 export PGHOST=127.0.0.1 PGPORT="$port" PGUSER=local_fixture_user PGDATABASE=postgres PGPASSWORD="$password"
 "$bin/createdb" -- firemud
 export PGDATABASE=firemud

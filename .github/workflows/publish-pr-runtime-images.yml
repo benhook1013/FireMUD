@@ -122,8 +122,10 @@ jobs:
                 const wallMillis = Date.parse(wall);
                 return Number.isFinite(time) && Number.isFinite(wallMillis) && new Date(wallMillis).toISOString() === wall ? time : NaN;
               };
-              const [start, jobStart, jobEnd, end] = [attempt.run_started_at, job.started_at, job.completed_at, attempt.updated_at].map(timestamp);
-              if (![start, jobStart, jobEnd, end].every(Number.isFinite) || end < start ||
+              const [created, attemptCreated, start, jobStart, jobEnd, end] =
+                [run.created_at, attempt.created_at, attempt.run_started_at, job.started_at, job.completed_at, attempt.updated_at].map(timestamp);
+              if (![created, attemptCreated, start, jobStart, jobEnd, end].every(Number.isFinite) ||
+                  created > attemptCreated || attemptCreated > start || end < start ||
                   jobStart < Math.floor(start / 1000) * 1000 || jobEnd < jobStart || jobEnd > Math.floor(end / 1000) * 1000 + 999) return false;
               // A skipped step normally has no execution timestamps. If supplied,
               // both timestamps must still agree with the actually attempted job.
@@ -134,7 +136,7 @@ jobs:
                     markerStart < jobStart || markerEnd < markerStart || markerEnd > jobEnd) return false;
               }
               const {data: latest} = await github.rest.actions.getWorkflowRun(prePostOptions({...context.repo, run_id: run.id}));
-              return matchesSelected(latest);
+              return matchesSelected(latest) && latest.created_at === run.created_at;
             };
             // Inventory incompleteness is unknown, never permission to dispatch duplicates.
             const inventory = async (workflowId, filter, deadline = prePostDeadline, phase = "Pre-dispatch", validateVisibilityRun = null) => {
@@ -166,7 +168,7 @@ jobs:
                 if (shifted) {
                   // Only POST visibility may restart this complete inventory; preflight stays terminal.
                   const error = new Error("Reconciliation inventory shifted; discard the whole snapshot");
-                  if (validateVisibilityRun) error.code = "VISIBILITY_PAGINATION_DRIFT";
+                  if (phase !== "Pre-dispatch") error.code = "VISIBILITY_PAGINATION_DRIFT";
                   throw error;
                 }
                 if (runs.length === total) return runs;
@@ -224,19 +226,21 @@ jobs:
                 samePrPath(run.path, event.path, workflow.path, number);
             };
             if (!await sourceCurrent()) return;
-            const currentTuple = async () => {
+            const currentTuple = async (deadline = prePostDeadline) => {
+              const options = request => withRequestDeadline(request, deadline,
+                deadline === prePostDeadline ? "Pre-dispatch" : "Runtime producer visibility");
               let pr;
               for (let attempt = 0; attempt < 6; attempt++) {
-                ({data: pr} = await github.rest.pulls.get(prePostOptions({...context.repo, pull_number: Number(number)})));
+                ({data: pr} = await github.rest.pulls.get(options({...context.repo, pull_number: Number(number)})));
                 if (pr.state !== "open" || pr.head?.sha !== head ||
                     pr.mergeable !== null || attempt === 5) break;
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                await new Promise(resolve => setTimeout(resolve, Math.min(2000, Math.max(0, deadline - Date.now()))));
               }
               if (pr.state !== "open" || pr.head?.repo?.full_name !== repository || pr.base?.repo?.full_name !== repository ||
                   pr.head?.sha !== head || pr.head?.ref !== event.head_branch ||
                   typeof pr.base?.ref !== "string" || !pr.base.ref || pr.mergeable !== true || pr.merge_commit_sha !== merge) return null;
-              const {data: ref} = await github.rest.git.getRef(prePostOptions({...context.repo, ref: `heads/${pr.base.ref}`}));
-              const {data: commit} = await github.rest.repos.getCommit(prePostOptions({...context.repo, ref: merge}));
+              const {data: ref} = await github.rest.git.getRef(options({...context.repo, ref: `heads/${pr.base.ref}`}));
+              const {data: commit} = await github.rest.repos.getCommit(options({...context.repo, ref: merge}));
               if (ref.ref !== `refs/heads/${pr.base.ref}` || ref.object?.sha !== base || commit.sha !== merge || commit.parents?.length !== 2 ||
                   commit.parents[0]?.sha !== base || commit.parents[1]?.sha !== head) return null;
               return pr.base.ref;
@@ -483,7 +487,7 @@ jobs:
               strictlyAfter = null,
               previousIds = null
             ) => {
-              const phase = deadline === prePostDeadline ? "Pre-dispatch" : "Refresh visibility";
+              const phase = strictlyAfter === null ? "Pre-dispatch" : "Refresh visibility";
               const runs = await inventory(
                 "runtime-images.yml",
                 {event: "repository_dispatch", created: `${createdSince}..*`},
@@ -530,7 +534,7 @@ jobs:
                       current.path !== run.path || current.name !== run.name || current.display_title !== event.display_title ||
                       current.event !== "repository_dispatch" || current.head_branch !== context.payload.repository.default_branch ||
                       current.head_sha !== run.head_sha || !sha(current.head_sha) || current.status !== "completed" ||
-                      current.conclusion !== run.conclusion) {
+                      current.created_at !== run.created_at || current.conclusion !== run.conclusion) {
                     core.warning(`Exact typed refresh ${run.id} terminal result is unproven or superseded; recovery remains held without retry.`);
                     return {found: true, ids};
                   }
@@ -553,12 +557,36 @@ jobs:
               if (!Number.isFinite(dispatchTime)) throw new Error("Invalid refresh dispatch timestamp");
               // Run timestamps may have only second precision. Compare from the
               // POST's timestamp second and require one exact run absent from the
-              // final complete pre-POST inventory. This is receipt, not success.
+              // final complete pre-POST inventory. Earlier requests can register
+              // late, so this proves visibility without attributing the POST.
               const secondFloor = Math.floor(dispatchTime / 1000) * 1000;
               const unseen = exact.filter(run => !previousIds.has(run.id));
               const visible = unseen.filter(run => Date.parse(run.created_at) >= secondFloor);
-              if (visible.length > 1) throw new Error("Multiple new exact refreshes are visible; dispatch outcome is ambiguous");
+              if (visible.length > 1) throw new Error("Multiple new exact typed producers are visible");
               return {found: visible.length === 1, ids};
+            };
+            const newerNativeProducer = async (createdSince, deadline) => {
+              const phase = "Native runtime producer visibility";
+              const active = run => ["queued", "waiting", "requested", "pending", "in_progress"].includes(run.status) &&
+                run.conclusion === null;
+              const exact = run => trusted(run) && run.event === "pull_request" && run.id > event.id &&
+                run.display_title === event.display_title && run.head_sha === head && run.head_branch === event.head_branch &&
+                [workflow.path, `${workflow.path}@refs/pull/${number}/merge`].includes(run.path) &&
+                Array.isArray(run.pull_requests) && run.pull_requests.length === 1 &&
+                run.pull_requests[0]?.number === Number(number) && run.pull_requests[0]?.head?.sha === head &&
+                run.pull_requests[0]?.base?.sha === base && run.pull_requests[0]?.base?.ref === baseRef &&
+                typeof run.created_at === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(run.created_at) &&
+                Date.parse(run.created_at) >= Date.parse(createdSince) && Date.parse(run.created_at) > Date.parse(event.created_at);
+              const runs = await inventory("runtime-images.yml", {event: "pull_request", head_sha: head,
+                created: `${createdSince}..*`}, deadline, phase);
+              const newest = runs.filter(run => run.display_title === event.display_title && run.id > event.id)
+                .sort((left, right) => right.id - left.id)[0];
+              if (!newest || !exact(newest) || !active(newest) || await currentTuple(deadline) !== baseRef) return false;
+              const {data: current} = await github.rest.actions.getWorkflowRun(withRequestDeadline({
+                ...context.repo, run_id: newest.id,
+              }, deadline, phase));
+              return exact(current) && active(current) && current.id === newest.id && current.run_attempt === newest.run_attempt &&
+                current.created_at === newest.created_at && samePrPath(current.path, newest.path, workflow.path, number);
             };
             if (typeof event.created_at !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(event.created_at) ||
                 !Number.isFinite(Date.parse(event.created_at))) throw new Error("Invalid original run creation timestamp");
@@ -569,7 +597,9 @@ jobs:
             const currentCi = await selectCi();
             if (!currentCi || currentCi.id !== selectedCi.id || currentCi.run_attempt !== selectedCi.run_attempt) return;
             const {data: finalCi} = await github.rest.actions.getWorkflowRun(prePostOptions({...context.repo, run_id: ci.id}));
-            if (!matchesCi(finalCi) || finalCi.conclusion !== ci.conclusion || !await wakeCurrent() || !await sourceCurrent() || await originalSuperseded() || await currentTuple() !== baseRef) return;
+            if (!matchesCi(finalCi) || finalCi.conclusion !== ci.conclusion || !await wakeCurrent() || !await sourceCurrent()) return;
+            const nativeVisibilitySince = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString();
+            if (await originalSuperseded() || await currentTuple() !== baseRef) return;
             // Repeat the complete trusted refresh preflight after all current-source fences.
             // This is the final read before POST, so a late replacement owns recovery.
             const finalRefreshInventory = await newerRefresh();
@@ -606,7 +636,11 @@ jobs:
               let retryDelayMs = 5000;
               try {
                 if ((await newerRefresh(dispatchStarted, deadline, dispatchStarted, previousRefreshIds)).found) {
-                  core.info(`Reconciled failed original runtime for PR #${number}; exact refresh is visible.`);
+                  core.info(`PR #${number}: exact refresh is visible. Producer visibility is separate from admission of this request.`);
+                  return;
+                }
+                if (await newerNativeProducer(nativeVisibilitySince, deadline)) {
+                  core.info(`PR #${number}: newer exact active native PR producer is reusable. This observation does not confirm the admission request.`);
                   return;
                 }
               } catch (error) {
@@ -803,7 +837,7 @@ jobs:
                 // permit only their boundary second, never an earlier execution second.
                 const attemptStart = Math.floor(started / 1000) * 1000;
                 const attemptEnd = Math.floor(updated / 1000) * 1000 + 999;
-                if (created >= started + 1000 || created > updated || started > attemptEnd) {
+                if (created > started + 1000 || created > updated || started > attemptEnd) {
                   throw new Error("publication source attempt chronology is inconsistent");
                 }
                 const jobs = [], ids = new Set();

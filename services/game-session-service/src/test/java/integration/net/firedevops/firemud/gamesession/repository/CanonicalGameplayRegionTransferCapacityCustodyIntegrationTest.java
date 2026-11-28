@@ -20,6 +20,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
@@ -47,6 +49,171 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
   @Container
   static final GenericContainer<?> REDIS =
       new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
+
+  @Test
+  void installedSuccessorSettlesOnlyTheExactDurableDenialForPossibleAccountSend() throws Exception {
+    try (var proof = new TransferSqlProof(true)) {
+      var original = proof.execution;
+      proof.precharge(original);
+      assertThat(proof.authorizeAccountSend(original))
+          .isEqualTo(
+              net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.SendDisposition
+                  .AUTHORIZE_NEW);
+      UUID transferId = proof.begin();
+      // A possible send without an SQL execution has no transfer census item. The actual
+      // lease-owner path installs the successor directly while retaining the charge for denial
+      // reconciliation.
+      assertThat(transferId).isNull();
+
+      var installed = installSuccessor(proof, transferId);
+      assertThat(installed.status.executorFence().longValueExact())
+          .isGreaterThan(original.selectedOwnerFence());
+      assertThat(installed.status).isEqualTo(proof.currentOwner());
+
+      var owner = proof.capacity(proof.sql);
+      var unresolved =
+          owner.reconcileSuccessorDenial(
+              proof.admission, original.request(), installed, null, transferDeadline());
+      assertThat(unresolved.accountDenial()).isNull();
+      assertThat(unresolved.possibleSend()).isTrue();
+      var beforeDenial = readCharge(proof, original);
+      assertThat(beforeDenial)
+          .containsEntry("account_send_state", "MAY_HAVE_SENT")
+          .containsEntry("account_denial_id", null)
+          .containsEntry("denial_settlement_owner_id", null);
+
+      // Controlled exact typed durable-denial receipt; Account transport/authentication is outside
+      // this receiving-side SQL/Redis custody fixture.
+      var denial = new Refusal(Failure.CAPACITY_EVALUATION_EXPIRED, UUID.randomUUID());
+      var settled =
+          owner.reconcileSuccessorDenial(
+              proof.admission, original.request(), installed, denial, transferDeadline());
+      assertThat(settled.accountDenial()).isEqualTo(denial);
+      assertThat(settled.possibleSend()).isFalse();
+      assertThat(readCharge(proof, original))
+          .containsEntry("account_send_state", "MAY_HAVE_SENT")
+          .containsEntry("account_denial_id", denial.durableDenialId())
+          .containsEntry("account_denial_kind", "CAPACITY_EVALUATION_EXPIRED")
+          .containsEntry("denial_settlement_owner_id", installed.status.ownerInstanceId())
+          .containsEntry(
+              "denial_settlement_owner_fence", installed.status.executorFence().longValueExact())
+          .containsEntry(
+              "denial_settlement_lease_correlation", installed.status.leaseTokenCorrelation());
+
+      assertThat(
+              owner
+                  .reconcileSuccessorDenial(
+                      proof.admission, original.request(), installed, denial, transferDeadline())
+                  .accountDenial())
+          .isEqualTo(denial);
+      var retained = readCharge(proof, original);
+      assertThatThrownBy(() ->
+              owner.reconcileSuccessorDenial(
+                  proof.admission,
+                  original.request(),
+                  installed,
+                  new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, UUID.randomUUID()),
+                  transferDeadline()))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(readCharge(proof, original)).isEqualTo(retained);
+      assertThat(proof.executionState(original)).isNull();
+      assertThat(proof.physicalExecutionExists(original)).isFalse();
+    }
+  }
+
+  @Test
+  void successorCannotSettlePossibleAcceptedEffectWithExecutionCustody() throws Exception {
+    try (var proof = new TransferSqlProof(true)) {
+      var original = proof.execution;
+      proof.seedUndeliveredDispatch(original);
+      UUID transferId = proof.begin();
+      assertThat(proof.itemImage(transferId)).isEqualTo("[]");
+
+      var installed = installSuccessor(proof, transferId);
+      assertThat(installed.status.executorFence().longValueExact())
+          .isGreaterThan(original.selectedOwnerFence());
+      assertThat(proof.executionState(original)).isEqualTo("INSTALL_DISPATCHED");
+
+      var beforeDenial = readCharge(proof, original);
+      var denial = new Refusal(Failure.CAPACITY_EVALUATION_EXPIRED, UUID.randomUUID());
+      assertThatThrownBy(() ->
+              proof
+                  .capacity(proof.sql)
+                  .reconcileSuccessorDenial(
+                      proof.admission, original.request(), installed, denial, transferDeadline()))
+          .isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(() ->
+              proof.sql.execute(
+                  "UPDATE game_session_capacity_evidence_charge SET account_denial_id=?,"
+                      + " account_denial_kind=?,denial_settlement_owner_id=?,"
+                      + " denial_settlement_owner_fence=?,denial_settlement_lease_correlation=?"
+                      + " WHERE admission_attempt_id=?",
+                  denial.durableDenialId(),
+                  denial.code().name(),
+                  installed.status.ownerInstanceId(),
+                  installed.status.executorFence().longValueExact(),
+                  installed.status.leaseTokenCorrelation(),
+                  original.request().admissionAttemptId()))
+          .rootCause()
+          .isInstanceOfSatisfying(
+              org.postgresql.util.PSQLException.class,
+              failure -> {
+                assertThat(failure.getSQLState()).isEqualTo("23514");
+                assertThat(failure.getServerErrorMessage()).isNotNull();
+                assertThat(failure.getServerErrorMessage().getMessage())
+                    .isEqualTo("Successor denial requires a charge without execution custody");
+              });
+      assertThat(readCharge(proof, original)).isEqualTo(beforeDenial);
+      assertThat(proof.executionState(original)).isEqualTo("INSTALL_DISPATCHED");
+      assertThat(proof.currentOwner()).isEqualTo(installed.status);
+    }
+  }
+
+  private CanonicalGameplayRegionLeaseOwner.Installation installSuccessor(
+      TransferSqlProof proof, UUID transferId) throws Exception {
+    var original = proof.region.installation();
+    try (var connection = proof.redis.connect(ByteArrayCodec.INSTANCE)) {
+      assertThat(connection.sync().pexpire(ascii(original.grant.key()), 0)).isTrue();
+    }
+    proof.recreateTransferOwners();
+    var installed =
+        CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+            proof.sql,
+            proof.redis,
+            proof.coordinationUri,
+            RedisScriptCatalog.fromContributions(
+                List.of(new CanonicalGameplayRegionLeaseRedisScriptContribution())),
+            original,
+            proof.upstream.resolver,
+            proof.coordinator,
+            transferDeadline());
+    if (transferId != null) {
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT state FROM game_session_region_owner_transfer WHERE transfer_id=?",
+                      transferId)
+                  .get(0, String.class))
+          .isEqualTo("COMPLETED");
+    } else {
+      assertThat(proof.currentOwner()).isEqualTo(installed.status);
+    }
+    return installed;
+  }
+
+  private static java.util.Map<String, Object> readCharge(
+      TransferSqlProof proof, OriginalNewCapacityExecution original) {
+    return proof
+        .sql
+        .fetchSingle(
+            "SELECT account_send_state,account_denial_id,account_denial_kind,"
+                + "denial_settlement_owner_id,denial_settlement_owner_fence,"
+                + "denial_settlement_lease_correlation"
+                + " FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+            original.request().admissionAttemptId())
+        .intoMap();
+  }
 
   @Test
   void restoredPreparedReceiptCannotReapplyAfterDurableIssuance() throws Exception {
@@ -420,6 +587,87 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       assertThat(commands.get()).isEqualTo(2);
       assertThat(proof.itemImage(id)).doesNotContain("\"fence_readback\": null");
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void indeterminateFenceObservationCannotQualifyAnotherOrLegacyDispatch(boolean legacyMarker)
+      throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID id = proof.begin();
+      long deadline = transferDeadline();
+      var item =
+          proof.transfers.within(deadline, ignored -> proof.transfers.capture(id).getFirst());
+      // Apply the exact physical fence while leaving its first SQL readback unrecorded.
+      proof.transfers.within(
+          deadline,
+          budget -> {
+            var before = proof.receiver.observeForRegionOwnerTransfer(id, item.ordinal(), deadline);
+            var dispatch = proof.transfers.fenceDispatch(item, before);
+            proof
+                .capacity(proof.sql)
+                .forTransferBudget(budget)
+                .fenceForTransfer(item, dispatch, deadline);
+            return null;
+          });
+
+      var retained =
+          proof.sql.fetchSingle(
+              "SELECT fence_dispatch_id,fence_apply_issued,fence_readback FROM"
+                  + " game_session_region_owner_transfer_item WHERE transfer_id=? AND target_ordinal=?",
+              id,
+              item.ordinal());
+      UUID storedDispatch = retained.get("fence_dispatch_id", UUID.class);
+      assertThat(storedDispatch).isNotNull();
+      assertThat(retained.get("fence_apply_issued", Boolean.class)).isTrue();
+      assertThat(retained.get("fence_readback", byte[].class)).isNull();
+      proof.recreateTransferOwners();
+
+      String redisKey =
+          "session:game:capacity-execution:{"
+              + item.assignment().tenantGameplayTag()
+              + "}:"
+              + item.execution().request().admissionAttemptId();
+      try (var connection = proof.redis.connect(ByteArrayCodec.INSTANCE)) {
+        byte[] key = redisKey.getBytes(StandardCharsets.UTF_8);
+        if (legacyMarker) {
+          connection.sync().hdel(key, ascii("fenceDispatchId"));
+        } else {
+          UUID otherDispatch = UUID.randomUUID();
+          assertThat(otherDispatch).isNotEqualTo(storedDispatch);
+          connection.sync().hset(key, ascii("fenceDispatchId"), ascii(otherDispatch.toString()));
+        }
+
+        long outcome =
+            new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                    proof.redis, proof.scripts, proof.clock, proof.tags)
+                .fenceCapacityExecutionOnce(
+                    item.execution(),
+                    item.candidate(),
+                    item.assignment(),
+                    storedDispatch,
+                    transferDeadline());
+        assertThat(outcome)
+            .isEqualTo(
+                CanonicalGameplayOriginalNewFinalAdmissionRedisOwner
+                    .CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED);
+
+        assertThatThrownBy(() -> proof.fence(item)).isInstanceOf(IllegalStateException.class);
+        var after =
+            proof.sql.fetchSingle(
+                "SELECT fence_dispatch_id,fence_readback FROM"
+                    + " game_session_region_owner_transfer_item"
+                    + " WHERE transfer_id=? AND target_ordinal=?",
+                id,
+                item.ordinal());
+        assertThat(after.get("fence_dispatch_id", UUID.class)).isEqualTo(storedDispatch);
+        assertThat(after.get("fence_readback", byte[].class)).isNull();
+        assertThat(proof.transfers.readCurrent(id, item.ordinal()).controlState())
+            .isEqualTo("FROZEN");
+        assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+      }
     }
   }
 

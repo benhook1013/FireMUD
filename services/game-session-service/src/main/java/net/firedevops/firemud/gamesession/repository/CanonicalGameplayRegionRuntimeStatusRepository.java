@@ -608,6 +608,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
           nextPhase = "REDIS_INITIALIZED";
         } else {
           if (currentStatus == null
+              || !Objects.equals(
+                  preparation.initializationClaimGeneration, current.initializationClaimGeneration)
               || (current.phase != TimelinePreparationPhase.REDIS_INITIALIZED
                   && current.phase != TimelinePreparationPhase.INSTALLED)) {
             throw unavailable();
@@ -838,6 +840,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         row.get("region_epoch", Long.class),
         row.get("last_committed_tick_id", Long.class),
         TimelinePreparationPhase.valueOf(row.get("phase", String.class)),
+        row.get("initialization_claim_generation", UUID.class),
         row.get("lease_token_correlation", String.class),
         fence == null ? null : BigInteger.valueOf(fence),
         row.get("redis_meta_digest", String.class),
@@ -1297,6 +1300,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     private final long regionEpoch;
     private final long lastCommittedTickId;
     private final TimelinePreparationPhase phase;
+    private final UUID initializationClaimGeneration;
     private final String leaseTokenCorrelation;
     private final BigInteger executorFence;
     private final String redisMetaDigest;
@@ -1331,6 +1335,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         long regionEpoch,
         long lastCommittedTickId,
         TimelinePreparationPhase phase,
+        UUID initializationClaimGeneration,
         String leaseTokenCorrelation,
         BigInteger executorFence,
         String redisMetaDigest,
@@ -1377,6 +1382,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       this.regionEpoch = regionEpoch;
       this.lastCommittedTickId = lastCommittedTickId;
       this.phase = Objects.requireNonNull(phase, "phase");
+      this.initializationClaimGeneration = initializationClaimGeneration;
       this.leaseTokenCorrelation = leaseTokenCorrelation;
       this.executorFence = executorFence;
       this.redisMetaDigest = redisMetaDigest;
@@ -1417,6 +1423,11 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
 
     TimelinePreparationPhase phase() {
       return phase;
+    }
+
+    boolean hasInitializationClaimGeneration() {
+      return initializationClaimGeneration != null
+          && !initializationClaimGeneration.equals(new UUID(0L, 0L));
     }
 
     String leaseTokenCorrelation() {

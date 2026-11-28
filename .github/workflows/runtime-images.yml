@@ -1116,16 +1116,9 @@ jobs:
                         disregardedTypedAttempts.set(newest.id, attemptBinding);
                         continue;
                       }
-                      if (newest.conclusion === "success" ? Boolean(outcome) : outcome !== "ordinary") return [newest];
-                    }
-                    // A recent success can be a validated transition diagnostic or
-                    // awaiting downstream evidence. Preserve its existing hold.
-                    if (newest.conclusion === "success") {
-                      const ciCompleted = Date.parse(workflowRun.updated_at || "");
-                      if (!Number.isFinite(ciCompleted) ||
-                          Math.floor(Date.parse(newest.created_at) / 1000) >= Math.floor(ciCompleted / 1000)) {
-                        return [newest];
-                      }
+                      // Success can have a retained publication even when its
+                      // native attempt proof is temporarily incomplete.
+                      if (newest.conclusion === "success" || outcome !== "ordinary") return [newest];
                     }
                     disregardedTypedAttempts.set(newest.id, attemptBinding);
                     // Discarding an unusable replacement does not establish
@@ -1592,6 +1585,16 @@ jobs:
                   ["AbortError", "TimeoutError"].includes(error?.name)));
               return transient ? 5000 : null;
             };
+            const exactActiveNativeProducer = (run, tuple, exactTitle) =>
+              run?.event === "pull_request" && run.workflow_id === runtimeWorkflow.id &&
+              [expectedWorkflowPath, `${expectedWorkflowPath}@refs/pull/${tuple.prNumber}/merge`].includes(run.path) &&
+              [runtimeWorkflow.name, exactTitle].includes(run.name) && run.display_title === exactTitle &&
+              run.repository?.full_name === expectedRepository && run.head_repository?.full_name === expectedRepository &&
+              run.head_sha === tuple.headSha && Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0 &&
+              ["queued", "waiting", "requested", "pending", "in_progress"].includes(run.status) && run.conclusion === null &&
+              validTimestamp(run.created_at) && Array.isArray(run.pull_requests) && run.pull_requests.length === 1 &&
+              String(run.pull_requests[0]?.number) === tuple.prNumber && run.pull_requests[0]?.head?.sha === tuple.headSha &&
+              run.pull_requests[0]?.base?.sha === tuple.baseSha && run.pull_requests[0]?.base?.ref === tuple.baseRef;
             if (pendingVisibility.length > 0) {
               try {
                 if (context.payload.repository?.full_name !== expectedRepository ||
@@ -1650,12 +1653,12 @@ jobs:
                     }
                   }
                 );
-                if (!observed.complete) throw new Error("Accepted refresh has incomplete visibility; no retry issued");
+                if (!observed.complete) throw new Error("Exact producer visibility is incomplete; no retry issued");
                 for (let index = pendingVisibility.length - 1; index >= 0; index--) {
                   const {tuple, previousIds, dispatchSince, responseUnknown} = pendingVisibility[index];
                   const exactTitle = `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
-                  // The floor includes this POST's second; the complete pre-POST ID
-                  // snapshot distinguishes new candidates from already-visible runs.
+                  // An earlier request may register during this window. The time and
+                  // inventory fences establish new visibility, not POST attribution.
                   const unseenExactRuns = observed.runs.filter(run => run.event === "repository_dispatch" &&
                     run.display_title === exactTitle && !previousIds.has(run.id));
                   for (const run of unseenExactRuns) {
@@ -1677,7 +1680,31 @@ jobs:
                   }
                   if (freshExactRuns.length > 0) {
                     pendingVisibility.splice(index, 1);
-                    if (responseUnknown) core.info(`Runtime refresh for PR #${tuple.prNumber} became visible after an unknown POST response.`);
+                    const observedAfter = responseUnknown ? "an unknown POST response" : "the admission request";
+                    core.info(`Exact runtime producer for PR #${tuple.prNumber} became visible after ${observedAfter}. Producer visibility is separate from admission of this request.`);
+                  }
+                }
+                if (pendingVisibility.length > 0) {
+                  const native = await readInventory(visibilitySince, ["pull_request"], visibilityDeadline,
+                    "Native runtime producer visibility", () => {});
+                  if (!native.complete) throw new Error("Native runtime producer visibility is incomplete; no retry issued");
+                  for (let index = pendingVisibility.length - 1; index >= 0; index--) {
+                    const {tuple, previousIds, dispatchSince} = pendingVisibility[index];
+                    const title = `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
+                    const newest = native.runs.filter(run => run.display_title === title && validTimestamp(run.created_at) &&
+                        !previousIds.has(run.id) && Date.parse(run.created_at) >= Date.parse(dispatchSince))
+                      .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+                    const [candidate, alternative] = newest;
+                    if (!exactActiveNativeProducer(candidate, tuple, title) ||
+                        (alternative && Date.parse(candidate.created_at) === Date.parse(alternative.created_at))) continue;
+                    const {data: current} = await github.rest.actions.getWorkflowRun(withRequestDeadline({
+                      ...context.repo, run_id: candidate.id,
+                    }, visibilityDeadline, "Native runtime producer visibility"));
+                    if (!exactActiveNativeProducer(current, tuple, title) || current.id !== candidate.id ||
+                        current.run_attempt !== candidate.run_attempt || current.created_at !== candidate.created_at ||
+                        current.head_branch !== candidate.head_branch) continue;
+                    pendingVisibility.splice(index, 1);
+                    core.info(`Exact native runtime producer ${current.id}/${current.run_attempt} is active for PR #${tuple.prNumber}. Producer visibility is separate from admission of this request.`);
                   }
                 }
               } catch (error) {

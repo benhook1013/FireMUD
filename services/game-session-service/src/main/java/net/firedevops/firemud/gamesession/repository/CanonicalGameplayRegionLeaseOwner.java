@@ -655,18 +655,18 @@ final class CanonicalGameplayRegionLeaseOwner {
                   incarnation)
               : statusRepository.matchesInstalledTimelineInitialization(
                   preparation, source, incarnation);
-      boolean resumablePhase =
-          sameInitializationAttempt
-              ? preparation.phase()
-                      == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
-                          .INSTALLED
-                  || preparation.phase()
-                      == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
-                          .REDIS_INITIALIZED
-              : preparation.phase()
+      boolean installedPreparation =
+          preparation.phase()
+              == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INSTALLED;
+      // Only a generation-qualified original attempt may finish a partial installation.
+      boolean recoverableOriginalPreparation =
+          existingRegionInstallation == null
+              && sameInitializationAttempt
+              && preparation.phase()
                   == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
-                      .INSTALLED;
-      if (!matchesInitialization || !resumablePhase) {
+                      .REDIS_INITIALIZED
+              && preparation.hasInitializationClaimGeneration();
+      if (!matchesInitialization || (!installedPreparation && !recoverableOriginalPreparation)) {
         throw unavailable();
       }
       if (existingRegionInstallation == null

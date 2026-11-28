@@ -334,7 +334,14 @@ finalBytes, admissionCount = string.gsub(templateBytes, '"admissionAt":"' .. adm
 finalBytes, continuityCount = string.gsub(finalBytes, '"continuityBindingExpiresAt":"' .. continuityPlaceholder .. '"',
   '"continuityBindingExpiresAt":"' .. string.format('%.0f', now + duration) .. '"')
 if admissionCount ~= 1 or continuityCount ~= 1 then return -2 end
+local sessionSha1 = redis.sha1hex(finalBytes)
+local admissionAt = string.format('%.0f', now)
+local continuityExpiresAt = string.format('%.0f', now + duration)
+-- An ACL error on the second command cannot undo an earlier Redis write.
+if not redis.acl_check_cmd('SET', KEYS[1], finalBytes)
+    or not redis.acl_check_cmd('HSET', KEYS[7], 'state', 'COMMITTED', 'sessionSha1', sessionSha1,
+      'admissionAt', admissionAt, 'continuityExpiresAt', continuityExpiresAt) then return -1 end
 redis.call('SET', KEYS[1], finalBytes)
-redis.call('HSET', KEYS[7], 'state', 'COMMITTED', 'sessionSha1', redis.sha1hex(finalBytes),
-  'admissionAt', string.format('%.0f', now), 'continuityExpiresAt', string.format('%.0f', now + duration))
+redis.call('HSET', KEYS[7], 'state', 'COMMITTED', 'sessionSha1', sessionSha1,
+  'admissionAt', admissionAt, 'continuityExpiresAt', continuityExpiresAt)
 return 1

@@ -246,6 +246,36 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   }
 
   @Test
+  void finalRequiresBothWritePermissionsBeforeUpdatingEitherKey() throws Exception {
+    ScriptCase original = seed();
+    byte[] sessionKey = ascii(original.keys()[0]);
+    byte[] executionKey = ascii(original.keys()[6]);
+    byte[] sessionBefore =
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, sessionKey);
+    byte[] executionBefore =
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, executionKey);
+
+    try {
+      admin.aclSetuser(PRINCIPAL, new AclSetuserArgs().removeCommand(CommandType.HSET));
+      assertThat(eval(original)).isEqualTo(-1L);
+      assertThat(
+              CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(
+                  admin, sessionKey))
+          .containsExactly(sessionBefore);
+      assertThat(
+              CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(
+                  admin, executionKey))
+          .containsExactly(executionBefore);
+    } finally {
+      admin.aclSetuser(PRINCIPAL, new AclSetuserArgs().addCommand(CommandType.HSET));
+    }
+
+    assertThat(eval(original)).isEqualTo(1L);
+    assertThat(admin.get(sessionKey)).isNotNull().isNotEqualTo(original.arguments()[8]);
+    assertThat(admin.hget(executionKey, ascii("state"))).containsExactly(ascii("COMMITTED"));
+  }
+
+  @Test
   void missingIndexClosedBarrierAndStaleCandidateRefuseWithoutRepairOrWrite() throws Exception {
     ScriptCase testCase = seed();
     assertThat(eval(testCase)).isEqualTo(1L);
@@ -373,7 +403,10 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   @Test
   void authorizedFenceChangesOnlyStateAndEveryDelayedCurrentOrPinnedOldCallRefuses()
       throws Exception {
-    ScriptCase original = seed();
+    ScriptCase original = seed(false);
+    Map<String, byte[]> candidate = physicalImage(original);
+    assertThat(eval(preFenceScriptSha, action(original, "INSTALL"))).isEqualTo(3L);
+    assertPhysicalImage(original, candidate, 6);
     Map<String, byte[]> before = physicalImage(original);
 
     assertThat(eval(action(original, "INSTALL"))).isEqualTo(6L);
@@ -932,7 +965,11 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     var staleTemplate = (tools.jackson.databind.node.ObjectNode) JSON.readTree(stale[10]);
     staleTemplate.put("capacityExecutionDigest", staleDigest);
     stale[10] = canonicalBytes(staleTemplate);
-    assertThat(eval(new ScriptCase(original.keys(), stale))).isEqualTo(-1L);
+    ScriptCase staleFence = new ScriptCase(original.keys(), stale);
+    assertThat(eval(staleFence)).isEqualTo(-1L);
+    assertThat(eval(action(staleFence, "CLOSE"))).isEqualTo(-1L);
+    assertThat(admin.get(ascii(original.keys()[0]))).containsExactly(candidate);
+    assertHash(original.keys()[6], capacityPhysicalFields(original, "AUTHORIZED"));
     admin.del(new byte[][] {ascii(original.keys()[6])});
     assertThat(eval(original)).isEqualTo(-1L);
     assertThat(eval(action(original, "CLOSE"))).isEqualTo(-1L);

@@ -461,15 +461,15 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       throw unavailable();
     }
 
-    if (committedCapacityRequest != null) {
-      inWritableSerializableTransaction(dsl -> {
-        SourceRead current = readCurrentOriginalSource(dsl, beforeActivationCaller, requestedLease);
-        requireSameOriginalOperation(beforeRead.operation(), current.operation());
-        return readCommittedCapacity(
-            dsl, current.operation(), peer, committedCapacityRequest, false);
-      });
-      if (Context.current().isCancelled()) throw unavailable();
-    }
+    inWritableSerializableTransaction(dsl -> {
+      SourceRead current = readCurrentOriginalSource(dsl, beforeActivationCaller, requestedLease);
+      requireSameOriginalOperation(beforeRead.operation(), current.operation());
+      new AccountGameplayTokenIdentityFenceRepository(dsl)
+          .requireActiveReadback(originalNewIdentity(beforeGenesis));
+      readCommittedCapacity(dsl, current.operation(), peer, committedCapacityRequest, false);
+      return true;
+    });
+    if (Context.current().isCancelled()) throw unavailable();
 
     // Activation is Account-owned and happens only after the authenticated GS readback exists.
     // If its reply is lost, the Redis CAS accepts only the same immutable active projection.
@@ -511,6 +511,8 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
           // Serialize qualification with reservation transitions until confirmation commits.
           var capacity =
               readCommittedCapacity(dsl, current.operation(), peer, committedCapacityRequest, true);
+          requireCurrentFinalReadback(finalReadback);
+          if (Context.current().isCancelled()) throw unavailable();
           return new ConfirmedSource(
               issuance.confirmFinalAdmission(
                   exact,
@@ -522,7 +524,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
     tokenRegistry.requireExactOriginalNewActiveRecord(confirmed.genesis());
     if (!confirmationDigest.equals(confirmed.genesis().confirmationReadbackSha256())
         || clock.millis() >= finalReadback.continuityExpiresAtMillis()
-        || (committedCapacityRequest != null && Context.current().isCancelled())) {
+        || Context.current().isCancelled()) {
       throw unavailable();
     }
     return new OriginalAdmissionConfirmation(confirmed);

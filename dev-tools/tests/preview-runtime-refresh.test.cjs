@@ -96,7 +96,7 @@ function admissionFixture() {
         return {data: state.refreshProducer ? state.refreshProducer(run) : run};
       },
       getWorkflowRunAttempt: async ({run_id, attempt_number}) =>
-        ({data: structuredClone(admissionAttempts.get(`${run_id}:${attempt_number}`))}),
+        ({status: 200, data: structuredClone(admissionAttempts.get(`${run_id}:${attempt_number}`))}),
       listJobsForWorkflowRunAttempt: async ({run_id, attempt_number}) => {
         const jobs = receiverJobs.get(`${run_id}:${attempt_number}`) || [];
         return {data: {total_count: jobs.length, jobs}};
@@ -164,9 +164,10 @@ function completeOwnerReceiptAttempt(f, kind = 'unsent') {
     steps: [{name: `Runtime refresh ${kind} claim ${f.outputs.get(`${kind}_claim`)}`,
       status: 'completed', conclusion: 'success'}]};
   f.admissionRuns.set(run.id, run);
-  f.admissionAttempts.set(`${run.id}:${run.run_attempt}`, run);
+  const originalAttempt = structuredClone(run);
+  f.admissionAttempts.set(`${run.id}:${run.run_attempt}`, originalAttempt);
   f.receiverJobs.set(`${run.id}:${run.run_attempt}`, [job]);
-  return {run, job};
+  return {run, originalAttempt, job};
 }
 
 function dispatchValidationError() {
@@ -296,6 +297,25 @@ test('a newer exact failure visible during live identity lookup defeats stale ac
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
   assert.equal(f.sent.length, 1);
   assert.ok(identityReads >= 4, 'changed inventory must recheck tuple before claim and dispatch');
+});
+
+test('incomplete active inventory must converge or leave the refresh undispatched', async () => {
+  for (const recovers of [true, false]) {
+    const f = admissionFixture();
+    const actions = f.admission.github.rest.actions;
+    const list = actions.listWorkflowRuns;
+    let reads = 0;
+    actions.listWorkflowRuns = async input => {
+      if (input.status === 'queued' && (++reads === 1 || !recovers)) {
+        return {data: {total_count: 1, workflow_runs: []}};
+      }
+      return list(input);
+    };
+    f.runs.push(f.makePullRequestRun());
+    assert.equal(await admitRuntimeRefresh(f.admission), recovers ? 'already-active' : 'inventory-unavailable');
+    assert.equal(f.state.waits.filter(delay => delay === 2000).length, 1);
+    assert.equal(f.sent.length, 0);
+  }
 });
 
 test('identity retries are bounded and do not retry authorization failure', async () => {
@@ -574,38 +594,44 @@ test('a completed rejection receipt survives a later admission rerun', async () 
   const f = admissionFixture();
   f.state.dispatchError = dispatchValidationError();
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatch-rejected');
-  const {run} = completeOwnerReceiptAttempt(f, 'rejected');
-  f.admissionRuns.set(run.id, {...run, run_attempt: 2, status: 'in_progress', conclusion: null});
+  const {run, originalAttempt} = completeOwnerReceiptAttempt(f, 'rejected');
+  Object.assign(run, {run_attempt: 2, status: 'in_progress', conclusion: null});
+  assert.equal(originalAttempt.run_attempt, 1);
   delete f.state.dispatchError;
   assert.equal(await admitOrdinaryRefresh(f), 'dispatched-observed');
   assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['1', '2']);
 });
 
-test('an inconclusive final identity leaves an exact unsent receipt and never dispatches', async () => {
+test('an inconclusive final identity leaves a current unsent receipt and never dispatches', async () => {
   const f = admissionFixture();
   f.state.afterClaim = () => {
     f.state.pullObservations.push(...Array.from({length: 6}, () => ({mergeable: null})));
   };
-  assert.equal(await admitRuntimeRefresh(f.admission), 'pre-send-unavailable');
+  assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
   assert.equal(f.sent.length, 0);
   assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
-  completeOwnerReceiptAttempt(f, 'pre-send-unavailable');
+  completeOwnerReceiptAttempt(f, 'unsent');
   assert.equal(await admitOrdinaryRefresh(f), 'dispatched-observed');
   assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['2']);
 });
 
-test('a thrown final identity read records a pre-send outcome', async () => {
-  const f = admissionFixture();
-  const exactPull = f.admission.github.rest.pulls.get;
-  let failFinalRead = false;
-  f.state.afterClaim = () => { failFinalRead = true; };
-  f.admission.github.rest.pulls.get = async request => {
-    if (failFinalRead) throw Object.assign(new Error('temporarily unavailable'), {status: 502});
-    return exactPull(request);
-  };
-  assert.equal(await admitRuntimeRefresh(f.admission), 'pre-send-unavailable');
-  assert.equal(f.sent.length, 0);
-  assert.match(f.outputs.get('pre-send-unavailable_claim'), /^generation 1 run 600 attempt 1 tag /);
+test('a thrown final identity read records a pre-send outcome in both request modes', async t => {
+  for (const previewOnly of [false, true]) {
+    await t.test(previewOnly ? 'preview' : 'ordinary', async () => {
+      const f = admissionFixture();
+      if (previewOnly) f.admission.input.preview_only = true;
+      const exactPull = f.admission.github.rest.pulls.get;
+      let failFinalRead = false;
+      f.state.afterClaim = () => { failFinalRead = true; };
+      f.admission.github.rest.pulls.get = async request => {
+        if (failFinalRead) throw Object.assign(new Error('temporarily unavailable'), {status: 502});
+        return exactPull(request);
+      };
+      assert.equal(await admitRuntimeRefresh(f.admission), 'pre-send-unavailable');
+      assert.equal(f.sent.length, 0);
+      assert.match(f.outputs.get('pre-send-unavailable_claim'), /^generation 1 run 600 attempt 1 tag /);
+    });
+  }
 });
 
 test('ambiguous dispatch responses never produce rejection or no-send receipts', async t => {
@@ -703,12 +729,18 @@ test('admission retries a transient identity read after acknowledging the claim'
   assert.equal(dispatch.merge_sha, A);
 });
 
-test('a comparison moving during the claim is never dispatched', async () => {
+test('a comparison moving during the claim records an ordinary pre-dispatch refusal', async () => {
   const f = admissionFixture();
   f.state.afterClaim = () => { f.state.base = D; };
   assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
-  assert.equal(f.claimRefs.size, 1);
+  assert.equal(f.claimRefs.size, 2);
   assert.deepEqual(f.sent, []);
+  assert.match(f.outputs.get('unsent_claim'), /^generation 1 run 600 attempt 1 tag [0-9a-f]{40}$/);
+  f.state.base = B;
+  assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
+  completeOwnerReceiptAttempt(f);
+  assert.equal(await admitOrdinaryRefresh(f), 'dispatched-observed');
+  assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['2']);
 });
 
 test('an exact successful native preview refusal allows ordinary CI to claim the next generation', async () => {
@@ -740,7 +772,7 @@ test('only the exact successful admission attempt can prove an unsent or rejecte
     'wrong qualified path': (f, {run}) => { run.path += '@refs/heads/stacked'; },
     'wrong repository': (f, {run}) => { run.head_repository.full_name = 'fork/FireMUD'; },
     'wrong owner revision': (f, {run, job}) => { run.head_sha = E; job.head_sha = E; },
-    'superseded attempt': (f, {run}) => { run.run_attempt++; },
+    'receipt attempt identity differs': (f, {run}) => { run.run_attempt++; },
     'failed run': (f, {run}) => { run.conclusion = 'failure'; },
     'wrong job head': (f, {job}) => { job.head_sha = E; },
     'skipped marker': (f, {job}) => { job.steps[0].conclusion = 'skipped'; },
@@ -764,15 +796,65 @@ test('only the exact successful admission attempt can prove an unsent or rejecte
         if (kind === 'unsent') preparePreviewRefusal(f);
         else f.state.dispatchError = dispatchValidationError();
         assert.equal(await admitRuntimeRefresh(f.admission), kind === 'unsent' ? 'obsolete' : 'dispatch-rejected');
-        change(f, {...completeOwnerReceiptAttempt(f, kind), kind});
+        const evidence = completeOwnerReceiptAttempt(f, kind);
+        // Rejection is attributed to historical evidence. Current-run movement
+        // blocks unsent receipts, while historical contradictions block either kind.
+        const receiptRun = kind === 'rejected' && name !== 'attempt moves during marker read'
+          ? evidence.originalAttempt : evidence.run;
+        change(f, {...evidence, run: receiptRun, kind});
         delete f.state.dispatchError;
-        assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
-        assert.equal(f.sent.length, kind === 'unsent' ? 0 : 1);
+        const historicalRejection = kind === 'rejected' && name === 'attempt moves during marker read';
+        assert.equal(await admitOrdinaryRefresh(f), historicalRejection ? 'dispatched-observed' : 'claim-held');
+        assert.equal(f.sent.length, historicalRejection ? 2 : kind === 'unsent' ? 0 : 1);
+        if (historicalRejection) {
+          assert.equal(evidence.run.run_attempt, 2);
+          assert.equal(evidence.originalAttempt.run_attempt, 1);
+        }
         if (kind === 'unsent' && name === 'attempt moves during marker read') {
           assert.deepEqual(f.state.ownerReads, [1, 2]);
         }
       });
     }
+  }
+});
+
+test('a newer native attempt preserves only an attributable original final identity failure', async t => {
+  for (const [name, change, expected] of [
+    ['exact scoped attempt', () => {}, 'dispatched-observed'],
+    ['wrong exact attempt identity', ({originalAttempt}) => { originalAttempt.run_attempt = 2; }, 'claim-held'],
+    ['wrong exact owner revision', ({originalAttempt}) => { originalAttempt.head_sha = E; }, 'claim-held'],
+    ['non-successful original attempt', ({originalAttempt}) => { originalAttempt.conclusion = 'failure'; }, 'claim-held'],
+    ['contradictory original marker', ({job}) => {
+      job.steps.push({name: 'Runtime refresh rejected claim', status: 'completed', conclusion: 'success'});
+    }, 'claim-held'],
+    ['latest attempt moves during marker read', ({f, run}) => {
+      const read = f.admission.github.rest.actions.listJobsForWorkflowRunAttempt;
+      f.admission.github.rest.actions.listJobsForWorkflowRunAttempt = async request => {
+        run.run_attempt++;
+        return read(request);
+      };
+    }, 'claim-held'],
+  ]) {
+    await t.test(name, async () => {
+      const f = admissionFixture();
+      let failFinalRead = false;
+      const read = f.admission.github.rest.pulls.get;
+      f.state.afterClaim = () => { failFinalRead = true; };
+      f.admission.github.rest.pulls.get = async request => {
+        if (failFinalRead) throw Object.assign(new Error('temporarily unavailable'), {status: 502});
+        return read(request);
+      };
+      assert.equal(await admitRuntimeRefresh(f.admission), 'pre-send-unavailable');
+      assert.deepEqual(f.sent, []);
+      const evidence = completeOwnerReceiptAttempt(f, 'pre-send-unavailable');
+      Object.assign(evidence.run, {run_attempt: 2, status: 'in_progress', conclusion: null});
+      assert.equal(evidence.originalAttempt.run_attempt, 1);
+      change({f, ...evidence});
+      failFinalRead = false;
+      assert.equal(await admitOrdinaryRefresh(f), expected);
+      assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim),
+        expected === 'dispatched-observed' ? ['2'] : []);
+    });
   }
 });
 

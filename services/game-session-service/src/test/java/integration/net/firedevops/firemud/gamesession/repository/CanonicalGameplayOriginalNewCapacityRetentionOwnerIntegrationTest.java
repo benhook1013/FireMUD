@@ -383,6 +383,32 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
               fixture
                   .dsl()
                   .fetchSingle(
+                      """
+                      SELECT state FROM game_session_region_owner_transfer
+                      WHERE tenant_id=? AND game_instance_id=? AND region_id=?
+                        AND old_owner_id=? AND old_owner_fence=?
+                      """,
+                      original.status.tenantId(),
+                      original.status.gameInstanceId(),
+                      original.status.regionId(),
+                      original.status.ownerInstanceId(),
+                      original.status.executorFence().longValueExact())
+                  .get(0, String.class))
+          .isEqualTo("FROZEN");
+      assertThatThrownBy(
+              () -> observeGuardedReplacementRefusal("successor-without-positive-serving-proof"))
+          .rootCause()
+          .isInstanceOfSatisfying(
+              org.postgresql.util.PSQLException.class,
+              failure -> {
+                assertThat(failure.getSQLState()).isEqualTo("23514");
+                assertThat(failure.getMessage())
+                    .contains("Region transfer must complete with owner installation");
+              });
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
                       "SELECT status FROM game_session_canonical_binding_transition WHERE"
                           + " transition_id=?",
                       fixture.transitionId())

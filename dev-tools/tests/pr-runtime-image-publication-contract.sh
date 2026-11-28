@@ -457,8 +457,9 @@ for (const publishable of ["false", "", undefined]) {
     client_payload: {source_run_id: "4242", source_run_attempt: "2"}}};
   await rejectsResolver(resolve({runs: [rerun]}), /run attempt differs from the dispatch/);
   await rejectsResolver(resolve({runs: [source], context: rerunContext}), /run attempt differs from the dispatch/);
-  const attempt2 = {...rerun, created_at: "2026-01-08T01:00:00Z",
-    run_started_at: "2026-01-08T01:00:00.500Z", updated_at: "2026-01-08T01:04:00Z"};
+  // The attempt endpoint can report created_at exactly one second after start.
+  const attempt2 = {...rerun, created_at: "2026-01-08T01:00:01Z",
+    run_started_at: "2026-01-08T01:00:00Z", updated_at: "2026-01-08T01:04:00Z"};
   const rerunProducer = producerFor(attempt2);
   const rerunResult = await resolve({runs: [rerun], context: rerunContext, nativeAttempt: attempt2, jobs: [rerunProducer]});
   assert.deepEqual(JSON.parse(rerunResult.output.source), rerun,
@@ -778,6 +779,7 @@ async function runReconcile({
   ciRuns = [ciRun], ciNativeRuns = {}, ciJobsByRun = {}, postVisibilityRuns = null,
   postVisibilityFailures = [], preflightRefreshRuns = [], refreshNativeRuns = {}, refreshAttemptJobs = {},
   refreshNativeAttempts = {}, sourceRun = source, sourceCallback = sourceRun,
+  postNativePrRuns = [], postNativePrSnapshots = {},
 } = {}) {
   let now = Date.parse("2026-01-08T00:00:00Z");
   let expire = expireFirstRequest;
@@ -852,6 +854,8 @@ async function runReconcile({
         getWorkflowRun: async options => {
           record("actions.getWorkflowRun", options, {owner, repo, run_id: options.run_id});
           if (options.run_id === source.id) return {data: sourceRun};
+          const native = postNativePrRuns.find(run => run.id === options.run_id);
+          if (native) return {data: postNativePrSnapshots[native.id] ?? native};
           const refresh = preflightRefreshRuns.find(run => run.id === options.run_id);
           if (refresh || Object.hasOwn(refreshNativeRuns, options.run_id)) {
             nativeRefreshRunIds.push(options.run_id);
@@ -894,7 +898,10 @@ async function runReconcile({
         },
         listWorkflowRuns: async options => {
           const {workflow_id: workflowId, event, head_sha: requestedHead, created, per_page, page} = options;
-          const normal = {owner, repo, workflow_id: workflowId, event, per_page, page};
+          assert.equal(per_page, 100);
+          assert.ok(Number.isInteger(page) && page > 0);
+          if (inventoryRequests.length === 0) assert.equal(page, 1);
+          const normal = {owner, repo, workflow_id: workflowId, event, per_page: 100, page};
           if (requestedHead !== undefined) normal.head_sha = requestedHead;
           if (created !== undefined) normal.created = created;
           record("actions.listWorkflowRuns", options, normal);
@@ -906,6 +913,11 @@ async function runReconcile({
           }
           let runs = [];
           if (workflowId === "ci.yml") runs = ciRuns;
+          if (workflowId === "runtime-images.yml" && event === "pull_request" && created !== undefined) {
+            assert.equal(requestedHead, head);
+            assert(visibleRun, "the native reuse observation shares the post-request window");
+            runs = postNativePrRuns;
+          }
           if (workflowId === "runtime-images.yml" && event === "repository_dispatch") {
             if (visibleRun) {
               const failure = postVisibilityFailures.shift();
@@ -919,7 +931,7 @@ async function runReconcile({
               runs = preflightRefreshRuns;
             }
           }
-          return {data: {total_count: runs.length, workflow_runs: runs}};
+          return {data: {total_count: runs.length, workflow_runs: runs.slice((page - 1) * per_page, page * per_page)}};
         },
       },
       pulls: {
@@ -991,12 +1003,14 @@ async function runReconcile({
   assert.equal(uncertainPost.dispatchRequests[0].request.retries, 0,
     "the production one-shot request explicitly disables Octokit retries");
   assert(uncertainPost.warnings.some(message => message.includes("no retry issued") && message.includes("ambiguous dispatch response")));
-  assert(uncertainPost.infos.some(message => message.includes("exact refresh is visible")));
+  assert(uncertainPost.infos.some(message => message.includes("exact refresh is visible") &&
+    message.includes("separate from admission")));
   assert(uncertainPost.requests.some(({name}) => name === "actions.listWorkflowRuns"),
     "the one-shot handoff must be followed by source-derived visibility observation");
   const postVisibilityFloor = "2026-01-08T00:00:00.000Z..*";
   const assertExactPostVisibilityFilter = result => {
-    const observationReads = result.inventoryRequests.filter(request => request.created === postVisibilityFloor);
+    const observationReads = result.inventoryRequests.filter(request =>
+      request.event === "repository_dispatch" && request.created === postVisibilityFloor);
     assert(observationReads.length > 0, "post-POST observation must query from the dispatch timestamp second");
     for (const request of observationReads) {
       const {request: requestOptions, ...normalOptions} = request;
@@ -1059,12 +1073,34 @@ async function runReconcile({
     }],
   });
   assert.match(stalePostVisibility.failure?.message ?? "", /visibility is unknown/,
-    "an otherwise exact native run created before the dispatch second cannot confirm the POST");
+    "an otherwise exact typed run created before the dispatch second does not qualify as newly visible");
   assert.equal(stalePostVisibility.postAttempts, 1);
   assert.equal(stalePostVisibility.inventoryRequests.filter(request =>
-    request.created === postVisibilityFloor
+    request.event === "repository_dispatch" && request.created === postVisibilityFloor
   ).length, 24, "out-of-filter stale evidence remains unaccepted throughout the bounded observation window");
   assertExactPostVisibilityFilter(stalePostVisibility);
+  const liveNative = {...source, id: 9002, status: "in_progress", conclusion: null,
+    path: `${source.path}@refs/pull/42/merge`, created_at: "2026-01-08T00:00:00Z",
+    pull_requests: [{number: 42, head: {sha: head}, base: {sha: base, ref: "develop"}}]};
+  const nativeReused = await runReconcile({postVisibilityRuns: [], postNativePrRuns: [liveNative]});
+  assert.equal(nativeReused.failure, null);
+  assertExactPostVisibilityFilter(nativeReused);
+  assert(nativeReused.infos.some(message => message.includes("newer exact active native PR producer is reusable") &&
+    message.includes("does not confirm the admission request")));
+  assert(nativeReused.inventoryRequests.some(request => request.event === "pull_request" &&
+    request.head_sha === head && request.created === postVisibilityFloor && request.request.signal.timeoutMs <= 120000));
+  assert(nativeReused.requests.some(({name, options}) => name === "actions.getWorkflowRun" && options.run_id === liveNative.id));
+  for (const changedNative of [
+    {...liveNative, run_attempt: 2},
+    {...liveNative, status: "completed", conclusion: "failure"},
+    {...liveNative, pull_requests: [{number: 42, head: {sha: head}, base: {sha: base, ref: "other"}}]},
+  ]) {
+    const noReuse = await runReconcile({postVisibilityRuns: [], postNativePrRuns: [liveNative],
+      postNativePrSnapshots: {[liveNative.id]: changedNative}});
+    assert.match(noReuse.failure?.message, /visibility is unknown/);
+    assert.equal(noReuse.postAttempts, 1);
+    assert(!noReuse.infos.some(message => message.includes("native PR producer is reusable")));
+  }
   for (const conclusion of ["cancelled", "timed_out"]) {
     for (const ambiguousPost of [false, true]) {
       const unusable = {...typedRefresh, conclusion, run_attempt: 2};
@@ -1134,7 +1170,7 @@ async function runReconcile({
     assert.deepEqual(held.nativeRefreshRunIds, [], "only cancelled/timed_out results enter native verification");
   }
   const legacyFailedPlay = {...typedRefresh, id: typedRefresh.id + 1, conclusion: "failure",
-    run_started_at: "2026-01-06T00:00:00Z", updated_at: "2026-01-06T00:03:00Z"};
+    created_at: "2026-01-05T23:59:59Z", run_started_at: "2026-01-06T00:00:00Z", updated_at: "2026-01-06T00:03:00Z"};
   const marker = {name: "Known canonical transition PLAY failure with successful authenticated cleanup", status: "completed",
     conclusion: "skipped", started_at: "2026-01-06T00:01:00Z", completed_at: "2026-01-06T00:01:00Z"};
   const failedJob = {id: 122, name: "PR Full-Stack Smoke (runtime-required=true)", run_id: legacyFailedPlay.id,
@@ -1159,8 +1195,16 @@ async function runReconcile({
     assert.equal(result.failure, null);
     assert.equal(result.postAttempts, expectedPosts);
   }
+  const reversedChronology = {...legacyFailedPlay, created_at: "2026-01-08T00:00:00Z"};
+  const reversed = await runReconcile({preflightRefreshRuns: [reversedChronology],
+    refreshAttemptJobs: {[reversedChronology.id]: {total_count: 1, jobs: [failedJob]}}});
+  assert.equal(reversed.failure, null);
+  assert.equal(reversed.postAttempts, 0, "a failed run cannot execute before it was created");
+  assert(reversed.warnings.some(message => /explicit investigation, not automatic replay/.test(message)));
   const rerunAttempt = {...legacyFailedPlay, run_started_at: "2026-01-06T01:00:00Z", updated_at: "2026-01-06T01:03:00Z"};
   for (const attempt of [rerunAttempt, {...legacyFailedPlay, run_attempt: 2},
+    {...legacyFailedPlay, created_at: "2026-01-06T00:01:00Z"},
+    {...legacyFailedPlay, created_at: "2026-01-05T23:59:58Z"},
     {...legacyFailedPlay, repository: {full_name: "fork/FireMUD"}},
     {...legacyFailedPlay, head_repository: {full_name: "fork/FireMUD"}},
     {...legacyFailedPlay, path: `${legacyFailedPlay.path}@refs/heads/develop`},

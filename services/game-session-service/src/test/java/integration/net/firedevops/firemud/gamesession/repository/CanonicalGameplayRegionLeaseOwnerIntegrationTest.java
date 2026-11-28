@@ -1944,6 +1944,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                             CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation
                                 .class),
                         org.mockito.ArgumentMatchers.any(Instant.class),
+                        org.mockito.ArgumentMatchers.same(inventory),
+                        org.mockito.ArgumentMatchers.same(evidence),
                         org.mockito.ArgumentMatchers.any());
                 org.mockito.Mockito.doAnswer(
                         cleanupInvocation -> {
@@ -1990,7 +1992,11 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           new CommandListener() {
             @Override
             public void commandStarted(CommandStartedEvent event) {
-              if (event.getCommand().getType() != CommandType.EVALSHA) return;
+              var command = event.getCommand();
+              if (command.getType() != CommandType.EVALSHA) return;
+              String arguments = command.getArgs().toCommandString();
+              if (!arguments.contains("value<PROBE>") && !arguments.contains("value<INITIALIZE>"))
+                return;
               String phase =
                   testSchema
                       .dsl()
@@ -1999,8 +2005,9 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                               + " WHERE initialization_operation_id = ?",
                           preparation.operationId())
                       .get(0, String.class);
-              if ("INITIALIZING".equals(phase)) {
-                assertThat(initialize.compareAndSet(null, event.getCommand())).isTrue();
+              if (arguments.contains("value<INITIALIZE>")) {
+                assertThat(phase).isEqualTo("INITIALIZING");
+                assertThat(initialize.compareAndSet(null, command)).isTrue();
               } else {
                 assertThat(phase).isEqualTo("PREPARED");
               }
@@ -2080,6 +2087,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       var inventory = mock(CanonicalGameplayBindingInventoryRepository.class);
       when(inventory.readProvisionalCasEvidence(TRANSITION_ID)).thenReturn(evidence);
       when(inventory.forBudget(org.mockito.ArgumentMatchers.any())).thenReturn(inventory);
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                java.util.function.Function<CanonicalGameplayBindingInventoryRepository, Object>
+                    read = invocation.getArgument(1);
+                return read.apply(inventory);
+              })
+          .when(inventory)
+          .withinTransferRead(
+              org.mockito.ArgumentMatchers.any(
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.class),
+              org.mockito.ArgumentMatchers.any());
       var source = source(world.originalEvidence());
       var incarnation =
           incarnationSource.readCurrent(
@@ -3085,16 +3103,22 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                               .isInstanceOf(RuntimeException.class);
                           assertThat(concurrentRelease.get()).isNotNull();
                           concurrentRelease.get().orTimeout(10, TimeUnit.SECONDS).join();
-                          assertThat(
-                                  testSchema
-                                      .dsl()
-                                      .fetchSingle(
-                                          "SELECT no_write_released_through"
-                                              + " FROM game_session_region_timeline_preparation"
-                                              + " WHERE initialization_operation_id = ?",
-                                          preparation.operationId())
-                                      .get(0, Long.class))
-                              .isZero();
+                          // The waiting retry committed the release of this exact claim.
+                          var released =
+                              testSchema
+                                  .dsl()
+                                  .fetchSingle(
+                                      "SELECT initialization_claim_ordinal, no_write_released_through,"
+                                          + " initialization_claim_generation"
+                                          + " FROM game_session_region_timeline_preparation"
+                                          + " WHERE initialization_operation_id = ?",
+                                      preparation.operationId());
+                          assertThat(released.get("initialization_claim_ordinal", Long.class))
+                              .isEqualTo(retained.claimOrdinal());
+                          assertThat(released.get("no_write_released_through", Long.class))
+                              .isEqualTo(retained.claimOrdinal());
+                          assertThat(released.get("initialization_claim_generation", UUID.class))
+                              .isNull();
                           assertThat(
                                   repository.findTimelinePreparation(source).orElseThrow().phase())
                               .isEqualTo(
@@ -3389,9 +3413,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
       assertThat(redis.admin().type(metaKey)).isEqualTo("none");
 
-      // Model process loss after the SQL commit but before any INITIALIZE Redis call:
-      // discard the sole returned creation permit, without changing SQL or deleting keys.
-      assertThat(statusRepository.beginInitialTimeline(preparation, NOW)).isPresent();
+      // Model process loss after the SQL commit but before any INITIALIZE Redis call.
+      var permit = statusRepository.beginInitialTimeline(preparation, NOW).orElseThrow();
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT initialization_claim_generation"
+                          + " FROM game_session_region_timeline_preparation WHERE transition_id = ?",
+                      TRANSITION_ID)
+                  .get(0, UUID.class))
+          .isEqualTo(permit.generation());
       var initializing = statusRepository.findTimelinePreparation(qualifiedSource).orElseThrow();
       assertThat(initializing.phase())
           .isEqualTo(
@@ -3598,7 +3630,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   void acknowledgedRegionBridgeRefusesCompatibilityTakeoverWithoutMutation() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();
-    try {
+    try (var compositionPool = newCompositionPool(testSchema)) {
       try (RedisFixture redis = RedisFixture.open()) {
         redis.admin().flushdb();
       }
@@ -3612,7 +3644,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         CanonicalGameplayRegionOwnerCompositionFixture.CompatibilityTakeoverProof proof =
             CanonicalGameplayRegionOwnerCompositionFixture
                 .installAndBridgeThenCompatibilityTakeoverRefuses(
-                    testSchema.dsl(),
+                    DSL.using(compositionPool, SQLDialect.POSTGRES),
                     REDIS.getHost(),
                     REDIS.getMappedPort(REDIS_PORT),
                     world.request(),

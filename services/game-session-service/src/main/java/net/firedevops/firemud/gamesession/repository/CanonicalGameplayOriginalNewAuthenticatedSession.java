@@ -162,8 +162,8 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
       String issuanceFence = requiredText(root, "issuanceFence");
       String encodedHandle = requiredText(root, "rebindHandle");
       String duration = requiredText(root, "canonicalSessionDurationMillis");
-      if (!requiredText(root, "capacityExecutionDigest").matches("sha256:[0-9a-f]{64}"))
-        throw invalid();
+      String capacityExecutionDigest = requiredText(root, "capacityExecutionDigest");
+      if (!capacityExecutionDigest.matches("sha256:[0-9a-f]{64}")) throw invalid();
 
       if (!SHA256.matcher(tokenHash).matches()) throw invalid();
       long admissionAtMillis = positiveDecimal(admissionAt);
@@ -209,6 +209,7 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
           tokenExpiresAtSeconds,
           issuanceFence,
           durationMillis,
+          capacityExecutionDigest,
           handle);
     } catch (RuntimeException rejected) {
       throw invalid();
@@ -552,6 +553,7 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
     private final long authTokenExpiresAt;
     private final String issuanceFence;
     private final long canonicalSessionDurationMillis;
+    private final String capacityExecutionDigest;
 
     private Finalized(
         byte[] canonicalBytes,
@@ -563,6 +565,7 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
         long authTokenExpiresAt,
         String issuanceFence,
         long canonicalSessionDurationMillis,
+        String capacityExecutionDigest,
         byte[] opaqueRebindHandle) {
       this.canonicalBytes = canonicalBytes.clone();
       this.originalCandidate = originalCandidate;
@@ -573,6 +576,7 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
       this.authTokenExpiresAt = authTokenExpiresAt;
       this.issuanceFence = issuanceFence;
       this.canonicalSessionDurationMillis = canonicalSessionDurationMillis;
+      this.capacityExecutionDigest = capacityExecutionDigest;
       this.opaqueRebindHandle = opaqueRebindHandle.clone();
     }
 
@@ -623,6 +627,10 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
 
     public long canonicalSessionDurationMillis() {
       return canonicalSessionDurationMillis;
+    }
+
+    String capacityExecutionDigest() {
+      return capacityExecutionDigest;
     }
 
     /** Returns only a caller-owned copy; Account remains the sole handle resolver. */

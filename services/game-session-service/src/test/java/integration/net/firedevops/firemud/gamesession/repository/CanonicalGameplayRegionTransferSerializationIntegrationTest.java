@@ -19,6 +19,8 @@ import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecuti
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.flywaydb.core.api.FlywayException;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
 import org.jooq.ExecuteListener;
@@ -185,6 +187,60 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
         assertThat(proof.executionState(dispatched)).isNull();
       }
       assertThat(custodyReads.get()).isPositive();
+
+      var current = proof.currentOwner();
+      installIsolation.set(-1);
+      assertThatThrownBy(() ->
+              repeatableReadRepository.installOwner(
+                  proof.scope,
+                  current.regionEpoch(),
+                  null,
+                  "f".repeat(64),
+                  current.ownerService(),
+                  "replacement-without-original-owner-evidence",
+                  proof.clock.instant()))
+          .rootCause()
+          .isInstanceOf(
+              CanonicalGameplayRegionRuntimeStatusRepository.ExistingOwnerReplacementRefused.class);
+      assertThat(installIsolation.get()).isEqualTo(Connection.TRANSACTION_READ_COMMITTED);
+      assertThat(proof.currentOwner()).isEqualTo(current);
+    }
+  }
+
+  @Test
+  void selectedOwnerSettlesExactDenialAfterRecordedAccountAbort() throws Exception {
+    try (var proof = new TransferSqlProof(1, 1_048_576L, 3)) {
+      var original = proof.execution;
+      var selected =
+          new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
+              original.selectedOwnerId(), original.selectedOwnerFence());
+      var denial = new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, UUID.randomUUID());
+      proof.authorizeAccountSend(original);
+      assertThat(proof.executionState(original)).isNull();
+      assertThat(proof.fixture.recordOriginalAccountAbort().isAccountAborted()).isTrue();
+
+      proof
+          .capacity(proof.sql)
+          .settleDeniedCharge(
+              proof.admission, original.request(), selected, denial, transferDeadline());
+
+      String chargeSql =
+          "SELECT account_denial_id,account_denial_kind FROM game_session_capacity_evidence_charge"
+              + " WHERE admission_attempt_id=?";
+      var charge = proof.sql.fetchSingle(chargeSql, original.request().admissionAttemptId());
+      assertThat(charge.get("account_denial_id", UUID.class)).isEqualTo(denial.durableDenialId());
+      assertThat(charge.get("account_denial_kind", String.class)).isEqualTo(denial.code().name());
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT count(*) FROM game_session_capacity_evidence_charge"
+                          + " WHERE tenant_id=? AND account_denial_id IS NULL",
+                      original.request().identity().tenantId())
+                  .get(0, Long.class))
+          .isZero();
+      assertThat(proof.executionState(original)).isNull();
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
     }
   }
 
@@ -254,11 +310,24 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
                       proof.admission, original.request(), selected, denial, transferDeadline());
       if (ownerReplaced) {
         proof.rawReplaceOwner("denial-settlement-successor", "e".repeat(64));
+        String retainedQuery =
+            """
+            SELECT to_jsonb(c)::text AS charge,
+                coalesce((SELECT to_jsonb(e)::text
+                  FROM game_session_original_new_capacity_execution e
+                  WHERE e.admission_attempt_id = c.admission_attempt_id), '<absent>') AS execution
+            FROM game_session_capacity_evidence_charge c
+            WHERE c.admission_attempt_id = ?
+            """;
+        var attemptId = original.request().admissionAttemptId();
+        var retainedBefore = proof.sql.fetchSingle(retainedQuery, attemptId).intoMap();
         assertThatThrownBy(settle::run)
             .isExactlyInstanceOf(IllegalStateException.class)
             .hasMessage("Original NEW capacity execution is indeterminate")
             .hasStackTraceContaining(
                 "CanonicalGameplayOriginalNewCapacityExecutionOwner.requireSelectedOwner");
+        var retainedAfter = proof.sql.fetchSingle(retainedQuery, attemptId).intoMap();
+        assertThat(retainedAfter).isEqualTo(retainedBefore);
       } else {
         settle.run();
         settle.run();
@@ -285,6 +354,156 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
                       original.request().admissionAttemptId())
                   .get(0, UUID.class))
           .isEqualTo(ownerReplaced ? null : denial.durableDenialId());
+    }
+  }
+
+  @Test
+  void capacityChargeRequiresTheTransitionRequestIdentity() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      var mismatched = proof.newMismatchedRequestExecution();
+      var request = mismatched.request();
+      var identity = request.identity();
+      assertThat(identity.requestId())
+          .isNotEqualTo(proof.execution.request().identity().requestId());
+
+      assertThatThrownBy(() ->
+              proof.sql.transaction(configuration ->
+                  DSL.using(configuration)
+                      .execute(
+                          "INSERT INTO game_session_capacity_evidence_charge"
+                              + " (admission_attempt_id,tenant_id,request_id,admission_id,"
+                              + "capacity_rearm_fence,mutation_digest,candidate_digest,"
+                              + "selected_owner_id,selected_owner_fence,reserved_binding_bytes,"
+                              + "account_send_state,account_send_evidence_expires_at)"
+                              + " VALUES (?,?,?,?,?,?,?,?,?,1048576,'UNCLAIMED',CAST(? AS timestamptz))",
+                          request.admissionAttemptId(),
+                          identity.tenantId(),
+                          identity.requestId(),
+                          identity.admissionId(),
+                          request.capacityRearmFence(),
+                          request.mutationDigest(),
+                          mismatched.candidateDigest(),
+                          mismatched.selectedOwnerId(),
+                          mismatched.selectedOwnerFence(),
+                          java.time.OffsetDateTime.ofInstant(
+                              request
+                                  .evidence()
+                                  .expiresAt()
+                                  .truncatedTo(java.time.temporal.ChronoUnit.MICROS),
+                              java.time.ZoneOffset.UTC))))
+          .rootCause()
+          .isInstanceOfSatisfying(
+              org.postgresql.util.PSQLException.class,
+              failure -> {
+                assertThat(failure.getSQLState()).isEqualTo("23514");
+                assertThat(failure.getMessage())
+                    .contains("Capacity evidence source or predecessor coverage is unavailable");
+              });
+
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT request_id FROM game_session_capacity_evidence_charge"
+                          + " WHERE admission_attempt_id=?",
+                      proof.execution.request().admissionAttemptId())
+                  .get(0, UUID.class))
+          .isEqualTo(proof.execution.request().identity().requestId());
+
+      var exact = proof.newIndependentControlledOriginExecution();
+      proof.precharge(exact);
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT request_id,admission_id,candidate_digest"
+                          + " FROM game_session_capacity_evidence_charge"
+                          + " WHERE admission_attempt_id=?",
+                      exact.request().admissionAttemptId())
+                  .intoMap())
+          .containsEntry("request_id", exact.request().identity().requestId())
+          .containsEntry("admission_id", exact.request().identity().admissionId())
+          .containsEntry("candidate_digest", exact.candidateDigest());
+    }
+  }
+
+  @Test
+  void transferItemRequiresExactAllocationVersionAndWorkloadNamespace() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID transferId = proof.insertRawFrozenTransfer(proof.sql);
+      var assignment = proof.tags.assignmentForTransition(proof.execution.transitionId());
+      String insert =
+          "INSERT INTO game_session_region_owner_transfer_item"
+              + " (transfer_id,target_ordinal,execution_digest,canonical_execution,candidate_digest,"
+              + "tenant_gameplay_tag,workload_namespace,allocation_version)"
+              + " VALUES (?,?,?,?,?,?,?,?)";
+
+      assertThatThrownBy(() ->
+              proof.sql.transaction(configuration ->
+                  DSL.using(configuration)
+                      .execute(
+                          insert,
+                          transferId,
+                          0L,
+                          proof.execution.digest(),
+                          proof.execution.canonicalBytes(),
+                          proof.execution.candidateDigest(),
+                          assignment.tenantGameplayTag(),
+                          assignment.workloadNamespace(),
+                          assignment.allocationVersion() + 1)))
+          .rootCause()
+          .isInstanceOfSatisfying(
+              org.postgresql.util.PSQLException.class,
+              failure -> {
+                assertThat(failure.getSQLState()).isEqualTo("23514");
+                assertThat(failure.getMessage())
+                    .contains("Transfer item differs from unresolved original region execution");
+              });
+      assertThat(
+              proof.sql.fetchOne(
+                  "SELECT 1 FROM game_session_region_owner_transfer_item WHERE transfer_id=?",
+                  transferId))
+          .isNull();
+
+      assertThatThrownBy(() ->
+              proof.sql.transaction(configuration ->
+                  DSL.using(configuration)
+                      .execute(
+                          insert,
+                          transferId,
+                          0L,
+                          proof.execution.digest(),
+                          proof.execution.canonicalBytes(),
+                          proof.execution.candidateDigest(),
+                          assignment.tenantGameplayTag(),
+                          "wrong-workload-namespace",
+                          assignment.allocationVersion())))
+          .rootCause()
+          .isInstanceOfSatisfying(
+              org.postgresql.util.PSQLException.class,
+              failure -> {
+                assertThat(failure.getSQLState()).isEqualTo("23514");
+                assertThat(failure.getMessage())
+                    .contains("Transfer item differs from unresolved original region execution");
+              });
+      assertThat(
+              proof.sql.fetchOne(
+                  "SELECT 1 FROM game_session_region_owner_transfer_item WHERE transfer_id=?",
+                  transferId))
+          .isNull();
+
+      proof.insertRawTransferItem(proof.sql, transferId, 0);
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT workload_namespace,allocation_version"
+                          + " FROM game_session_region_owner_transfer_item WHERE transfer_id=?",
+                      transferId)
+                  .intoMap())
+          .containsEntry("workload_namespace", assignment.workloadNamespace())
+          .containsEntry("allocation_version", assignment.allocationVersion());
     }
   }
 
@@ -735,6 +954,191 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
   }
 
   @Test
+  void staleTransferEnrollmentAfterTerminalCloseIsRefusedAndFrozenIntentCanResume()
+      throws Exception {
+    try (var proof = new TransferSqlProof();
+        var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
+                proof.admission.candidate(), Clock.systemUTC());
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(proof.execution)) {
+      var account = proof.controlledAccountOpen();
+      var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
+      proof
+          .capacity(proof.sql)
+          .authorize(
+              proof.admission, template, account, issuer, proof.execution, transferDeadline());
+      UUID transferId = proof.begin();
+      assertThat(
+              proof.sql.fetch(
+                  "SELECT execution_digest FROM game_session_original_new_capacity_execution"
+                      + " WHERE execution_digest=? AND status='AUTHORIZED'",
+                  proof.execution.digest()))
+          .hasSize(1);
+      // Freeze/census selected this exact assignment before the terminal close below. Reuse the
+      // captured value for the stale insert so the test reaches the SQL custody guard rather than
+      // trying to rediscover an inventory that has since become terminal.
+      var capturedAssignment = proof.tags.assignmentForTransition(proof.execution.transitionId());
+
+      // Retain a real terminal result through the owner fixture after the transfer's pending
+      // census selected this execution but before that stale selection inserts its child row.
+      assertThat(proof.fixture.recordOriginalAccountAbort().isAccountAborted()).isTrue();
+      proof
+          .capacity(proof.sql)
+          .closeOriginalAttempt(proof.execution.request(), proof.execution.reservation());
+      var terminal =
+          proof.sql.fetchSingle(
+              "SELECT status,terminal_readback FROM game_session_original_new_capacity_execution"
+                  + " WHERE execution_digest=?",
+              proof.execution.digest());
+      assertThat(terminal.get("status", String.class)).isEqualTo("CLOSED");
+      assertThat(terminal.get("terminal_readback", byte[].class)).isNotEmpty();
+      assertThat(
+              proof
+                  .capacity(proof.sql)
+                  .readExact(proof.execution.request(), proof.execution.reservation())
+                  .disposition())
+          .isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
+
+      assertThatThrownBy(
+              () -> proof.insertRawTransferItem(proof.sql, transferId, 0, capturedAssignment))
+          .rootCause()
+          .isInstanceOfSatisfying(
+              org.postgresql.util.PSQLException.class,
+              failure -> {
+                assertThat(failure.getSQLState()).isEqualTo("23514");
+                assertThat(failure.getMessage())
+                    .contains("Transfer item differs from unresolved original region execution");
+              });
+      assertThat(
+              proof.sql.fetchOne(
+                  "SELECT 1 FROM game_session_region_owner_transfer_item WHERE transfer_id=?",
+                  transferId))
+          .isNull();
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT state FROM game_session_region_owner_transfer WHERE transfer_id=?",
+                      transferId)
+                  .get(0, String.class))
+          .isEqualTo("FROZEN");
+
+      var frozen =
+          proof.coordinator.frozenOriginal(proof.execution.transitionId(), transferDeadline());
+      assertThat(frozen).isNotNull();
+      assertThat(frozen.transferId()).isEqualTo(transferId);
+      assertThat(proof.coordinator.resume(frozen, proof.scope, proof.prior, transferDeadline()))
+          .isEqualTo(transferId);
+      var installed = proof.install(transferId);
+      assertThat(installed.ownerInstanceId()).isEqualTo("sql-proof-successor");
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT state FROM game_session_region_owner_transfer WHERE transfer_id=?",
+                      transferId)
+                  .get(0, String.class))
+          .isEqualTo("COMPLETED");
+      assertThat(proof.executionState(proof.execution)).isEqualTo("CLOSED");
+      assertThat(
+              proof.sql.fetchCount(
+                  org.jooq.impl.DSL.table("game_session_region_owner_transfer_item")))
+          .isZero();
+    }
+  }
+
+  @Test
+  void ownerReplacementGuardTracksAuthorizedThenExactlyClosedCapacityExecution() throws Exception {
+    try (var proof = new TransferSqlProof();
+        var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
+                proof.admission.candidate(), Clock.systemUTC());
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(proof.execution)) {
+      var account = proof.controlledAccountOpen();
+      var issuer = proof.issuerOpen();
+      proof.authorizeAccountSend(proof.execution);
+      proof
+          .capacity(proof.sql)
+          .authorize(
+              proof.admission, template, account, issuer, proof.execution, transferDeadline());
+      assertThat(proof.executionState(proof.execution)).isEqualTo("AUTHORIZED");
+
+      assertOwnerReplacementGuard(proof, "owner-successor-while-authorized", false);
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+      assertThat(proof.executionState(proof.execution)).isEqualTo("AUTHORIZED");
+
+      assertThat(proof.fixture.recordOriginalAccountAbort().isAccountAborted()).isTrue();
+      proof
+          .capacity(proof.sql)
+          .closeOriginalAttempt(proof.execution.request(), proof.execution.reservation());
+      var terminal =
+          proof.sql.fetchSingle(
+              "SELECT status,terminal_readback FROM game_session_original_new_capacity_execution"
+                  + " WHERE execution_digest=?",
+              proof.execution.digest());
+      assertThat(terminal.get("status", String.class)).isEqualTo("CLOSED");
+      assertThat(terminal.get("terminal_readback", byte[].class)).isNotEmpty();
+      assertThat(
+              proof
+                  .capacity(proof.sql)
+                  .readExact(proof.execution.request(), proof.execution.reservation())
+                  .disposition())
+          .isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
+
+      assertOwnerReplacementGuard(proof, "owner-successor-after-closed-retention", true);
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+      assertThat(proof.executionState(proof.execution)).isEqualTo("CLOSED");
+    }
+  }
+
+  private void assertOwnerReplacementGuard(
+      TransferSqlProof proof, String successor, boolean expectedSuccess) throws Exception {
+    String schema = proof.sql.fetchSingle("SELECT current_schema()").get(0, String.class);
+    try (var connection =
+        java.sql.DriverManager.getConnection(
+            postgresContainer().getJdbcUrl(),
+            postgresContainer().getUsername(),
+            postgresContainer().getPassword())) {
+      connection.setSchema(schema);
+      connection.setAutoCommit(false);
+      DSLContext tx = DSL.using(connection, SQLDialect.POSTGRES);
+      tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+      tx.execute("SAVEPOINT guarded_owner_replacement");
+      if (expectedSuccess) {
+        assertThat(replaceOwner(tx, proof, successor)).isEqualTo(1);
+      } else {
+        assertThatThrownBy(() -> replaceOwner(tx, proof, successor))
+            .rootCause()
+            .isInstanceOfSatisfying(
+                org.postgresql.util.PSQLException.class,
+                failure -> {
+                  assertThat(failure.getSQLState()).isEqualTo("23514");
+                  assertThat(failure.getMessage())
+                      .contains("Region owner replacement lacks exact transfer custody");
+                });
+      }
+      // Both the rejected statement and successful control remain speculative.
+      tx.execute("ROLLBACK TO SAVEPOINT guarded_owner_replacement");
+      connection.rollback();
+    }
+  }
+
+  private int replaceOwner(DSLContext tx, TransferSqlProof proof, String successor) {
+    return tx.execute(
+        "UPDATE game_session_region_runtime_status SET"
+            + " owner_instance_id=?,executor_fence=nextval('game_session_region_executor_fence_seq'),lease_token_correlation=?"
+            + " WHERE tenant_id=? AND game_instance_id=? AND region_id=?",
+        successor,
+        "e".repeat(64),
+        proof.scope.tenantId(),
+        proof.scope.gameInstanceId(),
+        proof.scope.regionId());
+  }
+
+  @Test
   void rawTransferChildInsertSerializesWithCompletionAcrossCurrentAndOlderSnapshots()
       throws Exception {
     try (var proof = new TransferSqlProof();
@@ -819,6 +1223,100 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
                       transferId)
                   .get(0, Long.class))
           .isEqualTo(1L);
+    }
+  }
+
+  @Test
+  void lateTransferVerificationWaitsForParentCompletionThenIsRefused() throws Exception {
+    try (var proof = new TransferSqlProof();
+        ExecutorService executor = Executors.newSingleThreadExecutor()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID transferId = proof.begin();
+      proof.captureAndFence(transferId);
+      proof.verifyPage(transferId);
+      boolean verified =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.finishVerification(transferId));
+      assertThat(verified).isTrue();
+      var installed = proof.install(transferId);
+      assertThat(proof.currentOwner()).isEqualTo(installed);
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT state FROM game_session_region_owner_transfer WHERE transfer_id=?",
+                      transferId)
+                  .get(0, String.class))
+          .isEqualTo("COMPLETED");
+
+      String schema = proof.sql.fetchSingle("SELECT current_schema()").get(0, String.class);
+      try (var terminalLock =
+          java.sql.DriverManager.getConnection(
+              postgresContainer().getJdbcUrl(),
+              postgresContainer().getUsername(),
+              postgresContainer().getPassword())) {
+        terminalLock.setSchema(schema);
+        terminalLock.setAutoCommit(false);
+        DSLContext terminalSql = DSL.using(terminalLock, SQLDialect.POSTGRES);
+        terminalSql.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+        assertThat(
+                terminalSql
+                    .fetchSingle(
+                        "SELECT state FROM game_session_region_owner_transfer"
+                            + " WHERE transfer_id=? FOR UPDATE",
+                        transferId)
+                    .get(0, String.class))
+            .isEqualTo("COMPLETED");
+        int blockerPid = terminalSql.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+
+        UUID lateRound = UUID.randomUUID();
+        Future<String> lateVerification =
+            executor.submit(() -> {
+              try {
+                proof.sql.execute(
+                    "UPDATE game_session_region_owner_transfer_item SET verified_round=?"
+                        + " WHERE transfer_id=? AND target_ordinal=0",
+                    lateRound,
+                    transferId);
+                return "COMMITTED";
+              } catch (RuntimeException failure) {
+                for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+                  if (cause instanceof org.postgresql.util.PSQLException postgresFailure) {
+                    return postgresFailure.getSQLState() + ":" + postgresFailure.getMessage();
+                  }
+                }
+                throw failure;
+              }
+            });
+        try {
+          assertDatabaseWaitsFor(proof.sql, blockerPid);
+          assertThat(lateVerification.isDone()).isFalse();
+        } finally {
+          terminalLock.commit();
+        }
+
+        assertThat(lateVerification.get(10, TimeUnit.SECONDS))
+            .startsWith("23514:")
+            .contains("Completed transfer cannot acquire or change custody");
+        assertThat(
+                proof
+                    .sql
+                    .fetchSingle(
+                        "SELECT state,verification_round FROM game_session_region_owner_transfer"
+                            + " WHERE transfer_id=?",
+                        transferId)
+                    .intoMap())
+            .containsEntry("state", "COMPLETED");
+        assertThat(
+                proof
+                    .sql
+                    .fetchSingle(
+                        "SELECT verified_round FROM game_session_region_owner_transfer_item"
+                            + " WHERE transfer_id=? AND target_ordinal=0",
+                        transferId)
+                    .get(0, UUID.class))
+            .isNotEqualTo(lateRound);
+      }
     }
   }
 
@@ -1063,6 +1561,234 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       assertThat(proof.itemImage(winner)).isEqualTo("[]");
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
       assertThat(status.find(otherScope)).contains(otherPrior);
+    }
+  }
+
+  @Test
+  void transferCompletionRequiresExactSuccessorInstallationAtCommit() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      UUID transfer = proof.insertRawFrozenTransfer(proof.sql);
+      String frozen = proof.transferImage(transfer);
+      String successor = "sql-proof-successor";
+      String lease = "e".repeat(64);
+      assertThatThrownBy(() ->
+              proof.sql.transaction(configuration -> {
+                DSLContext transaction = DSL.using(configuration);
+                long fence =
+                    transaction
+                        .fetchSingle("SELECT nextval('game_session_region_executor_fence_seq')")
+                        .get(0, Long.class);
+                // The deferred guard permits the completion statement but refuses the commit.
+                assertThat(
+                        transaction.execute(
+                            "UPDATE game_session_region_owner_transfer"
+                                + " SET state='COMPLETED',new_owner_id=?,new_owner_fence=?,new_lease_correlation=?"
+                                + " WHERE transfer_id=? AND state='FROZEN'",
+                            successor,
+                            fence,
+                            lease,
+                            transfer))
+                    .isEqualTo(1);
+              }))
+          .rootCause()
+          .isInstanceOfSatisfying(
+              org.postgresql.util.PSQLException.class,
+              failure -> {
+                assertThat(failure.getSQLState()).isEqualTo("23514");
+                assertThat(failure.getServerErrorMessage()).isNotNull();
+                assertThat(failure.getServerErrorMessage().getMessage())
+                    .isEqualTo("Region transfer completion requires its exact installed successor");
+              });
+      assertThat(proof.transferImage(transfer)).isEqualTo(frozen);
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+
+      var installed = proof.rawCompleteAndInstall(transfer, successor, lease, false);
+      assertThat(installed.ownerInstanceId()).isEqualTo(successor);
+      assertThat(installed.leaseTokenCorrelation()).isEqualTo(lease);
+      assertThat(proof.currentOwner()).isEqualTo(installed);
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT state FROM game_session_region_owner_transfer WHERE transfer_id=?",
+                      transfer)
+                  .get(0, String.class))
+          .isEqualTo("COMPLETED");
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void transferIncarnationUpgradePreservesRetainedDispatches(boolean conflictingIncarnations)
+      throws Exception {
+    try (var proof = new TransferSqlProof(MigrationVersion.fromVersion("1065.0.11.2"))) {
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT version FROM flyway_schema_history WHERE success"
+                          + " ORDER BY installed_rank DESC LIMIT 1")
+                  .get(0, String.class))
+          .isEqualTo("1065.0.11.2");
+      var first = proof.execution;
+      var second = proof.newIndependentControlledOriginExecution();
+      proof.seedUndeliveredDispatch(first);
+      proof.seedUndeliveredDispatch(second);
+      UUID transfer = proof.insertRawFrozenTransfer(proof.sql);
+      proof.insertRawTransferItem(proof.sql, transfer, 0, first);
+      proof.insertRawTransferItem(proof.sql, transfer, 1, second);
+      assertThat(
+              proof
+                  .sql
+                  .fetch(
+                      "SELECT execution_digest FROM game_session_region_owner_transfer_item"
+                          + " WHERE transfer_id=? ORDER BY target_ordinal",
+                      transfer)
+                  .getValues(0, String.class))
+          .containsExactly(first.digest(), second.digest());
+
+      String dispatchSql =
+          "UPDATE game_session_region_owner_transfer_item"
+              + " SET fence_dispatch_id=?,fence_dispatch_incarnation=?"
+              + " WHERE transfer_id=? AND execution_digest=?";
+      String incarnation = "sha256:" + "a".repeat(64);
+      assertThat(
+              proof.sql.execute(
+                  dispatchSql, UUID.randomUUID(), incarnation, transfer, first.digest()))
+          .isEqualTo(1);
+      assertThat(
+              proof.sql.execute(
+                  dispatchSql,
+                  UUID.randomUUID(),
+                  conflictingIncarnations ? "sha256:" + "b".repeat(64) : incarnation,
+                  transfer,
+                  second.digest()))
+          .isEqualTo(1);
+      String parentSql =
+          "SELECT to_jsonb(t)::text||':'||xmin::text"
+              + " FROM game_session_region_owner_transfer t WHERE transfer_id=?";
+      String itemsSql =
+          "SELECT to_jsonb(i)::text||':'||xmin::text"
+              + " FROM game_session_region_owner_transfer_item i WHERE transfer_id=?"
+              + " ORDER BY target_ordinal";
+      var parentBefore = proof.sql.fetch(parentSql, transfer).getValues(0, String.class);
+      var itemsBefore = proof.sql.fetch(itemsSql, transfer).getValues(0, String.class);
+      String epochsSql =
+          "SELECT to_jsonb(e)::text||':'||xmin::text"
+              + " FROM game_session_runtime_family_catalog_epoch e ORDER BY catalog_epoch";
+      var epochsBefore = proof.sql.fetch(epochsSql).getValues(0, String.class);
+      var target = MigrationVersion.fromVersion("1065.0.11.3");
+      if (conflictingIncarnations) {
+        assertThatThrownBy(() -> proof.fixture.upgradeWithDefaultGameSessionMigrations(target))
+            .isInstanceOf(FlywayException.class)
+            .rootCause()
+            .isInstanceOfSatisfying(
+                org.postgresql.util.PSQLException.class,
+                failure -> {
+                  assertThat(failure.getSQLState()).isEqualTo("23514");
+                  assertThat(failure.getMessage())
+                      .contains("Retained region fence dispatches disagree on storage incarnation");
+                });
+        assertThat(proof.sql.fetch(epochsSql).getValues(0, String.class)).isEqualTo(epochsBefore);
+      } else {
+        assertThat(proof.fixture.upgradeWithDefaultGameSessionMigrations(target)).isEqualTo(1);
+        assertThat(proof.sql.fetch(epochsSql).getValues(0, String.class))
+            .hasSize(epochsBefore.size() + 1)
+            .startsWith(epochsBefore.toArray(String[]::new));
+      }
+      assertThat(proof.sql.fetch(parentSql, transfer).getValues(0, String.class))
+          .isEqualTo(parentBefore);
+      assertThat(proof.sql.fetch(itemsSql, transfer).getValues(0, String.class))
+          .isEqualTo(itemsBefore);
+    }
+  }
+
+  @Test
+  void firstFenceDispatchPinsIncarnationForAllCapturedExecutions() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      var first = proof.execution;
+      var second = proof.newIndependentControlledOriginExecution();
+      proof.seedUndeliveredDispatch(first);
+      proof.seedUndeliveredDispatch(second);
+      UUID transfer = proof.begin();
+      var captured =
+          proof.transfers.within(transferDeadline(), ignored -> proof.transfers.capture(transfer));
+      assertThat(captured)
+          .extracting(item -> item.execution().digest())
+          .containsExactlyInAnyOrder(first.digest(), second.digest());
+
+      var firstItem = captured.getFirst();
+      long firstDeadline = transferDeadline();
+      var firstDispatch =
+          proof.transfers.within(
+              firstDeadline,
+              ignored ->
+                  proof.transfers.fenceDispatch(
+                      firstItem,
+                      proof.receiver.observeForRegionOwnerTransfer(
+                          transfer, firstItem.ordinal(), firstDeadline)));
+      assertThat(firstDispatch.receiptId()).isNotNull();
+      String incarnation = firstDispatch.incarnationDigest();
+      assertThat(incarnation).isNotBlank();
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT incarnation_digest FROM game_session_region_owner_transfer WHERE transfer_id=?",
+                      transfer)
+                  .get(0, String.class))
+          .isEqualTo(incarnation);
+      String pinned = proof.transferImage(transfer);
+      String items = proof.itemImage(transfer);
+
+      var secondItem = captured.getLast();
+      String differentIncarnation = "sha256:" + "0".repeat(64);
+      assertThat(differentIncarnation).isNotEqualTo(incarnation);
+      assertThatThrownBy(() ->
+              proof.sql.execute(
+                  "UPDATE game_session_region_owner_transfer_item"
+                      + " SET fence_dispatch_id=?,fence_dispatch_incarnation=?,"
+                      + " fence_prepare_ids=ARRAY[]::uuid[]"
+                      + " WHERE transfer_id=? AND target_ordinal=? AND execution_digest=?",
+                  UUID.randomUUID(),
+                  differentIncarnation,
+                  transfer,
+                  secondItem.ordinal(),
+                  secondItem.execution().digest()))
+          .rootCause()
+          .isInstanceOfSatisfying(
+              org.postgresql.util.PSQLException.class,
+              failure -> {
+                assertThat(failure.getSQLState()).isEqualTo("23514");
+                assertThat(failure.getMessage())
+                    .contains(
+                        "Region fence dispatch requires an unfenced frozen original with its exact bound incarnation");
+              });
+      assertThat(proof.transferImage(transfer)).isEqualTo(pinned);
+      assertThat(proof.itemImage(transfer)).isEqualTo(items);
+
+      long secondDeadline = transferDeadline();
+      var secondDispatch =
+          proof.transfers.within(
+              secondDeadline,
+              ignored ->
+                  proof.transfers.fenceDispatch(
+                      secondItem,
+                      proof.receiver.observeForRegionOwnerTransfer(
+                          transfer, secondItem.ordinal(), secondDeadline)));
+      assertThat(secondDispatch.receiptId()).isNotNull().isNotEqualTo(firstDispatch.receiptId());
+      assertThat(secondDispatch.incarnationDigest()).isEqualTo(incarnation);
+      assertThat(
+              proof
+                  .sql
+                  .fetch(
+                      "SELECT fence_dispatch_id FROM game_session_region_owner_transfer_item"
+                          + " WHERE transfer_id=? AND fence_dispatch_incarnation=? ORDER BY target_ordinal",
+                      transfer,
+                      incarnation)
+                  .getValues(0, UUID.class))
+          .containsExactly(firstDispatch.receiptId(), secondDispatch.receiptId());
+      assertThat(proof.transferImage(transfer)).isEqualTo(pinned);
     }
   }
 }

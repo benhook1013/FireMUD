@@ -126,14 +126,13 @@ module.exports = async function admitPrRuntimeRefresh({
     return true;
   };
 
-  const currentIdentity = async ({requireConclusive = false} = {}) => {
+  const currentIdentity = async () => {
     for (let observation = 0; observation < 6; observation++) {
       const result = await observeIdentity();
       if (typeof result === 'boolean') return result;
       if (result !== null && observation === 5) throw result.error;
       if (observation < 5) await sleep(2000);
     }
-    if (requireConclusive) fail('Runtime refresh tuple did not resolve before dispatch.');
     return false;
   };
 
@@ -223,32 +222,38 @@ module.exports = async function admitPrRuntimeRefresh({
     throw new Error('Incomplete runtime run inventory.');
   };
   const rankRuns = (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at);
-  const readNewestExact = async () => {
+  const readNewestExactSnapshot = async () => {
     const exactRuns = [];
     const observedRunIds = new Set();
-    try {
-      for (const event of inventoryEvents) {
-        for (const status of activeStatuses) {
-          await collectInventory(event, status, undefined, exactRuns, observedRunIds);
-        }
+    for (const event of inventoryEvents) {
+      for (const status of activeStatuses) {
+        await collectInventory(event, status, undefined, exactRuns, observedRunIds);
       }
-
-      exactRuns.sort(rankRuns);
-      if (exactRuns.length === 0) return null;
-      // An older active producer only matters if no newer completed run supersedes it.
-      const createdSince = secondsUtc(Date.parse(exactRuns[0].created_at));
-      for (const event of inventoryEvents) {
-        await collectInventory(event, 'completed', createdSince, exactRuns, observedRunIds);
-      }
-      exactRuns.sort(rankRuns);
-      if (exactRuns.length > 1 && Date.parse(exactRuns[0].created_at) === Date.parse(exactRuns[1].created_at)) {
-        throw new Error('Newest exact runtime runs have equal chronology.');
-      }
-      return exactRuns[0];
-    } catch {
-      core.warning('Runtime active-run inventory was incomplete or ambiguous; preserving the required refresh fallback.');
-      return null;
     }
+
+    exactRuns.sort(rankRuns);
+    if (exactRuns.length === 0) return null;
+    // An older active producer only matters if no newer completed run supersedes it.
+    const createdSince = secondsUtc(Date.parse(exactRuns[0].created_at));
+    for (const event of inventoryEvents) {
+      await collectInventory(event, 'completed', createdSince, exactRuns, observedRunIds);
+    }
+    exactRuns.sort(rankRuns);
+    if (exactRuns.length > 1 && Date.parse(exactRuns[0].created_at) === Date.parse(exactRuns[1].created_at)) {
+      throw new Error('Newest exact runtime runs have equal chronology.');
+    }
+    return exactRuns[0];
+  };
+  const readNewestExact = async () => {
+    for (let observation = 0; observation < 2; observation += 1) {
+      try {
+        return await readNewestExactSnapshot();
+      } catch {
+        if (observation === 0) await sleep(2000);
+      }
+    }
+    core.warning('Runtime active-run inventory remained incomplete or ambiguous; no dispatch.');
+    return undefined;
   };
 
   const selectedProducerIsActive = async newestExact => {
@@ -290,7 +295,7 @@ module.exports = async function admitPrRuntimeRefresh({
   const isSha = value => typeof value === 'string' && value.length === 40 && shaPattern.test(value);
   const isCanonicalId = value => typeof value === 'string' &&
     isPositiveInteger(Number(value)) && String(Number(value)) === value;
-  const previewRefusal = {kind: 'unsent', description: 'Preview refusal'};
+  const unsent = {kind: 'unsent', description: 'Pre-dispatch refusal'};
   const dispatchRejection = {kind: 'rejected', description: 'Dispatch rejection'};
   const preSendUnavailable = {kind: 'pre-send-unavailable', description: 'Final identity read failure'};
   const ownerReceiptRefPrefix = (kind, tagSha) => `refs/tags/firemud-runtime-refresh-${kind}/v1/${tagSha}/`;
@@ -368,21 +373,37 @@ module.exports = async function admitPrRuntimeRefresh({
       }));
       if (workflow?.path !== admissionPath || !isPositiveInteger(workflow.id)) return false;
 
-      const isSuccessfulOwner = run => run?.id === runId && run.workflow_id === workflow.id &&
-        run.run_attempt === attempt && run.event === 'repository_dispatch' &&
+      const getRun = async () => dataOf(await github.rest.actions.getWorkflowRun({...contextRepo, run_id: runId}));
+      const isAttributableOwner = run => run?.id === runId && run.workflow_id === workflow.id &&
+        run.event === 'repository_dispatch' &&
         run.repository?.full_name === fullName && run.head_repository?.full_name === fullName &&
         run.head_branch === defaultBranch && isSha(run.head_sha) &&
         (claim.ownerRevision === undefined || run.head_sha === claim.ownerRevision) &&
-        [admissionPath, `${admissionPath}@${defaultBranch}`, `${admissionPath}@refs/heads/${defaultBranch}`].includes(run.path) &&
+        [admissionPath, `${admissionPath}@${defaultBranch}`, `${admissionPath}@refs/heads/${defaultBranch}`].includes(run.path);
+      const isSuccessfulOwner = run => isAttributableOwner(run) && run.run_attempt === attempt &&
         run.status === 'completed' && run.conclusion === 'success';
-      // An exact successful attempt can permanently attest a definitive POST
-      // rejection even when the admission run starts a newer attempt.
-      const readReceiptRun = async () => kind === dispatchRejection.kind
-        ? dataOf(await github.rest.actions.getWorkflowRunAttempt({
-          ...contextRepo, run_id: runId, attempt_number: attempt,
-        }))
-        : dataOf(await github.rest.actions.getWorkflowRun({...contextRepo, run_id: runId}));
-      const run = await readReceiptRun();
+      const getAttempt = () => github.rest.actions.getWorkflowRunAttempt({
+        ...contextRepo, run_id: runId, attempt_number: attempt,
+      });
+      // A definitive rejection belongs to the authenticated POST of the exact
+      // attempt, independent of any later attempt of this admission run.
+      const rejection = kind === dispatchRejection.kind;
+      const latestBefore = rejection ? dataOf(await getAttempt()) : await getRun();
+      if (!isAttributableOwner(latestBefore) || !isPositiveInteger(latestBefore.run_attempt)) return false;
+      const {run_attempt: latestAttempt, path: latestPath, status: latestStatus, conclusion: latestConclusion} = latestBefore;
+      const historical = !rejection && latestAttempt > attempt;
+      let run = latestBefore;
+      if (historical) {
+        // Only this typed failure proves the owner stopped before invoking dispatch.
+        if (kind !== preSendUnavailable.kind || claim.ownerRevision === undefined) return false;
+        const terminalConclusions = ['success', 'failure', 'neutral', 'cancelled', 'skipped',
+          'timed_out', 'action_required', 'stale', 'startup_failure'];
+        if (latestStatus === 'completed' ? !terminalConclusions.includes(latestConclusion) :
+          !activeStatuses.has(latestStatus) || latestConclusion !== null) return false;
+        const response = await getAttempt();
+        if (response?.status !== 200) return false;
+        run = dataOf(response);
+      }
       if (!isSuccessfulOwner(run)) return false;
 
       const inventory = dataOf(await github.rest.actions.listJobsForWorkflowRunAttempt({
@@ -398,8 +419,16 @@ module.exports = async function admitPrRuntimeRefresh({
       const markers = job.steps.filter(step => step.name.startsWith(markerPrefix));
       if (markers.length !== 1 || markers[0].status !== 'completed' || markers[0].conclusion !== 'success' ||
           markers[0].name !== `${markerPrefix} ${ownerReceiptIdentity(claim, runId, attempt)}`) return false;
+      if (historical && job.steps.some(step =>
+        [unsent, dispatchRejection].some(outcome => step.name.startsWith(`Runtime refresh ${outcome.kind} claim`)) &&
+        (step.status !== 'completed' || step.conclusion !== 'skipped'))) return false;
 
-      const latest = await readReceiptRun();
+      const latest = rejection ? dataOf(await getAttempt()) : await getRun();
+      if (historical) {
+        // Close the read against the same attributable latest attempt observed at entry.
+        return isAttributableOwner(latest) && latest.run_attempt === latestAttempt &&
+          latest.path === latestPath && latest.status === latestStatus && latest.conclusion === latestConclusion;
+      }
       return isSuccessfulOwner(latest) && latest.head_sha === run.head_sha;
     } catch {
       // An uncertain locator or marker cannot release a claim.
@@ -559,10 +588,12 @@ module.exports = async function admitPrRuntimeRefresh({
     core.info('Runtime refresh tuple changed during admission; no dispatch.');
     return 'obsolete';
   }
+  if (newestExact === undefined) return 'inventory-unavailable';
   if (activeProducerVerified) {
     // Tuple resolution can wait for merge computation. Do not suppress a repair
     // using producer evidence from before that final live comparison lookup.
     const currentProducer = await readNewestExact();
+    if (currentProducer === undefined) return 'inventory-unavailable';
     if (currentProducer && isExactActiveRun(currentProducer) && await selectedProducerIsActive(currentProducer)) {
       core.info('The unique newest exact runtime producer is already active; no dispatch.');
       return 'already-active';
@@ -577,8 +608,9 @@ module.exports = async function admitPrRuntimeRefresh({
   let witness;
   try {
     const prior = await latestClaim();
-    if (prior && !await ownerReceiptProven(prior, previewRefusal)) {
-      const provenPreSendOutcome = await ownerReceiptProven(prior, dispatchRejection) ||
+    if (prior) {
+      const provenPreSendOutcome = await ownerReceiptProven(prior, unsent) ||
+        await ownerReceiptProven(prior, dispatchRejection) ||
         await ownerReceiptProven(prior, preSendUnavailable);
       if (!provenPreSendOutcome && !await terminalReceiverProven(prior)) {
         core.info('Runtime refresh claim has no proven terminal receiver or trusted owner outcome; no dispatch.');
@@ -623,7 +655,7 @@ module.exports = async function admitPrRuntimeRefresh({
 
   let identityIsCurrent;
   try {
-    identityIsCurrent = await currentIdentity({requireConclusive: true});
+    identityIsCurrent = await currentIdentity();
   } catch {
     core.warning('Runtime refresh tuple could not be rechecked after claiming; no dispatch.');
     if (isTrustedReceiptOwner() && await recordOwnerReceipt(claim, preSendUnavailable)) {
@@ -634,8 +666,7 @@ module.exports = async function admitPrRuntimeRefresh({
 
   if (!identityIsCurrent) {
     core.info('Runtime refresh tuple changed after claiming; no dispatch.');
-    if (input.preview_only === true && isTrustedReceiptOwner() &&
-        !await recordOwnerReceipt(claim, previewRefusal)) return 'claim-held';
+    if (!isTrustedReceiptOwner() || !await recordOwnerReceipt(claim, unsent)) return 'claim-held';
     return 'obsolete';
   }
 

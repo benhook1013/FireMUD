@@ -2,6 +2,8 @@ package net.firedevops.firemud.gamesession.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import io.grpc.CallOptions;
 import io.grpc.ClientCall;
@@ -32,14 +34,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -118,6 +123,7 @@ class AccountTenantCapacityClientMtlsTest {
   void exactAccountPeerReceivesCompleteRequestAndExactRetryKeepsReservation() throws Exception {
     AtomicInteger calls = new AtomicInteger();
     AtomicInteger messages = new AtomicInteger();
+    AtomicReference<Throwable> serverFailure = new AtomicReference<>();
     Server server =
         server(
             "account",
@@ -125,10 +131,11 @@ class AccountTenantCapacityClientMtlsTest {
             false,
             new AtomicLong(),
             new AtomicBoolean(true),
-            null,
+            serverFailure,
             null,
             messages);
-    try (var client = client(server)) {
+    try (AutoCloseable stopServer = () -> stop(server);
+        var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest();
       var first = client.commit(request, deadline());
@@ -136,10 +143,9 @@ class AccountTenantCapacityClientMtlsTest {
       assertThat(first.reservationId()).isEqualTo(ACCOUNT_RESERVATION_ID);
       assertThat(replay).isEqualTo(first);
       assertThat(first.identity()).isEqualTo(request.identity());
+      assertThat(serverFailure.get()).isNull();
       assertThat(calls).hasValue(2);
       assertThat(messages).hasValue(2);
-    } finally {
-      stop(server);
     }
   }
 
@@ -221,7 +227,10 @@ class AccountTenantCapacityClientMtlsTest {
     try (var client = client(server)) {
       client.init();
       assertThatThrownBy(() -> client.commit(request, deadline()))
-          .isInstanceOf(StatusRuntimeException.class);
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
       assertThat(client.readRetainedAdmissionOutcome(request, deadline()))
           .isEqualTo(retainedResult);
       assertThat(commits).hasValue(1);
@@ -370,7 +379,22 @@ class AccountTenantCapacityClientMtlsTest {
     assertOriginalDenialRecovery(Failure.CAPACITY_EVALUATION_EXPIRED, true);
   }
 
+  @Test
+  void restartedClientRecoversOriginalDenialWithFreshBudgetAfterCommitTimesOut() throws Exception {
+    assertOriginalDenialRecovery(Failure.CAPACITY_QUOTA_EXCEEDED, true, true);
+  }
+
   private void assertOriginalDenialRecovery(Failure code, boolean receiptPresent) throws Exception {
+    assertOriginalDenialRecovery(code, receiptPresent, false);
+  }
+
+  private void assertOriginalDenialRecovery(Failure code, boolean receiptPresent, boolean timeOut)
+      throws Exception {
+    var clock = mock(Clock.class);
+    var now = new AtomicReference<>(CapacityAdmissionTestFixture.NOW);
+    when(clock.instant()).thenAnswer(ignored -> now.get());
+    long originalDeadline = deadline();
+    var tls = pki.clientProperties(directory, pki.identity("client"));
     var request = CapacityAdmissionTestFixture.playerRequest();
     UUID denialId = receiptPresent ? UUID.randomUUID() : null;
     var commits = new AtomicInteger();
@@ -386,7 +410,7 @@ class AccountTenantCapacityClientMtlsTest {
                   StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
                 commits.incrementAndGet();
                 failedCommit.set(wire);
-                observer.onError(Status.UNAVAILABLE.asRuntimeException());
+                if (!timeOut) observer.onError(Status.UNAVAILABLE.asRuntimeException());
               }
 
               @Override
@@ -400,20 +424,27 @@ class AccountTenantCapacityClientMtlsTest {
                 observer.onCompleted();
               }
             });
-    try {
-      try (var original = client(server)) {
+    try (AutoCloseable stopServer = () -> stop(server)) {
+      try (var original = client(server, tls, new GrpcChannelFactory(), clock)) {
         original.init();
-        assertThatThrownBy(() -> original.commit(request, deadline()))
-            .isInstanceOf(StatusRuntimeException.class);
+        assertThatThrownBy(() -> original.commit(request, originalDeadline))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode())
+                        .isEqualTo(
+                            timeOut ? Status.Code.DEADLINE_EXCEEDED : Status.Code.UNAVAILABLE));
       }
       assertThat(failedCommit.get()).isEqualTo(TenantCapacityAdmissionGrpcCodec.toRequest(request));
-      try (var restarted = client(server)) {
+      if (timeOut) now.set(Instant.ofEpochMilli(originalDeadline).plusMillis(1));
+      long readDeadline = now.get().plusSeconds(5).toEpochMilli();
+      try (var restarted = client(server, tls, new GrpcChannelFactory(), clock)) {
         restarted.init();
         if (receiptPresent) {
-          assertThat(restarted.readRetainedAdmissionDenial(request, deadline()))
+          assertThat(restarted.readRetainedAdmissionDenial(request, readDeadline))
               .isEqualTo(new Refusal(code, denialId));
         } else {
-          assertThatThrownBy(() -> restarted.readRetainedAdmissionDenial(request, deadline()))
+          assertThatThrownBy(() -> restarted.readRetainedAdmissionDenial(request, readDeadline))
               .isInstanceOfSatisfying(
                   StatusRuntimeException.class,
                   failure ->
@@ -422,8 +453,6 @@ class AccountTenantCapacityClientMtlsTest {
       }
       assertThat(commits).hasValue(1);
       assertThat(reads).hasValue(1);
-    } finally {
-      stop(server);
     }
   }
 
@@ -691,8 +720,17 @@ class AccountTenantCapacityClientMtlsTest {
       server =
           server(
               "account", calls, false, new AtomicLong(), respond, measuredSecondInvocationEntered);
-      try (var client = client(server, tls, factory);
-          var executor = Executors.newSingleThreadExecutor()) {
+      var client = client(server, tls, factory);
+      var executor = Executors.newSingleThreadExecutor(Thread.ofPlatform().daemon().factory());
+      try (AutoCloseable stopClient =
+          () -> {
+            factory.releaseReload.countDown();
+            executor.shutdownNow();
+            stopReloadingClient(client, factory);
+            assertThat(executor.awaitTermination(5, TimeUnit.SECONDS))
+                .as("capacity RPC worker terminated")
+                .isTrue();
+          }) {
         client.init();
         assertThat(factory.singleAttemptBuilds).hasValue(1);
         assertThat(factory.standardBuilds).hasValue(0);
@@ -800,14 +838,15 @@ class AccountTenantCapacityClientMtlsTest {
 
   private static AccountTenantCapacityClient client(
       Server server, CommonGrpcClientProperties tls, GrpcChannelFactory factory) {
+    return client(
+        server, tls, factory, Clock.fixed(CapacityAdmissionTestFixture.NOW, ZoneOffset.UTC));
+  }
+
+  private static AccountTenantCapacityClient client(
+      Server server, CommonGrpcClientProperties tls, GrpcChannelFactory factory, Clock clock) {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setAccountService("localhost:" + server.getPort());
-    return new AccountTenantCapacityClient(
-        endpoints,
-        tls,
-        factory,
-        "prod",
-        Clock.fixed(CapacityAdmissionTestFixture.NOW, ZoneOffset.UTC));
+    return new AccountTenantCapacityClient(endpoints, tls, factory, "prod", clock);
   }
 
   private static Server server(String identity, AtomicInteger calls, boolean wrongFence)
@@ -1006,7 +1045,30 @@ class AccountTenantCapacityClientMtlsTest {
     assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
   }
 
+  private static void stopReloadingClient(
+      AccountTenantCapacityClient client, BlockingReloadChannelFactory factory) throws Exception {
+    var close =
+        new FutureTask<Void>(() -> {
+          client.close();
+          return null;
+        });
+    Thread.ofPlatform().daemon().start(close);
+    // Independently cancel calls holding retired generations, even if close times out.
+    try (AutoCloseable stopChannels =
+        () -> {
+          factory.channels.forEach(ManagedChannel::shutdownNow);
+          for (ManagedChannel channel : factory.channels) {
+            assertThat(channel.awaitTermination(2, TimeUnit.SECONDS))
+                .as("capacity RPC transport terminated")
+                .isTrue();
+          }
+        }) {
+      close.get(8, TimeUnit.SECONDS);
+    }
+  }
+
   private static final class BlockingReloadChannelFactory extends GrpcChannelFactory {
+    private final List<ManagedChannel> channels = new CopyOnWriteArrayList<>();
     private final AtomicBoolean initialBuild = new AtomicBoolean(true);
     private final AtomicInteger standardBuilds = new AtomicInteger();
     private final AtomicInteger singleAttemptBuilds = new AtomicInteger();
@@ -1020,7 +1082,9 @@ class AccountTenantCapacityClientMtlsTest {
         throws SSLException {
       standardBuilds.incrementAndGet();
       awaitReload();
-      return super.buildChannel(target, defaultPort, properties, keepAlive);
+      ManagedChannel channel = super.buildChannel(target, defaultPort, properties, keepAlive);
+      channels.add(channel);
+      return channel;
     }
 
     @Override
@@ -1031,6 +1095,7 @@ class AccountTenantCapacityClientMtlsTest {
       awaitReload();
       ManagedChannel channel =
           super.buildChannelWithoutRetries(target, defaultPort, properties, keepAlive);
+      channels.add(channel);
       if (builds > 1) reloadBuilt.countDown();
       return channel;
     }

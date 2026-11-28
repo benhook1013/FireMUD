@@ -172,7 +172,8 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         seedBootstrapMemberCount,
         migrationTarget,
         afterBootstrap,
-        false);
+        false,
+        MigrationVersion.LATEST);
   }
 
   /** Genuine original preparation precedes the actual installed bootstrap; no local row is made. */
@@ -188,7 +189,24 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         originalInBootstrap ? 1 : 0,
         null,
         (data, intent) -> {},
-        originalInBootstrap);
+        originalInBootstrap,
+        MigrationVersion.LATEST);
+  }
+
+  static CanonicalGameplayAdmissionAbortCompositionFixture atMigrationFrontier(
+      DriverManagerDataSource accountDataSource,
+      Candidate accountCandidate,
+      RedisClient issuerRedisClient,
+      MigrationVersion migrationTarget) {
+    return new CanonicalGameplayAdmissionAbortCompositionFixture(
+        accountDataSource,
+        accountCandidate,
+        issuerRedisClient,
+        0,
+        Objects.requireNonNull(migrationTarget, "migrationTarget"),
+        (data, intent) -> {},
+        false,
+        null);
   }
 
   private CanonicalGameplayAdmissionAbortCompositionFixture(
@@ -199,7 +217,8 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       MigrationVersion migrationTarget,
       BiConsumer<DriverManagerDataSource, CanonicalGameplayIssuerLayoutBootstrapIntent>
           afterBootstrap,
-      boolean originalInBootstrap) {
+      boolean originalInBootstrap,
+      MigrationVersion targetAfterBootstrap) {
     long phaseStartedAt;
     if (seedBootstrapMemberCount < 0 || seedBootstrapMemberCount > 256) {
       throw new IllegalArgumentException("Bootstrap fixture member count must be within [0, 256]");
@@ -361,8 +380,8 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
               .completeInitialBootstrap(bootstrapIntent.operationId(), bootstrapRequestId);
       Objects.requireNonNull(afterBootstrap, "afterBootstrap")
           .accept(connectionSettings, bootstrapIntent);
-      if (migrationTarget != null) {
-        upgradeWithDefaultGameSessionMigrations(MigrationVersion.LATEST, dataSource);
+      if (migrationTarget != null && targetAfterBootstrap != null) {
+        upgradeWithDefaultGameSessionMigrations(targetAfterBootstrap, dataSource);
       }
       new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
           .installInitialOpen(installedAnchor, issuerSource);
@@ -670,6 +689,41 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     return new CanonicalGameplayAdmissionDecision(
         transitionId,
         controlledLeaseEvidence(identity, generation, target),
+        identity,
+        generation,
+        null,
+        target);
+  }
+
+  /** Uses the same typed billing authority as the controlled capacity entitlement builder. */
+  CanonicalGameplayAdmissionDecision originalPreparedDecisionWithControlledCapacityLease() {
+    var carrier =
+        new LinkedHashMap<>(controlledLeaseEvidence(identity, generation, target).carrier());
+    String tenant = identity.tenantId().toString();
+    carrier.put(
+        "authorityTuple",
+        Map.of(
+            "issuerAuthGeneration",
+            identity.issuerAuthGeneration().toString(),
+            "accountAuthorityGeneration",
+            "1",
+            "tenantAuthorityGeneration",
+            Map.of(tenant, "2"),
+            "membershipAuthorityGeneration",
+            Map.of(tenant, "1"),
+            "privateRealmGrantVersions",
+            List.of(),
+            "tenantBillingCutoff",
+            Map.of(
+                tenant,
+                Map.of(
+                    "tenantAuthorityGeneration", "2",
+                    "tenantBillingSequence", "1",
+                    "outboxStreamKey", "account:auth-authority:v1:tenant/" + tenant,
+                    "outboxSequence", "1"))));
+    return new CanonicalGameplayAdmissionDecision(
+        transitionId,
+        AccountGameplayAdmissionLeaseEvidence.fromCarrier(carrier),
         identity,
         generation,
         null,

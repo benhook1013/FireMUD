@@ -64,27 +64,6 @@ jq -e --argjson id "${source_run_id}" --argjson workflow_id "${workflow_id}" --a
   and .workflow_run.event == "pull_request"' "${GITHUB_EVENT_PATH}" >/dev/null ||
   fail_closed "Completion event does not match the source workflow."
 
-# Resolver reruns retain their ID, and latest job snapshots can hide an older
-# ambiguous admission. Neither the current nor historical resolver may rerun
-# automatically; explicit recovery must establish a separate safe boundary.
-resolver_path='.github/workflows/resolve-required-gates.yml'
-resolver_json="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/workflows/resolve-required-gates.yml")"
-resolver_id="$(jq -er --arg path "${resolver_path}" '
-  select(.name == "Resolve Required Gates" and .path == $path)
-  | .id | select(type == "number" and . > 0 and . == floor)' <<<"${resolver_json}")"
-current_resolver_json="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}")"
-jq -e --argjson id "${GITHUB_RUN_ID}" --argjson workflow_id "${resolver_id}" \
-  --arg repository "${GITHUB_REPOSITORY}" --arg path "${resolver_path}" \
-  --arg title "Resolve Required Gates workflow-${workflow_id} head-${head_sha} source-${source_run_id}" '
-  .id == $id and .workflow_id == $workflow_id and .repository.full_name == $repository and
-  .event == "workflow_run" and (.name == "Resolve Required Gates" or .name == $title) and
-  (.path == $path or (.path | startswith($path + "@") and length > ($path | length) + 1)) and
-  .display_title == $title and .run_attempt == 1 and .status == "in_progress" and
-  (.head_sha | type) == "string" and (.head_sha | test("^[0-9A-Fa-f]{40}$")) and
-  (try (.created_at | fromdateiso8601 | type == "number") catch false)' <<<"${current_resolver_json}" >/dev/null ||
-  fail_closed "Current resolver identity or first attempt is unproved; explicit recovery is required."
-current_resolver_created="$(jq -er '.created_at' <<<"${current_resolver_json}")"
-
 current_pr() {
   gh api --method GET "/repos/${GITHUB_REPOSITORY}/pulls/${pr_number}"
 }
@@ -107,6 +86,27 @@ if ! pr_is_current "${pr_json}"; then
 fi
 head_repository="$(jq -er '.head.repo.full_name' <<<"${pr_json}")"
 base_branch="$(jq -er '.base.ref' <<<"${pr_json}")"
+
+# Resolver reruns retain their ID, and latest job snapshots can hide an older
+# ambiguous admission. Neither the current nor historical resolver may rerun
+# automatically; explicit recovery must establish a separate safe boundary.
+resolver_path='.github/workflows/resolve-required-gates.yml'
+resolver_json="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/workflows/resolve-required-gates.yml")"
+resolver_id="$(jq -er --arg path "${resolver_path}" '
+  select(.name == "Resolve Required Gates" and .path == $path)
+  | .id | select(type == "number" and . > 0 and . == floor)' <<<"${resolver_json}")"
+current_resolver_json="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}")"
+jq -e --argjson id "${GITHUB_RUN_ID}" --argjson workflow_id "${resolver_id}" \
+  --arg repository "${GITHUB_REPOSITORY}" --arg path "${resolver_path}" \
+  --arg title "Resolve Required Gates workflow-${workflow_id} head-${head_sha} source-${source_run_id}" '
+  .id == $id and .workflow_id == $workflow_id and .repository.full_name == $repository and
+  .event == "workflow_run" and (.name == "Resolve Required Gates" or .name == $title) and
+  (.path == $path or (.path | startswith($path + "@") and length > ($path | length) + 1)) and
+  .display_title == $title and .run_attempt == 1 and .status == "in_progress" and
+  (.head_sha | type) == "string" and (.head_sha | test("^[0-9A-Fa-f]{40}$")) and
+  (try (.created_at | fromdateiso8601 | type == "number") catch false)' <<<"${current_resolver_json}" >/dev/null ||
+  fail_closed "Current resolver identity or first attempt is unproved; explicit recovery is required."
+current_resolver_created="$(jq -er '.created_at' <<<"${current_resolver_json}")"
 
 # Supplementary statuses may withhold native proof but never replace it.
 # This phase does not enter the legacy targeted-rerun admission protocol.

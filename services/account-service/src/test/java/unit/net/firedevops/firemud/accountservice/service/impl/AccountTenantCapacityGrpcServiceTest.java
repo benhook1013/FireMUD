@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.Any;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.protobuf.StatusProto;
@@ -35,6 +36,7 @@ import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixtu
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.jooq.ConnectionRunnable;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -56,6 +58,7 @@ class AccountTenantCapacityGrpcServiceTest {
     EXACT_EXPIRY_DENIAL,
     ABSENT,
     ACCEPTED,
+    MATCHING_RESERVATION,
     GENERIC_NO_ACCEPT,
     WRONG_FINGERPRINT,
     WRITABLE_CONNECTION,
@@ -228,6 +231,12 @@ class AccountTenantCapacityGrpcServiceTest {
         evidence == RetainedEvidence.EXACT_EXPIRY_DENIAL
             ? Failure.CAPACITY_EVALUATION_EXPIRED
             : Failure.CAPACITY_QUOTA_EXCEEDED;
+    Object[] key = {
+      request.identity().tenantId(),
+      request.identity().requestId(),
+      request.identity().admissionId(),
+      request.capacityRearmFence()
+    };
     DSLContext dsl = mock();
     Connection connection = mock();
     when(connection.isReadOnly()).thenReturn(evidence != RetainedEvidence.WRITABLE_CONNECTION);
@@ -250,22 +259,59 @@ class AccountTenantCapacityGrpcServiceTest {
                   : CapacityAdmissionDigest.preimage(request));
       when(row.get("decision_id", UUID.class)).thenReturn(decisionId);
       when(row.get("decision", String.class))
-          .thenReturn(evidence == RetainedEvidence.ACCEPTED ? "ACCEPTED" : "NO_ACCEPT");
+          .thenReturn(
+              evidence == RetainedEvidence.ACCEPTED
+                      || evidence == RetainedEvidence.MATCHING_RESERVATION
+                  ? "ACCEPTED"
+                  : "NO_ACCEPT");
       when(row.get("refusal_code", String.class))
           .thenReturn(
               evidence == RetainedEvidence.ACCEPTED
+                      || evidence == RetainedEvidence.MATCHING_RESERVATION
                       || evidence == RetainedEvidence.GENERIC_NO_ACCEPT
                   ? null
                   : expectedCode.name());
     }
+    UUID reservationId = UUID.randomUUID();
+    String evaluationIdentity = request.evidence().evaluationIdentity();
+    String snapshotIdentity = request.evidence().snapshotIdentity();
+    if (evidence == RetainedEvidence.MATCHING_RESERVATION) {
+      Record reservation = mock(Record.class);
+      when(reservation.get("mutation_digest", String.class)).thenReturn(request.mutationDigest());
+      when(reservation.get("admission_attempt_id", UUID.class))
+          .thenReturn(request.admissionAttemptId());
+      when(reservation.get("capacity_rearm_fence", Long.class)).thenReturn(1L);
+      when(reservation.get("canonical_payload", byte[].class))
+          .thenReturn(CapacityAdmissionDigest.preimage(request));
+      when(reservation.get("caller_workload", String.class))
+          .thenReturn(request.evidence().callerWorkload());
+      when(reservation.get("tenant_uuid", UUID.class)).thenReturn(request.identity().tenantId());
+      when(reservation.get("request_id", UUID.class)).thenReturn(request.identity().requestId());
+      when(reservation.get("admission_id", UUID.class))
+          .thenReturn(request.identity().admissionId());
+      when(reservation.get("reservation_id", UUID.class)).thenReturn(reservationId);
+      when(reservation.get("reservation_fence", Long.class)).thenReturn(3L);
+      when(reservation.get("expires_at", java.time.OffsetDateTime.class))
+          .thenReturn(
+              java.time.OffsetDateTime.ofInstant(
+                  request.evidence().expiresAt(), java.time.ZoneOffset.UTC));
+      when(reservation.get("state", String.class)).thenReturn("RESERVED");
+      when(reservation.get("evaluation_identity", String.class)).thenReturn(evaluationIdentity);
+      Record evaluation = mock(Record.class);
+      when(evaluation.get("snapshot_identity", String.class)).thenReturn(snapshotIdentity);
+      when(dsl.fetchOne(
+              "SELECT * FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+              request.identity().tenantId(),
+              request.identity().requestId(),
+              request.identity().admissionId()))
+          .thenReturn(reservation);
+      when(dsl.fetchOne(
+              "SELECT snapshot_identity FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
+              evaluationIdentity))
+          .thenReturn(evaluation);
+    }
     String sql =
         "SELECT * FROM account_capacity_origin_decisions WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND capacity_rearm_fence = ?";
-    Object[] key = {
-      request.identity().tenantId(),
-      request.identity().requestId(),
-      request.identity().admissionId(),
-      request.capacityRearmFence()
-    };
     when(dsl.fetchOne(sql, key))
         .thenAnswer(invocation -> {
           assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
@@ -278,6 +324,8 @@ class AccountTenantCapacityGrpcServiceTest {
           var definition = invocation.getArgument(0, TransactionDefinition.class);
           assertThat(definition.getPropagationBehavior())
               .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+          assertThat(definition.getIsolationLevel())
+              .isEqualTo(TransactionDefinition.ISOLATION_REPEATABLE_READ);
           assertThat(definition.getTimeout()).isEqualTo(5);
           assertThat(definition.isReadOnly()).isTrue();
           TransactionSynchronizationManager.setActualTransactionActive(true);
@@ -301,7 +349,24 @@ class AccountTenantCapacityGrpcServiceTest {
       TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
       TransactionSynchronizationManager.setActualTransactionActive(false);
     }
-    if (evidence == RetainedEvidence.EXACT_QUOTA_DENIAL
+    if (evidence == RetainedEvidence.MATCHING_RESERVATION) {
+      var response = ArgumentCaptor.forClass(CommitTenantCapacityAdmissionResponse.class);
+      var ordered = inOrder(observer);
+      ordered.verify(observer).onNext(response.capture());
+      var result = TenantCapacityAdmissionGrpcCodec.requireResponse(request, response.getValue());
+      assertThat(result.identity()).isEqualTo(request.identity());
+      assertThat(result.admissionAttemptId()).isEqualTo(request.admissionAttemptId());
+      assertThat(result.mutationDigest()).isEqualTo(request.mutationDigest());
+      assertThat(result.reservationId()).isEqualTo(reservationId);
+      assertThat(result.reservationFence()).isEqualTo(3L);
+      assertThat(result.state())
+          .isEqualTo(
+              net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State
+                  .RESERVED);
+      assertThat(result.snapshotIdentity()).isEqualTo(snapshotIdentity);
+      assertThat(result.evaluationIdentity()).isEqualTo(evaluationIdentity);
+      ordered.verify(observer).onCompleted();
+    } else if (evidence == RetainedEvidence.EXACT_QUOTA_DENIAL
         || evidence == RetainedEvidence.EXACT_EXPIRY_DENIAL) {
       var response = ArgumentCaptor.forClass(CommitTenantCapacityAdmissionResponse.class);
       var ordered = inOrder(observer);
@@ -322,7 +387,8 @@ class AccountTenantCapacityGrpcServiceTest {
       if (evidence == RetainedEvidence.EXACT_QUOTA_DENIAL
           || evidence == RetainedEvidence.EXACT_EXPIRY_DENIAL
           || evidence == RetainedEvidence.GENERIC_NO_ACCEPT
-          || evidence == RetainedEvidence.ACCEPTED) {
+          || evidence == RetainedEvidence.ACCEPTED
+          || evidence == RetainedEvidence.MATCHING_RESERVATION) {
         verify(dsl)
             .fetchOne(
                 "SELECT * FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
@@ -330,6 +396,12 @@ class AccountTenantCapacityGrpcServiceTest {
                 request.identity().requestId(),
                 request.identity().admissionId());
       }
+    }
+    if (evidence == RetainedEvidence.MATCHING_RESERVATION) {
+      verify(dsl)
+          .fetchOne(
+              "SELECT snapshot_identity FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
+              evaluationIdentity);
     }
     verifyNoMoreInteractions(dsl);
     verifyNoInteractions(accounts, memberships, issuances, scopes, clock);
@@ -552,6 +624,18 @@ class AccountTenantCapacityGrpcServiceTest {
     var error = ArgumentCaptor.forClass(Throwable.class);
     verify(observer).onError(error.capture());
     var expectedFailure = expected.toStatusException();
+    if (expected == Failure.ENTITLEMENT_UNAVAILABLE) {
+      assertThat(Status.fromThrowable(error.getValue()).getCode())
+          .isEqualTo(Status.Code.UNAVAILABLE);
+      var status = StatusProto.fromThrowable(error.getValue());
+      assertThat(status.getDetailsList())
+          .containsExactly(
+              Any.pack(
+                  ErrorDetail.newBuilder()
+                      .setCode("ENTITLEMENT_UNAVAILABLE")
+                      .setMessage(status.getMessage())
+                      .build()));
+    }
     assertThat(Status.fromThrowable(error.getValue()).getCode())
         .isEqualTo(expectedFailure.getStatus().getCode());
     assertThat(StatusProto.fromThrowable(error.getValue()))

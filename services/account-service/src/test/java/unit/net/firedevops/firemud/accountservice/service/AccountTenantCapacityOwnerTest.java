@@ -30,6 +30,7 @@ import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateExpiredException;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner;
@@ -164,11 +165,22 @@ class AccountTenantCapacityOwnerTest {
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
 
+  private enum InitialDenialPath {
+    QUOTA,
+    EXPIRES_AT_MEMBERSHIP_OBSERVATION,
+    EXPIRES_DURING_SCOPE_QUALIFICATION,
+    EXPIRES_DURING_DELEGATION_READ,
+    EXPIRES_DURING_USAGE_LOCK
+  }
+
   @ParameterizedTest
-  @EnumSource(
-      value = Failure.class,
-      names = {"CAPACITY_QUOTA_EXCEEDED", "CAPACITY_EVALUATION_EXPIRED"})
-  void durableDenialReplaysWithoutConsultingMutableCapacity(Failure cause) throws Exception {
+  @EnumSource(InitialDenialPath.class)
+  void durableDenialReplaysWithoutConsultingMutableCapacity(InitialDenialPath path)
+      throws Exception {
+    Failure cause =
+        path == InitialDenialPath.QUOTA
+            ? Failure.CAPACITY_QUOTA_EXCEEDED
+            : Failure.CAPACITY_EVALUATION_EXPIRED;
     var f = new Fixture(false, qualifiedRequest(true));
     f.existing = false;
     Record genericRefusal = mock(Record.class);
@@ -239,13 +251,38 @@ class AccountTenantCapacityOwnerTest {
         .execute(eq(originInsertSql), any(Object[].class));
     f.retained = true;
     var scope = qualifySources(f);
-    if (cause == Failure.CAPACITY_EVALUATION_EXPIRED) {
-      when(f.scopes.findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request)))
-          .thenAnswer(ignored -> {
-            when(f.clock.instant()).thenReturn(f.request.evidence().expiresAt());
-            f.databaseExpired = true;
-            return Optional.of(scope);
-          });
+    Runnable expire =
+        () -> {
+          when(f.clock.instant()).thenReturn(f.request.evidence().expiresAt());
+          f.databaseExpired = true;
+        };
+    switch (path) {
+      case QUOTA -> {}
+      case EXPIRES_AT_MEMBERSHIP_OBSERVATION -> f.onDatabaseObservation = expire;
+      case EXPIRES_DURING_DELEGATION_READ ->
+          when(f.issuances.readCurrentCommittedCandidateByJti(
+                  CapacityAdmissionTestFixture.DELEGATION_JTI))
+              .thenAnswer(ignored -> {
+                expire.run();
+                throw new CommittedCandidateExpiredException(
+                    CapacityAdmissionTestFixture.DELEGATION_JTI,
+                    f.request.evidence().expiresAt().getEpochSecond());
+              });
+      case EXPIRES_DURING_SCOPE_QUALIFICATION ->
+          when(f.scopes.findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request)))
+              .thenAnswer(ignored -> {
+                expire.run();
+                return Optional.of(scope);
+              });
+      case EXPIRES_DURING_USAGE_LOCK ->
+          doAnswer(
+                  ignored -> {
+                    expire.run();
+                    return usage;
+                  })
+              .when(f.dsl)
+              .fetchOne(
+                  startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
     }
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
         .isInstanceOfSatisfying(
@@ -259,12 +296,27 @@ class AccountTenantCapacityOwnerTest {
     assertThat(f.originDecision).isSameAs(genericRefusal);
     assertThat(f.pendingOriginDecision).isNull();
     UUID committedId = genericRefusal.get("decision_id", UUID.class);
-    if (cause == Failure.CAPACITY_EVALUATION_EXPIRED) {
+    if (path == InitialDenialPath.EXPIRES_AT_MEMBERSHIP_OBSERVATION) {
+      verifyNoInteractions(f.issuances, f.scopes);
+    } else if (path == InitialDenialPath.EXPIRES_DURING_DELEGATION_READ) {
+      verify(f.issuances)
+          .readCurrentCommittedCandidateByJti(CapacityAdmissionTestFixture.DELEGATION_JTI);
+      verifyNoInteractions(f.scopes);
+    } else {
       verify(f.scopes).findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request));
+    }
+    if (path == InitialDenialPath.EXPIRES_AT_MEMBERSHIP_OBSERVATION
+        || path == InitialDenialPath.EXPIRES_DURING_SCOPE_QUALIFICATION
+        || path == InitialDenialPath.EXPIRES_DURING_DELEGATION_READ) {
       verify(f.dsl, never())
           .fetchOne(
               startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
     }
+    verify(f.dsl, never())
+        .execute(startsWith("UPDATE account_tenant_capacity_usage "), any(Object[].class));
+    verify(f.dsl, never())
+        .execute(
+            startsWith("INSERT INTO account_tenant_capacity_reservations "), any(Object[].class));
     verify(f.dsl, times(1)).execute(eq(originInsertSql), any(Object[].class));
     verify(f.dsl, times(3)).fetchOne(eq(originLookupSql), aryEq(originKey));
     when(usage.get("held_units", Long.class)).thenReturn(0L);
@@ -285,6 +337,31 @@ class AccountTenantCapacityOwnerTest {
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
     verify(f.dsl, never())
         .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
+  }
+
+  @Test
+  void unavailableDelegationDuringExpiryDoesNotRetainDenial() throws Exception {
+    var f = new Fixture(false, qualifiedRequest(true));
+    f.existing = false;
+    f.retained = true;
+    qualifySources(f);
+    when(f.issuances.readCurrentCommittedCandidateByJti(
+            CapacityAdmissionTestFixture.DELEGATION_JTI))
+        .thenAnswer(ignored -> {
+          when(f.clock.instant()).thenReturn(f.request.evidence().expiresAt());
+          f.databaseExpired = true;
+          throw new AccountGameplayDelegationIssuanceRepository.StorageUnavailableException();
+        });
+
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> {
+              assertThat(failure.code()).isEqualTo(Failure.ENTITLEMENT_UNAVAILABLE);
+              assertThat(failure.durableDenialId()).isNull();
+            });
+    verifyNoInteractions(f.scopes);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
 
   @Test
@@ -324,43 +401,108 @@ class AccountTenantCapacityOwnerTest {
     verifyNoInteractions(f.memberships, f.issuances, f.scopes);
   }
 
-  @Test
-  void expiryDuringOriginRetentionRollsBackAcceptanceAndRefusal() throws Exception {
-    for (boolean quotaFull : new boolean[] {false, true}) {
-      var f = new Fixture(false, qualifiedRequest(true));
-      f.existing = false;
-      f.retained = true;
-      qualifySources(f);
-      Record usage = mock(Record.class);
-      when(usage.get("held_units", Long.class))
-          .thenReturn(quotaFull ? f.request.evidence().quota() : 0L);
-      when(usage.get("used_units", Long.class)).thenReturn(0L);
-      org.mockito.Mockito.doReturn(usage)
-          .when(f.dsl)
-          .fetchOne(
-              startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
-      retainOriginThenAdvanceClock(
-          f, f.request, quotaFull ? "NO_ACCEPT" : "ACCEPTED", f.request.evidence().expiresAt());
-
-      assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
-          .isInstanceOfSatisfying(
-              AccountTenantCapacityRepository.CapacityException.class,
-              failure -> assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE));
-      verify(f.dsl)
-          .execute(
-              startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class));
-      verify(f.dsl, never())
-          .execute(startsWith("UPDATE account_tenant_capacity_usage "), any(Object[].class));
-      verify(f.dsl, never())
-          .execute(
-              startsWith("INSERT INTO account_tenant_capacity_reservations "), any(Object[].class));
-      assertThat(f.originDecision).isNull();
-      assertThat(f.pendingOriginDecision).isNull();
-    }
+  private enum ExpiryDuringOriginWrite {
+    ACCOUNT_AFTER_ACCEPTANCE,
+    ACCOUNT_AFTER_QUOTA_DENIAL,
+    POSTGRES_AFTER_QUOTA_DENIAL
   }
 
-  @Test
-  void claimExpiryDuringRearmAcceptanceRollsBackBeforeHistoryOrFenceMutation() throws Exception {
+  @ParameterizedTest
+  @EnumSource(ExpiryDuringOriginWrite.class)
+  void expiryDuringOriginRetentionRollsBackAcceptanceAndRefusal(ExpiryDuringOriginWrite expiry)
+      throws Exception {
+    boolean quotaFull = expiry != ExpiryDuringOriginWrite.ACCOUNT_AFTER_ACCEPTANCE;
+    var f = new Fixture(false, qualifiedRequest(true));
+    f.existing = false;
+    f.retained = true;
+    qualifySources(f);
+    Record usage = mock(Record.class);
+    when(usage.get("held_units", Long.class))
+        .thenReturn(quotaFull ? f.request.evidence().quota() : 0L);
+    when(usage.get("used_units", Long.class)).thenReturn(0L);
+    org.mockito.Mockito.doReturn(usage)
+        .when(f.dsl)
+        .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
+    retainOriginThen(
+        f,
+        f.request,
+        quotaFull ? "NO_ACCEPT" : "ACCEPTED",
+        () -> {
+          if (expiry == ExpiryDuringOriginWrite.POSTGRES_AFTER_QUOTA_DENIAL) {
+            f.databaseExpired = true;
+          } else {
+            when(f.clock.instant()).thenReturn(f.request.evidence().expiresAt());
+          }
+        });
+
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> {
+              assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE);
+              assertThat(failure.durableDenialId()).isNull();
+            });
+    verify(f.dsl)
+        .execute(startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class));
+    verify(f.dsl, never())
+        .execute(startsWith("UPDATE account_tenant_capacity_usage "), any(Object[].class));
+    verify(f.dsl, never())
+        .execute(
+            startsWith("INSERT INTO account_tenant_capacity_reservations "), any(Object[].class));
+    assertThat(f.transactionEvents).containsExactly("begin", "rollback");
+    assertThat(f.originDecision).isNull();
+    assertThat(f.pendingOriginDecision).isNull();
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void expiryAfterReservationWriteRollsBackAndDoesNotSupplyDenial(boolean databaseRejectsCommit)
+      throws Exception {
+    var f = new Fixture(false, qualifiedRequest(true));
+    f.databaseRejectsDeferredCommit = databaseRejectsCommit;
+    f.existing = false;
+    f.retained = true;
+    qualifySources(f);
+    Record usage = mock(Record.class);
+    when(usage.get("held_units", Long.class)).thenReturn(0L);
+    when(usage.get("used_units", Long.class)).thenReturn(0L);
+    when(usage.get("usage_revision", Long.class)).thenReturn(1L);
+    org.mockito.Mockito.doReturn(usage)
+        .when(f.dsl)
+        .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
+    retainOriginThen(f, f.request, "ACCEPTED", () -> {});
+    when(f.dsl.execute(startsWith("UPDATE account_tenant_capacity_usage "), any(Object[].class)))
+        .thenReturn(1);
+    when(f.dsl.execute(
+            startsWith("INSERT INTO account_tenant_capacity_reservations "), any(Object[].class)))
+        .thenAnswer(ignored -> {
+          f.pendingReservation = true;
+          if (!databaseRejectsCommit) {
+            when(f.clock.instant()).thenReturn(f.request.evidence().expiresAt());
+          }
+          return 1;
+        });
+
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> {
+              assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE);
+              assertThat(failure.durableDenialId()).isNull();
+            });
+    verify(f.dsl).execute(startsWith("UPDATE account_tenant_capacity_usage "), any(Object[].class));
+    verify(f.dsl)
+        .execute(
+            startsWith("INSERT INTO account_tenant_capacity_reservations "), any(Object[].class));
+    assertThat(f.transactionEvents).containsExactly("begin", "rollback");
+    assertThat(f.originDecision).isNull();
+    assertThat(f.pendingReservation).isFalse();
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void expiryDuringRearmRollsBackBeforeHistoryOrFenceMutation(boolean evaluationExpires)
+      throws Exception {
     var f = new Fixture(false, qualifiedRequest(true));
     f.retained = true;
     qualifySources(f);
@@ -391,21 +533,29 @@ class AccountTenantCapacityOwnerTest {
     when(row.get("owner_readback", byte[].class)).thenReturn(new byte[] {1});
     String usageLock =
         "SELECT * FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = ? FOR UPDATE";
-    org.mockito.Mockito.doReturn(mock(Record.class))
+    Record usage = mock(Record.class);
+    doAnswer(
+            invocation -> {
+              f.databaseExpired = evaluationExpires;
+              return usage;
+            })
         .when(f.dsl)
         .fetchOne(startsWith(usageLock), any(Object[].class));
-    retainOriginThenAdvanceClock(f, next, "ACCEPTED", claimExpiry);
+    if (!evaluationExpires) {
+      retainOriginThen(f, next, "ACCEPTED", () -> when(f.clock.instant()).thenReturn(claimExpiry));
+    }
     var rearm =
         AccountTenantCapacityOwner.class.getDeclaredMethod(
             "rearm", Request.class, Request.class, UUID.class, long.class);
     rearm.setAccessible(true);
     assertThatThrownBy(() -> rearm.invoke(f.owner, f.request, next, claimOwner, 7L))
         .hasCauseInstanceOf(AccountTenantCapacityRepository.CapacityException.class)
-        .hasRootCauseMessage("IDEMPOTENCY_CONFLICT");
+        .hasRootCauseMessage(
+            evaluationExpires ? "CAPACITY_ADMISSION_STALE" : "IDEMPOTENCY_CONFLICT");
     var lockOrder = org.mockito.Mockito.inOrder(f.dsl);
     lockOrder.verify(f.dsl).fetchOne(startsWith(usageLock), any(Object[].class));
     lockOrder
-        .verify(f.dsl)
+        .verify(f.dsl, times(evaluationExpires ? 0 : 1))
         .execute(startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class));
     verify(f.dsl, never())
         .execute(
@@ -417,8 +567,8 @@ class AccountTenantCapacityOwnerTest {
     assertThat(f.pendingOriginDecision).isNull();
   }
 
-  private static void retainOriginThenAdvanceClock(
-      Fixture f, Request request, String decision, java.time.Instant afterWrite) {
+  private static void retainOriginThen(
+      Fixture f, Request request, String decision, Runnable afterWrite) {
     Record retained = mock(Record.class);
     when(retained.get("admission_attempt_id", UUID.class)).thenReturn(request.admissionAttemptId());
     when(retained.get("mutation_digest", String.class)).thenReturn(request.mutationDigest());
@@ -432,7 +582,7 @@ class AccountTenantCapacityOwnerTest {
             startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class)))
         .thenAnswer(invocation -> {
           f.pendingOriginDecision = retained;
-          when(f.clock.instant()).thenReturn(afterWrite);
+          afterWrite.run();
           return 1;
         });
   }
@@ -728,6 +878,8 @@ class AccountTenantCapacityOwnerTest {
         .thenReturn(current);
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
         .hasMessage("CAPACITY_ADMISSION_STALE");
+    verify(f.memberships)
+        .readCurrent(CapacityAdmissionTestFixture.ACCOUNT, f.request.identity().tenantId());
     verifyNoInteractions(f.issuances, f.scopes);
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
@@ -982,6 +1134,9 @@ class AccountTenantCapacityOwnerTest {
     private boolean existing = true;
     private boolean retained;
     private boolean databaseExpired;
+    private boolean databaseRejectsDeferredCommit;
+    private Runnable onDatabaseObservation = () -> {};
+    private boolean pendingReservation;
     private Record originDecision;
     private Record pendingOriginDecision;
 
@@ -1046,7 +1201,7 @@ class AccountTenantCapacityOwnerTest {
           .thenAnswer(invocation -> {
             String sql = invocation.getArgument(0, String.class);
             if (sql.startsWith("SELECT * FROM account_tenant_capacity_reservations "))
-              return existing ? row : null;
+              return existing || pendingReservation ? row : null;
             if (sql.startsWith("SELECT 1 FROM (SELECT tenant_uuid")) return null;
             if (sql.startsWith("SELECT * FROM account_capacity_origin_decisions "))
               return pendingOriginDecision != null ? pendingOriginDecision : originDecision;
@@ -1055,7 +1210,10 @@ class AccountTenantCapacityOwnerTest {
               return evaluation;
             if (sql.startsWith("SELECT * FROM account_tenant_capacity_evaluations "))
               return retained ? evaluation : null;
-            if (sql.startsWith("SELECT clock_timestamp()")) return databaseObservation;
+            if (sql.startsWith("SELECT clock_timestamp()")) {
+              onDatabaseObservation.run();
+              return databaseObservation;
+            }
             throw new AssertionError(sql);
           });
       owner =
@@ -1096,6 +1254,12 @@ class AccountTenantCapacityOwnerTest {
 
     @Override
     public void commit(TransactionStatus status) {
+      if (fixture.databaseRejectsDeferredCommit) {
+        rollback(status);
+        throw new org.springframework.transaction.TransactionSystemException(
+            "Deferred transaction validation failed",
+            new SQLException("Evaluation expired", "P1040"));
+      }
       if (fixture.pendingOriginDecision != null)
         fixture.originDecision = fixture.pendingOriginDecision;
       fixture.pendingOriginDecision = null;
@@ -1105,6 +1269,7 @@ class AccountTenantCapacityOwnerTest {
     @Override
     public void rollback(TransactionStatus status) {
       fixture.transactionEvents.add("rollback");
+      fixture.pendingReservation = false;
       fixture.pendingOriginDecision = null;
       TransactionSynchronizationManager.setActualTransactionActive(false);
     }

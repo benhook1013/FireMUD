@@ -113,7 +113,8 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       long explicitDeadline,
       ThreadFactory cancellationThreads,
       boolean background,
-      Deadline enclosingDeadline) {
+      Deadline enclosingDeadline,
+      Deadline entryDeadline) {
     this.background = background;
     this.clock = clock;
     this.cancellationThreads = Objects.requireNonNull(cancellationThreads);
@@ -124,6 +125,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       nanos = Math.min(nanos, caller.getDeadline().timeRemaining(TimeUnit.NANOSECONDS));
     if (enclosingDeadline != null)
       nanos = Math.min(nanos, enclosingDeadline.timeRemaining(TimeUnit.NANOSECONDS));
+    Deadline local = entryDeadline;
     if (explicitDeadline != Long.MAX_VALUE) {
       long remaining;
       try {
@@ -131,8 +133,9 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       } catch (ArithmeticException invalid) {
         throw unavailable();
       }
-      nanos =
-          Math.min(nanos, TimeUnit.MILLISECONDS.toNanos(Math.min(MAX_OPERATION_MILLIS, remaining)));
+      long explicitNanos = TimeUnit.MILLISECONDS.toNanos(Math.min(MAX_OPERATION_MILLIS, remaining));
+      nanos = Math.min(nanos, explicitNanos);
+      local = local.minimum(Deadline.after(explicitNanos, TimeUnit.NANOSECONDS));
     }
     if (nanos <= 0 || caller.isCancelled()) throw unavailable();
     try {
@@ -142,7 +145,6 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     } catch (ArithmeticException invalid) {
       throw unavailable();
     }
-    Deadline local = Deadline.after(nanos, TimeUnit.NANOSECONDS);
     if (enclosingDeadline != null) local = local.minimum(enclosingDeadline);
     deadline = caller.getDeadline() == null ? local : local.minimum(caller.getDeadline());
   }
@@ -298,11 +300,18 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       Runnable onPhysicalRelease,
       Deadline enclosingDeadline,
       Runnable onLogicalFinish) {
+    Deadline entryDeadline = Deadline.after(MAX_OPERATION_MILLIS, TimeUnit.MILLISECONDS);
     final CanonicalGameplayOriginalNewCapacityExecutionBudget budget;
     try {
       budget =
           new CanonicalGameplayOriginalNewCapacityExecutionBudget(
-              clock, explicitDeadline, cancellationThreads, background, enclosingDeadline);
+              clock,
+              explicitDeadline,
+              cancellationThreads,
+              background,
+              enclosingDeadline,
+              entryDeadline);
+      budget.check();
       // Background reads and transfer work share the same four-operation ceiling, but cannot
       // consume the two slots reserved for final admission. Neither class waits in a queue.
       if (background && !BACKGROUND_OPERATIONS.tryAcquire()) throw unavailable();
@@ -572,6 +581,8 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
                     check();
                     return owned.proxy;
                   } catch (RuntimeException expired) {
+                    // The deadline can expire before the caller starts cancellation.
+                    owned.retire();
                     owned.release();
                     throw expired;
                   }
@@ -647,16 +658,17 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     synchronized (resources) {
       outstanding = new ArrayList<>(connections.values());
     }
-    RuntimeException failure = null;
+    Throwable failure = null;
     for (OwnedConnection connection : outstanding) {
       try {
         connection.release();
-      } catch (RuntimeException cleanupFailure) {
+      } catch (RuntimeException | Error cleanupFailure) {
         if (failure == null) failure = cleanupFailure;
         else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
       }
     }
-    if (failure != null) throw failure;
+    if (failure instanceof Error error) throw error;
+    if (failure instanceof RuntimeException runtime) throw runtime;
   }
 
   /** Releases SQL connections opened by one retained companion operation. */
@@ -897,7 +909,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       // Detach cancellation before pool return, serialized against a cancellation already running.
       synchronized (resources) {
         if (returned || releaseAttempted) return;
-        if ((cancelled.get() || rollbackFailed) && !retired) retire();
+        if (cancelled.get() || rollbackFailed || retirementFailed) retire();
         releaseAttempted = true;
         if (activeConnection == this) {
           active = null;
