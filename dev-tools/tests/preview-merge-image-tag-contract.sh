@@ -321,15 +321,30 @@ PY_RERUN_PROOF_ORDER
   fi
 done
 
+cat >"$TEMP_DIR/proof-rejection-clock.sh" <<'EOF'
+# Keep the clock fixed through the proof reads. Stop on the first poll sleep.
+unset SECONDS
+SECONDS=0
+sleep() { SECONDS=$((SECONDS + $1)); }
+EOF
 for fixture in requalification_missing_receipt receipt_wrong_expired_requalification receipt_after_tag_conflict receipt_wrong_source receipt_wrong_publisher receipt_foreign receipt_failed receipt_duplicate legacy_expired legacy_missing; do
   if GH_FIXTURE="$fixture" \
-    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
-    HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=2 \
-    HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    WAITER_CALLS="$TEMP_DIR/waiter-$fixture.calls" \
+    BASH_ENV="$TEMP_DIR/proof-rejection-clock.sh" \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=60 \
+    HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=60 \
+    HOSTED_IMAGE_WAIT_SLEEP_SECONDS=60 \
     bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/publication-$fixture.out" 2>"$TEMP_DIR/publication-$fixture.err"; then
     echo "$fixture unexpectedly proved the publication artifact" >&2
     exit 1
   fi
+  case "$fixture" in
+    legacy_expired|legacy_missing) proof_read='/actions/runs/101/artifacts\?' ;;
+    receipt_wrong_expired_requalification|receipt_after_tag_conflict) proof_read='/actions/runs/103/attempts/1/jobs\?' ;;
+    receipt_foreign) proof_read='/actions/runs/102/attempts/1$' ;;
+    *) proof_read='/actions/runs/102/attempts/1/jobs\?' ;;
+  esac
+  grep -Eq "$proof_read" "$TEMP_DIR/waiter-$fixture.calls"
   grep -Fq 'Exact PR image publication and artifact proof is unavailable' "$TEMP_DIR/publication-$fixture.err"
 done
 

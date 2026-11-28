@@ -1458,8 +1458,8 @@ kubectl() {
   case "$*" in
     '--request-timeout=10s get namespace dev -o json') cat "$NAMESPACE_SNAPSHOT" ;;
     *'annotate namespace dev'*)
-      printf '%s\\n' "$*" >> "$ANNOTATION_CALLS"
-      [[ "$*" == '--request-timeout=10s annotate namespace dev --resource-version='* && "$ANNOTATION_ALLOWED" == true ]]
+      printf '%s\\n' "$#" "$@" >> "$ANNOTATION_CALLS"
+      [[ "${5:-}" == --resource-version=* && "$ANNOTATION_ALLOWED" == true ]]
       ;;
     *) return 2 ;;
   esac
@@ -1484,21 +1484,27 @@ kubectl() {
             },
             capture_output=True,
         )
-        return result.returncode, calls.read_text(encoding="utf-8").splitlines()
+        arguments = iter(calls.read_text(encoding="utf-8").splitlines())
+        mutations = [[next(arguments) for _ in range(int(count))] for count in arguments]
+        return result.returncode, mutations
 
     retain_deployment = deploy_by_name["Retain migration deployment intent"]
-    retained_call = f"--request-timeout=10s annotate namespace dev --resource-version=7 {pending_key}={pending_value}"
+    annotation_prefix = ["--request-timeout=10s", "annotate", "namespace", "dev", "--resource-version=7"]
+    retained_call = [*annotation_prefix, f"{pending_key}={pending_value}"]
     if run_retained_step(retain_deployment, {}) != (0, [retained_call]):
         raise SystemExit("migration deployment intent must bind the exact namespace version and attempt before Helm")
-    for annotations, uid in (({pending_key: pending_value}, "namespace-uid"), ({}, "different-uid")):
+    for annotations, uid in (
+        ({pending_key: pending_value}, "namespace-uid"),
+        ({"firemud.dev/pending-dev-demo-bootstrap": "123:1"}, "namespace-uid"),
+        ({}, "different-uid"),
+    ):
         status, mutations = run_retained_step(retain_deployment, annotations, namespace_uid=uid)
         if status == 0 or mutations:
             raise SystemExit("migration deployment intent must preserve an existing hold and refuse namespace replacement")
 
-    record_call = (
-        f"--request-timeout=10s annotate namespace dev --resource-version=7 "
-        f"firemud.dev/last-dev-demo-head-sha={target_sha} {pending_key}- --overwrite"
-    )
+    record_call = [
+        *annotation_prefix, f"firemud.dev/last-dev-demo-head-sha={target_sha}", f"{pending_key}-", "--overwrite",
+    ]
     if run_retained_step(deployed_head_step, {pending_key: pending_value}) != (0, [record_call]):
         raise SystemExit("recording the retained target must settle the exact hold in the same version-fenced request")
     status, mutations = run_retained_step(deployed_head_step, {pending_key: pending_value}, allowed=False)
@@ -1721,6 +1727,7 @@ if failure_summary["env"] != {
     "BOOTSTRAP_OUTCOME": "${{ steps." + bootstrap_step["id"] + ".outcome }}",
     "BOOTSTRAP_RESULT_READY": "${{ steps." + bootstrap_step["id"] + ".outputs.result_ready }}",
     "BOOTSTRAP_RETENTION_OUTCOME": "${{ steps." + deploy_by_name["Retain successful dev-demo bootstrap result"]["id"] + ".outcome }}",
+    "BOOTSTRAP_HOLD_CLEAR_OUTCOME": "${{ steps." + clear_bootstrap_hold["id"] + ".outcome }}",
 }:
     raise SystemExit("recorded-target verification advice must use this attempt's native outcomes")
 failure_summary_run = failure_summary["run"]
@@ -1735,18 +1742,19 @@ for name, value in {
     )
 with tempfile.TemporaryDirectory() as directory:
     summary = Path(directory) / "summary.md"
-    for deployed, recorded, bootstrap, ready, retention, stage, expected in (
-        ("failure", "skipped", "skipped", "", "skipped", "deploy", None),
-        ("skipped", "skipped", "skipped", "", "skipped", "unknown", None),
-        ("success", "failure", "skipped", "", "skipped", "deploy", None),
-        ("success", "skipped", "skipped", "", "skipped", "deploy", None),
-        ("success", "success", "failure", "", "skipped", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
-        ("success", "success", "skipped", "", "skipped", "runtime-readiness", "refer bootstrap recovery to the affected owners"),
-        ("success", "success", "cancelled", "", "skipped", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
-        ("success", "success", "success", "true", "failure", "bootstrap", "obtain owner readback of the original bootstrap"),
-        ("success", "success", "success", "true", "success", "smoke", "before repeating readiness or smoke"),
-        ("success", "success", "failure", "true", "success", "bootstrap", "original smoke bootstrap result was retained"),
-        ("success", "success", "failure", "true", "failure", "bootstrap", "obtain owner readback of the original bootstrap"),
+    for deployed, recorded, bootstrap, ready, retention, hold_clear, stage, expected in (
+        ("failure", "skipped", "skipped", "", "skipped", "skipped", "deploy", None),
+        ("skipped", "skipped", "skipped", "", "skipped", "skipped", "unknown", None),
+        ("success", "failure", "skipped", "", "skipped", "skipped", "deploy", None),
+        ("success", "skipped", "skipped", "", "skipped", "skipped", "deploy", None),
+        ("success", "success", "failure", "", "skipped", "skipped", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "skipped", "", "skipped", "skipped", "runtime-readiness", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "cancelled", "", "skipped", "skipped", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "success", "true", "failure", "skipped", "bootstrap", "obtain owner readback of the original bootstrap"),
+        ("success", "success", "success", "true", "success", "success", "smoke", "before repeating readiness or smoke"),
+        ("success", "success", "success", "true", "success", "failure", "bootstrap", "Verify the exact dev namespace UID and retained result"),
+        ("success", "success", "failure", "true", "success", "skipped", "bootstrap", "original smoke bootstrap result was retained"),
+        ("success", "success", "failure", "true", "failure", "skipped", "bootstrap", "obtain owner readback of the original bootstrap"),
     ):
         summary.write_text("", encoding="utf-8")
         subprocess.run(
@@ -1764,6 +1772,7 @@ with tempfile.TemporaryDirectory() as directory:
                 "BOOTSTRAP_OUTCOME": bootstrap,
                 "BOOTSTRAP_RESULT_READY": ready,
                 "BOOTSTRAP_RETENTION_OUTCOME": retention,
+                "BOOTSTRAP_HOLD_CLEAR_OUTCOME": hold_clear,
             },
             check=True,
         )
@@ -1777,6 +1786,8 @@ with tempfile.TemporaryDirectory() as directory:
                 raise SystemExit("dev-demo summary omitted the independent cleanup failure")
         elif ready == "true" and retention != "success":
             expected_stage = "retain-bootstrap-result"
+        elif hold_clear == "failure":
+            expected_stage = "clear-bootstrap-hold"
         if f"Failed stage: `{expected_stage}`" not in evidence:
             raise SystemExit("dev-demo failure summary misidentified the failed stage")
         if unconfirmed_recording:

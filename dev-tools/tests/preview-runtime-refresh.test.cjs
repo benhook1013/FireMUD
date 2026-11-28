@@ -22,7 +22,7 @@ function admissionFixture() {
   });
   const makePullRequestRun = (overrides = {}) => makeRun({
     event: 'pull_request', head_sha: C,
-    pull_requests: [{number: 7, head: {sha: C}, base: {sha: B}}],
+    pull_requests: [{number: 7, head: {sha: C}, base: {sha: B, ref: input.base_ref}}],
     ...overrides,
   });
   const sent = [];
@@ -958,6 +958,33 @@ test('advancing a generation requires one exact terminal receiver with a success
   assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['1', '2']);
   assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
   assert.equal(f.sent.length, 2);
+});
+
+test('a preview wake leaves successful exact claimed publication to the publisher', async () => {
+  const f = admissionFixture();
+  f.admission.input.preview_only = true;
+  f.state.keepHidden = true;
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
+  const [tag] = f.claimTags.values();
+  const run = {...f.state.newRun, status: 'completed', conclusion: 'success'};
+  f.runs.push(run);
+  f.receiverJobs.set(`${run.id}:${run.run_attempt}`, [
+    {id: 1, run_id: run.id, run_attempt: run.run_attempt, head_sha: run.head_sha,
+      name: 'Derive Runtime Image Metadata', status: 'completed', conclusion: 'success',
+      steps: [{name: `Runtime refresh claim generation 1 attempt 1 tag ${tag.sha}`,
+        status: 'completed', conclusion: 'success'}]},
+  ]);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'publication-pending');
+  assert.equal(f.sent.length, 1);
+});
+
+test('a native run for an old base ref does not suppress the current exact refresh', async () => {
+  const f = admissionFixture();
+  const oldRun = f.makePullRequestRun({id: 250});
+  f.admission.input.base_ref = 'stack/retargeted';
+  f.runs.push(oldRun);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.equal(f.sent[0].client_payload.base_ref, 'stack/retargeted');
 });
 
 test('an exact receiver rerun can prove the original claim without a new POST', async () => {

@@ -2111,8 +2111,23 @@ async function runDispatcher({
   const failedJob = {id: 72, name: "PR Full-Stack Smoke (runtime-required=true)", workflow_name: failedTyped.display_title,
     run_id: failedTyped.id, run_attempt: failedTyped.run_attempt, head_sha: failedTyped.head_sha, status: "completed", conclusion: "failure",
     started_at: "2026-01-03T00:01:01Z", completed_at: "2026-01-03T00:03:00Z", steps: [diagnosticMarker]};
+  const attemptScopedJob = {...failedJob};
+  delete attemptScopedJob.run_attempt;
+  const producerCompletedDuringInventory = await runDispatcher({
+    tuples: [tuple],
+    callback: {updated_at: "2026-01-02T00:00:00Z"},
+    inventories: {repository_dispatch: [{...failedTyped, status: "in_progress", conclusion: null}]},
+    runtimeRunOverrides: {[failedTyped.id]: failedTyped},
+    runtimeNativeAttempts: {[failedTyped.id]: failedTyped},
+    runtimeAttemptJobs: {[failedTyped.id]: {total_count: 1, jobs: [attemptScopedJob]}},
+  });
+  assert.deepEqual(numbers(producerCompletedDuringInventory), ["101"],
+    "a fresh native terminal result releases a stale inventory hold after exact attempt proof");
+  assert.deepEqual(producerCompletedDuringInventory.errors, []);
   for (const [jobs, total, expected] of [
     [[failedJob], 1, ["101"]],
+    [[attemptScopedJob], 1, ["101"]],
+    [[{...failedJob, run_attempt: null}], 1, []],
     [[{...failedJob, steps: [{...diagnosticMarker, started_at: null, completed_at: null}]}], 1, ["101"]],
     [[{...failedJob, steps: [{name: diagnosticMarker.name, status: "completed", conclusion: "skipped"}]}], 1, ["101"]],
     [[{...failedJob, steps: [{...diagnosticMarker, conclusion: "success"}]}], 1, []],
@@ -3100,6 +3115,9 @@ if [[ -n "${CONTRACT_GH_STATE_FILE:-}" ]]; then
 fi
 
 if [[ "$*" == *'/actions/runs/101' ]]; then
+  if [[ -n "${CONTRACT_CURRENT_SOURCE_READ:-}" ]]; then
+    printf '%s\n' "${CONTRACT_CURRENT_SOURCE_ATTEMPT:-2}" >>"$CONTRACT_CURRENT_SOURCE_READ"
+  fi
   printf '{"id":101,"workflow_id":501,"repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"},"run_attempt":%s,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}' "${CONTRACT_CURRENT_SOURCE_ATTEMPT:-2}"
   exit 0
 fi
@@ -3316,16 +3334,25 @@ for fixture in dispatch-success dispatch-earlier-attempt dispatch-legacy callbac
     fi
   fi
 done
+cat >"$contract_fixture_dir/stale-source-clock.sh" <<'EOF'
+# Keep the clock fixed through the proof reads. Stop on the first poll sleep.
+unset SECONDS
+SECONDS=0
+sleep() { SECONDS=$((SECONDS + $1)); }
+EOF
 if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
   CONTRACT_CURRENT_SOURCE_ATTEMPT=3 \
+  CONTRACT_CURRENT_SOURCE_READ="$contract_fixture_dir/stale-current-attempt.reads" \
+  BASH_ENV="$contract_fixture_dir/stale-source-clock.sh" \
   PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
-  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=60 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=60 \
   bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
     >"$contract_fixture_dir/stale-current-attempt.output" 2>"$contract_fixture_dir/stale-current-attempt.error"; then
   echo "A superseded producer must not pass even after exact publisher job success" >&2
   exit 1
 fi
+[[ "$(<"$contract_fixture_dir/stale-current-attempt.reads")" == 3 ]]
 require_contains "$contract_fixture_dir/stale-current-attempt.error" 'Runtime-image producer 101 advanced from attempt 2 to 3; selecting fresh proof.'
 
 for job_proof in skipped missing-step wrong-attempt incomplete; do

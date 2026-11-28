@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.CallOptions;
@@ -34,7 +35,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Clock;
-import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
@@ -73,6 +73,7 @@ import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.api.parallel.Resources;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /** Real loopback mTLS with a controlled Account result; not Account sources or final admission. */
@@ -83,6 +84,27 @@ class AccountTenantCapacityClientMtlsTest {
       UUID.fromString("a0577a29-9be2-42a0-9770-4c2a90581358");
   @TempDir static Path directory;
   private static LoopbackMtlsTestPki.Pki pki;
+
+  @ParameterizedTest
+  @NullAndEmptySource
+  @ValueSource(strings = {" \t "})
+  void initializationRequiresAnExplicitPrivateTarget(String target) throws Exception {
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setAccountService(target);
+    var factory = mock(GrpcChannelFactory.class);
+    try (var client =
+        new AccountTenantCapacityClient(
+            endpoints,
+            pki.clientProperties(directory, pki.identity("client")),
+            factory,
+            "prod",
+            Clock.fixed(CapacityAdmissionTestFixture.NOW, ZoneOffset.UTC))) {
+      assertThatThrownBy(client::init)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Explicit private Account capacity target is required");
+      verifyNoInteractions(factory);
+    }
+  }
 
   @BeforeAll
   static void certificates() throws Exception {
@@ -99,7 +121,7 @@ class AccountTenantCapacityClientMtlsTest {
   }
 
   @Test
-  void blankEndpointIsUnsetAndExplicitAccountEndpointIsPreserved() throws Exception {
+  void explicitAccountEndpointIsPreserved() throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     var factory = new GrpcChannelFactory();
     try (var client =
@@ -109,11 +131,6 @@ class AccountTenantCapacityClientMtlsTest {
             factory,
             "prod",
             Clock.fixed(CapacityAdmissionTestFixture.NOW, ZoneOffset.UTC))) {
-      assertThat(client.defaultTarget()).isEqualTo("account-service:6565");
-      for (String blank : new String[] {null, "", " \t "}) {
-        endpoints.setAccountService(blank);
-        assertThat(client.configuredTarget(endpoints)).isNull();
-      }
       endpoints.setAccountService("account.internal:7443");
       assertThat(client.configuredTarget(endpoints)).isEqualTo("account.internal:7443");
     }
@@ -375,7 +392,7 @@ class AccountTenantCapacityClientMtlsTest {
                             timeOut ? Status.Code.DEADLINE_EXCEEDED : Status.Code.UNAVAILABLE));
       }
       assertThat(failedCommit.get()).isEqualTo(TenantCapacityAdmissionGrpcCodec.toRequest(request));
-      if (timeOut) now.set(Instant.ofEpochMilli(originalDeadline).plusMillis(1));
+      now.set(request.evidence().expiresAt().plusMillis(1));
       long readDeadline = now.get().plusSeconds(5).toEpochMilli();
       try (var restarted = client(server, tls, new GrpcChannelFactory(), clock)) {
         restarted.init();

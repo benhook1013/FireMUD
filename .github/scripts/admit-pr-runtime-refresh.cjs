@@ -167,7 +167,7 @@ module.exports = async function admitPrRuntimeRefresh({
       return (barePath || run.path === `${runtimePath}@refs/pull/${pullNumber}/merge`) &&
         run.head_sha === input.head_sha && Array.isArray(associations) && associations.length === 1 &&
         associations[0]?.number === pullNumber && associations[0]?.head?.sha === input.head_sha &&
-        associations[0]?.base?.sha === input.base_sha;
+        associations[0]?.base?.sha === input.base_sha && associations[0]?.base?.ref === input.base_ref;
     }
     return false;
   };
@@ -568,7 +568,7 @@ module.exports = async function admitPrRuntimeRefresh({
     return false;
   };
 
-  const terminalReceiverProven = async claim => {
+  const provenTerminalReceiver = async claim => {
     const runs = [];
     await collectInventory('repository_dispatch', 'completed', claim.date, runs, new Set());
     if (new Set(runs.map(run => run.id)).size !== runs.length) fail('Duplicate terminal runtime receiver run.');
@@ -578,13 +578,13 @@ module.exports = async function admitPrRuntimeRefresh({
       if (receiver) fail('Multiple terminal runtime receivers for the same claim.');
       receiver = run;
     }
-    if (!receiver) return false;
+    if (!receiver) return null;
 
     const latest = dataOf(await github.rest.actions.getWorkflowRun({...contextRepo, run_id: receiver.id}));
     return exactNativeTuple(latest) && latest.event === 'repository_dispatch' && latest.id === receiver.id &&
       latest.run_attempt === receiver.run_attempt && latest.head_sha === receiver.head_sha &&
       latest.created_at === receiver.created_at && latest.status === 'completed' &&
-      latest.conclusion === receiver.conclusion;
+      latest.conclusion === receiver.conclusion ? latest : null;
   };
 
   const newestExact = await readNewestExact();
@@ -618,9 +618,17 @@ module.exports = async function admitPrRuntimeRefresh({
       const provenPreSendOutcome = await ownerReceiptProven(prior, unsent) ||
         await ownerReceiptProven(prior, dispatchRejection) ||
         await ownerReceiptProven(prior, preSendUnavailable);
-      if (!provenPreSendOutcome && !await terminalReceiverProven(prior)) {
+      const receiver = provenPreSendOutcome ? null : await provenTerminalReceiver(prior);
+      if (!provenPreSendOutcome && !receiver) {
         core.info('Runtime refresh claim has no proven terminal receiver or trusted owner outcome; no dispatch.');
         return 'claim-held';
+      }
+      if (input.preview_only === true && receiver?.conclusion === 'success') {
+        // The trusted publisher owns recovery from a missing or expired upload.
+        // A preview wake can overlap a successful producer's publication.
+        if (!await currentIdentity()) return 'obsolete';
+        core.info('The exact claimed producer succeeded; leave publication to its trusted publisher.');
+        return 'publication-pending';
       }
       if (provenPreSendOutcome && !await currentIdentity()) {
         core.info('Runtime refresh tuple changed during owner outcome verification; no dispatch.');

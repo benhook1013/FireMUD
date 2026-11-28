@@ -44,11 +44,6 @@ public final class AccountCapacityOriginDecisionRepository {
     retain(request, "ACCEPTED", null);
   }
 
-  /** Caller has locked Account and verified no exact or conflicting reservation exists. */
-  public UUID refuse(Request request) {
-    return retain(request, "NO_ACCEPT", null).get("decision_id", UUID.class);
-  }
-
   /** Replays an exact durable refusal before any mutable eligibility check. */
   public Refusal retainedAdmissionDenial(Request request) {
     return admissionDenial(find(request));

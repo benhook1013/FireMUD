@@ -166,6 +166,7 @@ classify_failure_body() {
           jar_download_step = 0
           jar_downloads++
           if (buildsrc_resolver) buildsrc_jar_downloads++
+          if (cached_compile_resolver) cached_compile_http_429++
           coordinates++
           repository_requests += 2
           transient++
@@ -174,7 +175,8 @@ classify_failure_body() {
         }
         next
       }
-      if ((fixtures_resolver || buildsrc_resolver || (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration)) &&
+      if ((fixtures_resolver || buildsrc_resolver || cached_compile_resolver ||
+           (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration)) &&
           line ~ /^> Could not download [[:alnum:]_.-]+\.jar \([[:alnum:]_-]+(\.[[:alnum:]_-]+)*:[[:alnum:]_.-]+:[0-9][[:alnum:]_.-]*\)$/) {
         artifact_coordinate = line
         sub(/^.*\(/, "", artifact_coordinate)
@@ -373,6 +375,11 @@ classify_failure_body() {
           configuration_name = substr(configuration_name, 2, length(configuration_name) - 2)
         }
         resolved_configuration = configuration_name
+        if (configuration_name ~ /^:[[:alnum:]-]+:compileClasspath$/) {
+          compile_owner = configuration_name
+          sub(/:compileClasspath$/, "", compile_owner)
+          cached_compile_resolver = cache_cause == 1 && cache_task == ("`" compile_owner ":compileJava`")
+        }
         if (configuration_name == "classpath") {
           buildsrc_classpath++
           if (buildsrc_configuration) buildsrc_resolver = 1
@@ -487,7 +494,7 @@ classify_failure_body() {
       }
       compile_module = resolved_configuration
       sub(/:compileClasspath$/, "", compile_module)
-      if (buildsrc_jar_downloads ||
+      if (buildsrc_jar_downloads || buildsrc_http_429 ||
           (cached_compile_http_429 && resolver_roots == 1 && cache_task == ("`" compile_module ":compileJava`"))) print "before-compile-rate-limit"
       else if (wrapped_resolution_causes || (fixtures_resolver && jar_downloads)) print "before-compile"
       exit 0

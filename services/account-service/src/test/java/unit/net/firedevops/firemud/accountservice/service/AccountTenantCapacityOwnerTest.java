@@ -170,6 +170,7 @@ class AccountTenantCapacityOwnerTest {
     QUOTA,
     EXPIRES_AT_MEMBERSHIP_OBSERVATION,
     EXPIRES_DURING_SCOPE_QUALIFICATION,
+    EXPIRES_ACROSS_SCOPE_CLOCK_SAMPLES,
     EXPIRES_DURING_DELEGATION_READ,
     EXPIRES_DURING_USAGE_LOCK
   }
@@ -257,6 +258,9 @@ class AccountTenantCapacityOwnerTest {
           when(f.clock.instant()).thenReturn(f.request.evidence().expiresAt());
           f.databaseExpired = true;
         };
+    if (path == InitialDenialPath.EXPIRES_DURING_DELEGATION_READ) {
+      when(scope.connectScopeExpiresAt()).thenReturn(f.request.evidence().expiresAt().toString());
+    }
     switch (path) {
       case QUOTA -> {}
       case EXPIRES_AT_MEMBERSHIP_OBSERVATION -> f.onDatabaseObservation = expire;
@@ -264,12 +268,16 @@ class AccountTenantCapacityOwnerTest {
           when(f.issuances.readCurrentCommittedCandidateByJti(
                   CapacityAdmissionTestFixture.DELEGATION_JTI))
               .thenAnswer(ignored -> {
-                f.databaseExpired = true;
-                Instant tokenExpiry = sourceTokenExpiry(f.request);
-                assertThat(tokenExpiry).isAfter(f.request.evidence().expiresAt());
-                when(f.clock.instant()).thenReturn(tokenExpiry);
-                throw new CommittedCandidateExpiredException(
-                    CapacityAdmissionTestFixture.DELEGATION_JTI, tokenExpiry.getEpochSecond());
+                throw markDelegationExpired(f);
+              });
+      case EXPIRES_ACROSS_SCOPE_CLOCK_SAMPLES ->
+          when(f.scopes.findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request)))
+              .thenAnswer(ignored -> {
+                when(f.clock.instant()).thenReturn(f.request.evidence().expiresAt());
+                var observations = new AtomicInteger();
+                f.onDatabaseObservation =
+                    () -> f.databaseExpired = observations.incrementAndGet() == 2;
+                return Optional.of(scope);
               });
       case EXPIRES_DURING_SCOPE_QUALIFICATION ->
           when(f.scopes.findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request)))
@@ -301,16 +309,10 @@ class AccountTenantCapacityOwnerTest {
     UUID committedId = genericRefusal.get("decision_id", UUID.class);
     if (path == InitialDenialPath.EXPIRES_AT_MEMBERSHIP_OBSERVATION) {
       verifyNoInteractions(f.issuances, f.scopes);
-    } else if (path == InitialDenialPath.EXPIRES_DURING_DELEGATION_READ) {
-      verify(f.issuances)
-          .readCurrentCommittedCandidateByJti(CapacityAdmissionTestFixture.DELEGATION_JTI);
-      verifyNoInteractions(f.scopes);
     } else {
       verify(f.scopes).findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request));
     }
-    if (path == InitialDenialPath.EXPIRES_AT_MEMBERSHIP_OBSERVATION
-        || path == InitialDenialPath.EXPIRES_DURING_SCOPE_QUALIFICATION
-        || path == InitialDenialPath.EXPIRES_DURING_DELEGATION_READ) {
+    if (path != InitialDenialPath.QUOTA && path != InitialDenialPath.EXPIRES_DURING_USAGE_LOCK) {
       verify(f.dsl, never())
           .fetchOne(
               startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
@@ -340,6 +342,40 @@ class AccountTenantCapacityOwnerTest {
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
     verify(f.dsl, never())
         .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
+  }
+
+  @Test
+  void delegationExpiryDuringLiveQualificationRequiresAnExactScope() throws Exception {
+    var f = new Fixture(false, qualifiedRequest(true));
+    f.existing = false;
+    f.retained = true;
+    qualifySources(f);
+    String scopeTokenHash = verifiedScopeTokenHash(f.request);
+    when(f.scopes.findCanonicalEvidenceByTokenHash(scopeTokenHash)).thenReturn(Optional.empty());
+    when(f.issuances.readCurrentCommittedCandidateByJti(
+            CapacityAdmissionTestFixture.DELEGATION_JTI))
+        .thenAnswer(ignored -> {
+          throw markDelegationExpired(f);
+        });
+
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> {
+              assertThat(failure.code()).isEqualTo(Failure.ENTITLEMENT_UNAVAILABLE);
+              assertThat(failure.durableDenialId()).isNull();
+            });
+    verify(f.scopes).findCanonicalEvidenceByTokenHash(scopeTokenHash);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  private static CommittedCandidateExpiredException markDelegationExpired(Fixture f) {
+    f.databaseExpired = true;
+    Instant tokenExpiry = sourceTokenExpiry(f.request);
+    assertThat(tokenExpiry).isAfter(f.request.evidence().expiresAt());
+    when(f.clock.instant()).thenReturn(tokenExpiry);
+    return new CommittedCandidateExpiredException(
+        CapacityAdmissionTestFixture.DELEGATION_JTI, tokenExpiry.getEpochSecond());
   }
 
   @Test
@@ -382,7 +418,7 @@ class AccountTenantCapacityOwnerTest {
               assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE);
               assertThat(failure.durableDenialId()).isNull();
             });
-    verify(f.dsl)
+    verify(f.dsl, times(2))
         .fetchOne(
             eq("SELECT clock_timestamp() >= ?::timestamptz AS expired"),
             eq(AccountTenantCapacityRepository.at(f.request.evidence().expiresAt())));
@@ -502,10 +538,16 @@ class AccountTenantCapacityOwnerTest {
     assertThat(f.pendingReservation).isFalse();
   }
 
+  private enum RearmExpiry {
+    EVALUATION_AFTER_USAGE_LOCK,
+    CLAIM_AFTER_ACCEPTANCE,
+    CLAIM_DURING_HISTORY_INSERT
+  }
+
   @ParameterizedTest
-  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
-  void expiryDuringRearmRollsBackBeforeHistoryOrFenceMutation(boolean evaluationExpires)
-      throws Exception {
+  @EnumSource(RearmExpiry.class)
+  void expiryDuringRearmRollsBackBeforeFenceMutation(RearmExpiry expiry) throws Exception {
+    boolean evaluationExpires = expiry == RearmExpiry.EVALUATION_AFTER_USAGE_LOCK;
     var f = new Fixture(false, qualifiedRequest(true));
     f.retained = true;
     qualifySources(f);
@@ -527,7 +569,10 @@ class AccountTenantCapacityOwnerTest {
         java.util.Objects.requireNonNull(
             f.dsl.fetchOne("SELECT * FROM account_tenant_capacity_reservations ", new Object[0]));
     UUID claimOwner = UUID.randomUUID();
-    var claimExpiry = next.evidence().expiresAt().plusSeconds(1);
+    var claimExpiry =
+        evaluationExpires
+            ? next.evidence().expiresAt().plusSeconds(1)
+            : next.evidence().expiresAt().minusSeconds(1);
     when(row.get("recovery_owner", UUID.class)).thenReturn(claimOwner);
     when(row.get("recovery_claim_fence", Long.class)).thenReturn(7L);
     when(row.get("recovery_claim_expires_at", java.time.OffsetDateTime.class))
@@ -548,7 +593,24 @@ class AccountTenantCapacityOwnerTest {
         .when(f.dsl)
         .fetchOne(startsWith(usageLock), any(Object[].class));
     if (!evaluationExpires) {
-      retainOriginThen(f, next, "ACCEPTED", () -> when(f.clock.instant()).thenReturn(claimExpiry));
+      retainOriginThen(
+          f,
+          next,
+          "ACCEPTED",
+          () -> {
+            if (expiry == RearmExpiry.CLAIM_AFTER_ACCEPTANCE) {
+              when(f.clock.instant()).thenReturn(claimExpiry);
+            }
+          });
+    }
+    if (expiry == RearmExpiry.CLAIM_DURING_HISTORY_INSERT) {
+      when(f.dsl.execute(
+              startsWith("INSERT INTO account_tenant_capacity_attempt_history "),
+              any(Object[].class)))
+          .thenAnswer(ignored -> {
+            when(f.clock.instant()).thenReturn(claimExpiry);
+            return 1;
+          });
     }
     var rearm =
         AccountTenantCapacityOwner.class.getDeclaredMethod(
@@ -563,7 +625,7 @@ class AccountTenantCapacityOwnerTest {
     lockOrder
         .verify(f.dsl, times(evaluationExpires ? 0 : 1))
         .execute(startsWith("INSERT INTO account_capacity_origin_decisions "), any(Object[].class));
-    verify(f.dsl, never())
+    verify(f.dsl, times(expiry == RearmExpiry.CLAIM_DURING_HISTORY_INSERT ? 1 : 0))
         .execute(
             startsWith("INSERT INTO account_tenant_capacity_attempt_history "),
             any(Object[].class));

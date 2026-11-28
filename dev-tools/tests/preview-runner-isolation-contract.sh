@@ -365,13 +365,22 @@ const repo = {owner: "example", repo: "FireMUD"};
 const context = {repo, payload: {repository: {full_name: repository}}};
 const dispatches = [];
 const github = {rest: {
-  pulls: {get: async () => ({data: {
-    state: "open", base: {ref: "develop", repo: {full_name: repository}},
-    head: {sha: head, repo: {full_name: repository}}, merge_commit_sha: merge,
-  }})},
-  git: {getRef: async () => ({data: {object: {sha: base}}})},
+  pulls: {get: async request => {
+    assert.deepEqual(request, {...repo, pull_number: 42});
+    return {data: {
+      state: "open", base: {ref: "develop", repo: {full_name: repository}},
+      head: {sha: head, repo: {full_name: repository}}, merge_commit_sha: merge,
+    }};
+  }},
+  git: {getRef: async request => {
+    assert.deepEqual(request, {...repo, ref: "heads/develop"});
+    return {data: {object: {sha: base}}};
+  }},
   repos: {
-    getCommit: async () => ({data: {sha: merge, parents: [{sha: base}, {sha: head}]}}),
+    getCommit: async request => {
+      assert.deepEqual(request, {...repo, ref: merge});
+      return {data: {sha: merge, parents: [{sha: base}, {sha: head}]}};
+    },
     createDispatchEvent: async request => dispatches.push(request),
   },
 }};

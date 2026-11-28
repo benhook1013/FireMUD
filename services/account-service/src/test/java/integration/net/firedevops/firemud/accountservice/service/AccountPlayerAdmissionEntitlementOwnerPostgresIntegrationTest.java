@@ -411,10 +411,20 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             })
         .when(f.capacityAccounts)
         .findByAccountUuidForUpdate(f.account.getAccountUuid());
+    f.dataSource.getConnectionProperties().setProperty("socketTimeout", "8");
+    var executor = Executors.newFixedThreadPool(2, Thread.ofPlatform().daemon().factory());
+    var first = executor.submit(() -> requireQuotaDenial(f, request));
+    var second = executor.submit(() -> requireQuotaDenial(f, request));
     UUID decision;
-    try (var executor = Executors.newFixedThreadPool(2)) {
-      var first = executor.submit(() -> requireQuotaDenial(f, request));
-      var second = executor.submit(() -> requireQuotaDenial(f, request));
+    try (AutoCloseable stopWorkers =
+        () -> {
+          first.cancel(true);
+          second.cancel(true);
+          executor.shutdownNow();
+          assertThat(executor.awaitTermination(10, TimeUnit.SECONDS))
+              .as("quota test workers terminated")
+              .isTrue();
+        }) {
       decision = first.get(10, TimeUnit.SECONDS);
       assertThat(second.get(10, TimeUnit.SECONDS)).isEqualTo(decision);
     }
@@ -603,48 +613,37 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     var entitlementRequest = f.request();
     var prior = capacityRequest(f, entitlementRequest);
     var next = prior;
+    UUID reservationId = null;
     UUID claimOwner = null;
     long claimFence = 0;
+    var recovery =
+        new AccountTenantCapacityRecoveryWorker(
+            f.capacityOwner,
+            f.dsl,
+            (request, reservation, deadline) ->
+                new AccountTenantCapacityRecoveryWorker.Observation(
+                    PEER,
+                    reservation,
+                    net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.preimage(
+                        request),
+                    AccountTenantCapacityRecoveryWorker.Disposition
+                        .NOT_EXECUTED_AFTER_AUTHORIZATION,
+                    request.admissionAttemptId(),
+                    7,
+                    "sha256:" + "e".repeat(64),
+                    "controlled-owner-no-execution".getBytes(StandardCharsets.US_ASCII)),
+            Clock.systemUTC());
     if (rearm) {
-      assertThat(f.capacityOwner.commit(prior, PEER).state())
-          .isEqualTo(TenantCapacityAdmission.State.RESERVED);
-      var recovery =
-          new AccountTenantCapacityRecoveryWorker(
-              f.capacityOwner,
-              f.dsl,
-              (request, reservation, deadline) ->
-                  new AccountTenantCapacityRecoveryWorker.Observation(
-                      PEER,
-                      reservation,
-                      net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest
-                          .preimage(request),
-                      AccountTenantCapacityRecoveryWorker.Disposition
-                          .NOT_EXECUTED_AFTER_AUTHORIZATION,
-                      request.admissionAttemptId(),
-                      7,
-                      "sha256:" + "e".repeat(64),
-                      "controlled-owner-no-execution".getBytes(StandardCharsets.US_ASCII)),
-              Clock.systemUTC());
+      var reservation = f.capacityOwner.commit(prior, PEER);
+      assertThat(reservation.state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
+      reservationId = reservation.reservationId();
       assertThat(
               recovery
                   .reconcile(
                       prior, AccountTenantCapacityRecoveryWorker.NoCommitAction.RETAIN_FOR_REARM)
                   .state())
           .isEqualTo(TenantCapacityAdmission.State.RESERVED);
-      next =
-          new TenantCapacityAdmission.Request(
-                  prior.identity(),
-                  UUID.randomUUID(),
-                  2,
-                  prior.targetNamespace(),
-                  prior.context(),
-                  prior.operation(),
-                  prior.priorShape(),
-                  prior.requestedShape(),
-                  capacityEvidence(f, entitlementRequest),
-                  prior.capacityDelta(),
-                  null)
-              .withDigest();
+      next = freshRearmRequest(f, entitlementRequest, prior);
       assertThat(next.evidence().evaluationIdentity())
           .isNotEqualTo(prior.evidence().evaluationIdentity());
       var claim =
@@ -709,7 +708,35 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
       assertThat(f.capacityOwner.readRetainedAdmissionDenial(attempt, PEER).durableDenialId())
           .isEqualTo(decision.get());
       assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_refusal_slots"))).isOne();
+    } else {
+      var fresh = freshRearmRequest(f, entitlementRequest, prior);
+      var committed = recovery.rearm(prior, fresh);
+      assertThat(committed.state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
+      assertThat(committed.reservationId()).isEqualTo(reservationId);
+      assertThat(committed.admissionAttemptId()).isEqualTo(fresh.admissionAttemptId());
+      assertThat(committed.capacityRearmFence()).isEqualTo(fresh.capacityRearmFence());
+      assertThat(f.capacityOwner.commit(fresh, PEER)).isEqualTo(committed);
+      assertThat(capacityRows(f.dsl).get("usage"))
+          .usingRecursiveComparison()
+          .isEqualTo(original.get("usage"));
     }
+  }
+
+  private static TenantCapacityAdmission.Request freshRearmRequest(
+      Fixture f, Request entitlementRequest, TenantCapacityAdmission.Request prior) {
+    return new TenantCapacityAdmission.Request(
+            prior.identity(),
+            UUID.randomUUID(),
+            prior.capacityRearmFence() + 1,
+            prior.targetNamespace(),
+            prior.context(),
+            prior.operation(),
+            prior.priorShape(),
+            prior.requestedShape(),
+            capacityEvidence(f, entitlementRequest),
+            prior.capacityDelta(),
+            null)
+        .withDigest();
   }
 
   private static Map<String, List<Map<String, Object>>> capacityRows(DSLContext dsl) {

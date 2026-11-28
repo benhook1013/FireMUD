@@ -116,7 +116,7 @@ case "$*" in
     if [[ "${QUIESCE_MODE:-}" == unobserved-replicaset ]]; then
       observed=1
     fi
-    printf '{"kind":"ReplicaSetList","items":[{"kind":"ReplicaSet","metadata":{"generation":2,"ownerReferences":[{"kind":"Deployment","name":"account-service","controller":true}]},"status":{"observedGeneration":%s},"spec":{"replicas":%s}}]}\n' "$observed" "$replicas"
+    printf '{"kind":"ReplicaSetList","items":[{"kind":"ReplicaSet","metadata":{"name":"retained-writer","uid":"writer-rs-uid","generation":2,"ownerReferences":[{"kind":"Deployment","name":"account-service","controller":true}]},"status":{"observedGeneration":%s},"spec":{"replicas":%s}},{"kind":"ReplicaSet","metadata":{"name":"unrelated-worker","uid":"unrelated-rs-uid"},"spec":{"replicas":1}}]}\n' "$observed" "$replicas"
     ;;
   "-n contract scale deployment/account-service --replicas=0")
     [[ "${QUIESCE_MODE:-}" != account-scale-failure ]] || { echo 'scale denied' >&2; exit 1; }
@@ -127,7 +127,15 @@ case "$*" in
   "-n contract scale deployment/automation-scripting-service --replicas=0")
     ;;
   "-n contract get pods -o json")
-    if [[ "${QUIESCE_MODE:-}" == registry-port-writer-pod ]]; then
+    if [[ "${QUIESCE_MODE:-}" == markerless-writer-pod || "${QUIESCE_MODE:-}" == unrelated-pod ]]; then
+      owner_name=retained-writer
+      owner_uid=writer-rs-uid
+      if [[ "$QUIESCE_MODE" == unrelated-pod ]]; then
+        owner_name=unrelated-worker
+        owner_uid=unrelated-rs-uid
+      fi
+      printf '{"kind":"%s","items":[{"kind":"Pod","metadata":{"deletionTimestamp":"2026-01-01T00:00:00Z","ownerReferences":[{"apiVersion":"apps/v1","kind":"ReplicaSet","name":"%s","uid":"%s","controller":true}]},"spec":{"containers":[{"name":"worker","image":"registry.example/runtime-neutral:1"}]}}]}\n' "$pod_list_kind" "$owner_name" "$owner_uid"
+    elif [[ "${QUIESCE_MODE:-}" == registry-port-writer-pod ]]; then
       marker="$QUIESCE_STATE/pod-list-call-count"
       count=0
       [[ ! -f "$marker" ]] || count="$(<"$marker")"
@@ -180,18 +188,24 @@ run_quiesce() {
 
 run_quiesce success >/dev/null
 run_quiesce typed-lists >/dev/null
-for mode in success unobserved-deployment unobserved-replicaset active-replicaset; do
+for mode in success unrelated-pod unobserved-deployment unobserved-replicaset active-replicaset markerless-writer-pod; do
   calls="$fixture_dir/verify-calls-$mode"
   if QUIESCE_MODE="$mode" QUIESCE_CALLS="$calls" \
     QUIESCE_STATE="$fixture_dir/state-success" PATH="$fake_bin:$PATH" \
     bash "$helper" --verify-only contract >"$fixture_dir/verify-out" 2>&1; then
-    [[ "$mode" == success ]] || {
+    [[ "$mode" == success || "$mode" == unrelated-pod ]] || {
       echo "verify-only accepted $mode" >&2
       exit 1
     }
   else
-    [[ "$mode" != success ]] || { cat "$fixture_dir/verify-out" >&2; exit 1; }
+    if [[ "$mode" == success || "$mode" == unrelated-pod ]]; then
+      cat "$fixture_dir/verify-out" >&2
+      exit 1
+    fi
     grep -Fq 'writer account-service is not quiescent' "$fixture_dir/verify-out"
+    if [[ "$mode" == markerless-writer-pod ]]; then
+      grep -Fq 'old writer pods: 1' "$fixture_dir/verify-out"
+    fi
   fi
   if rg -q ' (scale|patch) ' "$calls"; then
     echo "verify-only attempted a writer or Service mutation" >&2

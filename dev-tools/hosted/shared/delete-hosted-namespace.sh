@@ -96,15 +96,15 @@ fi
 delete_uid="${expected_namespace_uid:-$namespace_uid}"
 
 resource_version=""
-if [[ -n "$expected_deployed_head" ]]; then
+if [[ "$namespace" == dev ]]; then
   if ! resource_version="$(jq -er --arg head "$expected_deployed_head" '
     (.metadata.annotations // {}) as $annotations
-    | select(($annotations["firemud.dev/last-dev-demo-head-sha"] | ascii_downcase) == $head)
+    | select($head == "" or (($annotations["firemud.dev/last-dev-demo-head-sha"] // "") | ascii_downcase) == $head)
     | select($annotations | has("firemud.dev/pending-dev-demo-deployment") | not)
     | select($annotations | has("firemud.dev/pending-dev-demo-bootstrap") | not)
     | .metadata.resourceVersion | select(type == "string" and length > 0)
   ' <<<"$namespace_json")"; then
-    echo "refusing automatic dev-demo reset: deployed head or namespace version changed, or a pending deployment/bootstrap hold exists" >&2
+    echo "refusing dev-demo deletion: deployed head or namespace version changed, or a pending deployment/bootstrap hold exists" >&2
     exit 1
   fi
 fi

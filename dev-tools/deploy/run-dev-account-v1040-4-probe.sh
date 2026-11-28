@@ -72,18 +72,23 @@ if [[ "$check_permissions" == true ]]; then
 else
   verify_held_source
 fi
-image="$(kubectl --request-timeout=10s -n "$namespace" get deployment postgres -o json |
+# Select executable bytes from the same reviewed values used by the dev-demo chart.
+# A retained Deployment may confirm this identity, but cannot approve a client image.
+approved_image="$(
+  git -C "$helper_dir" show "$target_sha:k8s/helm/firemud/values-hosted-shared.example.yaml" |
+    python3 -c 'import sys, yaml; print(yaml.safe_load(sys.stdin)["previewStack"]["postgres"]["image"])'
+)" || fail "cannot read the approved PostgreSQL client image from reviewed hosted values"
+[[ "$approved_image" =~ ^postgres:18([.][0-9]+)*@sha256:[0-9a-f]{64}$ ]] ||
+  fail "the reviewed hosted values lack a digest-pinned official PostgreSQL client image"
+
+retained_image="$(kubectl --request-timeout=10s -n "$namespace" get deployment postgres -o json |
   jq -er --arg namespace "$namespace" '
     select(.kind == "Deployment" and .metadata.name == "postgres" and .metadata.namespace == $namespace)
     | .spec.template.spec.containers | map(select(.name == "postgres"))
     | select(length == 1) | .[0].image | select(type == "string")')" ||
   fail "the retained PostgreSQL image is unavailable"
-image_ref="${image%@sha256:*}"
-image_basename="${image_ref##*/}"
-image_tag="${image_basename##*:}"
-[[ "$image" =~ @sha256:[0-9a-f]{64}$ &&
-  "$image_basename" == postgres:* && "$image_tag" =~ ^[0-9][a-zA-Z0-9._-]*$ ]] ||
-  fail "the retained PostgreSQL image is not an approved digest-pinned client"
+[[ "$retained_image" == "$approved_image" ]] ||
+  fail "the retained PostgreSQL image differs from the approved client image"
 
 probe_source="$(<"$helper_dir/probe-dev-account-v1040-4.sh")"
 probe_id="$(openssl rand -hex 16)"
@@ -189,7 +194,7 @@ trap cleanup EXIT
 if ! job_manifest="$(jq -n \
   --arg name "$job_name" \
   --arg namespace "$namespace" --arg uid "$namespace_uid" --arg deployed "$deployed_sha" \
-  --arg target "$target_sha" --arg prefix "$origin_prefix" --arg image "$image" --arg probe "$probe_source" '
+  --arg target "$target_sha" --arg prefix "$origin_prefix" --arg image "$approved_image" --arg probe "$probe_source" '
     {
       apiVersion: "batch/v1", kind: "Job",
       metadata: {namespace: $namespace, name: $name, annotations: {

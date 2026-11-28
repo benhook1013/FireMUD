@@ -144,7 +144,11 @@ export PROBE_JOB_READ="$temp_dir/probe-job-read"
 export PROBE_DELETING_READ="$temp_dir/probe-deleting-read"
 export PROBE_DELETE_REQUESTED="$temp_dir/probe-delete-requested"
 PROBE_FIXTURE_HEAD="$(git -C "$root_dir" rev-parse HEAD)"
-export PROBE_FIXTURE_HEAD
+PROBE_FIXTURE_IMAGE="$(
+  git -C "$root_dir" show "$PROBE_FIXTURE_HEAD:k8s/helm/firemud/values-hosted-shared.example.yaml" |
+    python3 -c 'import sys, yaml; print(yaml.safe_load(sys.stdin)["previewStack"]["postgres"]["image"])'
+)"
+export PROBE_FIXTURE_HEAD PROBE_FIXTURE_IMAGE
 export PROBE_FIXTURE_BASE="$deployed_sha"
 export PROBE_FIXTURE_UID="$namespace_uid"
 export PROBE_FIXTURE_JOB_NAME="firemud-account-v1040-4-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -197,13 +201,14 @@ kubectl() {
       printf '{"kind":"ReplicaSetList","items":[]}\n'
       ;;
     '--request-timeout=10s -n dev get deployment postgres -o json')
-      local kind=Deployment
-      if [[ "${PROBE_SCENARIO:-}" == wrong-postgres-kind ]]; then
-        kind=StatefulSet
-      fi
-      jq -n --arg kind "$kind" '{kind:$kind,metadata:{name:"postgres",namespace:"dev"},
-        spec:{template:{spec:{containers:[{name:"postgres",
-          image:"postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a"}]}}}}'
+      local kind=Deployment image="$PROBE_FIXTURE_IMAGE"
+      case "${PROBE_SCENARIO:-}" in
+        wrong-postgres-kind) kind=StatefulSet ;;
+        unapproved-postgres-repository) image="registry.example.invalid/fixture/$image" ;;
+        unapproved-postgres-digest) image="${image%@*}@sha256:$(printf '%064d' 0)" ;;
+      esac
+      jq -n --arg kind "$kind" --arg image "$image" '{kind:$kind,metadata:{name:"postgres",namespace:"dev"},
+        spec:{template:{spec:{containers:[{name:"postgres",image:$image}]}}}}'
       ;;
     '--request-timeout=10s -n dev get deployment '*" --ignore-not-found -o json")
       [[ "$KUBECONFIG" == fixture-runtime ]] || return 2
@@ -319,6 +324,19 @@ for scenario in mismatched-server mismatched-ca insecure-runtime; do
   [[ ! -s "$temp_dir/receipt" && ! -e "$PROBE_JOB_MANIFEST" && ! -e "$PROBE_DRY_RUN" ]]
 done
 
+for scenario in unapproved-postgres-repository unapproved-postgres-digest; do
+  for mode in --check-permissions run; do
+    probe_args=()
+    [[ "$mode" != --check-permissions ]] || probe_args+=("$mode")
+    if PROBE_SCENARIO="$scenario" run_protected_probe "${probe_args[@]}" >"$temp_dir/receipt" 2>"$temp_dir/error"; then
+      echo "Protected probe $mode accepted $scenario." >&2
+      exit 1
+    fi
+    grep -Fq 'retained PostgreSQL image differs from the approved client image' "$temp_dir/error"
+    [[ ! -s "$temp_dir/receipt" && ! -e "$PROBE_JOB_MANIFEST" && ! -e "$PROBE_DRY_RUN" ]]
+  done
+done
+
 run_protected_probe --check-permissions
 [[ -s "$PROBE_DRY_RUN" && ! -e "$PROBE_JOB_MANIFEST" ]]
 for scenario in missing-delete-permission missing-get-pod-permission missing-list-replicasets-permission admission-denied; do
@@ -337,12 +355,12 @@ cmp -- "$PROBE_DRY_RUN" "$PROBE_JOB_MANIFEST"
 jq -e \
   --arg probe "$(cat "$root_dir/dev-tools/deploy/probe-dev-account-v1040-4.sh")" \
   --arg namespace dev --arg uid "$namespace_uid" --arg base "$deployed_sha" \
-  --arg head "$PROBE_FIXTURE_HEAD" --arg prefix 3 '
+  --arg head "$PROBE_FIXTURE_HEAD" --arg prefix 3 --arg image "$PROBE_FIXTURE_IMAGE" '
   .kind == "Job" and .metadata.namespace == "dev" and
   .spec.backoffLimit == 0 and .spec.activeDeadlineSeconds == 70 and .spec.ttlSecondsAfterFinished == 300 and
   .spec.template.spec.automountServiceAccountToken == false and
   (.spec.template.spec.containers | if type == "array" then
-    length == 1 and .[0].command == ["bash", "-c"] and
+    length == 1 and .[0].image == $image and .[0].command == ["bash", "-c"] and
     .[0].args == [$probe, "probe-dev-account-v1040-4", $namespace, $uid, $base, $head, $prefix] and
     .[0].env == [
       {name:"FIREMUD_POSTGRES_USER",valueFrom:{secretKeyRef:{name:"firemud-secret",key:"FIREMUD_POSTGRES_USER"}}},

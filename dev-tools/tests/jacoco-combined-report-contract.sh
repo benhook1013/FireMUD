@@ -13,12 +13,17 @@ account_aggregate_graph="$TMP_DIR/account-aggregate-graph"
 game_session_aggregate_graph="$TMP_DIR/game-session-aggregate-graph"
 world_aggregate_graph="$TMP_DIR/world-aggregate-graph"
 
-bash "$LOCKED_GRADLE" :common-saga:test -PfullCheck --dry-run --no-configuration-cache >"$unit_graph"
-bash "$LOCKED_GRADLE" :common-saga:check -PfullCheck --dry-run --no-configuration-cache >"$check_graph"
-bash "$LOCKED_GRADLE" :common-saga:jacocoTestReport -PfullCheck --dry-run --no-configuration-cache >"$report_graph"
-bash "$LOCKED_GRADLE" :account-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=account-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail >"$account_aggregate_graph"
-bash "$LOCKED_GRADLE" :game-session-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=game-session-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail >"$game_session_aggregate_graph"
-bash "$LOCKED_GRADLE" :world-management-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=world-management-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail >"$world_aggregate_graph"
+check_gradle_graph() {
+  bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
+    --runner "$LOCKED_GRADLE" -- "$@"
+}
+
+check_gradle_graph :common-saga:test -PfullCheck --dry-run --no-configuration-cache >"$unit_graph"
+check_gradle_graph :common-saga:check -PfullCheck --dry-run --no-configuration-cache >"$check_graph"
+check_gradle_graph :common-saga:jacocoTestReport -PfullCheck --dry-run --no-configuration-cache >"$report_graph"
+check_gradle_graph :account-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=account-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail >"$account_aggregate_graph"
+check_gradle_graph :game-session-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=game-session-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail >"$game_session_aggregate_graph"
+check_gradle_graph :world-management-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=world-management-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail >"$world_aggregate_graph"
 
 if grep -Eq '^:common-saga:(integrationTest|crossServiceTest|jacocoTestReport)([[:space:]]|$)' "$unit_graph"; then
   echo "Focused :common-saga:test unexpectedly scheduled categorized tests or the combined report." >&2

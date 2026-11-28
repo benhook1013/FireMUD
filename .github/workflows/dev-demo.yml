@@ -438,7 +438,8 @@ jobs:
                   and .metadata.labels["firemud.dev/environment-class"] == "dev-demo-cluster"
                   and .metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == $base
                   and .metadata.annotations["firemud.dev/requested-dev-demo-head-sha"] == $head
-                  and (.metadata.annotations | has("firemud.dev/pending-dev-demo-deployment") | not))
+                  and (.metadata.annotations
+                    | (has("firemud.dev/pending-dev-demo-deployment") or has("firemud.dev/pending-dev-demo-bootstrap")) | not))
                 | .metadata.resourceVersion | select(type == "string" and length > 0)
               '
           )"
@@ -675,8 +676,12 @@ jobs:
         if: ${{ success() && steps.retain-bootstrap-intent.outcome == 'success' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
+          NAMESPACE_KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
           PREVIEW_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
           PREVIEW_TENANT_ID: "1"
+          BOOTSTRAP_HEAD: ${{ needs.dev-demo-plan.outputs.head_sha }}
+          BOOTSTRAP_HOLD: ${{ steps.bootstrap-intent.outputs.bootstrap_hold }}
+          BOOTSTRAP_NAMESPACE_UID: ${{ steps.bootstrap-intent.outputs.namespace_uid }}
           BOOTSTRAP_REQUEST_ID: ${{ steps.bootstrap-intent.outputs.request_id }}
           BOOTSTRAP_EVIDENCE_DIR: ${{ steps.bootstrap-intent.outputs.evidence_dir }}
         run: |
@@ -983,6 +988,15 @@ jobs:
             cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true
             exit 1
           fi
+          if ! KUBECONFIG="$NAMESPACE_KUBECONFIG" kubectl --request-timeout=10s get namespace "$PREVIEW_NAMESPACE" -o json |
+            jq -e --arg uid "$BOOTSTRAP_NAMESPACE_UID" --arg head "$BOOTSTRAP_HEAD" --arg hold "$BOOTSTRAP_HOLD" '
+              .metadata.name == "dev" and .metadata.uid == $uid and .metadata.deletionTimestamp == null
+              and .metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == $head
+              and .metadata.annotations["firemud.dev/pending-dev-demo-bootstrap"] == $hold
+            ' >/dev/null; then
+            echo "::error::Dev-demo bootstrap namespace or retained attempt changed before sending" >&2
+            exit 1
+          fi
           if ! BOOTSTRAP_MODE=account \
             BOOTSTRAP_GATEWAY_BASE_URL="http://127.0.0.1:${BOOTSTRAP_GATEWAY_PORT}" \
             BOOTSTRAP_ACCOUNT_ID_FILE="${BOOTSTRAP_ACCOUNT_ID_FILE}" \
@@ -1155,6 +1169,7 @@ jobs:
           BOOTSTRAP_OUTCOME: ${{ steps.bootstrap-smoke.outcome }}
           BOOTSTRAP_RESULT_READY: ${{ steps.bootstrap-smoke.outputs.result_ready }}
           BOOTSTRAP_RETENTION_OUTCOME: ${{ steps.retain-bootstrap-result.outcome }}
+          BOOTSTRAP_HOLD_CLEAR_OUTCOME: ${{ steps.clear-bootstrap-hold.outcome }}
         run: |
           failure_stage="${DEV_DEMO_STAGE:-unknown}"
           if [[ "$DEPLOY_OUTCOME" == success && "$RECORD_OUTCOME" != success ]]; then
@@ -1163,6 +1178,8 @@ jobs:
             failure_stage=bootstrap-cleanup
           elif [[ "$BOOTSTRAP_RESULT_READY" == true && "$BOOTSTRAP_RETENTION_OUTCOME" != success ]]; then
             failure_stage=retain-bootstrap-result
+          elif [[ "$BOOTSTRAP_HOLD_CLEAR_OUTCOME" == failure ]]; then
+            failure_stage=clear-bootstrap-hold
           fi
           bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
             failure \
@@ -1184,6 +1201,8 @@ jobs:
               fi
               if [[ "$failure_stage" == bootstrap-cleanup ]]; then
                 echo "Bootstrap cleanup failed after producing the result. Verify cleanup of the temporary bootstrap resources before proceeding."
+              elif [[ "$failure_stage" == clear-bootstrap-hold ]]; then
+                echo "The bootstrap result was retained, but clearing the hold could not be confirmed. Verify the exact dev namespace UID and retained result before clearing the hold through owner recovery."
               fi
               echo "Keep the recorded target and existing namespace. Do not replay Helm or bootstrap to verify this release."
             } >> "$GITHUB_STEP_SUMMARY"

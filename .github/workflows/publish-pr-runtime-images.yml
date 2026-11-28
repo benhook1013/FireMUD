@@ -124,8 +124,9 @@ jobs:
               };
               const [created, attemptCreated, start, jobStart, jobEnd, end] =
                 [run.created_at, attempt.created_at, attempt.run_started_at, job.started_at, job.completed_at, attempt.updated_at].map(timestamp);
+              const creationAllowance = run.run_attempt > 1 ? 1000 : 0;
               if (![created, attemptCreated, start, jobStart, jobEnd, end].every(Number.isFinite) ||
-                  created > attemptCreated || attemptCreated > start || end < start ||
+                  created > attemptCreated || attemptCreated > start + creationAllowance || attemptCreated > end || end < start ||
                   jobStart < Math.floor(start / 1000) * 1000 || jobEnd < jobStart || jobEnd > Math.floor(end / 1000) * 1000 + 999) return false;
               // A skipped step normally has no execution timestamps. If supplied,
               // both timestamps must still agree with the actually attempted job.
@@ -880,6 +881,9 @@ jobs:
                     producer.steps.some(step =>
                       step?.name === "Known canonical transition PLAY failure with successful authenticated cleanup" &&
                       step.status === "completed" && step.conclusion === "success")) {
+                  if (requalification) {
+                    throw new Error("Runtime publication cannot be requalified: this attempt passed under the PLAY exception and has no publishable upload.");
+                  }
                   core.notice("CI passed under the canonical PLAY transition exception; no runtime images are eligible for publication.");
                   return;
                 }

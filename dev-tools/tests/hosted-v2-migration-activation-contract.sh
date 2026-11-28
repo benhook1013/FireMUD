@@ -61,12 +61,16 @@ assert_rejected() {
 (
   delete_helper="$ROOT_DIR/dev-tools/hosted/shared/delete-hosted-namespace.sh"
   delete_request="$fixture_dir/delete-request.json"
+  delete_attempt="$fixture_dir/delete-attempt"
   base_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   namespace_for_head "$base_sha"
   RESET_NAMESPACE_JSON="$(jq -c '.metadata.resourceVersion = "7"' <<<"$FAKE_NAMESPACE_JSON")"
-  export RESET_NAMESPACE_JSON DELETE_REQUEST="$delete_request"
+  export RESET_NAMESPACE_JSON DELETE_REQUEST="$delete_request" DELETE_ATTEMPT="$delete_attempt"
   # shellcheck disable=SC2329 # Exported to the delete helper's child Bash as its kubectl mock.
   kubectl() {
+    if [[ ${1:-} == delete ]]; then
+      printf '%s\n' attempted >>"$DELETE_ATTEMPT"
+    fi
     case "$*" in
       'get namespace dev --ignore-not-found -o json')
         [[ -s "$DELETE_REQUEST" ]] || printf '%s\n' "$RESET_NAMESPACE_JSON"
@@ -81,13 +85,24 @@ assert_rejected() {
   for change in     '.metadata.uid = "replacement"'     '.metadata.annotations["firemud.dev/last-dev-demo-head-sha"] = "changed"'     '.metadata.annotations["firemud.dev/pending-dev-demo-deployment"] = ""'     '.metadata.annotations["firemud.dev/pending-dev-demo-bootstrap"] = "123:1"'     'del(.metadata.resourceVersion)'; do
     RESET_NAMESPACE_JSON="$(jq -c "$change" <<<"$clean_snapshot")"
     if bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" >"$fixture_dir/reset.stdout" 2>"$fixture_dir/reset.stderr" ||
-      [[ -e "$delete_request" ]]; then
+      [[ -e "$delete_attempt" ]]; then
       echo "automatic reset did not refuse changed namespace evidence: $change" >&2
+      exit 1
+    fi
+  done
+  for hold in pending-dev-demo-deployment pending-dev-demo-bootstrap; do
+    RESET_NAMESPACE_JSON="$(jq -c --arg key "firemud.dev/$hold" '.metadata.annotations[$key] = ""' <<<"$clean_snapshot")"
+    if bash "$delete_helper" dev dev >"$fixture_dir/reset.stdout" 2>"$fixture_dir/reset.stderr" ||
+      [[ -e "$delete_attempt" ]]; then
+      echo "explicit destroy did not preserve the namespace with $hold" >&2
       exit 1
     fi
   done
   RESET_NAMESPACE_JSON="$clean_snapshot"
   bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" >"$fixture_dir/reset.stdout"
+  jq -e '.preconditions == {uid:"fixture-dev-uid",resourceVersion:"7"}' "$delete_request" >/dev/null
+  rm "$delete_request"
+  bash "$delete_helper" dev dev >"$fixture_dir/reset.stdout"
   jq -e '.preconditions == {uid:"fixture-dev-uid",resourceVersion:"7"}' "$delete_request" >/dev/null
 )
 
@@ -143,7 +158,12 @@ FAKE_NAMESPACE_JSON="$(jq -c --arg base "$game_session_v2_sha" --arg target "$su
   .metadata.annotations["firemud.dev/pending-dev-demo-deployment"] = ("123:1:" + $base + ":" + $target)
 ' <<<"$FAKE_NAMESPACE_JSON")"
 for target in "$supported_v2_sha" "$later_push_sha"; do
-  assert_rejected --reason 'unresolved retained deployment requires owner verification' repository_dispatch "" "$target"
+  assert_rejected --reason 'unresolved retained deployment or bootstrap requires owner verification' repository_dispatch "" "$target"
+done
+namespace_for_head "$game_session_v2_sha"
+FAKE_NAMESPACE_JSON="$(jq -c '.metadata.annotations["firemud.dev/pending-dev-demo-bootstrap"] = "123:1"' <<<"$FAKE_NAMESPACE_JSON")"
+for target in "$supported_v2_sha" "$later_push_sha"; do
+  assert_rejected --reason 'unresolved retained deployment or bootstrap requires owner verification' repository_dispatch "" "$target"
 done
 namespace_for_head "$supported_v2_sha"
 assert_rejected --reason 'the namespace already records the target SHA' repository_dispatch "" "$supported_v2_sha"

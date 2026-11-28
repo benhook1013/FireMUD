@@ -608,6 +608,8 @@ for (const publishable of ["false", "", undefined]) {
   await rejectsResolver(resolve({context: requalification}), /provenance is not trusted/);
   await rejectsResolver(resolve({context: requalification, runs: [prSource],
     jobs: [{...producerFor(prSource), steps: []}]}), /actual successful Upload/);
+  await rejectsResolver(resolve({context: requalification, runs: [prSource],
+    jobs: [{...producerFor(prSource), steps: exceptionJob.steps}]}), /no publishable upload/);
   const expiredRequalification = await resolve({context: requalification, runs: [prSource],
     artifactInventory: {total_count: 1, artifacts: [{...artifactFor(prSource), expired: true}]}});
   assert.deepEqual(expiredRequalification.output, {
@@ -1208,6 +1210,17 @@ async function runReconcile({
   assert.equal(reversed.postAttempts, 0, "a failed run cannot execute before it was created");
   assert(reversed.warnings.some(message => /explicit investigation, not automatic replay/.test(message)));
   const rerunAttempt = {...legacyFailedPlay, run_started_at: "2026-01-06T01:00:00Z", updated_at: "2026-01-06T01:03:00Z"};
+  const failedRerun = {...legacyFailedPlay, run_attempt: 2};
+  const failedRerunJob = {...failedJob, run_attempt: 2, started_at: "2026-01-06T01:00:01Z",
+    completed_at: "2026-01-06T01:02:00Z", steps: [{...marker, started_at: null, completed_at: null}]};
+  for (const [seconds, expectedPosts] of [[1, 1], [2, 0]]) {
+    const result = await runReconcile({preflightRefreshRuns: [failedRerun],
+      refreshNativeAttempts: {[failedRerun.id]: {...rerunAttempt, run_attempt: 2,
+        created_at: `2026-01-06T01:00:0${seconds}Z`}},
+      refreshAttemptJobs: {[failedRerun.id]: {total_count: 1, jobs: [failedRerunJob]}}});
+    assert.equal(result.failure, null);
+    assert.equal(result.postAttempts, expectedPosts, "only the bounded rerun timestamp skew is supported");
+  }
   for (const attempt of [rerunAttempt, {...legacyFailedPlay, run_attempt: 2},
     {...legacyFailedPlay, created_at: "2026-01-06T00:01:00Z"},
     {...legacyFailedPlay, created_at: "2026-01-05T23:59:58Z"},

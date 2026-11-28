@@ -913,7 +913,7 @@ jobs:
                 if (!exactPublisher(publisher, publisher) || publisher.id <= 0 || !Number.isSafeInteger(publisher.id) ||
                     publisher.run_attempt !== 1 ||
                     publisher.workflow_id !== owner.id || publisher.head_branch !== defaultBranch || !shaPattern.test(publisher.head_sha || "") ||
-                    !(publisher.path === publisherPath || publisher.path === `${publisherPath}@refs/heads/${defaultBranch}`) ||
+                    ![publisherPath, `${publisherPath}@${defaultBranch}`, `${publisherPath}@refs/heads/${defaultBranch}`].includes(publisher.path) ||
                     (publisher.event === "repository_dispatch" ? publisher.display_title !== `${dispatchTitle} ${attemptSuffix}` :
                       publisher.event !== "workflow_run" || publisher.display_title !== `${callbackTitle} source-run-${run.id} ${attemptSuffix}`) ||
                     !Number.isFinite(timestamp(publisher.created_at)) || timestamp(publisher.created_at) < artifactTime ||
@@ -984,7 +984,8 @@ jobs:
                 "PR Full-Stack Smoke (runtime-required=false)"].includes(job?.name));
               const job = producers[0];
               if (producers.length !== 1 || !Number.isSafeInteger(job.id) || job.id <= 0 ||
-                  job.run_id !== run.id || job.run_attempt !== run.run_attempt || job.head_sha !== run.head_sha ||
+                  job.run_id !== run.id || (Object.hasOwn(job, "run_attempt") && job.run_attempt !== run.run_attempt) ||
+                  job.head_sha !== run.head_sha ||
                   ![workflowName, run.display_title].includes(job.workflow_name) ||
                   job.status !== "completed" || job.conclusion !== run.conclusion || !Array.isArray(job.steps)) return false;
               const markers = job.steps.filter(step => step?.name === "Known canonical transition PLAY failure with successful authenticated cleanup");
@@ -1076,7 +1077,8 @@ jobs:
                 }
               }
               ordered.sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
-              for (const [index, newest] of ordered.entries()) {
+              for (const [index, observed] of ordered.entries()) {
+                let newest = observed;
                 if (index + 1 < ordered.length && Date.parse(newest.created_at) === Date.parse(ordered[index + 1].created_at)) {
                   throw new Error("newest exact runtime producer has an ambiguous created_at timestamp");
                 }
@@ -1084,7 +1086,22 @@ jobs:
                   if (newest.conclusion !== null && newest.conclusion !== undefined) {
                     throw new Error(`run ${newest.id} has a conclusion while still ${newest.status}`);
                   }
-                  return [newest];
+                  const {data: latest} = await github.rest.actions.getWorkflowRun(fanoutOptions({
+                    ...context.repo, run_id: newest.id,
+                  }));
+                  if (!latest || !["id", "workflow_id", "run_attempt", "event", "path",
+                    "display_title", "head_branch", "head_sha", "created_at"].every(field => latest[field] === newest[field]) ||
+                    latest.repository?.full_name !== newest.repository?.full_name ||
+                    latest.head_repository?.full_name !== newest.head_repository?.full_name ||
+                    !["Build Runtime Images", expectedTitle].includes(latest.name)) {
+                    throw new Error(`Exact producer ${newest.id} changed identity during inventory; retaining the duplicate hold`);
+                  }
+                  if (["queued", "waiting", "requested", "pending", "in_progress"].includes(latest.status) &&
+                      latest.conclusion == null) return [latest];
+                  if (latest.status !== "completed" || typeof latest.conclusion !== "string" || !latest.conclusion) {
+                    throw new Error(`Exact producer ${newest.id} has no proven active or terminal result`);
+                  }
+                  newest = latest;
                 }
                 if (newest.status === "completed") {
                   if (newest.event === "repository_dispatch" && ["cancelled", "timed_out", "failure", "success"].includes(newest.conclusion)) {

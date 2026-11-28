@@ -632,7 +632,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "15ad70c5aba21c9bf7a14f0cae2120314a532105298a3111c0a55224f52bb325";
+            const canonicalRuntimeWorkflowSha256 = "6ffd501902470669b1a84b68a4d24c2ecf52ddda634012598c427f5a0fdd4830";
             // Only authenticated default-branch refreshes may use retained successful definitions.
             // Keep the pre-rollout default and predecessor definitions for mixed-version runs.
             const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -867,6 +867,14 @@ jobs:
                 workflowPath, workflowSha, "immutable runtime workflow definition lookup");
               const currentDefinition = isSuccessfulRuntimeWorkflowDefinition(definitionHash, source.event);
               if (!currentDefinition && definitionHash !== canonicalLegacyRuntimeWorkflowSha256) return false;
+              if (exactSnapshotPending && candidate && !Object.hasOwn(candidate, "run_attempt")) {
+                // A sparse listing can also reflect an attempt being superseded.
+                const latest = await readLatestCanonicalAttempt(run);
+                if (!latest) return pendingExactSnapshot();
+                if (latest.run_attempt > run.run_attempt) return "attempt-superseded";
+                if (latest.run_attempt !== run.run_attempt || latest.status !== "completed" ||
+                    latest.conclusion !== run.conclusion) return pendingExactSnapshot();
+              }
               const jobs = await withTransientGitHubRetry(
                 "exact runtime attempt jobs lookup",
                 () => github.paginate(
@@ -879,17 +887,18 @@ jobs:
               if (producers.length > 1) return false;
               if (producers.length === 0) return pendingExactSnapshot();
               const job = producers[0];
+              const hasAttempt = Object.hasOwn(job, "run_attempt");
               if ((job.id != null && !positiveInteger(job.id)) ||
                   (candidate?.id != null && job.id != null && job.id !== candidate.id) ||
                   (job.run_id != null && job.run_id !== source.id) ||
-                  (job.run_attempt != null && job.run_attempt !== source.run_attempt) ||
+                  (hasAttempt && job.run_attempt !== source.run_attempt) ||
                   (job.head_sha != null && job.head_sha !== source.head_sha) ||
                   (job.check_run_url != null && job.id != null &&
                     job.check_run_url !== `https://api.github.com/repos/${repositoryName}/check-runs/${job.id}`)) return false;
-              if (job.id == null || job.run_id == null || job.run_attempt == null ||
+              if (job.id == null || job.run_id == null ||
                   job.head_sha == null || job.check_run_url == null) return pendingExactSnapshot();
               if (!positiveInteger(job.id) || job.run_id !== source.id ||
-                  job.run_attempt !== source.run_attempt || job.head_sha !== source.head_sha ||
+                  job.head_sha !== source.head_sha ||
                   job.check_run_url !== `https://api.github.com/repos/${repositoryName}/check-runs/${job.id}`) return false;
               if (job.status == null) {
                 if (exactSnapshotPending && (job.conclusion == null || job.conclusion === "success")) {
@@ -906,6 +915,14 @@ jobs:
                 return false;
               }
               if (job.conclusion !== "success") return false;
+              if (!hasAttempt) {
+                // GitHub's attempt-scoped jobs endpoint can omit this redundant
+                // field. Require the job to actually execute in the exact attempt.
+                const [start, jobStart, jobEnd, end] =
+                  [source.run_started_at, job.started_at, job.completed_at, source.updated_at].map(Date.parse);
+                if (![start, jobStart, jobEnd, end].every(Number.isFinite)) return pendingExactSnapshot();
+                if (jobStart < start || jobEnd < jobStart || jobEnd > end) return false;
+              }
               const markers = (job.steps ?? []).filter((step) =>
                 step.name === "Known canonical transition PLAY failure with successful authenticated cleanup"
               );
@@ -1284,7 +1301,8 @@ jobs:
               const producers = data.jobs.filter(job => job?.name === canonicalSmokeJobName);
               const job = producers[0];
               if (producers.length !== 1 || !positiveInteger(job.id) || job.run_id !== run.id ||
-                  job.run_attempt !== run.run_attempt || job.head_sha !== run.head_sha ||
+                  (Object.hasOwn(job, "run_attempt") && job.run_attempt !== run.run_attempt) ||
+                  job.head_sha !== run.head_sha ||
                   ![workflow.name, run.display_title].includes(job.workflow_name) ||
                   job.status !== "completed" || job.conclusion !== "failure" || !Array.isArray(job.steps)) return false;
               const markers = job.steps.filter(step =>
@@ -2256,10 +2274,7 @@ jobs:
                             }
                             continue smokeGatePolling;
                           }
-                          if (!await isCurrentCanonicalAttempt(refreshProof.run)) {
-                            await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                            continue smokeGatePolling;
-                          }
+                          if (Date.now() - started >= timeoutMs) break smokeGatePolling;
                           return;
                         }
                         knownPlayVerified = refreshProof?.status === "verified" &&
@@ -2454,11 +2469,10 @@ jobs:
                     await new Promise((resolve) => setTimeout(resolve, sleepMs));
                     continue smokeGatePolling;
                   }
-                  if (!await isCurrentCanonicalAttempt(matching)) {
-                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                    continue smokeGatePolling;
+                  if (proof === "ordinary") {
+                    if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                    return;
                   }
-                  if (proof === "ordinary") return;
                   freshIdentity = await resolveCurrentIdentity("Fencing moved cancelled-run PLAY exception", true);
                   if (freshIdentity?.obsolete) return;
                   if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
@@ -2556,11 +2570,11 @@ jobs:
                   fullSmokeJob = producerJobs[0] ?? null;
                   let attemptIdentityPending = false;
                   if (typedRuntimeProof && fullSmokeJob) {
-                    const identityFields = [fullSmokeJob.run_id, fullSmokeJob.run_attempt, fullSmokeJob.head_sha];
+                    const identityFields = [fullSmokeJob.run_id, fullSmokeJob.head_sha];
                     if (identityFields.some(value => value == null)) {
                       attemptIdentityPending = true;
                     } else if (fullSmokeJob.run_id !== matching.id ||
-                        fullSmokeJob.run_attempt !== matching.run_attempt ||
+                        (Object.hasOwn(fullSmokeJob, "run_attempt") && fullSmokeJob.run_attempt !== matching.run_attempt) ||
                         fullSmokeJob.head_sha !== matching.head_sha) {
                       await failNonTerminalSnapshot("with a producer from a different runtime attempt");
                       return;
@@ -2855,10 +2869,6 @@ jobs:
                   if (!fencedIdentity || identityKey(fencedIdentity) !== identityKey(currentIdentity)) {
                     currentIdentity = fencedIdentity;
                     core.info(`Runtime images run ${matching.id} was not accepted because its PR identity changed during the final attempt lookup.`);
-                    continue smokeGatePolling;
-                  }
-                  if (!await isCurrentCanonicalAttempt(matching)) {
-                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
                     continue smokeGatePolling;
                   }
                   if (Date.now() - started >= timeoutMs) break smokeGatePolling;

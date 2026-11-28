@@ -39,9 +39,10 @@ if ! namespace_uid="$(jq -er --arg namespace "$namespace" '
   exit 1
 fi
 if ! jq -e '
-  (.metadata.annotations // {}) | has("firemud.dev/pending-dev-demo-deployment") | not
+  (.metadata.annotations // {})
+  | (has("firemud.dev/pending-dev-demo-deployment") or has("firemud.dev/pending-dev-demo-bootstrap")) | not
 ' <<<"$namespace_json" >/dev/null; then
-  echo "refusing hosted deployment: an unresolved retained deployment requires owner verification of the exact Helm release and Flyway state before namespace mutation" >&2
+  echo "refusing hosted deployment: an unresolved retained deployment or bootstrap requires owner verification of the exact Helm release and retained state before namespace mutation" >&2
   exit 1
 fi
 if ! base_sha="$(jq -e -r \

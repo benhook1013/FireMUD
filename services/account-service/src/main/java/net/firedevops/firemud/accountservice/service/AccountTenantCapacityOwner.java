@@ -165,15 +165,16 @@ public final class AccountTenantCapacityOwner {
           EvaluationLifetime lifetime = observeLifetime(evidence, retainedExpiry);
           if (!lifetime.expired()) {
             try {
-              currentDelegationAndScope(request, parsed, lifetime.accountNow());
+              currentDelegation(request, lifetime.accountNow());
             } catch (CommittedCandidateExpiredException expired) {
               if (!evidence.permitsCreation()
                   || !expired.matches(sourceTokenJti(evidence), sourceTokenExpiry(evidence)))
                 throw unavailable();
-              lifetime = observeLifetime(evidence, retainedExpiry);
-              if (!lifetime.expired()) throw unavailable();
+              currentScope(request, parsed, lifetime.accountNow());
+              if (!observeLifetime(evidence, retainedExpiry).expired()) throw unavailable();
               return refuseExpired(request);
             }
+            currentScope(request, parsed, lifetime.accountNow());
             lifetime = observeLifetime(evidence, retainedExpiry);
           }
           if (lifetime.expired() && evidence.permitsCreation()) return refuseExpired(request);
@@ -207,6 +208,10 @@ public final class AccountTenantCapacityOwner {
     boolean databaseExpired = capacity.retainedEvaluationExpired(retainedExpiry);
     Instant accountNow = clock.instant();
     boolean accountExpired = !accountNow.isBefore(retainedExpiry);
+    if (!databaseExpired && accountExpired) {
+      // The PostgreSQL sample precedes the Account sample and can straddle the deadline.
+      databaseExpired = capacity.retainedEvaluationExpired(retainedExpiry);
+    }
     if (databaseExpired != accountExpired || accountNow.isBefore(evidence.evaluatedAt()))
       throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
     return new EvaluationLifetime(accountNow, databaseExpired);
@@ -275,10 +280,11 @@ public final class AccountTenantCapacityOwner {
               CapacityAdmissionDigest.preimage(prior),
               row.get("owner_readback", byte[].class));
       if (history != 1) throw unavailable();
+      requireClaim(row, recoveryOwner, claimFence, clock.instant());
       int changed =
           dsl.execute(
               "UPDATE account_tenant_capacity_reservations SET admission_attempt_id = ?, capacity_rearm_fence = ?, reservation_fence = ?, mutation_digest = ?, canonical_payload = ?, evaluation_identity = ?, expires_at = ?::timestamptz, reconcile_deadline = ?::timestamptz, next_reconcile_at = NULL, recovery_attempt_count = 0, execution_status = 'OWNER_EXECUTION_PENDING', owner_readback = NULL, owner_readback_digest = NULL "
-                  + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND admission_attempt_id = ? AND capacity_rearm_fence = ? AND mutation_digest = ? AND recovery_owner = ? AND recovery_claim_fence = ? AND state = 'RESERVED' AND execution_status = 'NOT_EXECUTED_AFTER_AUTHORIZATION' AND clock_timestamp() < ?::timestamptz",
+                  + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND admission_attempt_id = ? AND capacity_rearm_fence = ? AND mutation_digest = ? AND recovery_owner = ? AND recovery_claim_fence = ? AND state = 'RESERVED' AND execution_status = 'NOT_EXECUTED_AFTER_AUTHORIZATION' AND recovery_claim_expires_at > clock_timestamp() AND clock_timestamp() < ?::timestamptz",
               next.admissionAttemptId(),
               next.capacityRearmFence(),
               Math.incrementExact(number(row, "reservation_fence")),
@@ -308,10 +314,11 @@ public final class AccountTenantCapacityOwner {
     requireCurrentLifetime(evidence, now);
     var parsed = currentMembership(request);
     try {
-      currentDelegationAndScope(request, parsed, now);
+      currentDelegation(request, now);
     } catch (CommittedCandidateExpiredException expired) {
       throw unavailable();
     }
+    currentScope(request, parsed, now);
     requireCurrentLifetime(evidence, clock.instant());
   }
 
@@ -342,11 +349,9 @@ public final class AccountTenantCapacityOwner {
     return parsed;
   }
 
-  private void currentDelegationAndScope(
-      Request request, RuntimePlayerAdmissionEntitlementEvidence parsed, Instant now) {
+  private void currentDelegation(Request request, Instant now) {
     if (!(request.context() instanceof PlayerContext player)) throw unavailable();
-    var fields = request.evidence().fields();
-    if (!(fields.get("sourceReferences") instanceof Map<?, ?> source)) throw unavailable();
+    var source = sourceReferences(request.evidence());
     var issuance =
         qualifiedSource(() ->
                 issuances.readCurrentCommittedCandidateByJti(sourceTokenJti(request.evidence())))
@@ -362,6 +367,12 @@ public final class AccountTenantCapacityOwner {
         || !issuance.commitProofSha256().equals(source.get("callerCommitProofSha256"))
         || now.getEpochSecond() < issuance.identity().notBeforeEpochSecond()
         || now.getEpochSecond() >= issuance.identity().expiresAtEpochSecond()) throw unavailable();
+  }
+
+  private void currentScope(
+      Request request, RuntimePlayerAdmissionEntitlementEvidence parsed, Instant now) {
+    if (!(request.context() instanceof PlayerContext player)) throw unavailable();
+    var source = sourceReferences(request.evidence());
     var scope =
         qualifiedSource(() ->
                 scopes.findCanonicalEvidenceByTokenHash(parsed.verifiedConnectScopeTokenHash()))
@@ -376,16 +387,18 @@ public final class AccountTenantCapacityOwner {
         || !now.isBefore(Instant.parse(scope.connectScopeExpiresAt()))) throw unavailable();
   }
 
-  private static UUID sourceTokenJti(Evidence evidence) {
+  private static Map<?, ?> sourceReferences(Evidence evidence) {
     if (!(evidence.fields().get("sourceReferences") instanceof Map<?, ?> source))
       throw unavailable();
-    return UUID.fromString((String) source.get("callerTokenJti"));
+    return source;
+  }
+
+  private static UUID sourceTokenJti(Evidence evidence) {
+    return UUID.fromString((String) sourceReferences(evidence).get("callerTokenJti"));
   }
 
   private static Instant sourceTokenExpiry(Evidence evidence) {
-    if (!(evidence.fields().get("sourceReferences") instanceof Map<?, ?> source))
-      throw unavailable();
-    return Instant.parse((String) source.get("callerTokenExpiresAt"));
+    return Instant.parse((String) sourceReferences(evidence).get("callerTokenExpiresAt"));
   }
 
   private static <T> T qualifiedSource(Supplier<T> read) {

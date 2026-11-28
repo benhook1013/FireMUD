@@ -208,7 +208,7 @@ public final class AccountTenantCapacityClient
 
   @Override
   protected String defaultTarget() {
-    return "account-service:6565";
+    throw new IllegalStateException("Explicit private Account capacity target is required");
   }
 
   @Override

@@ -61,6 +61,8 @@ class AccountTenantCapacityGrpcServiceTest {
     ABSENT,
     ACCEPTED,
     GENERIC_NO_ACCEPT,
+    WRONG_ATTEMPT,
+    WRONG_DIGEST,
     WRONG_FINGERPRINT,
     WRITABLE_CONNECTION,
     AUTOCOMMIT_CONNECTION
@@ -273,8 +275,16 @@ class AccountTenantCapacityGrpcServiceTest {
         .connection(any(ConnectionRunnable.class));
     Record row = evidence == RetainedEvidence.ABSENT ? null : mock(Record.class);
     if (row != null) {
-      when(row.get("admission_attempt_id", UUID.class)).thenReturn(request.admissionAttemptId());
-      when(row.get("mutation_digest", String.class)).thenReturn(request.mutationDigest());
+      when(row.get("admission_attempt_id", UUID.class))
+          .thenReturn(
+              evidence == RetainedEvidence.WRONG_ATTEMPT
+                  ? UUID.randomUUID()
+                  : request.admissionAttemptId());
+      when(row.get("mutation_digest", String.class))
+          .thenReturn(
+              evidence == RetainedEvidence.WRONG_DIGEST
+                  ? "0".repeat(64)
+                  : request.mutationDigest());
       when(row.get("canonical_payload", byte[].class))
           .thenReturn(
               evidence == RetainedEvidence.WRONG_FINGERPRINT

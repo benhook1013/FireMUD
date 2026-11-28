@@ -89,7 +89,7 @@ read_endpoint_slices() {
 verify_writer_quiescence() {
   local writer_deadline="$1"
   local service deployment_json replicas deployment_observed replicasets_json active_replicasets
-  local unobserved_replicasets replicaset_status pods_json pod_count
+  local unobserved_replicasets replicaset_status writer_replicasets pods_json pod_count
   for service in "${services[@]}"; do
     while :; do
       if ! deployment_json="$(kubectl --request-timeout=10s -n "$namespace" get deployment "$service" --ignore-not-found -o json)"; then
@@ -132,19 +132,25 @@ verify_writer_quiescence() {
                 | select(.spec.replicas == 0)
                 | select((.metadata.generation | type) != "number"
                     or .status.observedGeneration != .metadata.generation)]
-                | length
+                | length,
+              owners: [.[].metadata
+                | if (.name | type == "string" and length > 0)
+                    and (.uid | type == "string" and length > 0)
+                  then {name, uid}
+                  else error("writer ReplicaSet identity is missing")
+                  end]
             }
-          | "\(.active)\t\(.unobserved)"
+          | "\(.active)\t\(.unobserved)\t\(.owners | tojson)"
         end
       ' <<<"$replicasets_json")"; then
         fail "cannot parse ReplicaSets for Deployment/$service"
       fi
-      read -r active_replicasets unobserved_replicasets <<<"$replicaset_status"
+      IFS=$'\t' read -r active_replicasets unobserved_replicasets writer_replicasets <<<"$replicaset_status"
 
       if ! pods_json="$(kubectl --request-timeout=10s -n "$namespace" get pods -o json)"; then
         fail "cannot verify pods for Deployment/$service"
       fi
-      if ! pod_count="$(jq -er --arg service "$service" '
+      if ! pod_count="$(jq -er --arg service "$service" --argjson writer_replicasets "$writer_replicasets" '
         def valid_pod_list:
           (.kind == "PodList" or .kind == "List")
           and ((.items | type) == "array")
@@ -155,7 +161,10 @@ verify_writer_quiescence() {
           [
             .items[]?
             | select(
-                (.metadata.labels.app == $service)
+                any(.metadata.ownerReferences[]?;
+                  .apiVersion == "apps/v1" and .kind == "ReplicaSet" and .controller == true
+                  and ({name, uid} as $owner | any($writer_replicasets[]; . == $owner)))
+                or (.metadata.labels.app == $service)
                 or any(.spec.containers[]?;
                   .name == $service
                   or ((.image // "") | split("@")[0] | split("/")[-1] | split(":")[0]) == $service
