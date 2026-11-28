@@ -607,8 +607,17 @@ async function assertAttemptEvidencePinnedWhenLiveHeadAdvances() {
   const requestStart = attemptJobIdentities.length;
   const writesBefore = mutationCounts();
   let headAdvancedAfterSelection = false;
+  const listedAttempts = new Map();
+  const producerQueries = new Map();
   github.paginate = async (method, input) => {
     const rows = await originalPaginate(method, input);
+    if (method === codeqlListWorkflowRuns) {
+      const requests = producerQueries.get(input.workflow_id) ?? [];
+      requests.push(input.head_sha);
+      producerQueries.set(input.workflow_id, requests);
+      if (input.head_sha === advancedHeadSha) return [];
+      for (const {id, run_attempt} of rows) listedAttempts.set(id, run_attempt);
+    }
     if (method === codeqlListWorkflowRuns && input.workflow_id === "codeql.yml" && !headAdvancedAfterSelection) {
       headAdvancedAfterSelection = true;
       currentHeadSha = advancedHeadSha;
@@ -618,9 +627,19 @@ async function assertAttemptEvidencePinnedWhenLiveHeadAdvances() {
   try {
     await run(github, context, core);
     const reads = attemptJobIdentities.slice(requestStart);
+    for (const workflow of ["codeql.yml", "license-scan.yml"]) {
+      const requestedHeads = producerQueries.get(workflow) ?? [];
+      if (requestedHeads.length === 0 || requestedHeads.some(sha => sha !== headSha)) {
+        throw new Error(`Producer queries for ${workflow} must use the captured head after a live head change`);
+      }
+    }
     if (!headAdvancedAfterSelection || reads.length === 0 ||
         reads.some(({head_sha}) => head_sha !== headSha)) {
       throw new Error("native job evidence must stay bound to each selected run ID/attempt after the live PR head advances");
+    }
+    if (jobRequests.slice(-reads.length).some(({run_id, attempt_number}) =>
+      listedAttempts.get(run_id) !== attempt_number)) {
+      throw new Error("native jobs request must use each selected producer's run ID and attempt");
     }
     if (mutationsChanged(writesBefore)) {
       throw new Error("an advanced live head must prevent publication from the earlier native evidence snapshot");
@@ -715,6 +734,61 @@ async function assertProducerSelectionRace() {
       throw new Error("the newer producer was not checked");
     }
     jobRequests.length = 0;
+  }
+}
+async function assertFinalProducerRead() {
+  const originalPaginate = github.paginate;
+  const originalRequest = github.request;
+  const originalGetRun = github.rest.actions.getWorkflowRun;
+  for (const change of ["codeql-attempt", "license-outcome", "stable"]) {
+    currentHeadSha = headSha; currentBaseSha = baseSha;
+    currentBaseRef = "develop"; pullRequestReads = 0;
+    let licenseJobReads = 0;
+    const directReads = [];
+    github.paginate = async (method, input) => {
+      const rows = await originalPaginate(method, input);
+      if (method === checksListForRef) {
+        return rows.map(row => ({...row, status: "completed", conclusion: "success"}));
+      }
+      if (method !== codeqlListWorkflowRuns) return rows;
+      return rows.filter(row => row.id === (input.workflow_id === "codeql.yml" ? 200 : 300));
+    };
+    github.request = async (route, input) => {
+      const result = await originalRequest(route, input);
+      if (input.run_id === 300) licenseJobReads += 1;
+      return result;
+    };
+    github.rest.actions.getWorkflowRun = async (input) => {
+      const result = await originalGetRun(input);
+      if (licenseJobReads !== 2) throw new Error("direct read preceded the final producer selections");
+      const {run_id: id} = input;
+      directReads.push(id);
+      if (change === "codeql-attempt" && id === 200) return {data: {...result.data, run_attempt: 2}};
+      if (change === "license-outcome" && id === 300) {
+        return {data: {...result.data, status: "in_progress", conclusion: null}};
+      }
+      return result;
+    };
+    const before = mutationCounts();
+    try {
+      await run(github, context, core);
+    } finally {
+      github.paginate = originalPaginate;
+      github.request = originalRequest;
+      github.rest.actions.getWorkflowRun = originalGetRun;
+    }
+    if (change === "stable") {
+      const published = [...calls.updated.slice(before[0]), ...calls.created.slice(before[1])];
+      if (directReads.join(",") !== "200,300" || published.length !== 1 ||
+          !published[0].body.includes("Static analysis checks passed")) {
+        throw new Error("a stable passing selection must recheck both attempts and publish");
+      }
+    } else {
+      const changedId = change === "codeql-attempt" ? 200 : 300;
+      if (!directReads.includes(changedId) || mutationsChanged(before)) {
+        throw new Error("changed producer attempt or outcome must preserve the existing summary");
+      }
+    }
   }
 }
 async function assertLicenseSetupFailureClassification() {
@@ -1134,6 +1208,7 @@ run(github, context, core).then(async () => {
                  await assertCompletionOrders();
                 await assertAttemptEvidencePinnedWhenLiveHeadAdvances();
                 await assertProducerSelectionRace();
+                await assertFinalProducerRead();
                 await assertLicenseSetupFailureClassification();
                 await assertCodeqlSetupFailureClassification();
                 await assertUnclassifiedCancellation();

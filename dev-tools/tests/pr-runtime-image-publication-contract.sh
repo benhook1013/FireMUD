@@ -14,6 +14,7 @@ python3 -c 'import sys; sys.exit(0 if __debug__ else "Runtime image publication 
 # This bounded expression uses only property reads, equality, boolean operators and format.
 python3 - "$RUNTIME_WORKFLOW" <<'PY_CONCURRENCY'
 import copy
+import json
 import os
 import re
 import subprocess
@@ -117,6 +118,8 @@ assert "CANDIDATE_TAG" not in jobs["publish-runtime-images"]["env"]
 for job_id, definition in jobs.items():
     needs = definition.get("needs", [])
     needs = [needs] if isinstance(needs, str) else needs
+    for expression in re.findall(r"needs\.([A-Za-z0-9_-]+)\.", json.dumps(definition)):
+        assert expression in needs, (job_id, expression, needs)
     digest_uses = []
 
     def find_digest_uses(value, path=()):
@@ -447,6 +450,10 @@ publish = step_names.index("Publish fixed PR image tags")
 receipt = step_names.index("Record exact fixed-tag publication receipt")
 retain = step_names.index("Retain exact fixed-tag publication receipt")
 assert publish < receipt < retain
+receipt_artifact = publisher_steps[retain]["with"]
+assert receipt_artifact["name"] == "pr-runtime-publication-${{ github.run_id }}-attempt-${{ github.run_attempt }}"
+assert receipt_artifact["path"] == "${{ runner.temp }}/exact-pr-runtime-publication.json"
+assert receipt_artifact["path"].endswith("exact-pr-runtime-publication.json")
 publisher_path.write_text(publisher_steps[publish]["run"], encoding="utf-8")
 validation_path.with_name("publication-receipt.sh").write_text(publisher_steps[receipt]["run"], encoding="utf-8")
 def javascript_step(text, name):
@@ -814,8 +821,13 @@ case "${2:-}" in
       { [[ "${MOCK_RUNTIME_CLAIM_REF_PERSISTENT:-}" == true ]] ||
         [[ "$(wc -l < "$RUNTIME_CLAIM_LOOKUPS")" -eq 1 ]]; }; then
       if [[ "$include_claim_headers" == true ]]; then
-        printf 'HTTP/2 %s\r\nRetry-After: %s\r\n\r\n{}\n' \
-          "$MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS" "${MOCK_RUNTIME_CLAIM_REF_RETRY_AFTER:-0}"
+        printf 'HTTP/2 %s\r\n' "$MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS"
+        if [[ -n "${MOCK_RUNTIME_CLAIM_REF_RATE_HEADERS:-}" ]]; then
+          printf '%b\r\n' "$MOCK_RUNTIME_CLAIM_REF_RATE_HEADERS"
+        else
+          printf 'Retry-After: %s\r\n' "${MOCK_RUNTIME_CLAIM_REF_RETRY_AFTER:-0}"
+        fi
+        printf '\r\n{}\n'
       fi
       echo "gh: Test claim lookup response (HTTP $MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS)" >&2
       exit 1
@@ -849,6 +861,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 from urllib.parse import quote
 
 fixture = Path(os.environ["FIXTURE_DIR"])
@@ -966,7 +979,7 @@ try:
         (503, False, 2, True, 0),
         (503, True, 3, False, 0),
         (404, True, 1, False, 0),
-        (429, False, 2, True, 0),
+        (429, False, 2, True, 1),
         (429, True, 1, False, 120),
     ]:
         claim_lookups.unlink(missing_ok=True)
@@ -982,6 +995,24 @@ try:
         assert ("runtime_refresh_claim_attempt=1" in claim_output) == succeeds, claim_output
         if not succeeds:
             assert "positively identified as the original receiver" in retried_claim.stderr, retried_claim.stderr
+    rate_reset = str(int(time.time()) + 3)
+    for headers, count, succeeds in [
+        (f"X-RateLimit-Remaining: 0\\nX-RateLimit-Reset: {rate_reset}", 2, True),
+        ("Retry-After: 1", 2, True),
+        ("Retry-After: 1\\nX-RateLimit-Remaining: 1\\nX-RateLimit-Reset: 9999999999", 2, True),
+        ("Retry-After: 1.5", 1, False),
+        ("Retry-After: 1\\nRetry-After: 2", 1, False),
+        ("X-RateLimit-Remaining: 1\\nX-RateLimit-Reset: 9999999999", 1, False),
+    ]:
+        claim_lookups.unlink(missing_ok=True)
+        retried_claim = admit(request, merge, branch, {
+            **claim_request, "RUNTIME_CLAIM_LOOKUPS": str(claim_lookups),
+            "MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS": "403",
+            "MOCK_RUNTIME_CLAIM_REF_RATE_HEADERS": headers,
+        })
+        assert (retried_claim.returncode == 0) == succeeds, retried_claim.stderr
+        assert claim_lookups.read_text().splitlines() == [claim_request["EXPECTED_RUNTIME_CLAIM_REF"]] * count
+        assert ("runtime_refresh_claim_attempt=1" in Path(env["GITHUB_OUTPUT"]).read_text()) == succeeds
     unavailable_base = admit(request, merge, branch, {**claim_request, "MOCK_BASE_REF_MISSING": "true"})
     assert unavailable_base.returncode != 0
     assert Path(env["GITHUB_OUTPUT"]).read_text().splitlines() == [
@@ -1641,7 +1672,10 @@ case "${1:-}" in
     image="${2:-}"
     service="${image##*/}"
     service="${service%%:*}"
-    if [[ "${PUBLISH_TARGET_MODE:-}" == all-existing ]]; then
+    if [[ "${PUBLISH_POST_PUSH_FAILURE:-}" == verification-pull && "$service" == automation-scripting-service ]]; then
+      : > "$FIXTURE_DIR/failed-verification-pull"
+      exit 1
+    elif [[ "${PUBLISH_TARGET_MODE:-}" == all-existing ]]; then
       printf '%s\n' "$service" >> "$FIXTURE_DIR/verified-services"
       if [[ "${ADVANCE_DURING_PUBLICATION:-}" == final-verification && "$service" == backup-verifier ]]; then
         jq '.run_attempt += 1' "$FIXTURE_DIR/exact-source-run.json" > "$FIXTURE_DIR/source-run.json"
@@ -1667,7 +1701,8 @@ case "${1:-}" in
     if [[ -n "${PUSH_ATTEMPT_LOG:-}" ]]; then
       printf '%s\n' "${2%%:*}" >> "$PUSH_ATTEMPT_LOG"
     fi
-    if [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$*" == *"automation-scripting-service"* ]]; then
+    if [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$*" == *"automation-scripting-service"* &&
+      "${PUBLISH_POST_PUSH_FAILURE:-}" != verification-pull ]]; then
       exit 1
     fi
     printf '%s\n' "$*" >> "$REGISTRY_MARKER"
@@ -1699,6 +1734,10 @@ if [[ -n "${CURL_STATUS:-}" ]]; then
   exit 0
 fi
 image_url="${*: -1}"
+if [[ "${PUBLISH_POST_PUSH_FAILURE:-}" == manifest-lookup && "$image_url" == *"/automation-scripting-service/manifests/"* &&
+  -f "$PUSH_ATTEMPT_LOG" ]] && grep -Fxq 'ghcr.io/benhook1013/automation-scripting-service' "$PUSH_ATTEMPT_LOG"; then
+  exit 28
+fi
 if [[ "${PUBLISH_TARGET_MODE:-}" == all-existing ]]; then
   printf '200\n'
 elif [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$image_url" == *"/social-groups-service/manifests/"* ]]; then
@@ -1774,7 +1813,7 @@ for publication_stage in preflight between-tags retry; do
       test "$(wc -l < "$fixture_dir/push-attempt-log")" -eq 1
       grep -Fxq 'ghcr.io/benhook1013/account-service' "$fixture_dir/push-attempt-log"
       sed '/Fixed tags not verified available at stop:/,$d' "$fixture_dir/summary" |
-        grep -Fx -- '- `account-service`' >/dev/null
+        grep -Fx -- "- \`ghcr.io/benhook1013/account-service:pr-merge-$merge_sha\`" >/dev/null
       ;;
     retry)
       test "$(wc -l < "$fixture_dir/push-attempt-log")" -eq 2
@@ -1790,15 +1829,39 @@ fi
 test ! -e "$fixture_dir/advance-marker"
 grep -Fxq 'ghcr.io/benhook1013/account-service' "$fixture_dir/push-attempt-log"
 test "$(grep -Fxc 'ghcr.io/benhook1013/automation-scripting-service' "$fixture_dir/push-attempt-log")" -eq 3
-python3 - "$fixture_dir/summary" <<'PY'
+assert_partial_publication_summary() {
+  python3 - "$fixture_dir/summary" "$merge_sha" <<'PY'
 import sys
 from pathlib import Path
 
 summary = Path(sys.argv[1]).read_text(encoding="utf-8")
-unpublished = summary.split("Fixed tags not verified available at stop:", 1)[1]
-if "`social-groups-service`" in unpublished:
-    raise SystemExit("already-available later service was incorrectly reported unpublished")
+verified, unverified = summary.split("Fixed tags not verified available at stop:", 1)
+def tag(service):
+    return f"`ghcr.io/benhook1013/{service}:pr-merge-{sys.argv[2]}`"
+
+for service in ("account-service", "social-groups-service"):
+    assert tag(service) in verified and tag(service) not in unverified, summary
+assert tag("automation-scripting-service") in unverified, summary
+assert tag("automation-scripting-service") not in verified, summary
 PY
+}
+assert_partial_publication_summary
+
+for post_push_failure in manifest-lookup verification-pull; do
+  if PUBLISH_POST_PUSH_FAILURE="$post_push_failure" run_publication_fixture unchanged 2>"$fixture_dir/post-push-error"; then
+    echo "publisher accepted unverified post-push state after $post_push_failure" >&2
+    exit 1
+  fi
+  test "$(grep -Fxc 'ghcr.io/benhook1013/automation-scripting-service' "$fixture_dir/push-attempt-log")" -eq 1
+  assert_partial_publication_summary
+  case "$post_push_failure" in
+    manifest-lookup) grep -Fq 'Unable to classify' "$fixture_dir/post-push-error" ;;
+    verification-pull)
+      test -e "$fixture_dir/failed-verification-pull"
+      grep -Fq 'could not be pulled for immutable comparison' "$fixture_dir/post-push-error"
+      ;;
+  esac
+done
 
 for receipt_case in unchanged final-verification; do
   cp "$fixture_dir/exact-source-run.json" "$fixture_dir/source-run.json"

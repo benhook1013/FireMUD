@@ -1344,12 +1344,14 @@ fi
     available_section, unpublished_section = summary_text.split(
         "Fixed tags not verified available at stop:", maxsplit=1
     )
-    assert "`account-service`" in available_section
-    assert "`entity-management-service`" in available_section
-    assert "`social-groups-service`" not in available_section
-    assert "`social-groups-service`" in unpublished_section
-    assert "`world-management-service`" not in unpublished_section
-    assert "`entity-management-service`" not in unpublished_section
+    assert "Verified available fixed tags before stop:" in available_section
+    assert [line for line in available_section.splitlines() if line.startswith("- ")] == [
+        "- `ghcr.io/benhook1013/account-service:fixture-head`",
+        "- `ghcr.io/benhook1013/entity-management-service:fixture-head`",
+    ]
+    assert [line for line in unpublished_section.splitlines() if line.startswith("- ")] == [
+        "- `ghcr.io/benhook1013/social-groups-service:fixture-head`",
+    ]
 
 with tempfile.TemporaryDirectory() as publication_race_fixture_dir:
     fixture_root = Path(publication_race_fixture_dir)
@@ -1724,6 +1726,16 @@ assert comparison_rejection_step["name"] == (
 assert comparison_rejection_step["if"] == (
     "${{ steps.target.outputs.action == 'none' && steps.target.outputs.stale_comparison_retry_nonce != '' }}"
 )
+ineligible_rejection_step = next(
+    step for step in validate_job["steps"]
+    if step.get("name", "").startswith("Trusted preview retry rejected ineligible nonce-")
+)
+assert ineligible_rejection_step["name"] == (
+    "Trusted preview retry rejected ineligible nonce-${{ steps.target.outputs.ineligible_retry_nonce }}"
+)
+assert ineligible_rejection_step["if"] == (
+    "${{ steps.target.outputs.action == 'none' && steps.target.outputs.ineligible_retry_nonce != '' }}"
+)
 assert '"$ARTIFACT_DIRECTORY/preview-metadata.json"' in target_script
 assert '"$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml"' in target_script
 assert 'exposure-mode "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml"' in target_script
@@ -2032,6 +2044,7 @@ assert proof_retry_recheck["env"]["RETRY_NAMESPACE_UID"] == (
 )
 assert "check-preview-proof-retry.sh" in proof_retry_recheck["run"]
 for guarded_step in (
+    "Revalidate exact PR source binding before privileged mutations",
     "Prune stale runtime namespaces",
     "Revalidate exact PR source binding before capacity reclaim",
     "Enforce priority-aware preview capacity",
@@ -2042,6 +2055,9 @@ for guarded_step in (
     assert deploy_by_name[guarded_step]["if"] == (
         "${{ steps.recheck-proof-retry.outputs.proceed == 'true' }}"
     )
+assert list(deploy_by_name).index(
+    "Revalidate exact PR source binding before privileged mutations"
+) < list(deploy_by_name).index("Prune stale runtime namespaces")
 clean_delete = deploy_by_name["Delete exact preview runtime namespace before recreate"]
 assert clean_delete["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
@@ -2341,6 +2357,7 @@ deploy_failure = next(
 )
 assert deploy_failure["if"] == (
     "${{ !cancelled() && failure() && "
+    "steps.recheck-proof-retry.outputs.proceed != 'false' && "
     "(steps.allocate-capacity.outputs.allocation_status != 'unavailable' || "
     "steps.publish-capacity-unavailable.outcome == 'failure') }}"
 )
@@ -2425,7 +2442,10 @@ assert "Wait for runtime rollouts before operator validation" not in deploy_by_n
 
 preparation_failure = jobs["publish-preparation-failure"]
 assert preparation_failure["needs"] == ["validate-target", "prepare-runtime"]
-assert "needs.prepare-runtime.result == 'failure'" in preparation_failure["if"]
+assert preparation_failure["if"] == (
+    "${{ !cancelled() && needs.validate-target.outputs.action == 'deploy' "
+    "&& needs.prepare-runtime.result == 'failure' }}"
+)
 preparation_failure_steps = {
     step.get("name"): step for step in preparation_failure["steps"]
 }
@@ -2444,9 +2464,10 @@ assert "proof-complete|namespace-changed)" in preparation_failure_check["run"]
 assert preparation_failure_check["env"]["RETRY_NAMESPACE_UID"] == (
     "${{ needs.validate-target.outputs.proof_retry_namespace_uid }}"
 )
+assert preparation_failure["concurrency"]["group"] == "preview-allocation-lifecycle"
+assert "if" not in preparation_failure_check
 assert preparation_failure_comment["if"] == (
-    "${{ needs.validate-target.outputs.proof_retry_namespace_uid == '' || "
-    "steps.recheck-preparation-failure.outputs.proceed == 'true' }}"
+    "${{ steps.recheck-preparation-failure.outputs.proceed == 'true' }}"
 )
 assert preparation_failure_comment["name"] not in prepare_by_name
 
@@ -2834,6 +2855,17 @@ assert operator_run.count("needs.dev-demo-plan.outputs.telnet_port") == 1
 
 preview_plan_steps = preview_workflow["jobs"]["preview-plan"]["steps"]
 preview_plan_outputs = preview_workflow["jobs"]["preview-plan"]["outputs"]
+obsolete_plan_step = next(
+    step for step in preview_plan_steps
+    if step.get("name", "").startswith("Preview retry no handoff stale-comparison nonce-")
+)
+assert obsolete_plan_step["name"] == (
+    "Preview retry no handoff stale-comparison nonce-${{ steps.derive.outputs.obsolete_retry_nonce }}"
+)
+assert obsolete_plan_step["if"] == "${{ steps.derive.outputs.obsolete_retry_nonce != '' }}"
+for step_id in ("target-metadata", "eligibility"):
+    step = next(step for step in preview_plan_steps if step.get("id") == step_id)
+    assert step["if"] == "${{ steps.derive.outputs.obsolete_retry_nonce == '' }}"
 preview_plan_checkouts = [
     step
     for step in preview_plan_steps
@@ -2854,6 +2886,7 @@ refresh_job = preview_workflow["jobs"]["preview-runtime-base-refresh"]
 assert refresh_job["needs"] == "preview-plan"
 assert "github.event_name == 'repository_dispatch'" in refresh_job["if"]
 assert "base_refresh_required == 'true'" in refresh_job["if"]
+assert "needs.preview-plan.outputs.proof_retry_namespace_uid == ''" in refresh_job["if"]
 assert "image_tag != needs.preview-plan.outputs.base_sha" in refresh_job["if"]
 assert refresh_job["permissions"] == {"contents": "write", "pull-requests": "read"}
 refresh_step = next(
@@ -2868,6 +2901,7 @@ assert "parents[1]" in refresh_step["with"]["script"]
 render_job = preview_workflow["jobs"]["preview-render"]
 assert render_job["needs"] == ["preview-plan", "preview-runtime-base-refresh"]
 assert "always()" in render_job["if"]
+assert "needs.preview-plan.outputs.eligible == 'true'" in render_job["if"]
 assert "close_certificate_identity_mode" not in preview_plan_outputs
 assert "certificate_identity_mode" not in preview_plan_outputs
 preview_derive_step = next(
@@ -3805,6 +3839,7 @@ if [[ "$2" == repos/example/FireMUD/pulls/901/files\?per_page=100 ]]; then
   exit 0
 fi
 if [[ "$2" == repos/example/FireMUD/git/ref/heads/develop ]]; then
+  [[ "${PREVIEW_DERIVE_BASE_UNAVAILABLE:-false}" == false ]] || exit 1
   printf '%s\n' '{"ref":"refs/heads/develop","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
   exit 0
 fi
@@ -3856,8 +3891,10 @@ run_preview_derive_dispatch() {
     CLIENT_PR_NUMBER="$input_pr_number" \
     CLIENT_HEAD_SHA="$input_head_sha" \
     CLIENT_BASE_REF=develop \
-    CLIENT_BASE_SHA="$preview_derive_base_lower" \
+    CLIENT_BASE_SHA="${PREVIEW_DERIVE_CLIENT_BASE_SHA:-$preview_derive_base_lower}" \
     CLIENT_MERGE_SHA="$preview_derive_merge_lower" \
+    CLIENT_PROOF_RETRY_NAMESPACE_UID="${PREVIEW_DERIVE_RETRY_UID:-}" \
+    CLIENT_PROOF_RETRY_NONCE="${PREVIEW_DERIVE_RETRY_NONCE:-}" \
     CLIENT_PREVIEW_DOMAIN="$input_preview_domain" \
     CLIENT_ACTION="$input_action" \
     CLIENT_IMAGE_TAG="$input_image_tag" \
@@ -3894,6 +3931,40 @@ grep -Fxq "base_sha=$preview_derive_base_lower" "$preview_derive_output"
 grep -Fxq "merge_sha=$preview_derive_merge_lower" "$preview_derive_output"
 test "$(wc -l <"${preview_derive_output}.gh.log")" -eq 2
 grep -Fxq 'api repos/example/FireMUD/pulls/901' "${preview_derive_output}.gh.log"
+
+preview_plan_retry_nonce=01234567-0123-4123-8123-0123456789ab
+preview_derive_retry_pr_json="$(jq -c '. + {number:901,state:"open"}' <<<"$preview_derive_pr_json")"
+for preview_retry_case in obsolete matching unreadable; do
+  preview_retry_output="$TEMP_DIR/preview-derive-retry-$preview_retry_case.output"
+  preview_retry_error="$TEMP_DIR/preview-derive-retry-$preview_retry_case.error"
+  planned_base=dddddddddddddddddddddddddddddddddddddddd
+  base_unavailable=false
+  [[ "$preview_retry_case" != matching ]] || planned_base="$preview_derive_base_lower"
+  [[ "$preview_retry_case" != unreadable ]] || base_unavailable=true
+  retry_status=0
+  PREVIEW_DERIVE_CLIENT_BASE_SHA="$planned_base" PREVIEW_DERIVE_BASE_UNAVAILABLE="$base_unavailable" \
+    PREVIEW_DERIVE_PR_JSON="$preview_derive_retry_pr_json" PREVIEW_DERIVE_RETRY_UID=uid-pr-901 \
+    PREVIEW_DERIVE_RETRY_NONCE="$preview_plan_retry_nonce" \
+    run_preview_derive_dispatch 901 "$preview_derive_head_lower" deploy "$planned_base" preview.firedevops.net \
+      "$preview_retry_output" "$preview_retry_error" || retry_status=$?
+  case "$preview_retry_case" in
+    obsolete)
+      test "$retry_status" -eq 0
+      test "$(cat "$preview_retry_output")" = "obsolete_retry_nonce=$preview_plan_retry_nonce"
+      ;;
+    matching)
+      test "$retry_status" -eq 0
+      grep -Fxq "proof_retry_nonce=$preview_plan_retry_nonce" "$preview_retry_output"
+      grep -Fxq 'action=deploy' "$preview_retry_output"
+      test -z "$(sed -n '/^obsolete_retry_nonce=/p' "$preview_retry_output")"
+      ;;
+    unreadable)
+      test "$retry_status" -eq 1
+      test ! -s "$preview_retry_output"
+      grep -Fq 'Invalid pull request base ref' "$preview_retry_error"
+      ;;
+  esac
+done
 
 preview_derive_runtime_output="$TEMP_DIR/preview-derive-runtime.output"
 PREVIEW_DERIVE_CHANGED_FILES='.github/workflows/runtime-images.yml' run_preview_derive_dispatch \
@@ -5519,7 +5590,9 @@ if [[ "$1" == api && "$2" == repos/example/FireMUD/actions/runs/77 ]]; then
 fi
 if [[ "$1" == api && "$2" == repos/example/FireMUD/git/ref/heads/develop ]]; then
   branch_sha="${TEST_EXPECTED_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
-  if [[ "${TEST_APPLY_SCENARIO:?}" == wrong-base ]]; then
+  if [[ "${TEST_APPLY_SCENARIO:?}" == wrong-base ]] ||
+    { [[ "$TEST_APPLY_SCENARIO" == base-advanced-during-source-read ]] &&
+      grep -Fxq 'source-attempt-1' "${TEST_APPLY_LOG:?}"; }; then
     branch_sha=dddddddddddddddddddddddddddddddddddddddd
   fi
   jq -nc --arg sha "$branch_sha" '{ref:"refs/heads/develop",object:{sha:$sha}}'
@@ -5553,7 +5626,7 @@ repository_name=example/FireMUD
 base_sha="${TEST_EXPECTED_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
 merge_sha="${TEST_EXPECTED_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}"
 case "${TEST_APPLY_SCENARIO:?}" in
-  success|source-reran)
+  success|source-reran|base-advanced-during-source-read)
     ;;
   closed-first)
     state=closed
@@ -5708,8 +5781,11 @@ run_apply_fixture wrong-merge \
 run_apply_fixture source-reran \
   "gh-1 gh-2 dry-run gh-3 gh-4 source-attempt-2" \
   "Preview source attempt changed"
+run_apply_fixture base-advanced-during-source-read \
+  "gh-1 gh-2 dry-run gh-3 gh-4 source-attempt-1 gh-5" \
+  "Preview source binding changed"
 run_apply_fixture success \
-  "gh-1 gh-2 dry-run gh-3 gh-4 source-attempt-1 apply deployed-tuple"
+  "gh-1 gh-2 dry-run gh-3 gh-4 source-attempt-1 gh-5 apply deployed-tuple"
 
 # The old source attempt was current before DELETE. The mocked wait completion
 # advances GitHub's native attempt while the PR tuple stays identical.
@@ -6691,10 +6767,11 @@ case "$resource" in
       --argjson labels "${TEST_PR_LABELS_JSON:-[]}" \
       --argjson changed_files "$changed_file_count" \
       --argjson number "${TEST_PR_NUMBER:-900}" \
-      '{number:$number,state:$state,changed_files:$changed_files,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:$base_sha,repo:{full_name:"example/FireMUD"}},merge_commit_sha:$merge,mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels}'
+      '{number:$number,state:$state,changed_files:$changed_files,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:$base_sha,repo:{full_name:"example/FireMUD"}},merge_commit_sha:$merge,mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels,user:{login:"human"}}'
     ;;
   repos/example/FireMUD/git/ref/heads/*)
-    printf '%s' '{"ref":"refs/heads/develop","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
+    jq -cn --arg ref "refs/heads/${resource#repos/example/FireMUD/git/ref/heads/}" '
+      {ref:$ref,object:{sha:("b" * 40)}}'
     ;;
   repos/example/FireMUD/commits/cccccccccccccccccccccccccccccccccccccccc)
     if [[ "${FAKE_STALE_MERGE_PARENTS:-false}" == true ]]; then
@@ -7091,6 +7168,43 @@ FAKE_FIXTURE_WORKFLOW_RUN_JSON="$retry_source_run_json" FAKE_METADATA_EVENT=repo
   run_deploy_target_fixture retry-stale-head 0 'Ignoring stale lifecycle event for an earlier PR head.'
 grep -Fxq 'action=none' "$TEMP_DIR/deploy-target-retry-stale-head.output"
 grep -Fxq "stale_head_retry_nonce=${retry_nonce}" "$TEMP_DIR/deploy-target-retry-stale-head.output"
+
+for retry_eligibility_case in priority removed malformed superseded; do
+  case "$retry_eligibility_case" in
+    priority)
+      retry_labels='[{"name":"preview:priority"}]'
+      expected_message='action=deploy'
+      ;;
+    malformed)
+      retry_labels='{}'
+      expected_message='Refusing hosted preview lifecycle action: PR label metadata is missing or malformed.'
+      ;;
+    *)
+      retry_labels='[]'
+      expected_message='Refusing hosted preview lifecycle action: PR is not preview-eligible.'
+      ;;
+  esac
+  refreshed_retry_source=''
+  if [[ "$retry_eligibility_case" == superseded ]]; then
+    refreshed_retry_source="$(jq -c '.run_attempt = 2' <<<"$retry_source_run_json")"
+  fi
+  TEST_PR_BASE_REF=feature/stack FAKE_FIXTURE_PR_LABELS_JSON="$retry_labels" \
+    FAKE_FIXTURE_WORKFLOW_RUN_JSON="$retry_source_run_json" \
+    FAKE_FIXTURE_REFRESHED_WORKFLOW_RUN_JSON="$refreshed_retry_source" \
+    FAKE_METADATA_EVENT=repository_dispatch FAKE_METADATA_ACTION=deploy FAKE_METADATA_RETRY_NONCE="$retry_nonce" \
+    FAKE_METADATA_IMAGE_TAG="pr-merge-cccccccccccccccccccccccccccccccccccccccc" \
+    run_deploy_target_fixture "retry-eligibility-$retry_eligibility_case" 0 "$expected_message"
+  retry_eligibility_output="$TEMP_DIR/deploy-target-retry-eligibility-$retry_eligibility_case.output"
+  if [[ "$retry_eligibility_case" == removed ]]; then
+    grep -Fxq 'action=none' "$retry_eligibility_output"
+    grep -Fxq "ineligible_retry_nonce=$retry_nonce" "$retry_eligibility_output"
+  else
+    test -z "$(sed -n '/^ineligible_retry_nonce=/p' "$retry_eligibility_output")"
+    if [[ "$retry_eligibility_case" != priority ]]; then
+      grep -Fxq 'action=none' "$retry_eligibility_output"
+    fi
+  fi
+done
 
 retry_old_base=dddddddddddddddddddddddddddddddddddddddd
 retry_old_merge=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee

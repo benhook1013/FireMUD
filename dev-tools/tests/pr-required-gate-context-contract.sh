@@ -434,6 +434,27 @@ gates = {
 }
 
 
+def translate_actions(body, values):
+    tokens = re.compile(
+        r"""(?P<single>'(?:''|[^'])*')|(?P<double>"(?:\\.|[^"\\])*")|"""
+        + r"(?P<context>(?<![\w.])(?:" + "|".join(map(re.escape, values)) + r")(?![\w.]))"
+        + r"|(?P<operator>&&|\|\|)|(?P<keyword>\b(?:null|true|false)\b)"
+    )
+    translations = {"&&": " and ", "||": " or ", "null": "None", "true": "True", "false": "False"}
+
+    def translate(token):
+        value = token[0]
+        if token.lastgroup == "single":
+            return repr(value[1:-1].replace("''", "'"))
+        if token.lastgroup == "double":
+            return value
+        if token.lastgroup == "context":
+            return values[value]
+        return translations[value]
+
+    return tokens.sub(translate, body)
+
+
 def evaluate(expression, action, base_ref, event="pull_request"):
     """Evaluate the narrow boolean gate expressions used here."""
     body = expression.strip()
@@ -445,11 +466,7 @@ def evaluate(expression, action, base_ref, event="pull_request"):
         "github.event_name": repr(event),
         "always()": "True",
     }
-    for key, value in values.items():
-        body = body.replace(key, value)
-    body = re.sub(r"(?<!['\"])\bnull\b(?!['\"])", "None", body)
-    body = body.replace("&&", " and ").replace("||", " or ").replace("!=", " != ")
-    return bool(interpret_selector(ast.parse(body.strip(), mode="eval").body))
+    return bool(interpret_selector(ast.parse(translate_actions(body, values).strip(), mode="eval").body))
 
 
 def push_branch_matches(push_config, branch):
@@ -463,8 +480,9 @@ def push_branch_matches(push_config, branch):
     if not isinstance(branches, list) or any(not isinstance(pattern, str) for pattern in branches):
         raise ValueError("Unsupported push branch filter shape")
     for pattern in branches:
-        if any(character in pattern for character in "!?[]") or "**" in pattern:
+        if any(character in pattern for character in "!?[]+") or "**" in pattern:
             raise ValueError(f"Unsupported push branch glob syntax: {pattern!r}")
+    for pattern in branches:
         expression = "^" + re.escape(pattern).replace(r"\*", "[^/]*") + "$"
         if re.fullmatch(expression, branch):
             return True
@@ -477,6 +495,7 @@ assert not push_branch_matches({"branches": ["main", "release/*"]}, "release/202
 for unsupported_filter in (
     {"branches": ["!main"]}, {"branches": ["release/**"]},
     {"branches": ["feature/?"]}, {"branches": ["release/[0-9]"]},
+    {"branches": ["m+ain", "develop"]},
     {"branches-ignore": ["main"]},
 ):
     try:
@@ -596,6 +615,8 @@ for forbidden in ("{name}", "{0.attr}", "{0[0]}", "{0:04}", "{0!r}", "{{0}}", "{
 
 assert evaluate("github.event.changes.base.ref == null", "edited", None)
 assert not evaluate("'null' == 'None'", "edited", None)
+assert evaluate("'room!=hall||garden' == 'room!=hall||garden'", "edited", None)
+assert not evaluate("'room!=hall' == 'room != hall'", "edited", None)
 
 
 def effective_group(group, action, base_ref, workflow_name="Required Gate", *, pr_number=42, push_branch=None, run_id="123"):
@@ -609,25 +630,8 @@ def effective_group(group, action, base_ref, workflow_name="Required Gate", *, p
         "github.ref": repr(f"refs/heads/{push_branch}" if push_branch else f"refs/pull/{pr_number}/merge"),
     }
 
-    tokens = re.compile(
-        r"""(?P<single>'(?:''|[^'])*')|(?P<double>"(?:\\.|[^"\\])*")|"""
-        + r"(?P<context>\b(?:" + "|".join(map(re.escape, values)) + r")\b)"
-        + r"|(?P<operator>&&|\|\|)|(?P<keyword>\b(?:null|true|false)\b)"
-    )
-    translations = {"&&": " and ", "||": " or ", "null": "None", "true": "True", "false": "False"}
-
-    def translate(token):
-        value = token[0]
-        if token.lastgroup == "single":
-            return repr(value[1:-1].replace("''", "'"))
-        if token.lastgroup == "double":
-            return value
-        if token.lastgroup == "context":
-            return values[value]
-        return translations[value]
-
     def render(match):
-        body = tokens.sub(translate, match[1].strip())
+        body = translate_actions(match[1].strip(), values)
         tree = ast.parse(body, mode="eval")
         return actions_scalar_text(interpret_selector(tree.body))
     return re.sub(r"\$\{\{(.*?)\}\}", render, group)
@@ -637,6 +641,7 @@ assert effective_group("${{ 'null' == 'None' && 'failed' || 'ok' }}", None, None
 assert effective_group("${{ 'true && false' }}", None, None) == "true && false"
 assert effective_group("${{ 'github.ref' }}", None, None) == "github.ref"
 assert effective_group("${{ 'it''s null' }}", None, None) == "it's null"
+assert effective_group("${{ true && 'a||b' == 'a or b' }}", None, None) == "false"
 
 assert effective_group("${{ format('gate{0}{1}{2}', null, true, false) }}", None, None) == "gatetruefalse"
 assert effective_group("${{ null }}-${{ true }}-${{ false }}", None, None) == "-true-false"
@@ -1097,6 +1102,8 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
   let now = 1000;
   let runLookups = 0;
   const start = now;
+  const movedBase = "f".repeat(40), movedMerge = "e".repeat(40);
+  const baseMoved = () => selectionCase === "cancelled-live-tuple-moves" && now - start >= 4 * 60 * 1000;
   const failures = [];
   const cancelledReads = new Set();
   const listRuns = async () => {}, listJobs = async () => {};
@@ -1114,11 +1121,11 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
       steps: selectionCase === "cancelled-executed" && index === 0 ? [{name: "executed"}] : []}));
   };
   const github = { rest: {
-    pulls: { get: async () => ({ data: { state: "open", head: { sha: head }, base: { ref: "develop", sha: base }, merge_commit_sha: merge } }) },
-    repos: { getCommit: async () => ({ data: { sha: merge, parents: [{ sha: base }, { sha: head }] } }) },
+    pulls: { get: async () => ({ data: { state: "open", head: { sha: head }, base: { ref: "develop", sha: baseMoved() ? movedBase : base }, merge_commit_sha: baseMoved() ? movedMerge : merge } }) },
+    repos: { getCommit: async ({ref}) => ({ data: { sha: ref, parents: [{ sha: ref === movedMerge ? movedBase : base }, { sha: head }] } }) },
     git: { getRef: async ({ref}) => {
       assert.equal(ref, "heads/develop");
-      return {data: {object: {sha: base}}};
+      return {data: {object: {sha: baseMoved() ? movedBase : base}}};
     } },
     actions: { listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
       getWorkflow: async () => ({data: {id: 7, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}}),
@@ -1245,6 +1252,11 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
   assert.equal(cancelled.failures.length, 1);
   assert.match(cancelled.failures[0], /cancelled/i);
   assert.ok(cancelled.minutes <= 5.25, "cancelled source without an exact replacement remains bounded");
+  const movedCancellation = await scenario("cancelled", 0, "cancelled-live-tuple-moves");
+  assert.equal(movedCancellation.failures.length, 1);
+  assert.match(movedCancellation.failures[0], /cancelled/i);
+  assert.ok(movedCancellation.minutes >= 9 && movedCancellation.minutes <= 9.25,
+    "one verified comparison change earns its own bounded replacement window");
   const deadline = await scenario("success", Infinity);
   assert.equal(deadline.failures.length, 1);
   assert.match(deadline.failures[0], /Timed out waiting for the exact/);
@@ -1299,6 +1311,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   const missingCancellation = kind === "optional-final-read-cancellation-disappears";
   const cancelledWithReplacement = kind === "optional-final-read-cancelled-with-replacement" || missingCancellation;
   const movedNativeCancellation = kind === "cancelled-native-attempt-moves";
+  const cancelledWithPendingRefresh = kind === "cancelled-native-pending-refresh";
   const transientFinalPull = kind === "optional-final-read-pr-identity";
   let nativeCancellationRead = false, failedFinalPullReads = 0, pendingReplacementRead = false;
   let movedNativeFailureObserved = false;
@@ -1410,6 +1423,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
             throw Object.assign(new Error("native cancellation no longer available"), {status: 404});
           }
           nativeCancellationRead = true;
+          if (cancelledWithPendingRefresh) fallbackReadOrder.push(runId);
           return {data: movedNativeCancellation
             ? {...exactPrimary, run_attempt: 2, status: "queued", conclusion: null}
             : cancelledOriginal};
@@ -1432,6 +1446,9 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
           throw Object.assign(new Error("final current-base workflow-run lookup unavailable"), {status: 503});
         }
         fallbackReadOrder.push(runId);
+        if (runId === 44 && cancelledWithPendingRefresh) {
+          return {data: {...dispatchPrimary, status: "queued", conclusion: null}};
+        }
         if (runId === 43 && (kind.startsWith("pending-native") || kind.startsWith("duplicate-"))) {
           const terminal = kind === "pending-native-fails-after-final-order" ||
             (kind === "pending-native-dual-native-fails-during-refresh" && pendingRefreshObserved);
@@ -1531,6 +1548,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
         kind.endsWith("-network") ? {code: "ECONNRESET"} : {status: badStatus});
     }
     if (finalAttemptError && alternativeJobsReads > 2) {
+      assert.equal(input.attempt_number, source.run_attempt);
       return [{...job, steps: [...job.steps,
         {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
     }
@@ -1595,7 +1613,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
       yield {data: refreshInventoryReads === 1 ? [source] : [{...dispatchPrimary, conclusion: "failure"}, source]};
       return;
     }
-    if (kind.startsWith("pending-native-dual-") && input.event === "repository_dispatch") {
+    if ((kind.startsWith("pending-native-dual-") || cancelledWithPendingRefresh) && input.event === "repository_dispatch") {
       refreshInventoryReads += 1;
       const failed = kind.endsWith("-fails") && refreshInventoryReads > 1;
       yield {data: [
@@ -1661,6 +1679,13 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   assert.equal(movedCancellation.failures.length, 1, "a later native failed attempt cannot inherit cancelled-attempt fallback proof");
   const stableCancellation = await scenario("cancelled-native-attempt-stable", "repository_dispatch");
   assert.deepEqual(stableCancellation.failures, [], "unchanged exact cancellation may still admit the proven fallback");
+  const cancelledWithPendingRefresh = await scenario("cancelled-native-pending-refresh", "repository_dispatch");
+  assert.deepEqual(cancelledWithPendingRefresh.failures, [],
+    "a stable pending refresh must not hide older verified refresh proof after native cancellation");
+  assert.equal(cancelledWithPendingRefresh.refreshInventoryReads, 2,
+    "read refresh ordering once for selection and once for the pending fallback fence");
+  assert.deepEqual(cancelledWithPendingRefresh.fallbackReadOrder.slice(-4), [44, 43, 43, 42],
+    "observe the pending refresh and native cancellation before the selected attempt's final read");
   const transientRefreshPull = await scenario("optional-final-read-pr-identity", "repository_dispatch");
   assert.equal(transientRefreshPull.failedFinalPullReads, 4, "bounded PR validation retry must finish before returning to native selection");
   assert(transientRefreshPull.info.some(line => line.includes("Found runtime-images run 43 with status=completed")));
@@ -4701,6 +4726,68 @@ async function failedLegacyProof(stage, error, event = "pull_request") {
   assert.match(warnings[0], /^Canonical PLAY transition exception proof is unavailable:/);
   assert.deepEqual(outputs, []);
 }
+
+const finalPlayFence = script.slice(script.indexOf("async function currentCanonicalPlayAttempt("),
+  script.indexOf("// Canonical-transition diagnostic acceptance"));
+
+async function verifyFinalPlayFence(conclusion, event, change) {
+  const matching = {...source, event, conclusion};
+  const latest = {...matching};
+  const order = [], outputs = [], failed = [];
+  let now = 0;
+  const summary = {addHeading: () => summary, addRaw: () => summary, write: async () => {}};
+  const core = {
+    summary, warning: () => {}, setFailed: message => failed.push(message),
+    setOutput: (...output) => {order.push("accept"); outputs.push(output);},
+  };
+  const github = {
+    paginate: async () => [candidate],
+    rest: {actions: {getWorkflowRun: async ({run_id}) => {
+      assert.equal(run_id, matching.id);
+      order.push("attempt");
+      return {data: latest};
+    }}},
+  };
+  const branch = conclusion === "success" ? failedBranch : legacyFailedBranch;
+  const execute = new Function("options", "Date", `
+    return (async () => {
+      const {matching, fullSmokeJob, canonicalSmokeJobName, currentIdentity, selectedIdentity, repositoryName,
+        github, owner, repo, started, timeoutMs, core, TerminalGitHubRequestError, verifyKnownPlayFailure,
+        resolveCurrentIdentity, isCurrentPullRequestObsolete, identityKey, retryExactSelection,
+        withTransientGitHubRetry} = options;
+      ${finalPlayFence}
+      smokeGatePolling: for (let selection = 0; selection < 1; selection++) {
+        ${branch}
+      }
+    })();
+  `);
+  await execute({
+    matching, fullSmokeJob: candidate, canonicalSmokeJobName, currentIdentity: identity, selectedIdentity: identity,
+    repositoryName, github, owner: "benhook1013", repo: "FireMUD", started: 0, timeoutMs: 10_000, core,
+    TerminalGitHubRequestError, withTransientGitHubRetry: (_label, call) => call(),
+    verifyKnownPlayFailure: async () => {order.push("proof"); return true;},
+    resolveCurrentIdentity: async () => {
+      order.push("comparison");
+      if (change === "attempt") latest.run_attempt += 1;
+      if (change === "nonterminal") Object.assign(latest, {status: "in_progress", conclusion: null});
+      if (change === "conclusion") latest.conclusion = "cancelled";
+      if (change === "deadline") now = 10_000;
+      return identity;
+    },
+    isCurrentPullRequestObsolete: async () => false,
+    identityKey: value => JSON.stringify(value),
+    retryExactSelection: async (_message, options) => {
+      assert.deepEqual(options, {requirePendingPrimary: false});
+      order.push("retry");
+      return change !== "deadline";
+    },
+  }, {now: () => now});
+  assert.deepEqual(failed, []);
+  assert.deepEqual(outputs, change === "stable" ? [["known_play_exception", "true"]] : []);
+  assert.deepEqual(order, ["proof", "comparison", ...(change === "deadline" ? [] : ["attempt"]),
+    change === "stable" ? "accept" : "retry"]);
+}
+
 const markerExpression = fs.readFileSync(process.argv[2] + ".marker", "utf8").trim().slice(3, -2);
 const markerValues = {
   "github.event_name": "pull_request", "github.repository": repositoryName,
@@ -4730,6 +4817,11 @@ function markerAccepted(overrides = {}) {
   for (const event of ["pull_request", "repository_dispatch"]) {
     for (const stage of ["jobs", "proof", "malformed-jobs"]) {
       await failedLegacyProof(stage, Object.assign(new Error("unavailable"), {status: 404}), event);
+    }
+    for (const conclusion of ["success", "failure"]) {
+      for (const change of ["stable", "attempt", "nonterminal", "conclusion", "deadline"]) {
+        await verifyFinalPlayFence(conclusion, event, change);
+      }
     }
   }
   await failedLegacyProof("proof", null);

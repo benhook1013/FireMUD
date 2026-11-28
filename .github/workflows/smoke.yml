@@ -628,7 +628,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "064d6a9ea063be682e1eb5f93dcea04ae96ae766bc6a6d760286bb9044689a1e";
+            const canonicalRuntimeWorkflowSha256 = "740c1b49a3917cdfcc6db2aaed0a4290b9ba44350f708c091e675303e36154cf";
             // The previous archive format does not change this definition's independently valid smoke proof.
             const canonicalMergeOnlyArtifactRuntimeWorkflowSha256 = "004af984d2aa7ab023758cbc38c6c20f92976b8f07040c9a4965bda6616d5dd5";
             const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -759,8 +759,10 @@ jobs:
             function isSuccessfulRuntimeWorkflowDefinition(definitionHash, sourceEvent) {
               // The earlier claim target does not invalidate already established smoke proof.
               const canonicalMergeTargetRuntimeWorkflowSha256 = "ad7ae1a525621952060f824752e96491c3d5b5973b29bcac7ad83c45f03ec45a";
+              const canonicalPreviousClaimReadRuntimeWorkflowSha256 = "064d6a9ea063be682e1eb5f93dcea04ae96ae766bc6a6d760286bb9044689a1e";
               return definitionHash === canonicalRuntimeWorkflowSha256 ||
                 definitionHash === canonicalMergeTargetRuntimeWorkflowSha256 ||
+                definitionHash === canonicalPreviousClaimReadRuntimeWorkflowSha256 ||
                 definitionHash === canonicalMergeOnlyArtifactRuntimeWorkflowSha256 ||
                 (sourceEvent === "repository_dispatch" &&
                   (definitionHash === canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 ||
@@ -841,6 +843,17 @@ jobs:
               );
               return latest.id === source.id && latest.run_attempt === source.run_attempt &&
                 latest.status === "completed" && latest.conclusion === "success";
+            }
+
+            async function currentCanonicalPlayAttempt(run) {
+              if (Date.now() - started >= timeoutMs) return false;
+              const { data: latest } = await withTransientGitHubRetry(
+                "canonical PLAY attempt after final comparison",
+                () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id })
+              );
+              return Date.now() - started < timeoutMs && latest.id === run.id &&
+                latest.run_attempt === run.run_attempt && latest.status === "completed" &&
+                latest.conclusion === run.conclusion;
             }
 
             // Canonical-transition diagnostic acceptance never becomes passing producer proof.
@@ -1240,8 +1253,7 @@ jobs:
             }
 
             let currentIdentity = null;
-            let cancelledRunId = null;
-            let cancelledRunObservedAt = null;
+            let cancelledWait = null;
             smokeGatePolling: while (Date.now() - started < timeoutMs) {
               if (pollIteration % pullRequestCheckInterval === 0 || !currentIdentity) {
                 const resolvedIdentity = await resolveCurrentIdentity(
@@ -1292,39 +1304,35 @@ jobs:
               );
               if (
                 currentIdentity.sourceEvent === "pull_request" &&
-                cancelledRunId !== null &&
-                (matching?.id !== cancelledRunId ||
-                  matching.status !== "completed" ||
-                  matching.conclusion !== "cancelled")
-              ) {
-                cancelledRunId = null;
-                cancelledRunObservedAt = null;
-              }
-              if (
-                currentIdentity.sourceEvent === "pull_request" &&
                 matching?.status === "completed" &&
                 matching.conclusion === "cancelled"
               ) {
-                if (cancelledRunId !== matching.id) {
-                  cancelledRunId = matching.id;
-                  cancelledRunObservedAt = Date.now();
+                if (cancelledWait?.runId !== matching.id || cancelledWait.attempt !== matching.run_attempt) {
+                  cancelledWait = {runId: matching.id, attempt: matching.run_attempt, identity: null, observedAt: Date.now()};
                 }
                 const replacementIdentity = await resolveCurrentIdentity(
                   "Selecting a trusted replacement for the cancelled event run", true
                 );
                 if (replacementIdentity?.obsolete) return;
+                if (replacementIdentity) {
+                  const replacementKey = identityKey(replacementIdentity);
+                  if (cancelledWait.identity !== null && cancelledWait.identity !== replacementKey) {
+                    cancelledWait.observedAt = Date.now();
+                  }
+                  cancelledWait.identity = replacementKey;
+                }
                 const replacementTitle = replacementIdentity
                   ? runtimeDisplayTitle(replacementIdentity) : "";
                 const replacement = replacementIdentity && await findMatchingRuntimeImagesRun(
                   "repository_dispatch", replacementTitle, replacementIdentity, selection
                 );
                 if (!replacement) {
-                  if (Date.now() - cancelledRunObservedAt >= cancelledReplacementTimeoutMs) {
+                  if (Date.now() - cancelledWait.observedAt >= cancelledReplacementTimeoutMs) {
                     if (await isCurrentPullRequestObsolete("Stopping obsolete cancelled-run smoke gate for")) {
                       return;
                     }
                     core.setFailed(
-                      `Cancelled runtime-images run ${cancelledRunId} has no exact repository_dispatch replacement ` +
+                      `Cancelled runtime-images run ${matching.id} has no exact repository_dispatch replacement ` +
                       `after ${cancelledReplacementTimeoutMs / 60000} minutes`
                     );
                     return;
@@ -1342,6 +1350,8 @@ jobs:
                 matching = replacement;
                 selectedIdentity = replacementIdentity;
                 selectedDisplayTitle = replacementTitle;
+              } else {
+                cancelledWait = null;
               }
               // A queued native run can share a tuple with a completed trusted refresh.
               // It must not hide already verified smoke proof or cause a second dispatch.
@@ -1414,6 +1424,13 @@ jobs:
                       if (!freshIdentity || identityKey(freshIdentity) !== identityKey(selectedIdentity)) {
                         if (currentIdentity.sourceEvent === "repository_dispatch") currentIdentity = freshIdentity;
                         continue smokeGatePolling;
+                      }
+                      if (!await currentCanonicalPlayAttempt(matching)) {
+                        if (await retryExactSelection(
+                          "Canonical PLAY attempt changed after the final comparison; retry exact selection.",
+                          { requirePendingPrimary: false }
+                        )) continue smokeGatePolling;
+                        break smokeGatePolling;
                       }
                       core.setOutput("known_play_exception", "true");
                       core.warning("Canonical PLAY transition exception accepted: LOGIN succeeded, direct backend PLAY failed ERROR ENTITLEMENT_UNAVAILABLE. No runtime qualification or image publication.");
@@ -1599,6 +1616,13 @@ jobs:
                       if (currentIdentity.sourceEvent === "repository_dispatch") currentIdentity = freshIdentity;
                       continue smokeGatePolling;
                     }
+                    if (!await currentCanonicalPlayAttempt(matching)) {
+                      if (await retryExactSelection(
+                        "Canonical PLAY attempt changed after the final comparison; retry exact selection.",
+                        { requirePendingPrimary: false }
+                      )) continue smokeGatePolling;
+                      break smokeGatePolling;
+                    }
                     core.setOutput("known_play_exception", "true");
                     core.warning("Canonical PLAY transition exception accepted: LOGIN succeeded, direct backend PLAY failed ERROR ENTITLEMENT_UNAVAILABLE. No runtime qualification or image publication.");
                     await core.summary.addHeading("Canonical PLAY transition exception accepted")
@@ -1760,7 +1784,8 @@ jobs:
                     break smokeGatePolling;
                   }
                 }
-                if ((selection.pendingPrimary?.event === "pull_request" || cancelledNative) && !selection.pendingRefresh &&
+                const pendingTypedRefresh = pendingOrderingFences.some(run => run.event === "repository_dispatch");
+                if ((selection.pendingPrimary?.event === "pull_request" || cancelledNative) && !pendingTypedRefresh &&
                     matching.event === "repository_dispatch") {
                   // The selected refresh may have been the newest visible one
                   // when checked. A later refresh can fail during proof reads.

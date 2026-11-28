@@ -437,10 +437,17 @@ jobs:
               --author "$(jq -r '.user.login // empty' <<<"$pull_request_json")" \
               --labels-json "$labels_json")" || emit_no_action \
                 "Refusing hosted preview lifecycle action: PR is not preview-eligible."
-            [[ "$(sed -n 's/^reason=//p' <<<"$label_metadata")" != malformed-label-metadata ]] || emit_no_action \
+            eligibility_reason="$(sed -n 's/^reason=//p' <<<"$label_metadata")"
+            [[ "$eligibility_reason" != malformed-label-metadata ]] || emit_no_action \
               "Refusing hosted preview lifecycle action: PR label metadata is missing or malformed."
-            [[ "$(sed -n 's/^eligible=//p' <<<"$label_metadata")" == true ]] || emit_no_action \
-              "Refusing hosted preview lifecycle action: PR is not preview-eligible."
+            preview_eligible="$(sed -n 's/^eligible=//p' <<<"$label_metadata")"
+            if [[ "$preview_eligible" != true ]]; then
+              if [[ "$preview_eligible" == false && "$eligibility_reason" == unsupported-base-branch ]] &&
+                jq -e '.user.login | type == "string" and length > 0' <<<"$pull_request_json" >/dev/null; then
+                record_retry_rejection ineligible_retry_nonce
+              fi
+              emit_no_action "Refusing hosted preview lifecycle action: PR is not preview-eligible."
+            fi
           elif [[ "$EVENT_NAME" == workflow_run && "$ACTION" == destroy ]]; then
             [[ "$state" == open ]] || emit_no_action \
               "Ignoring manual destroy because the target pull request is not open."
@@ -561,6 +568,10 @@ jobs:
       - name: Trusted preview retry rejected stale-comparison nonce-${{ steps.target.outputs.stale_comparison_retry_nonce }}
         if: ${{ steps.target.outputs.action == 'none' && steps.target.outputs.stale_comparison_retry_nonce != '' }}
         run: echo 'Rejected the exact preview retry source attempt for a stale comparison before deployment.'
+
+      - name: Trusted preview retry rejected ineligible nonce-${{ steps.target.outputs.ineligible_retry_nonce }}
+        if: ${{ steps.target.outputs.action == 'none' && steps.target.outputs.ineligible_retry_nonce != '' }}
+        run: echo 'Rejected the exact preview retry source attempt because the current base requires the priority label.'
 
   prepare-runtime:
     name: Prepare Validated Preview Inputs
@@ -684,11 +695,9 @@ jobs:
           persist-credentials: false
 
       - name: Set up kubectl for preparation failure proof check
-        if: ${{ needs.validate-target.outputs.proof_retry_namespace_uid != '' }}
         uses: ./.github/actions/setup-kubectl
 
       - name: Write namespace-manager kubeconfig for preparation failure proof check
-        if: ${{ needs.validate-target.outputs.proof_retry_namespace_uid != '' }}
         uses: ./.github/actions/write-kubeconfig
         with:
           content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
@@ -697,7 +706,6 @@ jobs:
 
       - name: Recheck proof retry before publishing preparation failure
         id: recheck-preparation-failure
-        if: ${{ needs.validate-target.outputs.proof_retry_namespace_uid != '' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-preparation-failure.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
@@ -708,18 +716,32 @@ jobs:
           IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
         run: |
           set -euo pipefail
+          namespace_uid="$RETRY_NAMESPACE_UID"
+          if [[ -z "$namespace_uid" ]]; then
+            snapshot="$(kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json --request-timeout=10s)"
+            if [[ -z "$snapshot" ]]; then
+              echo 'proceed=true' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            namespace_uid="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' <<<"$snapshot")"
+          fi
+
           result="$(bash ./dev-tools/hosted/preview/check-preview-proof-retry.sh \
-            "$RUNTIME_NAMESPACE" "$RETRY_NAMESPACE_UID" "$BASE_SHA" "$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG")"
+            "$RUNTIME_NAMESPACE" "$namespace_uid" "$BASE_SHA" "$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG")"
           case "$result" in
             proof-missing) echo 'proceed=true' >> "$GITHUB_OUTPUT" ;;
             proof-complete|namespace-changed)
-              echo "::notice::Preview retry preparation failure publication skipped: $result."
+              if [[ "$result" == namespace-changed && -z "$RETRY_NAMESPACE_UID" ]]; then
+                echo 'proceed=true' >> "$GITHUB_OUTPUT"
+              else
+                echo "::notice::Preview preparation failure publication skipped: $result."
+              fi
               ;;
             *) exit 1 ;;
           esac
 
       - name: Publish trusted preview preparation failure
-        if: ${{ needs.validate-target.outputs.proof_retry_namespace_uid == '' || steps.recheck-preparation-failure.outputs.proceed == 'true' }}
+        if: ${{ steps.recheck-preparation-failure.outputs.proceed == 'true' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
@@ -747,7 +769,7 @@ jobs:
             });
 
       - name: Remove preparation failure kubeconfig
-        if: ${{ always() && needs.validate-target.outputs.proof_retry_namespace_uid != '' }}
+        if: ${{ always() }}
         run: rm -f -- "$RUNNER_TEMP/preview-preparation-failure.kubeconfig"
 
   deploy-runtime:
@@ -825,23 +847,6 @@ jobs:
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
 
-      - name: Revalidate exact PR source binding before privileged mutations
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN_ID: ${{ needs.validate-target.outputs.render_run_id }}
-          SOURCE_RUN_ATTEMPT: ${{ needs.validate-target.outputs.render_run_attempt }}
-          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
-          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
-          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
-          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
-          EXPECTED_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
-        run: |
-          set -euo pipefail
-          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
-            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
-            "before privileged runtime mutation" \
-            "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"
-
       - name: Recheck proof retry under the preview allocation lock
         id: recheck-proof-retry
         env:
@@ -868,6 +873,24 @@ jobs:
               ;;
             *) exit 1 ;;
           esac
+
+      - name: Revalidate exact PR source binding before privileged mutations
+        if: ${{ steps.recheck-proof-retry.outputs.proceed == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ needs.validate-target.outputs.render_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.validate-target.outputs.render_run_attempt }}
+          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+          EXPECTED_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "before privileged runtime mutation" \
+            "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"
 
       - name: Prune stale runtime namespaces
         if: ${{ steps.recheck-proof-retry.outputs.proceed == 'true' }}
@@ -1323,7 +1346,7 @@ jobs:
           echo "uid=$runtime_uid" >> "$GITHUB_OUTPUT"
 
       - name: Publish trusted preview deployment failure
-        if: ${{ !cancelled() && failure() && (steps.allocate-capacity.outputs.allocation_status != 'unavailable' || steps.publish-capacity-unavailable.outcome == 'failure') }}
+        if: ${{ !cancelled() && failure() && steps.recheck-proof-retry.outputs.proceed != 'false' && (steps.allocate-capacity.outputs.allocation_status != 'unavailable' || steps.publish-capacity-unavailable.outcome == 'failure') }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}

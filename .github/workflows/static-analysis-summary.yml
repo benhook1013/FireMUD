@@ -354,7 +354,8 @@ jobs:
             const unavailableChecks = gateResults.filter(([, result]) => result === "unavailable");
 
             let headline = "⏳ Static analysis evidence is unavailable";
-            if (gateResults.every(([, result]) => result === "success")) {
+            const passing = gateResults.every(([, result]) => result === "success");
+            if (passing) {
               headline = "✅ Static analysis checks passed";
             } else if (failedChecks.length > 0) {
               headline = "❌ Static analysis checks failed";
@@ -399,7 +400,19 @@ jobs:
               return Number(comment.id) < Number(oldest.id) ? comment : oldest;
             }, null);
 
-            // Reruns can advance a producer without changing the PR tuple.
+            if (passing) {
+              const latest = await selectWorkflowRuns();
+              const latestChecks = resolveStatuses(latest);
+              if (Object.entries(workflowRuns).some(([name, selected]) =>
+                ["id", "run_attempt", "status", "conclusion"].some(field =>
+                  selected?.[field] !== latest[name]?.[field])) ||
+                  checks.some(([, result], index) => result !== latestChecks[index][1])) {
+                core.info("A producer selection or check result changed before publishing the passing summary.");
+                return;
+              }
+            }
+
+            // Read both producer attempts after both final selections.
             for (const run of Object.values(workflowRuns)) {
               if (!run) continue;
               const { data: current } = await github.rest.actions.getWorkflowRun({
@@ -408,20 +421,9 @@ jobs:
               });
               if (current?.id !== run.id || current.run_attempt !== run.run_attempt ||
                   current.event !== "pull_request" || current.head_sha !== headSha ||
-                  current.display_title !== run.display_title || associatedBaseRef(current) !== baseRef) {
+                  current.display_title !== run.display_title || associatedBaseRef(current) !== baseRef ||
+                  (passing && (current.status !== run.status || current.conclusion !== run.conclusion))) {
                 core.info("A selected producer attempt changed while static analysis was being summarized.");
-                return;
-              }
-            }
-
-            if (!failedChecks.length && !unavailableChecks.length && !pendingChecks.length) {
-              const latest = await selectWorkflowRuns();
-              const latestChecks = resolveStatuses(latest);
-              if (Object.entries(workflowRuns).some(([name, selected]) =>
-                ["id", "run_attempt", "status", "conclusion"].some(field =>
-                  selected?.[field] !== latest[name]?.[field])) ||
-                  checks.some(([, result], index) => result !== latestChecks[index][1])) {
-                core.info("A producer selection or check result changed before publishing the passing summary.");
                 return;
               }
             }

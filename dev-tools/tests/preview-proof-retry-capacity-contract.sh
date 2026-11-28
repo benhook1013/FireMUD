@@ -13,6 +13,7 @@ holder() {
  jq -cn --argjson filler "$1" '{apiVersion:"v1",kind:"ConfigMap",metadata:{namespace:"firemud-system",name:"firemud-preview-proof-retries",uid:"holder",resourceVersion:"rv-1"},data:{schemaVersion:"1","pr-789":("é"*$filler)}}'
 }
 kubectl() {
+ printf '%s\n' "$*" >>kubectl-invocations
  local patch=
  while (( $# )); do
    if [[ $1 == --patch ]]; then patch=$2; shift; fi
@@ -53,6 +54,7 @@ preview_retry_holder_headroom "$test_snapshot" | jq -e '
  . == {usedBytes:67,hardLimitBytes:1048576,remainingBytes:1048509}' >/dev/null
 read_fail=false
 before_report_calls="$(wc -l <calls)"
+before_report_invocations="$(wc -l <kubectl-invocations)"
 # Used indirectly by report_preview_retry_holder_headroom from the sourced helper.
 # shellcheck disable=SC2329
 read_preview_retry_holder() {
@@ -79,6 +81,7 @@ read_fail=true
 unknown_report=$(report_preview_retry_holder_headroom holder)
 grep -F 'headroom: unknown' <<<"$unknown_report" >/dev/null
 test "$(wc -l <calls)" = "$before_report_calls"
+test "$(wc -l <kubectl-invocations)" = "$before_report_invocations"
 
 # Leave exactly enough room for the replacement, then add a single binary byte.
 record_bytes=$(jq -nr --argjson record "$record" '$record | tojson | utf8bytelength')

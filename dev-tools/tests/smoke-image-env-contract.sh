@@ -77,15 +77,36 @@ docker() {
       return 0
       ;;
     compose\ *)
+      shift
+      local -a compose_options=()
+      while [[ "${1:-}" == -f ]]; do
+        [[ $# -ge 3 ]] || return 97
+        compose_options+=("$1" "$2")
+        shift 2
+      done
+      local operation="${1:-}"
+      local protected_options_match=false
+      if [[ -n "${FIREMUD_SMOKE_RUNTIME_DIGESTS:-}" ]]; then
+        local compose_root="$FIREMUD_SMOKE_SOURCE_ROOT/docker"
+        local -a expected_options=(-f "$compose_root/docker-compose.yml" -f "$compose_root/docker-compose.override.yml"
+          -f "$compose_root/docker-compose.smoke-images.override.yml" -f "$compose_root/docker-compose.grpc-mtls.override.yml")
+        if (( ${#compose_options[@]} == ${#expected_options[@]} )); then
+          protected_options_match=true
+          local index
+          for index in "${!expected_options[@]}"; do
+            if [[ "${compose_options[$index]}" != "${expected_options[$index]}" ]]; then
+              protected_options_match=false
+              break
+            fi
+          done
+        fi
+      fi
       if [[ "${SMOKE_TEST_DIAGNOSTICS_MODE:-}" == true ]]; then
-        local arguments=" $* "
         if [[ -n "${FIREMUD_SMOKE_RUNTIME_DIGESTS:-}" ]]; then
-          local compose_root="$FIREMUD_SMOKE_SOURCE_ROOT/docker"
-          local expected_prefix=" compose -f $compose_root/docker-compose.yml -f $compose_root/docker-compose.override.yml -f $compose_root/docker-compose.smoke-images.override.yml -f $compose_root/docker-compose.grpc-mtls.override.yml "
           local config_marker="$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.config"
           local startup_marker="$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.up"
-          if [[ "$arguments" == *" config "* ]]; then
-            [[ "$arguments" == "${expected_prefix}config --format json " ]] || return 93
+          if [[ "$operation" == config ]]; then
+            [[ "$protected_options_match" == true && $# -eq 3 && "$2" == --format && "$3" == json ]] || return 93
             printf '%s\n' "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT" >"$config_marker"
             local drift="${SMOKE_TEST_PROTECTED_DRIFT:-}"
             if [[ "$drift" == retry && -e "$startup_marker" ]]; then
@@ -102,28 +123,27 @@ docker() {
             '
             return
           fi
-          if [[ "$arguments" == *" up "* ]]; then
-            [[ "$arguments" == "${expected_prefix}up -d --remove-orphans " &&
+          if [[ "$operation" == up ]]; then
+            [[ "$protected_options_match" == true && $# -eq 3 && "$2" == -d && "$3" == --remove-orphans &&
               -f "$config_marker" && "$(<"$config_marker")" == "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT" ]] || return 94
             printf '%s\n' up >>"$startup_marker"
             [[ "${SMOKE_TEST_PROTECTED_DRIFT:-}" != retry ]] || return 95
           fi
         fi
-        if [[ "$arguments" == *" up "* ]]; then
+        if [[ "$operation" == up ]]; then
           touch "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.resources"
-        elif [[ "$arguments" == *" down "* ]]; then
+        elif [[ "$operation" == down ]]; then
           if [[ -e "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.resources" && "${SMOKE_TEST_CLEANUP_FAIL:-false}" == true ]]; then
             return 92
           fi
           rm -f "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.resources"
         fi
-        if [[ "$arguments" == *" logs "* ]]; then
-          if [[ "$arguments" != *" logs --no-color --timestamps --tail 200 "* ]]; then
+        if [[ "$operation" == logs ]]; then
+          if [[ $# -ne 6 || "$2" != --no-color || "$3" != --timestamps || "$4" != --tail || "$5" != 200 ]]; then
             echo "Unexpected smoke diagnostic log command: $*" >&2
             return 90
           fi
-          local service="${arguments##* --tail 200 }"
-          service="${service% }"
+          local service="$6"
           case "$service" in
             game-design-service|game-session-service|world-management-service) ;;
             *)
@@ -136,7 +156,6 @@ docker() {
         fi
         return 0
       fi
-      local arguments=" $* "
       local expected_receipt_directory
       expected_receipt_directory="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.authored-world-source"
       if [[ "${FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH:-}" != "$expected_receipt_directory" ||
@@ -148,22 +167,22 @@ docker() {
       fi
       if [[ "${SMOKE_COMPOSE_CONFIG_ONLY:-false}" == true ]]; then
         if [[ -n "${FIREMUD_SMOKE_RUNTIME_DIGESTS:-}" ]]; then
-          local compose_root="$FIREMUD_SMOKE_SOURCE_ROOT/docker"
-          local expected_prefix=" compose -f $compose_root/docker-compose.yml -f $compose_root/docker-compose.override.yml -f $compose_root/docker-compose.smoke-images.override.yml -f $compose_root/docker-compose.grpc-mtls.override.yml "
-          [[ "$arguments" == "${expected_prefix}config --format json " ]] || {
+          [[ "$protected_options_match" == true && "$operation" == config && $# -eq 3 && "$2" == --format && "$3" == json ]] || {
             echo "Only the protected digest Compose JSON config render may reach real Docker." >&2
+            printf '%q ' compose "${compose_options[@]}" "$@" >>"$TEST_OWNERSHIP_DIR/disallowed-compose-operations"
             return 96
           }
           touch "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.docker-config-json"
-          command docker "$@"
+          command docker compose "${compose_options[@]}" "$@"
           return $?
         fi
-        if [[ "$arguments" == *" config " || "$arguments" == *" config --format json " ]]; then
-          command docker "$@"
+        if [[ "$operation" == config && ( $# -eq 1 || ( $# -eq 3 && "$2" == --format && "$3" == json ) ) ]]; then
+          command docker compose "${compose_options[@]}" "$@"
           return $?
         fi
       fi
       echo "Unexpected real Docker compose operation in smoke image contract: $*" >&2
+      printf '%q ' compose "${compose_options[@]}" "$@" >>"$TEST_OWNERSHIP_DIR/disallowed-compose-operations"
       return 97
       ;;
     *)
@@ -467,6 +486,7 @@ run_protected_digest_regressions() {
   fi
   [[ -e "$TEST_OWNERSHIP_DIR/$TEST_RUN_ID-digest-config.docker-config-json" ]]
   [[ ! -e "$TEST_OWNERSHIP_DIR/$TEST_RUN_ID-digest-config.up" ]]
+  [[ ! -e "$TEST_OWNERSHIP_DIR/disallowed-compose-operations" ]]
 
   local drift
   FIREMUD_SMOKE_SOURCE_ROOT="$source_root" FIREMUD_SMOKE_RUNTIME_DIGESTS="$digest_map" \

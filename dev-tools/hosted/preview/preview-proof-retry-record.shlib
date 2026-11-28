@@ -269,7 +269,6 @@ retire_merged_preview_retry_entries() {
     old_row="$(preview_retry_entry "$initial" "$namespace")" || continue
     [[ "$old_row" != null ]] || continue
     phase="$(jq -r '.phase // empty' <<<"$old_row")" || continue
-    [[ "$phase" != RESERVED ]] || continue
     [[ "$phase" != SEND_STARTED || -n "$verify_terminal" ]] || continue
     pr_number="${namespace#pr-}"
     # A closed, unmerged pull request can reopen with the same tuple. Only
@@ -290,10 +289,11 @@ retire_merged_preview_retry_entries() {
     jq -e --arg uid "$holder_uid" '.metadata.uid == $uid' <<<"$holder" >/dev/null || return 1
     row="$(preview_retry_entry "$holder" "$namespace")" || continue
     [[ "$row" == "$old_row" ]] || continue
-    if [[ "$phase" == SEND_STARTED ]]; then
-      runtime="$(kubectl get namespace "$namespace" --ignore-not-found -o json --request-timeout=10s)" || continue
-      [[ -z "$runtime" ]] || continue
-    fi
+    # Retirement needs an absence observation after the fresh holder and row
+    # comparison for both reservation phases. A RESERVED row can be reclaimed
+    # only while this exact canonical row remains unchanged under the holder CAS.
+    runtime="$(kubectl get namespace "$namespace" --ignore-not-found -o json --request-timeout=10s)" || continue
+    [[ -z "$runtime" ]] || continue
     write_preview_retry_entry "$holder" "$namespace" null >/dev/null || return 1
     echo "Retired the proof-retry record for merged PR #$pr_number."
   done < <(jq -r '.keys[]' <<<"$entries")

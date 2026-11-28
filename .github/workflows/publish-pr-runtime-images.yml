@@ -676,16 +676,16 @@ jobs:
           verify_existing_target() {
             local service="$1"
             local image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
-            if ! docker pull "$image" >/dev/null; then
+            if ! timeout 120s docker pull "$image" >/dev/null; then
               echo "Existing fixed image tag could not be pulled for immutable comparison: $image" >&2
-              exit 1
+              return 1
             fi
             local target_image_id
             target_image_id="$(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null || true)"
             if [[ -z "$target_image_id" || "$target_image_id" != "${source_image_ids[$service]}" ]]; then
               echo "Existing fixed image tag does not match the validated source artifact: $image" >&2
               echo "Expected source image ID ${source_image_ids[$service]}, observed target image ID ${target_image_id:-<missing>}." >&2
-              exit 1
+              return 1
             fi
             echo "Fixed image tag already exists with the validated source image ID; preserving first publication: $image"
           }
@@ -724,12 +724,14 @@ jobs:
             {
               echo "### Partial PR runtime image publication"
               echo
-              echo "Successfully available fixed tags:"
+              echo "Verified available fixed tags before stop:"
               if ((${#available_services[@]} == 0)); then
                 echo "- None"
               else
                 # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
-                printf -- '- `%s`\n' "${available_services[@]}"
+                for candidate_service in "${available_services[@]}"; do
+                  printf -- '- `ghcr.io/benhook1013/%s:%s`\n' "$candidate_service" "$IMAGE_TAG"
+                done
               fi
               echo
               echo "Fixed tags not verified available at stop:"
@@ -737,7 +739,9 @@ jobs:
                 echo "- None"
               else
                 # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
-                printf -- '- `%s`\n' "${unpublished_services[@]}"
+                for candidate_service in "${unpublished_services[@]}"; do
+                  printf -- '- `ghcr.io/benhook1013/%s:%s`\n' "$candidate_service" "$IMAGE_TAG"
+                done
               fi
             } >> "$GITHUB_STEP_SUMMARY"
           }
@@ -758,17 +762,14 @@ jobs:
                 exit 1
               fi
               if docker push "$image"; then
-                # A successful client push is not publication proof until the
-                # authenticated target resolves to the exact source image ID.
-                verify_existing_target "$service"
                 break
               fi
               if ! state="$(registry_manifest_state "$image")"; then
                 echo "Unable to classify $image after a failed push; refusing to infer absence." >&2
+                report_partial_publication "$service"
                 exit 1
               fi
               if [[ "$state" == existing ]]; then
-                verify_existing_target "$service"
                 break
               fi
               if (( push_attempt >= max_push_attempts )); then
@@ -781,6 +782,11 @@ jobs:
               sleep "$backoff_seconds"
               push_attempt=$((push_attempt + 1))
             done
+            # Only authenticated readback of the source image ID verifies the tag.
+            if ! verify_existing_target "$service"; then
+              report_partial_publication "$service"
+              exit 1
+            fi
             available_services+=("$service")
           done
 

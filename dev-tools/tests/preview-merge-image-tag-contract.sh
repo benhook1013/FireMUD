@@ -210,6 +210,9 @@ case "${GH_FIXTURE:-}" in
     ;;
   branch_newer_noop|branch_older_jobs_transient|branch_newer_failed|branch_newer_ambiguous|branch_older_mismatch|branch_older_unproved)
     source="$(printf '{"id":103,"run_attempt":2,"status":"completed","conclusion":"success","event":"workflow_run","html_url":"https://example.test/runtime/103","display_title":"Build Runtime Images trusted-branch branch-develop sha-%s","created_at":"2026-09-21T00:02:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$head_sha")"
+    if [[ "$GH_FIXTURE" == branch_newer_failed ]]; then
+      source="$(jq -c '.conclusion="failure"' <<<"$source")"
+    fi
     older_sha="$head_sha"
     [[ "$GH_FIXTURE" != branch_older_mismatch ]] || older_sha="$base_sha"
     older="$(printf '{"id":102,"run_attempt":1,"status":"completed","conclusion":"success","event":"workflow_run","html_url":"https://example.test/runtime/102","display_title":"Build Runtime Images trusted-branch branch-develop sha-%s","created_at":"2026-09-21T00:01:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$older_sha")"
@@ -228,6 +231,9 @@ case "${GH_FIXTURE:-}" in
           branch_newer_ambiguous)
             # An absent promotion job is not affirmative skipped-work proof.
             printf '%s' '{"total_count":0,"jobs":[]}'
+            ;;
+          branch_older_jobs_transient)
+            printf '%s' '{"total_count":1,"jobs":[{"run_id":103,"run_attempt":2,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"skipped","steps":[{"name":"Promote smoke-tested service digests","status":"completed","conclusion":"skipped"}]}]}'
             ;;
           *)
             printf '%s' '{"total_count":1,"jobs":[{"run_id":103,"run_attempt":2,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"skipped","steps":[]}]}'
@@ -252,7 +258,7 @@ case "${GH_FIXTURE:-}" in
         ;;
     esac
     ;;
-  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate|source_failure_with_alternate_rerun|source_inventory_*|source_alternate_inventory_*|publisher_callback_*|publisher_pr_merge_head|publisher_replacement_handoff*|publisher_producer_rerun_at_acceptance|publisher_stale_receipt*|publisher_exact_retry|publisher_expired_producer|publisher_missing_producer)
+  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate|source_failure_with_alternate_rerun|source_inventory_*|source_alternate_inventory_*|publisher_callback_*|publisher_pr_merge_head|publisher_replacement_handoff*|publisher_producer_rerun_at_acceptance|publisher_stale_receipt*|publisher_exact_retry|publisher_expired_producer|publisher_missing_producer|publisher_explicit_*|publisher_native_before_other)
     source_title="Build Runtime Images secure-pr-artifact pr-7 base-${base_sha} head-${head_sha} merge-${merge_sha} mode-required"
     source_event=pull_request
     publisher_merge="$merge_sha"
@@ -263,6 +269,9 @@ case "${GH_FIXTURE:-}" in
     if [[ "$GH_FIXTURE" == typed_publisher_* ]]; then
       source_event=repository_dispatch
       publisher_title+=" source-run-101"
+    fi
+    if [[ "$GH_FIXTURE" == publisher_explicit_typed ]]; then
+      source_event=repository_dispatch
     fi
     source_attempt=1 publisher_id=102 recorded_attempt=1
     [[ "$GH_FIXTURE" != publisher_stale_receipt* ]] || source_attempt=2
@@ -298,9 +307,13 @@ PY_RECEIPT
       source="$(jq -c '.conclusion="failure" | .created_at="2026-09-21T00:20:00Z"' <<<"$source")"
     fi
     publisher="$(printf '{"id":%s,"run_attempt":2,"status":"completed","conclusion":"success","event":"workflow_run","display_title":"%s","created_at":"2026-09-21T00:01:00Z","path":".github/workflows/publish-pr-runtime-images.yml","head_branch":"develop","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$publisher_id" "$publisher_title")"
+    if [[ "$GH_FIXTURE" == publisher_explicit_* ]]; then
+      publisher="$(jq -c '.event="repository_dispatch" | .display_title="Publish PR Runtime Images source-run-101"' <<<"$publisher")"
+    fi
     if [[ "$GH_FIXTURE" == source_alternate_inventory_* ]]; then
       last_alternate=109
-      [[ "$GH_FIXTURE" != source_alternate_inventory_capped ]] || last_alternate=110
+      [[ "$GH_FIXTURE" != source_alternate_inventory_ninth ]] || last_alternate=110
+      alternate_publisher="$(jq -c '.id=120 | .created_at="2026-09-21T00:21:00Z"' <<<"$publisher")"
       alternate_inventory="$(jq -cn --argjson source "$source" --argjson last "$last_alternate" '
         [$source, (range(102; $last + 1) as $id |
           $source | .id=$id | .conclusion="success"
@@ -320,8 +333,30 @@ PY_RECEIPT
           printf '%s' '{"total_count":0,"artifacts":[]}'
           exit
           ;;
+        *actions/runs/120)
+          printf '%s' "$alternate_publisher"
+          exit
+          ;;
+        *actions/runs/120/attempts/2/jobs?per_page=100)
+          printf '%s' '{"total_count":1,"jobs":[{"run_id":120,"run_attempt":2,"name":"Publish Fixed PR Merge Image Tags","status":"completed","conclusion":"success","steps":[{"name":"Publish fixed PR image tags","status":"completed","conclusion":"success"}]}]}'
+          exit
+          ;;
+        *actions/runs/120/artifacts?*)
+          receipt_sha="$(receipt_zip 120 110 | sha256sum | cut -d' ' -f1)"
+          jq -cn --arg dig "sha256:$receipt_sha" \
+            '{total_count:1,artifacts:[{name:"pr-runtime-publication-120-attempt-2",id:497,expired:false,workflow_run:{id:120},digest:$dig}]}'
+          exit
+          ;;
+        *actions/artifacts/497/zip)
+          receipt_zip 120 110
+          exit
+          ;;
         *actions/workflows/publish-pr-runtime-images.yml/runs?*event=workflow_run*)
-          jq -c '{total_count:1,workflow_runs:[. | .id=120 | .conclusion="failure" | .created_at="2026-09-21T00:21:00Z"]}' <<<"$publisher"
+          if [[ "$GH_FIXTURE" == source_alternate_inventory_ninth && "$*" == *created=2026-09-21T00:11:00Z* ]]; then
+            jq -c '{total_count:1,workflow_runs:[.]}' <<<"$alternate_publisher"
+          else
+            jq -c '{total_count:1,workflow_runs:[. | .conclusion="failure"]}' <<<"$alternate_publisher"
+          fi
           exit
           ;;
       esac
@@ -470,7 +505,14 @@ PY_RECEIPT
         '
         ;;
       *actions/workflows/publish-pr-runtime-images.yml/runs?*event=workflow_run*)
-        if [[ "$GH_FIXTURE" == publisher_replacement_handoff* && "$*" == *created=2026-09-21T00:02:00Z* ]]; then
+        if [[ "$GH_FIXTURE" == publisher_explicit_stalled ]]; then
+          exec /bin/sleep 60
+        elif [[ "$GH_FIXTURE" == publisher_explicit_* ]]; then
+          printf '%s' '{"total_count":0,"workflow_runs":[]}'
+        elif [[ "$GH_FIXTURE" == publisher_exact_retry && ! -e "$GH_FIXTURE_STATE" ]]; then
+          touch "$GH_FIXTURE_STATE"
+          jq -c '{total_count:1,workflow_runs:[. | .id=102 | .conclusion="failure"]}' <<<"$publisher"
+        elif [[ "$GH_FIXTURE" == publisher_replacement_handoff* && "$*" == *created=2026-09-21T00:02:00Z* ]]; then
           printf '{"total_count":1,"workflow_runs":[%s]}' "$alt_publisher"
         elif [[ "$GH_FIXTURE" == publisher_replacement_handoff_missing_direct ]]; then
           printf '%s' '{"total_count":0,"workflow_runs":[]}'
@@ -479,7 +521,15 @@ PY_RECEIPT
         fi
         ;;
       *actions/workflows/publish-pr-runtime-images.yml/runs?*event=repository_dispatch*)
-        printf '%s' '{"total_count":0,"workflow_runs":[]}'
+        if [[ "$GH_FIXTURE" == publisher_explicit_* ]]; then
+          printf '{"total_count":1,"workflow_runs":[%s]}' "$publisher"
+        else
+          if [[ "$GH_FIXTURE" == publisher_native_before_other ]]; then
+            touch "$GH_FIXTURE_STATE"
+            exec /bin/sleep 60
+          fi
+          printf '%s' '{"total_count":0,"workflow_runs":[]}'
+        fi
         ;;
       *actions/workflows/runtime-images.yml/runs?*)
         if [[ "$GH_FIXTURE" == source_inventory_* ]]; then
@@ -593,19 +643,19 @@ if [[ "${0##*/}" == wait-for-runtime-images.sh ]]; then
       echo "obsolete branch waiter must refuse before sleeping" >&2
       exit 99
     fi
-    SECONDS=$((SECONDS + 1))
+    SECONDS=$((SECONDS + ${GH_FIXTURE_CLOCK_STEP:-1}))
   }
 fi
 EOF
 export BASH_ENV="$TEMP_DIR/waiter-clock.sh"
 
 GH_FIXTURE=success_runs \
-  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=12 \
   HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
   HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
   timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/publisher-success.out"
 grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/publisher-success.out"
-GH_FIXTURE=publisher_callback_source_branch HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
+GH_FIXTURE=publisher_callback_source_branch HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=12 \
   HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
   timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/publisher-source-branch.out"
 grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/publisher-source-branch.out"
@@ -615,8 +665,8 @@ grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/publisher-source-
 # expected, but an immediate publisher failure is not.
 alternate_status=0
 alternate_output="$(
-  GH_FIXTURE=publisher_failed_with_active_alternate GH_FIXTURE_STATE="$TEMP_DIR/active-alternate-state" \
-    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=3 \
+  GH_FIXTURE=publisher_failed_with_active_alternate GH_FIXTURE_STATE="$TEMP_DIR/active-alternate-state" GH_FIXTURE_CLOCK_STEP=6 \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=12 HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=12 \
     HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
     timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" 2>&1
 )" || alternate_status=$?
@@ -655,27 +705,20 @@ for inventory_fixture in source_inventory_missing_row source_inventory_changing_
   esac
 done
 
-# The cap alone keeps this otherwise terminal result pending. Every examined
-# alternate has a complete publisher read with a terminal failure.
-for alternate_fixture in source_alternate_inventory_complete source_alternate_inventory_capped; do
-  capped_alternate_status=0
-  capped_alternate_output="$(
-    GH_FIXTURE="$alternate_fixture" \
-      HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
-      timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" 2>&1
-  )" || capped_alternate_status=$?
-  test "$capped_alternate_status" = 1
-  if [[ "$alternate_fixture" == source_alternate_inventory_complete ]]; then
-    grep -Fq 'Matching runtime-images workflow 101 completed with failure' <<<"$capped_alternate_output"
-  else
-    grep -Fq 'Waiting for publication of an exact replacement producer' <<<"$capped_alternate_output"
-    grep -Fq 'Timed out waiting for runtime-images workflow' <<<"$capped_alternate_output"
-    if grep -Fq 'Matching runtime-images workflow 101 completed with failure' <<<"$capped_alternate_output"; then
-      echo "capped PR alternate inventory became a terminal runtime-image failure" >&2
-      exit 1
-    fi
-  fi
-done
+# Complete alternate coverage can prove terminal failure or qualify an older
+# exact provider receipt after the newest eight alternatives fail.
+alternate_status=0
+alternate_output="$(
+  GH_FIXTURE=source_alternate_inventory_complete \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=30 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    timeout 45s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" 2>&1
+)" || alternate_status=$?
+test "$alternate_status" = 1
+grep -Fq 'Matching runtime-images workflow 101 completed with failure' <<<"$alternate_output"
+GH_FIXTURE=source_alternate_inventory_ninth \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=30 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 45s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/ninth-publisher.out" 2>&1
+grep -Fq 'Trusted PR image publisher 120 succeeded' "$TEMP_DIR/ninth-publisher.out"
 
 # A stale success in the first list can turn into a rerun before its detail read.
 # That replacement is still active even while the newer exact producer stays red.
@@ -696,9 +739,12 @@ for handoff_fixture in publisher_replacement_handoff publisher_replacement_hando
   publisher_replacement_handoff_workflow_transient publisher_replacement_handoff_repo_transient \
   publisher_replacement_handoff_inventory_transient; do
   GH_FIXTURE="$handoff_fixture" GH_FIXTURE_STATE="$TEMP_DIR/$handoff_fixture-state" \
-    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=8 HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=8 \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=20 HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=20 \
     HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
-    timeout 20s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/$handoff_fixture.out" 2>&1
+    timeout 45s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/$handoff_fixture.out" 2>&1 || {
+      cat "$TEMP_DIR/$handoff_fixture.out" >&2
+      exit 1
+    }
   if [[ "$handoff_fixture" != publisher_replacement_handoff_inventory_transient ]]; then
     grep -Fq 'Waiting for publication of an exact replacement producer' "$TEMP_DIR/$handoff_fixture.out"
   fi
@@ -728,20 +774,38 @@ done
 # A typed native callback binds the exact source run in its title, and both
 # producer events still require one positive publication step for the attempt.
 GH_FIXTURE=typed_publisher_success \
-  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=12 \
   HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
   HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
   timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/typed-publisher-success.out"
 grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/typed-publisher-success.out"
+
+# Either publisher event can prove either producer type. A ready path gets to
+# verify its receipt before a second inventory call can consume the deadline.
+for publisher_fixture in publisher_explicit_pr publisher_explicit_typed publisher_native_before_other; do
+  GH_FIXTURE="$publisher_fixture" GH_FIXTURE_STATE="$TEMP_DIR/$publisher_fixture.state" \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=12 HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=12 \
+    HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
+    timeout 20s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/$publisher_fixture.out"
+  grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/$publisher_fixture.out"
+  test ! -e "$TEMP_DIR/$publisher_fixture.state"
+done
+BASH_ENV= GH_FIXTURE=publisher_explicit_stalled \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=12 HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=12 \
+  HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
+  timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/publisher-explicit-stalled.out" 2>&1
+grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/publisher-explicit-stalled.out"
+
 # New producer attempt cannot borrow the old receipt; its own exact publisher can qualify.
-GH_FIXTURE=publisher_exact_retry \
-  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+GH_FIXTURE=publisher_exact_retry GH_FIXTURE_STATE="$TEMP_DIR/publisher-exact-retry.state" \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=8 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
   HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
-  timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/publisher-exact-retry.out"
+  timeout 20s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/publisher-exact-retry.out" 2>&1
+grep -Fq 'publisher 102 completed with failure' "$TEMP_DIR/publisher-exact-retry.out"
 grep -Fq 'Trusted PR image publisher 103 succeeded' "$TEMP_DIR/publisher-exact-retry.out"
 
 for publisher_fixture in publisher_expired_producer publisher_missing_producer; do
-  GH_FIXTURE="$publisher_fixture" HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 \
+  GH_FIXTURE="$publisher_fixture" HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=12 \
     HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
     timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/$publisher_fixture.out"
   grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/$publisher_fixture.out"
@@ -752,8 +816,8 @@ for publisher_fixture in publisher_steps_absent publisher_duplicate_steps typed_
   publisher_callback_bad_receipt publisher_callback_other_branch publisher_pr_merge_head; do
   publisher_status=0
   publisher_output="$(
-    GH_FIXTURE="$publisher_fixture" GH_FIXTURE_STATE="$TEMP_DIR/$publisher_fixture-state" HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
-      HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    GH_FIXTURE="$publisher_fixture" GH_FIXTURE_STATE="$TEMP_DIR/$publisher_fixture-state" GH_FIXTURE_CLOCK_STEP=8 \
+      HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=8 HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=8 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
       HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
       timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" 2>&1
   )" || publisher_status=$?
@@ -772,7 +836,7 @@ wrong_merge_status=0
 wrong_merge_output="$(
   GH_FIXTURE=wrong_runs \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
-    HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=1 \
+    HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=8 \
     HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
     HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
     timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" 2>&1
@@ -810,7 +874,7 @@ done
 # immutable-commit promotion proof from an earlier callback.
 for branch_fixture in branch_newer_noop branch_older_jobs_transient; do
   GH_FIXTURE="$branch_fixture" GH_FIXTURE_STATE="$TEMP_DIR/$branch_fixture-state" \
-    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=8 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
     timeout 15s bash "$WAITER" "$head_sha" >"$TEMP_DIR/$branch_fixture.out"
   grep -Fq "Earlier trusted branch runtime-image run 102 has verified promotion for ${head_sha} after a newer skipped promotion." "$TEMP_DIR/$branch_fixture.out"
 done
@@ -853,8 +917,16 @@ for branch_fixture in branch_newer_failed branch_newer_ambiguous branch_older_mi
     printf 'branch fallback must refuse with status 1 for %s, got %s\n' "$branch_fixture" "$branch_fallback_status" >&2
     exit 1
   fi
-  grep -Fq 'Trusted branch runtime-image run 103 has no verified promotion' <<<"$branch_fallback_output"
-  grep -Fq "Timed out waiting for runtime-images workflow for ${head_sha} after" <<<"$branch_fallback_output"
+  if [[ "$branch_fixture" == branch_newer_failed ]]; then
+    grep -Fq 'Matching runtime-images workflow 103 completed with failure' <<<"$branch_fallback_output"
+    if grep -Eq 'Timed out waiting|102 has verified promotion' <<<"$branch_fallback_output"; then
+      echo "branch waiter did not stop on the latest exact failed run" >&2
+      exit 1
+    fi
+  else
+    grep -Fq 'Trusted branch runtime-image run 103 has no verified promotion' <<<"$branch_fallback_output"
+    grep -Fq "Timed out waiting for runtime-images workflow for ${head_sha} after" <<<"$branch_fallback_output"
+  fi
 done
 
 branch_obsolete_status=0

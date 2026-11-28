@@ -174,20 +174,29 @@ repair_requested_tuple() {
   return "$repair_success"
 }
 
-preview_dispatch_comparison_is_current() {
-  local pr_number="$1" base_sha="$2" head_sha="$3" merge_sha="$4" image_tag="$5"
-  local live_pr base_ref live_base live_image
+current_preview_dispatch_priority() {
+  local pr_number="$1" base_sha="$2" head_sha="$3" merge_sha="$4" image_tag="$5" expected_base_ref="$6"
+  local live_pr base_ref live_base live_image author labels eligibility current_priority
   live_pr="$(timeout 10s gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")" || return 1
   base_ref="$(jq -er --arg repo "$GITHUB_REPOSITORY" --arg head "$head_sha" --arg merge "$merge_sha" '
     select(.state == "open" and .mergeable == true and .head.repo.full_name == $repo
       and .base.repo.full_name == $repo and .head.sha == $head and .merge_commit_sha == $merge)
     | .base.ref | select(type == "string" and test("^[A-Za-z0-9._/-]+$"))
   ' <<<"$live_pr")" || return 1
+  [[ "$base_ref" == "$expected_base_ref" ]] || return 1
   live_base="$(timeout 10s gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${base_ref}")" || return 1
   jq -e --arg base "$base_sha" '.object.sha == $base' <<<"$live_base" >/dev/null || return 1
-  live_image="$(bash ./dev-tools/hosted/preview/resolve-preview-image-tag.sh \
+  live_image="$(timeout 30s bash ./dev-tools/hosted/preview/resolve-preview-image-tag.sh \
     "$merge_sha" "$pr_number" "$base_sha")" || return 1
-  [[ "$live_image" == "$image_tag" ]]
+  [[ "$live_image" == "$image_tag" ]] || return 1
+  author="$(jq -er '.user.login | select(type == "string" and length > 0)' <<<"$live_pr")" || return 1
+  labels="$(jq -ec '.labels | select(type == "array")' <<<"$live_pr")" || return 1
+  eligibility="$(python3 "$eligibility_script" --operation deploy --state open \
+    --base-ref "$base_ref" --author "$author" --labels-json "$labels")" || return 1
+  grep -Fxq 'eligible=true' <<<"$eligibility" || return 1
+  current_priority="$(sed -n 's/^priority=//p' <<<"$eligibility")"
+  [[ "$current_priority" == true || "$current_priority" == false ]] || return 1
+  printf '%s\n' "$current_priority"
 }
 
 prepare_preview_dispatch() {
@@ -269,6 +278,14 @@ prepare_preview_dispatch() {
     # A superseded reservation or a confirmed missing Namespace can restore the predecessor.
     local predecessor
     predecessor="$(jq -c '.predecessor' <<<"$prior")" || return 1
+    if [[ -z "$snapshot" ]]; then
+      local current_namespace
+      if ! current_namespace="$(kubectl get namespace "$namespace" --ignore-not-found -o json --request-timeout=10s)" ||
+        [[ -n "$current_namespace" ]]; then
+        echo "Unable to reconfirm Namespace absence before releasing the proof-retry reservation for PR #${pr_number}; leaving it charged." >&2
+        return 1
+      fi
+    fi
     if ! holder="$(write_preview_retry_entry "$holder" "$namespace" "$predecessor" true)"; then
       echo "Unable to confirm release of the superseded proof-retry reservation for PR #${pr_number}; refusing dispatch." >&2
       dispatch_outcome_failed=true
@@ -350,7 +367,7 @@ prepare_preview_dispatch() {
   elif [[ "$phase" == SEND_STARTED ]]; then
     # Another actor may have started a distinct send after the first settlement.
     [[ "$settled_once" != true ]] || return 1
-    local settled
+    local settled current_priority
     if ! settled="$(settle_terminal_preview_retry "$namespace" "$pr_number" "$prior")"; then
       echo "Retained proof-retry send-start for PR #${pr_number} has no guarded rejection; leaving it charged without positive terminal receiver evidence."
       return 1
@@ -359,13 +376,14 @@ prepare_preview_dispatch() {
     prior="$(preview_retry_entry "$holder" "$namespace")" || return 1
     jq -en --argjson current "$prior" --argjson settled "$settled" '$current == $settled' >/dev/null || return 1
     # Settlement can race with a PR update as well as a Namespace change.
-    if ! preview_dispatch_comparison_is_current "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag"; then
+    if ! current_priority="$(current_preview_dispatch_priority \
+      "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" "$pr_base_ref")"; then
       echo "Skipping PR #${pr_number}: preview comparison could not be reconfirmed after retry settlement."
       return 2
     fi
     # Re-read the Namespace and ordinary capacity before dispatch.
     prepare_preview_dispatch "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" \
-      "$require_deployed_tuple" "$priority" "$expected_namespace_uid" true
+      "$require_deployed_tuple" "$current_priority" "$expected_namespace_uid" true
     return $?
   fi
   if [[ "$proof_completed" == true ]]; then
@@ -421,6 +439,11 @@ prepare_preview_dispatch() {
        stageVersion:2,phase:"RESERVED",predecessor:$predecessor,
        holderUid:$holder_uid,holderResourceVersion:$holder_rv}
   ')" || return 1
+  if ! current_preview_dispatch_priority \
+    "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" "$pr_base_ref" >/dev/null; then
+    echo "Skipping PR #${pr_number}: preview comparison could not be reconfirmed before charging a proof retry."
+    return 2
+  fi
   if ! holder="$(write_preview_retry_entry "$holder" "$namespace" "$reservation")"; then
     echo "Unable to prove proof-retry reservation custody for PR #${pr_number}; refusing dispatch." >&2
     dispatch_outcome_failed=true
@@ -449,6 +472,7 @@ proof_retry_namespace_matches() {
 
 start_reserved_proof_retry() {
   local holder="$1" namespace="$2" pr_number="$3" started current current_row tuple
+  local fence_failure=""
   local reserved="$proof_retry_record"
   if ! proof_retry_namespace_matches "$namespace" "$proof_retry_record"; then
     echo "Skipping PR #${pr_number}: Namespace fence changed before proof retry dispatch; reservation stays charged." >&2
@@ -471,17 +495,17 @@ start_reserved_proof_retry() {
     ' <<<"$current" >/dev/null ||
     ! current_row="$(preview_retry_entry "$current" "$namespace")" ||
     [[ "$current_row" != "$started" ]]; then
-    echo "Proof-retry send-start custody changed before POST for PR #${pr_number}; leaving its budget charged." >&2
-    dispatch_outcome_failed=true
-    return 1
+    fence_failure="holder custody"
+  elif ! proof_retry_namespace_matches "$namespace" "$started"; then
+    fence_failure="the final Namespace fence"
   fi
-  if ! proof_retry_namespace_matches "$namespace" "$started"; then
+  if [[ -n "$fence_failure" ]]; then
     # Only the process that acknowledged the send-start can prove that it
     # has not attempted POST. Restore the same reservation using this row's CAS.
     if restore_owned_proof_retry "$namespace" "$reserved" false; then
-      echo "Restored the unsent proof-retry reservation for PR #${pr_number} after the final Namespace fence could not be verified." >&2
+      echo "Restored the unsent proof-retry reservation for PR #${pr_number} after $fence_failure could not be verified." >&2
     else
-      echo "Unable to restore the unsent proof-retry reservation for PR #${pr_number}; leaving its budget charged." >&2
+      echo "Unable to restore the unsent proof-retry reservation for PR #${pr_number} after $fence_failure could not be verified; leaving its budget charged." >&2
       dispatch_outcome_failed=true
     fi
     return 1
@@ -659,9 +683,13 @@ automatic_preview_has_tuple() {
           and ([.steps[] | select(.name == "Explain preview skip")] | length) <= 1)
     ' <<<"$jobs" >/dev/null || return 2
     if jq -e '.status == "completed" and .conclusion == "success"' <<<"$latest" >/dev/null &&
-      jq -e '
-        any(.jobs[] | select(.name == "Preview Plan") | .steps[];
-          .name == "Explain preview skip" and .status == "completed" and .conclusion == "success")
+      jq -e --arg nonce "$nonce" '
+        "Preview retry no handoff stale-comparison nonce-" as $prefix
+        | .jobs[] | select(.name == "Preview Plan")
+        | [.steps[] | select(.status == "completed" and .conclusion == "success"
+          and (.name == "Explain preview skip" or (.name | startswith($prefix))))] as $skips
+        | ($skips | length) == 1
+          and ($skips[0].name == "Explain preview skip" or ($nonce != "" and $skips[0].name == ($prefix + $nonce)))
       ' <<<"$jobs" >/dev/null; then
       preview_source_skipped_render "$run_id" "$attempt" "$head" <<<"$jobs" >/dev/null || return 2
       # A completed, successful, explicitly explained no-op cannot still hand off a render.
@@ -891,7 +919,16 @@ verify_terminal_preview_retry() {
     return 1
   fi
 
-  source_latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 1
+  if [[ "$source_status" == 3 ]]; then
+    consumer_latest="$(timeout 10s gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${consumer_id}")" || return 1
+    jq -e --argjson id "$consumer_id" --argjson attempt "$consumer_attempt" --arg title "$consumer_title" \
+      --argjson status "$consumer_status" '
+      .id == $id and .run_attempt == $attempt and .display_title == $title
+        and .status == "completed" and ($status != 4 or .conclusion == "success")
+      ' <<<"$consumer_latest" >/dev/null || return 1
+  fi
+  # A new source attempt can start while the trusted consumer is being checked.
+  source_latest="$(timeout 10s gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 1
   jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg title "$title" \
     --argjson workflow_id "$preview_workflow_id" --arg repo "$GITHUB_REPOSITORY" \
     --arg branch "$DEFAULT_BRANCH" --arg head "$run_head" '
@@ -902,14 +939,6 @@ verify_terminal_preview_retry() {
       and (.path | IN(".github/workflows/preview.yml", ".github/workflows/preview.yml@" + $branch,
         ".github/workflows/preview.yml@refs/heads/" + $branch))
     ' <<<"$source_latest" >/dev/null || return 1
-  if [[ "$source_status" == 3 ]]; then
-    consumer_latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${consumer_id}")" || return 1
-    jq -e --argjson id "$consumer_id" --argjson attempt "$consumer_attempt" --arg title "$consumer_title" \
-      --argjson status "$consumer_status" '
-      .id == $id and .run_attempt == $attempt and .display_title == $title
-        and .status == "completed" and ($status != 4 or .conclusion == "success")
-      ' <<<"$consumer_latest" >/dev/null || return 1
-  fi
 }
 
 settle_terminal_preview_retry() {
@@ -1302,7 +1331,8 @@ trusted_consumer_has_tuple() {
          and ($deploy[0] | .name == $tuple and successful) then "validated-deploy"
       elif $nonce != "" and ($rejected | length) == 1 and (any($deploy[]; successful) | not)
          and ($rejected[0].name | IN("Trusted preview retry rejected stale-head nonce-" + $nonce,
-           "Trusted preview retry rejected stale-comparison nonce-" + $nonce))
+           "Trusted preview retry rejected stale-comparison nonce-" + $nonce,
+           "Trusted preview retry rejected ineligible nonce-" + $nonce))
       then "rejected-retry"
       else empty end
   ' <<<"$jobs")" || return 1

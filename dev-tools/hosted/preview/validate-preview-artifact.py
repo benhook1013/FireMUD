@@ -2065,6 +2065,8 @@ def validate_metadata(
             r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", retry_uid
         ):
             fail("metadata proofRetryNamespaceUid must be a canonical Namespace UID")
+        if "proofRetryNonce" not in metadata or "sourceRunAttempt" not in metadata:
+            fail("retry metadata must bind its reservation nonce and exact source run attempt")
         allowed_fields.add("proofRetryNamespaceUid")
     if "proofRetryNonce" in metadata:
         retry_nonce = metadata["proofRetryNonce"]

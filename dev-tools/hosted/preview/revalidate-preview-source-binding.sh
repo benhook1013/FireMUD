@@ -143,4 +143,7 @@ jq -e \
 
 if [[ $# -eq 7 ]]; then
   require_current_run_attempt "$6" "$7" "$STAGE"
+  # Repeat the exact comparison after the independent source-attempt read.
+  timeout 15s bash "${BASH_SOURCE[0]}" \
+    "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" "$STAGE"
 fi

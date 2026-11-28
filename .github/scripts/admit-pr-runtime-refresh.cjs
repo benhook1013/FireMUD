@@ -25,6 +25,7 @@ module.exports = async function admitPrRuntimeRefresh({
   const ownerReceiptReserveMs = 20 * 1000;
   const identityRequestTimeoutMs = 5000;
   const claimWriteTimeoutMs = 10_000;
+  const dispatchTimeoutMs = 15_000;
 
   const fail = message => { throw new Error(message); };
   const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -73,12 +74,18 @@ module.exports = async function admitPrRuntimeRefresh({
   const validChronology = value => typeof value === 'string' &&
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) &&
     Number.isFinite(Date.parse(value));
-  const identityRequest = deadline => {
-    if (deadline === undefined) return {};
-    const remaining = deadline - now();
-    if (remaining <= 0) throw new Error('Exact runtime comparison read deadline expired.');
-    return {request: {timeout: Math.min(identityRequestTimeoutMs, remaining)}};
+  const boundedRequest = (deadline, requestLimitMs) => {
+    const timeoutMs = Math.floor(Math.min(deadline - now(), requestLimitMs));
+    if (timeoutMs <= 0) throw new Error('Runtime refresh request deadline expired.');
+    return {request: {retries: 0, signal: AbortSignal.timeout(timeoutMs)}};
   };
+  const identityRequest = deadline =>
+    deadline === undefined ? {} : boundedRequest(deadline, identityRequestTimeoutMs);
+  const pullMatches = pull => pull && pull.number === pullNumber && pull.state === 'open' &&
+    pull.head?.repo?.full_name === fullName && pull.base?.repo?.full_name === fullName &&
+    pull.head?.sha === input.head_sha && pull.base?.ref === input.base_ref &&
+    (pull.mergeable === true || pull.mergeable === null) &&
+    typeof pull.mergeable_state === 'string' && !['dirty', 'conflicting'].includes(pull.mergeable_state);
   const observeIdentity = async deadline => {
     let pullResponse;
     try {
@@ -89,12 +96,7 @@ module.exports = async function admitPrRuntimeRefresh({
       return transientIdentityRead(error);
     }
     const pull = dataOf(pullResponse);
-    if (!pull || pull.number !== pullNumber || pull.state !== 'open' ||
-        pull.head?.repo?.full_name !== fullName || pull.base?.repo?.full_name !== fullName ||
-        pull.head?.sha !== input.head_sha || pull.base?.ref !== input.base_ref ||
-        (pull.mergeable !== true && pull.mergeable !== null) ||
-        typeof pull.mergeable_state !== 'string' ||
-        ['dirty', 'conflicting'].includes(pull.mergeable_state)) return false;
+    if (!pullMatches(pull)) return false;
 
     let refResponse;
     try {
@@ -130,11 +132,20 @@ module.exports = async function admitPrRuntimeRefresh({
     }
     if (mergeBase !== input.base_sha) return false;
     if (Object.hasOwn(input, 'preview_only')) {
+      let fresh;
+      try {
+        fresh = dataOf(await github.rest.pulls.get({...contextRepo, pull_number: pullNumber,
+          ...identityRequest(deadline)}));
+      } catch (error) {
+        if (isNotFound(error)) return false;
+        return transientIdentityRead(error);
+      }
+      if (!pullMatches(fresh) || fresh.merge_commit_sha !== reportedMerge) return false;
       try {
         execFileSync('python3', [
           resolve(__dirname, '../../dev-tools/hosted/preview/preview-eligibility.py'), '--revalidate-deploy',
           '--expected-repository', fullName, '--expected-head-sha', input.head_sha,
-        ], {input: JSON.stringify(pull), encoding: 'utf8'});
+        ], {input: JSON.stringify(fresh), encoding: 'utf8'});
       } catch (error) {
         if (error.status !== 1) throw error;
         core.info('Canonical preview eligibility refused the current PR; no dispatch.');
@@ -528,7 +539,7 @@ module.exports = async function admitPrRuntimeRefresh({
     const ref = `${ownerReceiptRefPrefix(kind, claim.tag_sha)}${context.runId}/${admissionAttempt}`;
     try {
       const locator = await github.rest.git.createRef({...contextRepo, ref, sha: claim.tag_sha,
-        request: {retries: 0, timeout: claimWriteTimeoutMs}});
+        ...boundedRequest(claim.jobDeadline, claimWriteTimeoutMs)});
       if (locator?.status !== 201 || locator.data?.ref !== ref ||
           locator.data.object?.type !== 'tag' || locator.data.object.sha !== claim.tag_sha) {
         fail(`${description} locator creation is unproven.`);
@@ -732,7 +743,7 @@ module.exports = async function admitPrRuntimeRefresh({
     const tag = await github.rest.git.createTag({
       ...contextRepo, tag: tagName(generation), message: claimMessage(generation, witnessDigest, ownerRevision),
       object: ownerRevision, type: 'commit', tagger: {...tagger, date},
-      request: {retries: 0, timeout: claimWriteTimeoutMs},
+      ...boundedRequest(jobDeadline - ownerReceiptReserveMs, claimWriteTimeoutMs),
     });
     const annotation = parseClaimTag(tag?.data, generation);
     if (tag?.status !== 201 || annotation?.ownerRevision !== ownerRevision ||
@@ -741,7 +752,7 @@ module.exports = async function admitPrRuntimeRefresh({
     }
     const ref = `refs/tags/${tagName(generation)}`;
     const created = await github.rest.git.createRef({...contextRepo, ref, sha: tag.data.sha,
-      request: {retries: 0, timeout: claimWriteTimeoutMs}});
+      ...boundedRequest(jobDeadline - ownerReceiptReserveMs, claimWriteTimeoutMs)});
     if (created?.status !== 201 || created.data?.ref !== ref ||
         created.data.object?.type !== 'tag' || created.data.object.sha !== tag.data.sha) {
       fail('Runtime claim ref creation is unproven.');
@@ -755,8 +766,12 @@ module.exports = async function admitPrRuntimeRefresh({
   }
 
   let identityIsCurrent;
+  let dispatchRequest;
   try {
     identityIsCurrent = await currentIdentity(claim.jobDeadline - ownerReceiptReserveMs);
+    if (identityIsCurrent) {
+      dispatchRequest = boundedRequest(claim.jobDeadline - ownerReceiptReserveMs, dispatchTimeoutMs).request;
+    }
   } catch {
     core.warning('Runtime refresh tuple could not be rechecked after claiming; no dispatch.');
     if (isTrustedReceiptOwner() && await recordOwnerReceipt(claim, preSendUnavailable)) {
@@ -783,7 +798,7 @@ module.exports = async function admitPrRuntimeRefresh({
         runtime_refresh_claim: String(claim.generation),
         runtime_refresh_claim_witness: witness,
       },
-      request: {retries: 0, redirect: 'error'},
+      request: {...dispatchRequest, redirect: 'error'},
     });
     if (dispatched?.status !== 204) fail('Unexpected runtime refresh dispatch status.');
   } catch (error) {

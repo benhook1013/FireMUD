@@ -656,7 +656,7 @@ def check_candidate_execution(job):
         if re.match(r"(?:\./)?candidate/", step.get("uses", "")):
             raise AssertionError("preview render uses a candidate local action")
         script = step.get("run", "").replace("\\\n", "")
-        if re.search(r"(?:bash|python3)\s+(?:\./)?candidate/", script) or re.search(
+        if re.search(r"""\b(?:bash|sh|python3)\s+['"]?(?:\./)?candidate/""", script) or re.search(
             r"""(?:^|[;&|()]|\b(?:then|do|else)\s)\s*['"]?(?:\./)?candidate/""",
             script,
             flags=re.MULTILINE,
@@ -671,6 +671,13 @@ except AssertionError:
     pass
 else:
     raise AssertionError("conditional candidate execution escaped isolation checking")
+for interpreter in ("bash", "sh", "python3"):
+    try:
+        check_candidate_execution({"steps": [{"run": f"{interpreter} './candidate/inert-fixture.sh'"}]})
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(f"quoted candidate operand for {interpreter} escaped isolation checking")
 check_candidate_execution({"steps": [{"run": "if false; then ./chart-data/inert-fixture.sh; fi"}]})
 for job_name, job in preview_jobs.items():
     for checkout in checkouts(job):

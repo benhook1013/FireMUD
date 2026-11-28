@@ -263,10 +263,13 @@ test('serialized admission waits for the first exact receiver before releasing t
     witness_sha256: createHash('sha256').update(witness).digest('hex'),
     owner_revision: D,
   }) + '\n');
-  assert.deepEqual(f.sent, [{owner: 'example', repo: 'FireMUD', event_type: 'pr-runtime-base-refresh',
+  assert.equal(f.sent.length, 1);
+  const {request: {signal, ...request}, ...posted} = f.sent[0];
+  assert.ok(signal instanceof AbortSignal);
+  assert.deepEqual({...posted, request}, {owner: 'example', repo: 'FireMUD', event_type: 'pr-runtime-base-refresh',
     client_payload: {...f.admission.input, image_tag: `pr-merge-${A}`, runtime_refresh_claim: '1',
       runtime_refresh_claim_witness: witness},
-    request: {retries: 0, redirect: 'error'}}]);
+    request: {retries: 0, redirect: 'error'}});
 });
 
 test('a non-native admission context cannot create a tag or dispatch', async t => {
@@ -396,6 +399,42 @@ test('the final identity read stops before the reserved owner receipt window', a
   assert.ok([...f.claimRefs.keys()].some(ref => ref.startsWith('refs/tags/firemud-runtime-refresh-pre-send-unavailable/')));
 });
 
+test('bounded identity reads and claim writes pass a fetch cancellation signal', async () => {
+  const f = admissionFixture();
+  const {git, pulls} = f.admission.github.rest;
+  const createTag = git.createTag;
+  const createRef = git.createRef;
+  const getPull = pulls.get;
+  const signals = [];
+  const observeSignal = options => {
+    assert.ok(options.request.signal instanceof AbortSignal);
+    assert.equal(options.request.signal.aborted, false);
+    assert.equal(options.request.retries, 0);
+    signals.push(options.request.signal);
+  };
+  git.createTag = async options => {
+    observeSignal(options);
+    return createTag(options);
+  };
+  git.createRef = async options => {
+    observeSignal(options);
+    return createRef(options);
+  };
+  let claimed = false;
+  f.state.afterClaim = () => { claimed = true; };
+  pulls.get = async options => {
+    if (claimed) {
+      observeSignal(options);
+      throw new DOMException('Synthetic final read timed out', 'TimeoutError');
+    }
+    return getPull(options);
+  };
+
+  assert.equal(await admitRuntimeRefresh(f.admission), 'pre-send-unavailable');
+  assert.equal(new Set(signals).size, 4);
+  assert.deepEqual(f.sent, []);
+});
+
 test('identity retries are bounded and do not retry authorization failure', async () => {
   for (const [status, observations] of [[503, 6], [403, 1]]) {
     const f = admissionFixture();
@@ -413,11 +452,20 @@ test('identity retries are bounded and do not retry authorization failure', asyn
 });
 
 test('completed producers still permit an exact repair', async () => {
-  for (const conclusion of ['success', 'failure']) {
+  for (const conclusion of [null, 'success', 'failure']) {
     const f = admissionFixture();
-    f.runs.push(f.makeRun({status: 'completed', conclusion}));
-    assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
-    assert.equal(f.sent.length, 1);
+    f.runs.push(f.makePullRequestRun({id: 299, created_at: new Date(f.state.now - 120000).toISOString()}));
+    if (conclusion !== null) {
+      f.runs.push(f.makePullRequestRun({
+        id: 300, status: 'completed', conclusion, created_at: new Date(f.state.now - 60000).toISOString(),
+      }));
+    }
+    assert.equal(await admitRuntimeRefresh(f.admission), conclusion ? 'dispatched-observed' : 'already-active');
+    assert.equal(f.sent.length, conclusion ? 1 : 0);
+    assert.ok(f.state.lookups.some(call => call.event === 'pull_request' &&
+      call.status === 'queued' && call.runIds.includes(299)));
+    assert.ok(f.state.lookups.some(call => call.event === 'pull_request' &&
+      call.status === 'completed' && call.runIds.includes(300) === Boolean(conclusion)));
   }
 });
 
@@ -458,6 +506,39 @@ test('serialized admission reapplies preview policy after the inventory read onl
     assert.equal(await admitRuntimeRefresh(f.admission), previewOnly ? 'obsolete' : 'dispatched-observed');
     assert.equal(f.sent.length, previewOnly ? 0 : 1);
   }
+});
+
+test('the preview comparison uses fresh priority after the final merge read', async () => {
+  const f = admissionFixture();
+  f.admission.input.base_ref = 'feature/stack';
+  f.admission.input.preview_only = true;
+  let claimed = false;
+  f.state.afterClaim = () => { claimed = true; };
+  const getCommit = f.admission.github.rest.repos.getCommit;
+  f.admission.github.rest.repos.getCommit = async options => {
+    const commit = await getCommit(options);
+    if (claimed) f.state.labels = [];
+    return commit;
+  };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
+  assert.deepEqual(f.sent, []);
+  assert.ok([...f.claimRefs.keys()].some(ref => ref.startsWith('refs/tags/firemud-runtime-refresh-unsent/')));
+});
+
+test('a bounded dispatch POST preserves custody on an ambiguous timeout', async () => {
+  const f = admissionFixture();
+  let posts = 0;
+  f.admission.github.rest.repos.createDispatchEvent = async ({request}) => {
+    posts++;
+    assert.ok(request.signal instanceof AbortSignal);
+    assert.equal(request.retries, 0);
+    assert.equal(request.redirect, 'error');
+    throw new DOMException('Synthetic dispatch timeout', 'TimeoutError');
+  };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(posts, 1);
+  assert.equal(f.claimRefs.size, 1);
+  assert.equal(f.outputs.size, 0);
 });
 
 test('preview marker stays within the admission request and the schema stays closed', async () => {

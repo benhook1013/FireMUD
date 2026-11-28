@@ -103,7 +103,19 @@ cat > "$TEMP_DIR/bin/kubectl" <<'EOF'
 set -euo pipefail
 if [[ "$*" == "-n firemud-system get configmap firemud-preview-proof-retries -o json --request-timeout=10s" ]]; then
   if [[ "${FAKE_RETRY_HOLDER_MISSING:-false}" == true ]]; then exit 1; fi
+  : > "$FAKE_RETRY_HOLDER_READ_MARKER"
   if [[ -f "$FAKE_RETRY_HOLDER" ]]; then
+    if [[ -n "${FAKE_RETRY_POST_ACK_GET_FAILURE:-}" && ! -e "$FAKE_RETRY_POST_ACK_GET_MARKER" ]] &&
+      jq -e '.data["pr-901"] | fromjson? | .phase == "SEND_STARTED"' "$FAKE_RETRY_HOLDER" >/dev/null; then
+      : > "$FAKE_RETRY_POST_ACK_GET_MARKER"
+      if [[ "$FAKE_RETRY_POST_ACK_GET_FAILURE" == competing ]]; then
+        jq -c '.metadata.resourceVersion |= (tonumber + 1 | tostring)
+          | .data["pr-901"] |= (fromjson | .nonce = "12345678-1234-4234-8234-123456789abc" | tojson)' \
+          "$FAKE_RETRY_HOLDER" > "$FAKE_RETRY_HOLDER.next"
+        mv "$FAKE_RETRY_HOLDER.next" "$FAKE_RETRY_HOLDER"
+      fi
+      exit 1
+    fi
     cat "$FAKE_RETRY_HOLDER"
   else
     printf '%s\n' '{"apiVersion":"v1","kind":"ConfigMap","metadata":{"namespace":"firemud-system","name":"firemud-preview-proof-retries","uid":"uid-holder","resourceVersion":"1"},"data":{"schemaVersion":"1"}}'
@@ -132,8 +144,9 @@ if [[ "${1:-}" == -n && "${2:-}" == firemud-system && "${3:-}" == patch &&
     exit 1
   fi
   if [[ "${FAKE_RETRY_PATCH_CASE:-}" == competing-start && "$target_phase" == SEND_STARTED ]]; then
-    state="$(jq -c '.metadata.resourceVersion = "2"
-      | .data["pr-901"] |= (fromjson | .phase = "SEND_STARTED" | .count = 2 | tojson)' <<<"$state")"
+    state="$(jq -c '.metadata.resourceVersion |= (tonumber + 1 | tostring)
+      | .data["pr-901"] |= (fromjson | .phase = "SEND_STARTED"
+        | .nonce = "12345678-1234-4234-8234-123456789abc" | tojson)' <<<"$state")"
     printf '%s\n' "$state" > "$FAKE_RETRY_HOLDER"
   fi
   next="$(jq -ec --argjson patch "$8" '
@@ -153,8 +166,7 @@ if [[ "${1:-}" == -n && "${2:-}" == firemud-system && "${3:-}" == patch &&
   printf '%s\n' "$next" > "$FAKE_RETRY_HOLDER"
   if [[ "${FAKE_RETRY_PATCH_CASE:-}" == different-nonce ||
     ( "${FAKE_RETRY_PATCH_CASE:-}" == lost-reserve && "$target_phase" == RESERVED ) ||
-    ( "${FAKE_RETRY_PATCH_CASE:-}" == lost-send && "$target_phase" == SEND_STARTED ) ||
-    ( "${FAKE_RETRY_PATCH_CASE:-}" == competing-start && "$target_phase" == SEND_STARTED ) ]]; then
+    ( "${FAKE_RETRY_PATCH_CASE:-}" == lost-send && "$target_phase" == SEND_STARTED ) ]]; then
     exit 1
   fi
   case "${FAKE_RETRY_PATCH_CASE:-}" in
@@ -204,6 +216,7 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
   fi
   if [[ "${FAKE_PR_901_NAMESPACE_ABSENT:-false}" == true ]] ||
     [[ "${FAKE_PR_901_NAMESPACE_ABSENT_ON_INITIAL:-false}" == true && "$count" -eq 1 ]] ||
+    [[ "${FAKE_PR_901_NAMESPACE_REAPPEARS_AFTER_HOLDER_READ:-false}" == true && ! -e "$FAKE_RETRY_HOLDER_READ_MARKER" ]] ||
     [[ "${FAKE_PR_901_NAMESPACE_ABSENT_ON_RECHECK:-false}" == true && "$count" -gt 1 ]]; then
     exit 0
   fi
@@ -802,7 +815,11 @@ if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5255/att
   exit 0
 fi
 if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/runs/5255' ]]; then
-  printf '%s' "${FAKE_PREVIEW_DISPATCH_LATEST_JSON:-null}"
+  if [[ "${FAKE_SOURCE_RERUN_DURING_FINAL_CONSUMER_READ:-false}" == true && -e "$FAKE_FINAL_CONSUMER_READ_MARKER" ]]; then
+    jq -c '.run_attempt = 2 | .status = "in_progress" | .conclusion = null' <<<"$FAKE_PREVIEW_DISPATCH_LATEST_JSON"
+  else
+    printf '%s' "${FAKE_PREVIEW_DISPATCH_LATEST_JSON:-null}"
+  fi
   exit 0
 fi
 if [[ "$1" == api && "$resource" =~ ^repos/example/FireMUD/actions/runs/(525[6-9])/attempts/1/jobs\?per_page=100$ ]]; then
@@ -820,7 +837,10 @@ if [[ "$1" == api && "$resource" =~ ^repos/example/FireMUD/actions/runs/(525[6-9
   run_id="${BASH_REMATCH[1]}"
   latest_json="$(jq -c --argjson id "$run_id" '.id = $id' <<<"${FAKE_TRUSTED_CONSUMER_LATEST_JSON:-null}")"
   if [[ "$run_id" == 5256 ]] && jq -e '.status == "completed"' <<<"$latest_json" >/dev/null; then
-    : > "${FAKE_TRUSTED_CONSUMER_COMPLETED_MARKER:?}"
+    if [[ -e "$FAKE_TRUSTED_CONSUMER_COMPLETED_MARKER" ]]; then
+      : > "$FAKE_FINAL_CONSUMER_READ_MARKER"
+    fi
+    : > "$FAKE_TRUSTED_CONSUMER_COMPLETED_MARKER"
   fi
   printf '%s' "$latest_json"
   exit 0
@@ -1015,6 +1035,9 @@ case "$resource" in
       exit 0
     fi
     live_head="${FAKE_PR_901_HEAD:-head-901}"
+    if [[ -n "${FAKE_PR_901_HEAD_AFTER_HOLDER_READ:-}" && -e "$FAKE_RETRY_HOLDER_READ_MARKER" ]]; then
+      live_head="$FAKE_PR_901_HEAD_AFTER_HOLDER_READ"
+    fi
     if [[ -n "${FAKE_PR_901_HEAD_AFTER_SETTLEMENT:-}" && -s "${FAKE_RETRY_PATCH_LOG:-}" ]]; then
       live_head="$FAKE_PR_901_HEAD_AFTER_SETTLEMENT"
     fi
@@ -1022,11 +1045,15 @@ case "$resource" in
       head-901|stale-head) live_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
     esac
     live_state="${FAKE_PR_901_STATE:-open}"
+    live_priority="${FAKE_PR_901_PRIORITY:-true}"
+    if [[ -n "${FAKE_PR_901_PRIORITY_AFTER_SETTLEMENT:-}" && -s "${FAKE_RETRY_PATCH_LOG:-}" ]]; then
+      live_priority="$FAKE_PR_901_PRIORITY_AFTER_SETTLEMENT"
+    fi
     if [[ "$has_jq" == true ]]; then
       printf '%s\t%s\t%s\n' \
         "$live_state" \
         "$live_head" \
-        "$(fake_labels_json "${FAKE_PR_901_PRIORITY:-true}" valid | base64 | tr -d '\n')"
+        "$(fake_labels_json "$live_priority" valid | base64 | tr -d '\n')"
       exit 0
     fi
     mergeable_state_json="$(jq -cn --arg value "${FAKE_PR_901_MERGEABLE_STATE:-clean}" '$value')"
@@ -1044,7 +1071,7 @@ case "$resource" in
       --arg base_repository "${FAKE_PR_901_BASE_REPOSITORY:-example/FireMUD}" \
       --arg mergeable "${FAKE_PR_901_MERGEABLE:-true}" \
       --argjson mergeable_state "$mergeable_state_json" \
-      --arg priority "${FAKE_PR_901_PRIORITY:-true}" \
+      --arg priority "$live_priority" \
       '{state:$state,head:{sha:$head,ref:$head_ref,repo:{full_name:$head_repository}},base:{ref:$base_ref,repo:{full_name:$base_repository}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",changed_files:1,mergeable:($mergeable == "true"),mergeable_state:$mergeable_state,user:{login:"human"},labels:(if $priority == "true" then [{name:"preview:priority"}] else [] end)}'
     ;;
   */pulls/902)
@@ -1348,6 +1375,9 @@ export FAKE_RETRY_PATCH_LOG="$TEMP_DIR/proof-retry-patch.log"
 export FAKE_SLEEP_LOG="$TEMP_DIR/sleep.log"
 export FAKE_NAMESPACE_LIST_CALLS="$TEMP_DIR/namespace-list-calls"
 export FAKE_RECENT_HANDOFF_LOOKUP_LOG="$TEMP_DIR/recent-handoff-lookup.log"
+export FAKE_RETRY_HOLDER_READ_MARKER="$TEMP_DIR/retry-holder-read"
+export FAKE_RETRY_POST_ACK_GET_MARKER="$TEMP_DIR/retry-post-ack-get"
+export FAKE_FINAL_CONSUMER_READ_MARKER="$TEMP_DIR/final-consumer-read"
 export FAKE_TRUSTED_CONSUMER_COMPLETED_MARKER="$TEMP_DIR/trusted-consumer-completed.marker"
 export FAKE_COMMENT_TARGET_LOG="$TEMP_DIR/comment-target.log"
 export FAKE_PREVIOUS_COMMENT_ID_LOG="$TEMP_DIR/previous-comment-id.log"
@@ -1386,6 +1416,7 @@ adversarial_labels_base64="$(printf '%s' '[{"name":"custom:label"},{"name":"quot
 invalid_json_labels_base64="$(printf '%s' '{invalid-json' | base64 | tr -d '\n')"
 
 reset_case() {
+  rm -f "$FAKE_RETRY_HOLDER_READ_MARKER" "$FAKE_FINAL_CONSUMER_READ_MARKER" "$FAKE_RETRY_POST_ACK_GET_MARKER"
   rm -f "$FAKE_DELETE_LOG" "$FAKE_DELETE_TIMEOUT_LOG" "$FAKE_PUBLISH_LOG" "$FAKE_PUBLISHED_STATE" "$FAKE_PUBLISH_CALLS" "$FAKE_SOURCE_BINDING_CALLS" "$FAKE_COMMENT_METHOD_LOG" "$FAKE_COMMENT_TARGET_LOG" "$FAKE_PREVIOUS_COMMENT_ID_LOG" "$FAKE_ANNOTATE_LOG" "$FAKE_ANNOTATE_FAILURE_MARKER" "$FAKE_DISPATCH_LOG" "$FAKE_RETRY_PATCH_LOG" "$FAKE_RETRY_HOLDER" "$FAKE_TRUSTED_CONSUMER_COMPLETED_MARKER" "$FAKE_SLEEP_LOG" "$FAKE_NAMESPACE_LIST_CALLS" "$FAKE_RECENT_HANDOFF_LOOKUP_LOG" "$FAKE_TARGET_CALLS" "$FAKE_TARGET_METADATA_CALLS" "$FAKE_PR_101_CALLS" "$FAKE_PRUNE_QUERY_LOG" "$FAKE_PRIORITY_QUERY_LOG" "$FAKE_NAMESPACE_JSON_CALLS" "$FAKE_RECONCILER_RESOLUTION_LOG" "$FAKE_NAMESPACE_SNAPSHOT_LOG" "$FAKE_NAMESPACE_SNAPSHOT_CALLS" "$FAKE_RUNTIME_KUBECTL_LOG" "$FAKE_RUNTIME_DELETE_UID_LOG" "$FAKE_RUNTIME_NAMESPACE_DELETED_MARKER" "$FAKE_RUNTIME_WAIT_MARKER" "$FAKE_HELM_LOG" "$FAKE_IDENTITY_LOG" "$FAKE_IDENTITY_LIST_KUBECONFIG_LOG" "$FAKE_IDENTITY_REQUEST_LOG" "$FAKE_IDENTITY_WAIT_LOG" "$FAKE_OPERATION_SEQUENCE" "$TEMP_DIR/output"
   export GITHUB_OUTPUT="$TEMP_DIR/output"
   export FAKE_TARGET_PRIORITY=true
@@ -1539,7 +1570,9 @@ run_proof_retry_contract() (
 
   fixture_reconcile() (
     cd "$ROOT_DIR"
-    FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+    local labels="$adversarial_labels_base64"
+    [[ "${FAKE_FIXTURE_INITIAL_PRIORITY:-false}" != true ]] || labels="$priority_labels_base64"
+    FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${labels}\n" \
       FAKE_PR_901_HEAD=head-901 FAKE_PR_901_REQUESTED_HEAD=head-901 \
       FAKE_PR_901_PROOF_COMPLETE="${FAKE_PR_901_PROOF_COMPLETE:-false}" DEFAULT_BRANCH=develop PREVIEW_MAX_ACTIVE=2 \
       bash "$retry_reconciler"
@@ -1557,6 +1590,16 @@ run_proof_retry_contract() (
   test ! -e "$FAKE_ANNOTATE_LOG"
   jq -se 'length == 2 and .[0][0].value == "uid-holder" and .[0][1].value == "1"
     and (.[0][2].value|fromjson|.phase=="RESERVED") and (.[1][2].value|fromjson|.phase=="SEND_STARTED")' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+
+  reset_case
+  seed_retry_holder 1
+  local holder_before
+  holder_before="$(<"$FAKE_RETRY_HOLDER")"
+  FAKE_PR_901_HEAD_AFTER_HOLDER_READ="$(printf '%040d' 8)" fixture_reconcile >"$case_output" 2>&1
+  grep -Fq 'preview comparison could not be reconfirmed before charging a proof retry' "$case_output"
+  test "$(<"$FAKE_RETRY_HOLDER")" = "$holder_before"
+  test ! -e "$FAKE_RETRY_PATCH_LOG"
+  test ! -e "$FAKE_DISPATCH_LOG"
 
   # A same-UID, same-deployment metadata update can refresh a proven unsent
   # reservation's Namespace fence without allocating a new nonce or charge.
@@ -1682,6 +1725,30 @@ run_proof_retry_contract() (
     | $reserved.phase == "RESERVED" and $started == ($reserved | .phase = "SEND_STARTED")
     and $restored == $reserved)' "$FAKE_RETRY_PATCH_LOG" >/dev/null
 
+  for post_ack_case in unchanged competing; do
+    reset_case
+    seed_retry_holder 1
+    post_ack_status=0
+    FAKE_RETRY_POST_ACK_GET_FAILURE="$post_ack_case" fixture_reconcile >"$case_output" 2>&1 || post_ack_status=$?
+    test -e "$FAKE_RETRY_POST_ACK_GET_MARKER"
+    test ! -e "$FAKE_DISPATCH_LOG"
+    assert_retry_count 2
+    if [[ "$post_ack_case" == unchanged ]]; then
+      test "$post_ack_status" -eq 0
+      grep -Fq 'after holder custody could not be verified' "$case_output"
+      jq -se --slurpfile holder "$FAKE_RETRY_HOLDER" 'length == 3 and
+        .[2][1].value == "3" and .[2][2] == .[0][2]
+        and .[2][2].value == $holder[0].data["pr-901"]' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+    else
+      test "$post_ack_status" -ne 0
+      grep -Fq 'leaving its budget charged' "$case_output"
+      test "$(wc -l < "$FAKE_RETRY_PATCH_LOG")" -eq 2
+      jq -e '.metadata.resourceVersion == "4" and
+        (.data["pr-901"] | fromjson | .phase == "SEND_STARTED"
+          and .nonce == "12345678-1234-4234-8234-123456789abc")' "$FAKE_RETRY_HOLDER" >/dev/null
+    fi
+  done
+
   reset_case
   seed_retry_holder 1
   FAKE_RETRY_PATCH_CASE=rollback-version-conflict FAKE_RETRY_RUNTIME_CHANGE_AFTER_START=true \
@@ -1727,6 +1794,17 @@ run_proof_retry_contract() (
     and .[0][1].value == "1" and (.[0][2].value | fromjson) == $prior' "$FAKE_RETRY_PATCH_LOG" >/dev/null
   test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
   if grep -Fq 'proof_retry_nonce' "$FAKE_DISPATCH_LOG"; then exit 1; fi
+
+  reset_case
+  seed_staged_holder RESERVED
+  holder_before="$(<"$FAKE_RETRY_HOLDER")"
+  FAKE_PR_901_NAMESPACE_REAPPEARS_AFTER_HOLDER_READ=true FAKE_PR_901_NAMESPACE_UID=replacement-uid \
+    fixture_reconcile >"$case_output" 2>&1
+  grep -Fq 'Unable to reconfirm Namespace absence before releasing the proof-retry reservation' "$case_output"
+  test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 3
+  test "$(<"$FAKE_RETRY_HOLDER")" = "$holder_before"
+  test ! -e "$FAKE_RETRY_PATCH_LOG"
+  test ! -e "$FAKE_DISPATCH_LOG"
 
   reset_case
   seed_staged_holder RESERVED
@@ -1785,7 +1863,15 @@ run_proof_retry_contract() (
     fi
     test ! -e "$FAKE_DISPATCH_LOG"
     assert_retry_count 2
-    jq -e '.data["pr-901"] | fromjson | .phase=="SEND_STARTED"' "$FAKE_RETRY_HOLDER" >/dev/null
+    jq -se --arg mode "$transition_case" --slurpfile holder "$FAKE_RETRY_HOLDER" '
+      (.[1][2].value | fromjson) as $requested
+      | length == 2 and .[1][1].value == "2" and $holder[0].metadata.resourceVersion == "3"
+        and $requested.phase == "SEND_STARTED" and
+        (($holder[0].data["pr-901"] | fromjson) ==
+          (if $mode == "competing-start" then
+            $requested | .nonce = "12345678-1234-4234-8234-123456789abc"
+           else $requested end))
+    ' "$FAKE_RETRY_PATCH_LOG" >/dev/null
     fixture_reconcile >"$case_output"
     grep -Fq 'no guarded rejection; leaving it charged' "$case_output"
     test ! -e "$FAKE_DISPATCH_LOG"
@@ -1841,7 +1927,10 @@ run_proof_retry_contract() (
      repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},
      updated_at:$now}]}')"
   local exact_source_latest="$source_latest" exact_source_inventory="$source_inventory"
-  FAKE_PREVIEW_DISPATCH_JOBS_JSON="$source_jobs" \
+  local obsolete_jobs
+  obsolete_jobs="$(jq -c --arg nonce "$old_nonce" '
+    .jobs[0].steps[0].name = ("Preview retry no handoff stale-comparison nonce-" + $nonce)' <<<"$source_jobs")"
+  FAKE_PREVIEW_DISPATCH_JOBS_JSON="$obsolete_jobs" \
     FAKE_PREVIEW_DISPATCH_LATEST_JSON="$source_latest" \
     FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$source_inventory" \
     fixture_reconcile >"$case_output"
@@ -1859,6 +1948,43 @@ run_proof_retry_contract() (
     '(.data["pr-901"] | fromjson) | .count == $count and .phase == "SEND_STARTED" and .nonce != $old_nonce' \
     "$FAKE_RETRY_HOLDER" >/dev/null
   test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+
+  local no_handoff_case untrusted_skip_jobs
+  for no_handoff_case in wrong-nonce rendered; do
+    reset_case
+    seed_staged_holder
+    untrusted_skip_jobs="$(jq -c --arg mode "$no_handoff_case" '
+      if $mode == "rendered" then .jobs[1].conclusion = "success"
+      else .jobs[0].steps[0].name += "-other" end' <<<"$obsolete_jobs")"
+    FAKE_PREVIEW_DISPATCH_JOBS_JSON="$untrusted_skip_jobs" \
+      FAKE_PREVIEW_DISPATCH_LATEST_JSON="$source_latest" \
+      FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$source_inventory" \
+      fixture_reconcile >"$case_output" 2>&1
+    test ! -e "$FAKE_RETRY_PATCH_LOG"
+    test ! -e "$FAKE_DISPATCH_LOG"
+    assert_retry_count 2
+  done
+
+  local post_settlement_priority
+  for post_settlement_priority in true false; do
+    reset_case
+    seed_staged_holder
+    FAKE_FIXTURE_INITIAL_PRIORITY=true FAKE_PR_901_NAMESPACE_ABSENT=true \
+      FAKE_PR_901_PRIORITY_AFTER_SETTLEMENT="$post_settlement_priority" \
+      FAKE_PREVIEW_DISPATCH_JOBS_JSON="$obsolete_jobs" \
+      FAKE_PREVIEW_DISPATCH_LATEST_JSON="$source_latest" \
+      FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$source_inventory" \
+      fixture_reconcile >"$case_output" 2>&1
+    jq -se --arg nonce "$old_nonce" 'length == 1 and
+      (.[0][2].value | fromjson | .count == 2 and .nonce == $nonce and (has("phase") | not))' \
+      "$FAKE_RETRY_PATCH_LOG" >/dev/null
+    if [[ "$post_settlement_priority" == true ]]; then
+      test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+    else
+      grep -Fq 'preview capacity is still full after refresh' "$case_output"
+      test ! -e "$FAKE_DISPATCH_LOG"
+    fi
+  done
 
   reset_case
   seed_staged_holder
@@ -1942,6 +2068,21 @@ run_proof_retry_contract() (
     fi
   done
 
+  reset_case
+  seed_staged_holder
+  holder_before="$(<"$FAKE_RETRY_HOLDER")"
+  FAKE_PR_901_PROOF_COMPLETE=true FAKE_PREVIEW_DISPATCH_JOBS_JSON="$rendered_jobs" \
+    FAKE_PREVIEW_DISPATCH_LATEST_JSON="$source_latest" FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$source_inventory" \
+    FAKE_TRUSTED_CONSUMER_LATEST_JSON="$consumer" FAKE_TRUSTED_CONSUMER_JOBS_JSON="$consumer_jobs" \
+    FAKE_RETRY_TERMINAL_CONSUMER="$(jq -c '[{total_count:1,workflow_runs:[.]}]' <<<"$consumer")" \
+    FAKE_RETRY_RENDER_RECEIPT="$receipt" FAKE_SOURCE_RERUN_DURING_FINAL_CONSUMER_READ=true \
+    fixture_reconcile >"$case_output" 2>&1
+  test -e "$FAKE_FINAL_CONSUMER_READ_MARKER"
+  grep -Fq 'send-start for aligned PR #901 remains charged' "$case_output"
+  test "$(<"$FAKE_RETRY_HOLDER")" = "$holder_before"
+  test ! -e "$FAKE_RETRY_PATCH_LOG"
+  test ! -e "$FAKE_DISPATCH_LOG"
+
   # A complete split inventory can identify one exact consumer even when
   # unrelated runs bring the unpartitioned creation window to GitHub's cap.
   reset_case
@@ -1958,13 +2099,14 @@ run_proof_retry_contract() (
     "$FAKE_RETRY_PATCH_LOG" >/dev/null
 
   local rejection_case rejected_consumer_jobs
-  for rejection_case in stale-head stale-comparison wrong-nonce wrong-attempt skipped missing conflicting; do
+  for rejection_case in stale-head stale-comparison ineligible wrong-nonce wrong-attempt skipped missing conflicting; do
     reset_case
     seed_staged_holder
     rejected_consumer_jobs="$(jq -c --arg nonce "$old_nonce" --arg failure "$rejection_case" '
       {name:("Trusted preview retry rejected stale-head nonce-" + $nonce),
        status:"completed",conclusion:"success"} as $step
       | if $failure == "stale-comparison" then .jobs[0].steps = [$step | .name |= sub("stale-head"; "stale-comparison")]
+        elif $failure == "ineligible" then .jobs[0].steps = [$step | .name |= sub("stale-head"; "ineligible")]
         elif $failure == "conflicting" then .jobs[0].steps += [$step]
         elif $failure == "missing" then .jobs[0].steps = []
         elif $failure == "wrong-nonce" then .jobs[0].steps = [$step | .name += "-other"]
@@ -1978,7 +2120,7 @@ run_proof_retry_contract() (
       FAKE_RETRY_TERMINAL_CONSUMER="$(jq -c '[{total_count:1,workflow_runs:[.]}]' <<<"$consumer")" \
       FAKE_RETRY_RENDER_RECEIPT="$receipt" fixture_reconcile >"$case_output" 2>&1
     assert_retry_count 2
-    if [[ "$rejection_case" == stale-head || "$rejection_case" == stale-comparison ]]; then
+    if [[ "$rejection_case" == stale-head || "$rejection_case" == stale-comparison || "$rejection_case" == ineligible ]]; then
       jq -se --arg nonce "$old_nonce" 'length == 1 and
         (.[0][2].value | fromjson | .count == 2 and .nonce == $nonce and (has("phase") | not))' \
         "$FAKE_RETRY_PATCH_LOG" >/dev/null
@@ -2178,11 +2320,16 @@ run_proof_retry_contract() (
     DEFAULT_BRANCH=develop FAKE_NAMESPACE_ROWS='' \
       FAKE_PR_901_NAMESPACE_ABSENT=true FAKE_RETRY_MERGE_STATE=merged \
       bash "$PRUNER" --apply --retire-proof-retries >"$case_output" 2>&1
-    if [[ "$staged_phase" == SEND_STARTED ]]; then
+    if [[ "$staged_phase" == RESERVED ]]; then
+      grep -Fq 'Retired the proof-retry record for merged PR #901' "$case_output"
+      jq -e '.data | has("pr-901") | not' "$FAKE_RETRY_HOLDER" >/dev/null
+      jq -se 'length == 1 and .[0][0].value == "uid-holder" and .[0][1].value == "1"
+        and .[0][2] == {op:"remove",path:"/data/pr-901"}' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+    else
       grep -Fq 'terminal receiver evidence could not be verified' "$case_output"
+      test "$(<"$FAKE_RETRY_HOLDER")" = "$still_owned"
+      test ! -e "$FAKE_RETRY_PATCH_LOG"
     fi
-    test "$(<"$FAKE_RETRY_HOLDER")" = "$still_owned"
-    test ! -e "$FAKE_RETRY_PATCH_LOG"
   done
 
   # Verify an exact terminal receiver only on the merged/absent path. A
@@ -2352,8 +2499,154 @@ run_retry_retirement_cursor_contract() (
   echo 'Preview proof-retry retirement cursor contract passed.'
 )
 
+run_reserved_retry_retirement_contract() (
+  set -euo pipefail
+  # shellcheck source=/dev/null
+  source "$ROOT_DIR/dev-tools/hosted/preview/preview-proof-retry-record.shlib"
+  export GITHUB_REPOSITORY=owner/fixture
+  holder_file="$TEMP_DIR/c23-holder"
+  namespace_log="$TEMP_DIR/c23-namespaces"
+  pull_log="$TEMP_DIR/c23-pulls"
+  patch_log="$TEMP_DIR/c23-patches"
+  holder_read_log="$TEMP_DIR/c23-holder-reads"
+  mode=stable
+
+  seed_row() {
+    local ns="$1" phase="$2"
+    jq -n --arg ns "$ns" --arg phase "$phase" '
+      {apiVersion:"v1",kind:"ConfigMap",
+       metadata:{namespace:"firemud-system",name:"firemud-preview-proof-retries",uid:"c23-holder",resourceVersion:"1"},
+       data:{schemaVersion:"1",($ns):({repository:"owner/fixture",namespace:$ns,count:1,
+         base:("a"*40),head:("b"*40),merge:("c"*40),image:"fixture",namespaceUid:("uid-" + $ns),
+         nonce:"123e4567-e89b-42d3-a456-426614174000",stageVersion:2,phase:$phase,predecessor:null,
+         namespaceResourceVersion:"rv-1",holderUid:"c23-holder",holderResourceVersion:"0"}|tojson)}}' >"$holder_file"
+    : >"$namespace_log"; : >"$pull_log"; : >"$patch_log"
+    : >"$holder_read_log"
+  }
+
+  timeout() { [[ "$1" == 10s ]] || return 2; shift; "$@"; }
+  gh() {
+    [[ "$1" == api && "$2" == repos/owner/fixture/pulls/* ]] || return 2
+    local ns="pr-${2##*/}" state merged
+    printf '%s\n' "$ns" >>"$pull_log"
+    state=closed; merged=true
+    if [[ "$ns" == pr-133 ]]; then state=open; merged=false; fi
+    jq -cn --arg ns "$ns" --arg state "$state" --argjson merged "$merged" '
+      {number:($ns|ltrimstr("pr-")|tonumber),state:$state,merged:$merged,
+       head:{repo:{full_name:"owner/fixture"}},base:{repo:{full_name:"owner/fixture"}}}'
+  }
+  kubectl() {
+    case "$*" in
+      '-n firemud-system get configmap firemud-preview-proof-retries -o json --request-timeout=10s')
+        printf 'read\n' >>"$holder_read_log"
+        if [[ "$mode" == phase-change && "$(wc -l <"$holder_read_log")" -eq 2 ]]; then
+          jq '.metadata.resourceVersion="2" | .data["pr-132"] |=
+            (fromjson | .phase="SEND_STARTED" | .holderResourceVersion="1" | tojson)' \
+            "$holder_file" >"$holder_file.next" || return 2
+          mv "$holder_file.next" "$holder_file" || return 2
+        fi
+        cat "$holder_file"
+        ;;
+      get\ namespace\ pr-*\ --ignore-not-found\ -o\ json\ --request-timeout=10s)
+        printf '%s\n' "$3" >>"$namespace_log"
+        ;;
+      '-n firemud-system patch configmap firemud-preview-proof-retries --type=json --patch '*)
+        local patch="${8}"
+        jq -en --argjson p "$patch" --slurpfile h "$holder_file" '
+          ($p|length)==3 and $p[0]=={op:"test",path:"/metadata/uid",value:$h[0].metadata.uid}
+          and $p[1]=={op:"test",path:"/metadata/resourceVersion",value:$h[0].metadata.resourceVersion}
+          and $p[2].op=="remove"' >/dev/null || return 2
+        printf '%s\n' "$patch" >>"$patch_log"
+        jq --argjson p "$patch" '
+          .metadata.resourceVersion |= (tonumber+1|tostring)
+          | del(.data[($p[2].path|ltrimstr("/data/"))])' \
+          "$holder_file" >"$holder_file.next"
+        mv "$holder_file.next" "$holder_file"
+        cat "$holder_file"
+        ;;
+      *) printf 'unexpected c23 kubectl: %s\n' "$*" >&2; return 2 ;;
+    esac
+  }
+
+  seed_row pr-131 RESERVED
+  retire_merged_preview_retry_entries >"$TEMP_DIR/c23-stable.log"
+  grep -Fq 'Retired the proof-retry record for merged PR #131' "$TEMP_DIR/c23-stable.log"
+  test "$(wc -l <"$namespace_log")" -eq 2
+  test "$(wc -l <"$patch_log")" -eq 1
+  jq -e '.data | has("pr-131") | not' "$holder_file" >/dev/null
+  jq -se '
+    .[0][0]=={op:"test",path:"/metadata/uid",value:"c23-holder"}
+    and .[0][1]=={op:"test",path:"/metadata/resourceVersion",value:"1"}
+    and .[0][2]=={op:"remove",path:"/data/pr-131"}' "$patch_log" >/dev/null
+
+  seed_row pr-132 RESERVED
+  mode=phase-change
+  retire_merged_preview_retry_entries >"$TEMP_DIR/c23-phase-change.log"
+  if grep -Fq 'Retired the proof-retry record for merged PR #132' "$TEMP_DIR/c23-phase-change.log"; then
+    echo 'Retirement removed a reused reservation after it entered SEND_STARTED' >&2
+    exit 1
+  fi
+  jq -e '.data["pr-132"]|fromjson|.phase=="SEND_STARTED" and .holderResourceVersion=="1"' \
+    "$holder_file" >/dev/null
+  test ! -s "$patch_log"
+
+  mode=stable
+  seed_row pr-133 RESERVED
+  row_before="$(jq -c '.data["pr-133"]' "$holder_file")"
+  retire_merged_preview_retry_entries >"$TEMP_DIR/c23-reopenable.log"
+  test "$(jq -c '.data["pr-133"]' "$holder_file")" = "$row_before"
+  test ! -s "$patch_log"
+
+  seed_row pr-134 SEND_STARTED
+  row_before="$(jq -c '.data["pr-134"]' "$holder_file")"
+  retire_merged_preview_retry_entries >"$TEMP_DIR/c23-send-started.log"
+  test "$(jq -c '.data["pr-134"]' "$holder_file")" = "$row_before"
+  test ! -s "$pull_log"
+  test ! -s "$patch_log"
+  echo 'Preview RESERVED retry retirement custody contract passed.'
+)
+
 run_proof_retry_contract
+
+preparation_proof_step="$TEMP_DIR/preparation-proof-step.sh"
+extract_workflow_step_run "$ROOT_DIR/.github/workflows/hosted-identity-request.yml" \
+  "Recheck proof retry before publishing preparation failure" "$preparation_proof_step"
+for preparation_case in ordinary-complete ordinary-missing ordinary-absent ordinary-other-tuple retry-changed; do
+  reset_case
+  proof_complete=false
+  namespace_absent=false
+  deployed_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  retry_uid=''
+  case "$preparation_case" in
+    ordinary-complete) proof_complete=true ;;
+    ordinary-absent) namespace_absent=true ;;
+    ordinary-other-tuple) deployed_head=dddddddddddddddddddddddddddddddddddddddd ;;
+    retry-changed) retry_uid=previous-uid ;;
+  esac
+  : > "$TEMP_DIR/preparation-proof.output"
+  (
+    cd "$ROOT_DIR"
+    RUNTIME_NAMESPACE=pr-901 RETRY_NAMESPACE_UID="$retry_uid" \
+      BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+      MERGE_SHA=cccccccccccccccccccccccccccccccccccccccc IMAGE_TAG=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+      GITHUB_OUTPUT="$TEMP_DIR/preparation-proof.output" FAKE_PR_901_PROOF_COMPLETE="$proof_complete" \
+      FAKE_PR_901_NAMESPACE_ABSENT="$namespace_absent" FAKE_PR_901_SNAPSHOT_HEAD="$deployed_head" \
+      bash "$preparation_proof_step"
+  ) > "$TEMP_DIR/preparation-proof.log"
+  case "$preparation_case" in
+    ordinary-complete)
+      test ! -s "$TEMP_DIR/preparation-proof.output"
+      grep -Fq 'Preview preparation failure publication skipped: proof-complete.' "$TEMP_DIR/preparation-proof.log"
+      ;;
+    retry-changed)
+      test ! -s "$TEMP_DIR/preparation-proof.output"
+      grep -Fq 'Preview preparation failure publication skipped: namespace-changed.' "$TEMP_DIR/preparation-proof.log"
+      ;;
+    *) grep -Fxq 'proceed=true' "$TEMP_DIR/preparation-proof.output" ;;
+  esac
+done
 run_retry_retirement_cursor_contract
+run_reserved_retry_retirement_contract
 if [[ "${PREVIEW_RETRY_CONTRACT_ONLY:-false}" == true ]]; then
   exit 0
 fi

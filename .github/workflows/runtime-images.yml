@@ -163,8 +163,12 @@ jobs:
             local endpoint="$1"
             local attempt response status remaining request_timeout normalized_response response_status
             local response_headers response_body retry_after retry_wait retry_epoch retry_after_value
+            local primary_remaining primary_reset reset_wait now_epoch
             local -a retry_after_values=()
+            local -a primary_remaining_values=() primary_reset_values=()
             for attempt in 1 2 3; do
+              primary_remaining=""
+              primary_reset=""
               remaining=$((claim_read_deadline - SECONDS))
               (( remaining > 2 )) || break
               request_timeout=15
@@ -188,30 +192,54 @@ jobs:
                 printf '%s\n' "$response_body"
                 return 0
               fi
-              if [[ "$response_status" == "429" ]]; then
+              if [[ "$response_status" == "429" || "$response_status" == "403" ]]; then
                 retry_after_values=()
                 mapfile -t retry_after_values < <(
                   awk 'tolower($1) == "retry-after:" {sub(/^[^:]*:[[:space:]]*/, ""); print}' <<<"$response_headers"
                 )
-                (( ${#retry_after_values[@]} > 0 )) || break
-                retry_after="${retry_after_values[0]}"
-                for retry_after_value in "${retry_after_values[@]}"; do
-                  [[ "$retry_after_value" == "$retry_after" ]] || break 2
-                done
-                if [[ "$retry_after" =~ ^[0-9]{1,8}$ ]]; then
-                  retry_wait=$((10#$retry_after))
-                elif [[ "$retry_after" =~ ^[A-Z][a-z]{2},[[:space:]][0-9]{2}[[:space:]][A-Z][a-z]{2}[[:space:]][0-9]{4}[[:space:]][0-9]{2}:[0-9]{2}:[0-9]{2}[[:space:]]GMT$ ]]; then
-                  retry_epoch="$(date -u --date="$retry_after" +%s 2>/dev/null)" || break
-                  retry_wait=$((retry_epoch - $(date -u +%s)))
-                  (( retry_wait > 0 )) || retry_wait=0
-                else
-                  break
+                primary_remaining_values=()
+                primary_reset_values=()
+                mapfile -t primary_remaining_values < <(
+                  awk 'tolower($1) == "x-ratelimit-remaining:" {sub(/^[^:]*:[[:space:]]*/, ""); print}' <<<"$response_headers"
+                )
+                mapfile -t primary_reset_values < <(
+                  awk 'tolower($1) == "x-ratelimit-reset:" {sub(/^[^:]*:[[:space:]]*/, ""); print}' <<<"$response_headers"
+                )
+                retry_wait=0
+                if (( ${#retry_after_values[@]} > 0 )); then
+                  retry_after="${retry_after_values[0]}"
+                  for retry_after_value in "${retry_after_values[@]}"; do
+                    [[ "$retry_after_value" == "$retry_after" ]] || break 2
+                  done
+                  if [[ "$retry_after" =~ ^[0-9]{1,8}$ ]]; then
+                    retry_wait=$((10#$retry_after))
+                  elif [[ "$retry_after" =~ ^[A-Z][a-z]{2},[[:space:]][0-9]{2}[[:space:]][A-Z][a-z]{2}[[:space:]][0-9]{4}[[:space:]][0-9]{2}:[0-9]{2}:[0-9]{2}[[:space:]]GMT$ ]]; then
+                    retry_epoch="$(date -u --date="$retry_after" +%s 2>/dev/null)" || break
+                    now_epoch="$(date -u +%s)"
+                    retry_wait=$((retry_epoch - now_epoch))
+                    (( retry_wait > 0 )) || break
+                  else
+                    break
+                  fi
                 fi
+                if (( ${#primary_remaining_values[@]} > 0 || ${#primary_reset_values[@]} > 0 )); then
+                  (( ${#primary_remaining_values[@]} == 1 && ${#primary_reset_values[@]} == 1 )) || break
+                  primary_remaining="${primary_remaining_values[0]}"
+                  primary_reset="${primary_reset_values[0]}"
+                  [[ "$primary_remaining" =~ ^[0-9]{1,8}$ && "$primary_reset" =~ ^[0-9]{1,12}$ ]] || break
+                  if (( 10#$primary_remaining == 0 )); then
+                    now_epoch="$(date -u +%s)"
+                    reset_wait=$((10#$primary_reset - now_epoch))
+                    (( reset_wait > 0 )) || break
+                    (( reset_wait > retry_wait )) && retry_wait=$reset_wait
+                  fi
+                fi
+                (( retry_wait > 0 )) || break
                 remaining=$((claim_read_deadline - SECONDS))
                 if (( attempt == 3 || remaining <= 2 || retry_wait + 2 >= remaining )); then
                   break
                 fi
-                echo "Runtime refresh claim GET was rate-limited; honoring Retry-After before retrying the same exact object." >&2
+                echo "Runtime refresh claim GET was rate-limited; honoring the provider delay before retrying the same exact object." >&2
                 sleep "$retry_wait"
                 continue
               fi
@@ -635,10 +663,6 @@ jobs:
               "gradlew.bat",
               "settings.gradle.kts",
             ]);
-            const runtimeRunEvents = ["pull_request", "repository_dispatch"];
-            const runtimeRunPageSize = 100;
-            const runtimeRunLookbackMilliseconds = 7 * 24 * 60 * 60 * 1000;
-
             const waitForMergeRefresh = async () => {
               await new Promise((resolve) => setTimeout(resolve, 2000));
             };
@@ -782,162 +806,6 @@ jobs:
                 };
               }
               return null;
-            };
-
-            const loadExistingRuntimeRuns = async () => {
-              const readInventory = async (createdSince) => {
-                const inventory = [];
-                let complete = true;
-                let incompleteReason = null;
-                for (const event of runtimeRunEvents) {
-                  const response = await github.rest.actions.listWorkflowRuns({
-                    ...context.repo,
-                    workflow_id: "runtime-images.yml",
-                    event,
-                    created: `${createdSince}..*`,
-                    per_page: runtimeRunPageSize,
-                    page: 1,
-                  });
-                  const payload = response?.data;
-                  if (!payload || !Number.isInteger(payload.total_count) ||
-                    payload.total_count < 0 || !Array.isArray(payload.workflow_runs)) {
-                    throw new Error(`runtime-images ${event} recent run inventory is malformed`);
-                  }
-                  if (payload.total_count > runtimeRunPageSize) {
-                    complete = false;
-                    incompleteReason ??= `runtime-images ${event} has more than ${runtimeRunPageSize} runs since ${createdSince}`;
-                  }
-                  const expectedPageLength = Math.min(payload.total_count, runtimeRunPageSize);
-                  if (payload.workflow_runs.length !== expectedPageLength) {
-                    throw new Error(`runtime-images ${event} recent run inventory is incomplete`);
-                  }
-                  inventory.push(...payload.workflow_runs);
-                }
-                return {complete, runs: inventory, reason: incompleteReason};
-              };
-
-              const createdSince = new Date(Date.now() - runtimeRunLookbackMilliseconds).toISOString();
-              const initial = await readInventory(createdSince);
-              if (initial.complete) {
-                return initial;
-              }
-
-              const inFlightStatuses = ["queued", "waiting", "requested", "pending", "in_progress"];
-              const inFlightRuns = initial.runs.filter((run) => inFlightStatuses.includes(run?.status));
-              if (inFlightRuns.length === 0) {
-                return initial;
-              }
-
-              const validTimestamp = (value) => typeof value === "string" &&
-                /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) &&
-                Number.isFinite(Date.parse(value));
-              if (inFlightRuns.some((run) => !runtimeRunEvents.includes(run.event) ||
-                !Number.isSafeInteger(run.id) || run.id <= 0 || !validTimestamp(run.created_at))) {
-                return {
-                  ...initial,
-                  reason: "truncated recent inventory contains an in-flight run without a valid event, id, or creation timestamp",
-                };
-              }
-
-              const refinementSince = inFlightRuns
-                .map((run) => run.created_at)
-                .sort()[0];
-              // The inclusive created lower bound makes the refined pages a complete candidate set without relying on API ordering.
-              const refined = await readInventory(refinementSince);
-              if (!refined.complete) {
-                return {
-                  ...refined,
-                  reason: refined.reason || "refined runtime run inventory is incomplete",
-                };
-              }
-              const refinedIds = new Set(refined.runs.map((run) => `${run?.event}:${run?.id}`));
-              if (inFlightRuns.some((run) => !refinedIds.has(`${run.event}:${run.id}`))) {
-                return {
-                  ...refined,
-                  complete: false,
-                  reason: "refined inventory did not retain every initially observed in-flight run",
-                };
-              }
-              return refined;
-            };
-
-            const findExactExistingProducer = (tuple, inventory) => {
-              const expectedWorkflowPath = ".github/workflows/runtime-images.yml";
-              const workflowPathMatches = (path) => {
-                if (path === expectedWorkflowPath) {
-                  return true;
-                }
-                const prefix = `${expectedWorkflowPath}@`;
-                if (typeof path !== "string" || !path.startsWith(prefix)) {
-                  return false;
-                }
-                const ref = path.slice(prefix.length);
-                if (ref.length === 0 || ref === "@" || ref.endsWith(".") ||
-                  /[\u0000-\u0020\u007f]/.test(ref) ||
-                  ["~", "^", ":", "?", "*", "[", "\\"].some((character) => ref.includes(character)) ||
-                  ref.includes("..") || ref.includes("@{")) {
-                  return false;
-                }
-                return ref.split("/").every((part) =>
-                  part.length > 0 && part !== "." && part !== ".." &&
-                  !part.startsWith(".") &&
-                  !part.endsWith(".lock")
-                );
-              };
-              const expectedTitle =
-                `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} ` +
-                `base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
-              const matching = inventory.runs.filter((run) =>
-                run?.display_title === expectedTitle
-              );
-              const ordered = [];
-              const matchingIds = new Set();
-              for (const run of matching) {
-                if (!runtimeRunEvents.includes(run.event) ||
-                  !Number.isSafeInteger(run.id) || run.id <= 0 || matchingIds.has(run.id) ||
-                  typeof run.created_at !== "string" ||
-                  !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(run.created_at) ||
-                  !Number.isFinite(Date.parse(run.created_at)) ||
-                  !workflowPathMatches(run.path) ||
-                  !["Build Runtime Images", expectedTitle].includes(run.name) ||
-                  run.repository?.full_name !== context.payload.repository.full_name ||
-                  run.head_repository?.full_name !== context.payload.repository.full_name) {
-                  throw new Error(`run ${run.id} has the exact tuple title but invalid workflow or repository identity`);
-                }
-                matchingIds.add(run.id);
-                ordered.push(run);
-                if (run.event === "pull_request") {
-                  if (run.head_sha !== tuple.headSha) {
-                    throw new Error(`run ${run.id} has the exact tuple title but a different PR head SHA`);
-                  }
-                  const pullRequests = run.pull_requests;
-                  if (!Array.isArray(pullRequests) || (pullRequests.length > 0 && !pullRequests.some((pullRequest) =>
-                    String(pullRequest?.number) === tuple.prNumber &&
-                    pullRequest?.head?.sha === tuple.headSha
-                  ))) {
-                    throw new Error(`run ${run.id} has incomplete or conflicting PR association evidence`);
-                  }
-                }
-              }
-              ordered.sort((left, right) => right.created_at.localeCompare(left.created_at));
-              if (ordered.length > 1 && ordered[0].created_at === ordered[1].created_at) {
-                throw new Error("newest exact runtime producer has an ambiguous created_at timestamp");
-              }
-              const newest = ordered[0];
-              if (!newest) {
-                return [];
-              }
-              if (["queued", "waiting", "requested", "pending", "in_progress"].includes(newest.status)) {
-                if (newest.conclusion !== null && newest.conclusion !== undefined) {
-                  throw new Error(`run ${newest.id} has a conclusion while still ${newest.status}`);
-                }
-                return [newest];
-              }
-              if (newest.status === "completed") {
-                // Completed source success does not prove publication remains usable; preserve recovery dispatch.
-                return [];
-              }
-              throw new Error(`run ${newest.id} has an unknown status and cannot be classified`);
             };
 
             if (!shaPattern.test(refreshSha) || typeof refreshBranch !== "string" ||
@@ -1092,61 +960,23 @@ jobs:
                 }
               }
             }
-            let runtimeInventoryPromise;
-            let runtimeInventoryError = null;
             for (const resolved of refreshTargets) {
               const {tuple, pullRequest} = resolved;
               if (await hasRuntimeChange(pullRequest)) {
-                let existingProducers = [];
-                let fallbackReason = null;
-                let inventory;
-                if (runtimeInventoryError) {
-                  fallbackReason = runtimeInventoryError;
-                } else {
-                  try {
-                    runtimeInventoryPromise ??= loadExistingRuntimeRuns();
-                    inventory = await runtimeInventoryPromise;
-                  } catch (error) {
-                    fallbackReason = error.message || String(error);
-                    runtimeInventoryError = fallbackReason;
-                  }
-                }
-                if (!fallbackReason) {
-                  try {
-                    existingProducers = findExactExistingProducer(tuple, inventory);
-                    if (!inventory.complete) {
-                      // The REST contract does not specify a sort order, so a truncated page cannot prove omitted runs are older.
-                      existingProducers = [];
-                      fallbackReason = inventory.reason || "recent run inventory is incomplete";
-                    }
-                  } catch (error) {
-                    fallbackReason = error.message || String(error);
-                  }
-                }
-                if (fallbackReason) {
-                  core.warning(
-                    `Cannot verify recent runtime producer evidence for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}); falling back to the required refresh dispatch: ${fallbackReason}`
-                  );
-                }
-                if (existingProducers.length > 0) {
-                  const producer = existingProducers[0];
-                  core.info(
-                    `Skipping duplicate PR runtime refresh for #${tuple.prNumber}: exact tuple producer ${producer.id} remains ${producer.status}.`
-                  );
-                } else {
-                  core.info(`No reusable in-flight exact producer was verified in the bounded recent inventory; dispatching required PR runtime refresh for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
-                  await github.rest.repos.createDispatchEvent({
-                    ...context.repo,
-                    event_type: "pr-runtime-base-refresh-request",
-                    client_payload: {
-                      pr_number: tuple.prNumber,
-                      base_ref: tuple.baseRef,
-                      base_sha: tuple.baseSha,
-                      head_sha: tuple.headSha,
-                      merge_sha: tuple.mergeSha,
-                    },
-                  });
-                }
+                // The admission workflow serializes this tuple and alone can
+                // prove the producer or claim belongs to its exact base ref.
+                core.info(`Requesting serialized PR runtime refresh admission for #${tuple.prNumber} (${tuple.baseRef} / ${tuple.mergeSha}).`);
+                await github.rest.repos.createDispatchEvent({
+                  ...context.repo,
+                  event_type: "pr-runtime-base-refresh-request",
+                  client_payload: {
+                    pr_number: tuple.prNumber,
+                    base_ref: tuple.baseRef,
+                    base_sha: tuple.baseSha,
+                    head_sha: tuple.headSha,
+                    merge_sha: tuple.mergeSha,
+                  },
+                });
               } else {
                 core.info(`Skipping PR runtime image refresh for #${tuple.prNumber}: no runtime-changing files.`);
               }
