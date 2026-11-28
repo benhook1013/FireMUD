@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.service;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -70,9 +69,7 @@ public final class GameSessionIssuerGenerationProjectionBootstrap {
       return sourceCheckpoint;
     }
 
-    @SuppressFBWarnings(
-        value = "EI_EXPOSE_REP",
-        justification = "Checkpoint values are strings and immutable lists of immutable maps.")
+    /** Returns the immutable checkpoint made from strings and immutable nested evidence. */
     public Map<String, Object> projectionCheckpoint() {
       return projectionCheckpoint;
     }
