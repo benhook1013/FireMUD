@@ -83,6 +83,11 @@ public final class GameSessionRetainedTenantAssociationReadRepository {
     this.trustedRetainedAssociationSigners = Map.copyOf(trustedRetainedAssociationSigners);
   }
 
+  /** Reads a selected route within this owner's provisioned workload namespace. */
+  public Optional<UUID> readCanonicalTenantId(GameplayAdmissionPointerSnapshot target) {
+    return readCanonicalTenantId(workloadNamespace, target);
+  }
+
   /**
    * Observes one committed owner snapshot. The result identifies the retained tenant; it carries no
    * current Account entitlement or admission decision.
