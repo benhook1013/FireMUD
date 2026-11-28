@@ -3,6 +3,7 @@ package net.firedevops.firemud.recovery.model;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -681,20 +682,45 @@ class InitialGameplayReleaseModelTest {
     codec.requireBoundedEvidence(original);
     assertThat(codec.digest(original)).isEqualTo(originalDigest);
 
-    var oversized =
-        new InitialGameplayReleaseEvidence(
-            original.evidenceRef(),
-            repeated.repeat(2_097_153),
-            original.migration(),
-            original.issuerLayout(),
-            original.writerFencing(),
-            original.worldInitialization(),
-            original.entityInitialization(),
-            original.regionLease());
+    var oversized = withEvidenceIdentity(original, repeated.repeat(2_097_153));
     oversized.validateFor(scope);
     assertThatThrownBy(() -> codec.requireBoundedEvidence(oversized))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Initial gameplay release evidence exceeds 4 MiB of JSON");
+  }
+
+  @Test
+  void acceptsExactlyFourMebibytesOfJsonAndRejectsOneMoreByte() {
+    int limit = 4 * 1024 * 1024;
+    var scope = scope(UUID.randomUUID());
+    var original = evidence(scope);
+    var codec = new InitialGameplayReleaseTupleCodec();
+    int identityOverhead =
+        codec.toJson(withEvidenceIdentity(original, "x")).getBytes(StandardCharsets.UTF_8).length
+            - 1;
+    String boundaryIdentity = "x".repeat(limit - identityOverhead);
+    var boundary = withEvidenceIdentity(original, boundaryIdentity);
+    boundary.validateFor(scope);
+    assertThat(codec.toJson(boundary).getBytes(StandardCharsets.UTF_8)).hasSize(limit);
+    codec.requireBoundedEvidence(boundary);
+
+    var oversized = withEvidenceIdentity(original, boundaryIdentity + "x");
+    assertThatThrownBy(() -> codec.requireBoundedEvidence(oversized))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Initial gameplay release evidence exceeds 4 MiB of JSON");
+  }
+
+  private static InitialGameplayReleaseEvidence withEvidenceIdentity(
+      InitialGameplayReleaseEvidence original, String evidenceIdentity) {
+    return new InitialGameplayReleaseEvidence(
+        original.evidenceRef(),
+        evidenceIdentity,
+        original.migration(),
+        original.issuerLayout(),
+        original.writerFencing(),
+        original.worldInitialization(),
+        original.entityInitialization(),
+        original.regionLease());
   }
 
   @Test

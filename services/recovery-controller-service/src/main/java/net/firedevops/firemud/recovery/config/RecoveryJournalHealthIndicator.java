@@ -2,12 +2,14 @@ package net.firedevops.firemud.recovery.config;
 
 import jakarta.annotation.PreDestroy;
 import java.sql.SQLException;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.sql.DataSource;
 import net.firedevops.firemud.recovery.journal.JooqInitialGameplayReleaseJournal;
 import org.springframework.boot.health.contributor.Health;
@@ -210,6 +212,11 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+                AND attname = 'state' AND NOT attisdropped AND attnotnull
+                AND atttypid = 'pg_catalog.varchar'::regtype AND atttypmod = 24)
+            AND EXISTS (
+              SELECT 1 FROM pg_catalog.pg_attribute
+              WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND attname = 'readback_identity' AND NOT attisdropped AND NOT attnotnull
                 AND atttypid = 'pg_catalog.text'::regtype)
             AND (SELECT count(*) = 2 FROM pg_catalog.pg_attribute
@@ -343,13 +350,14 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
           """;
 
   private final DataSource dataSource;
+  private final AtomicBoolean probeInProgress = new AtomicBoolean();
   private final ThreadPoolExecutor probes =
       new ThreadPoolExecutor(
           0,
           1,
           PROBE_TIMEOUT_SECONDS,
           TimeUnit.SECONDS,
-          new SynchronousQueue<>(),
+          new ArrayBlockingQueue<>(1),
           task -> {
             Thread worker = new Thread(task, "recovery-journal-readiness");
             worker.setDaemon(true);
@@ -366,8 +374,26 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       return Health.down().build();
     }
     long deadline = System.nanoTime() + PROBE_TIMEOUT_NANOS;
+    if (!probeInProgress.compareAndSet(false, true)) {
+      return Health.down().build();
+    }
+    Future<Boolean> probe;
     try {
-      var probe = probes.submit(() -> checkJournal(deadline));
+      probe =
+          probes.submit(() -> {
+            try {
+              return checkJournal(deadline);
+            } finally {
+              // Cleanup precedes result publication. The next probe may use the queue
+              // while the worker hands off this result and becomes idle.
+              probeInProgress.set(false);
+            }
+          });
+    } catch (RejectedExecutionException unavailable) {
+      probeInProgress.set(false);
+      return Health.down().build();
+    }
+    try {
       long remaining = deadline - System.nanoTime();
       return remaining > 0
               && probe.get(remaining, TimeUnit.NANOSECONDS)
@@ -377,7 +403,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
       return Health.down().build();
-    } catch (ExecutionException | RejectedExecutionException | TimeoutException unavailable) {
+    } catch (ExecutionException | TimeoutException unavailable) {
       return Health.down().build();
     }
   }

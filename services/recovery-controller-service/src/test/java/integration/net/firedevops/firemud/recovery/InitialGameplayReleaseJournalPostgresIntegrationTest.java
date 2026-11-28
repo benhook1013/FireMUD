@@ -1179,6 +1179,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     "updated_at, TYPE timestamptz(6)",
     "preparation_observation_payload, SET DEFAULT jsonb_build_object()",
     "preparation_observation_digest, SET DEFAULT 'a'",
+    "state, TYPE varchar(10)",
     "effect_id, DROP NOT NULL",
     "effect_id, TYPE text USING effect_id::text",
     "readback_identity, TYPE varchar(4)",
@@ -1538,6 +1539,26 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     } finally {
       dsl.execute("DROP DATABASE " + database);
     }
+  }
+
+  private InitialGameplayReleaseController controllerAt(
+      InitialGameplayReleaseJournal fixtureJournal,
+      InitialGameplayReleaseEffectPort port,
+      Instant now)
+      throws Exception {
+    return ReflectionUtils.accessibleConstructor(
+            InitialGameplayReleaseController.class,
+            InitialGameplayReleaseJournal.class,
+            InitialGameplayReleaseTupleCodec.class,
+            InitialGameplayReleaseEvidenceProvider.class,
+            InitialGameplayReleaseEffectPort.class,
+            Clock.class)
+        .newInstance(
+            fixtureJournal,
+            tupleCodec,
+            mock(InitialGameplayReleaseEvidenceProvider.class),
+            port,
+            Clock.fixed(now, ZoneOffset.UTC));
   }
 
   private static HealthIndicator journalHealth(ConfigurableApplicationContext context) {
@@ -2140,8 +2161,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(journal.findNextEffect(operationId)).isEmpty();
   }
 
-  @Test
-  void unresolvedHandoffRefreshesHeldPreparationWithoutRedispatch() {
+  @ParameterizedTest(name = "handoff finalizes during preparation readback: {0}")
+  @ValueSource(booleans = {false, true})
+  void unresolvedHandoffRefreshesHeldPreparationWithoutRedispatch(boolean finalizeDuringRefresh)
+      throws Exception {
     Instant base = Instant.parse("2026-09-01T00:00:00Z");
     OutboxEntry preparation = authorizedDispatch(base);
     UUID operationId = preparation.effect().operationId();
@@ -2179,25 +2202,50 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         readbackFor(
             preparation,
             preparation.lastAttemptId(),
-            EffectReadbackState.PREPARED_FENCED,
+            finalizeDuringRefresh
+                ? EffectReadbackState.UNKNOWN_OR_PARTIAL
+                : EffectReadbackState.PREPARED_FENCED,
             "fresh-preparation-receipt",
             base.plusSeconds(10));
+    EffectReadback applied =
+        readbackFor(
+            handoff,
+            handoff.lastAttemptId(),
+            EffectReadbackState.OWNER_HANDOFF_APPLIED,
+            "handoff-completed-during-refresh",
+            base.plusSeconds(11));
+    Instant now = base.plusSeconds(12);
     var port = mock(InitialGameplayReleaseEffectPort.class);
     when(port.readback(handoff.effect(), handoff.lastAttemptId(), handoff.attemptCount()))
         .thenReturn(InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(unknown));
     when(port.readback(
             preparation.effect(), preparation.lastAttemptId(), preparation.attemptCount()))
-        .thenReturn(InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(refreshed));
-    var controller =
-        new InitialGameplayReleaseController(
-            journal, tupleCodec, mock(InitialGameplayReleaseEvidenceProvider.class), port);
+        .thenAnswer(invocation -> {
+          if (finalizeDuringRefresh) {
+            journal.recordEffectReadback(handoff, applied, now);
+          }
+          return InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(refreshed);
+        });
+    var controller = controllerAt(journal, port, now);
+    String priorPreparation = storedOutbox(operationId, preparation.effect().effectId());
 
-    assertThat(controller.reconcileNextEffect(operationId).phase()).isEqualTo(Phase.RELEASING);
+    Operation result = controller.reconcileNextEffect(operationId);
 
     verify(port).readback(handoff.effect(), handoff.lastAttemptId(), handoff.attemptCount());
     verify(port)
         .readback(preparation.effect(), preparation.lastAttemptId(), preparation.attemptCount());
     verifyNoMoreInteractions(port);
+    if (finalizeDuringRefresh) {
+      assertThat(result.phase()).isEqualTo(Phase.FINALIZED);
+      assertThat(journal.find(operationId)).contains(result);
+      assertThat(storedOutbox(operationId, handoff.effect().effectId()))
+          .contains(tupleCodec.digest(applied));
+      assertThat(storedOutbox(operationId, preparation.effect().effectId()))
+          .isEqualTo(priorPreparation);
+      assertThat(journal.findNextEffect(operationId)).isEmpty();
+      return;
+    }
+    assertThat(result.phase()).isEqualTo(Phase.RELEASING);
     assertThat(storedOutbox(operationId, preparation.effect().effectId()))
         .contains(tupleCodec.digest(refreshed));
     assertThat(journal.findHeldPreparationForRefresh(operationId)).isEmpty();
@@ -5911,20 +5959,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             .thenReturn(
                 InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(partial),
                 InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(closure));
-        var controller =
-            ReflectionUtils.accessibleConstructor(
-                    InitialGameplayReleaseController.class,
-                    InitialGameplayReleaseJournal.class,
-                    InitialGameplayReleaseTupleCodec.class,
-                    InitialGameplayReleaseEvidenceProvider.class,
-                    InitialGameplayReleaseEffectPort.class,
-                    Clock.class)
-                .newInstance(
-                    legacyJournal,
-                    tupleCodec,
-                    mock(InitialGameplayReleaseEvidenceProvider.class),
-                    port,
-                    Clock.fixed(dispatchTime.plusSeconds(3), ZoneOffset.UTC));
+        var controller = controllerAt(legacyJournal, port, dispatchTime.plusSeconds(3));
         controller.reconcileNextEffect(V1_OPERATION_ID);
         assertThat(legacyJournal.findNextEffect(V1_OPERATION_ID)).contains(held);
         assertThat(retainedOutboxRow(legacyDsl)).contains(tupleCodec.digest(partial));

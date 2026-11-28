@@ -511,6 +511,7 @@ def recovery_flyway_config(
         "spring.datasource.hikari.username": "${FIREMUD_RECOVERY_CONTROL_DB_USER}",
         "spring.datasource.hikari.password": "${FIREMUD_RECOVERY_CONTROL_DB_PASSWORD}",
     }
+    recovery_database_host = "firemudrecoverycontroldbhost"
     callback_locations = "spring.flyway.callbacklocations"
     placeholder_replacement = "spring.flyway.placeholderreplacement"
     effective_exclusions: list[str] | None = None
@@ -690,6 +691,7 @@ def recovery_flyway_config(
                     ambiguous.discard(path)
             exact_guard_paths = {auto_configuration_switch, pool_init_sql, pool_test_query,
                                  datasource_type, *credential_paths, *driver_paths,
+                                 recovery_database_host,
                                  "spring.flyway.validateonmigrate",
                                  "spring.datasource.url", "spring.datasource.hikari.jdbcurl",
                                  "spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
@@ -755,14 +757,23 @@ def recovery_flyway_config(
         effective_settings[path] != POSTGRESQL_DRIVER for path in driver_paths & effective_settings.keys()
     ):
         return None
+    if require_current_configuration and recovery_database_host in effective_settings:
+        # The host belongs to the deployment environment. A packaged default
+        # can silently redirect the dedicated journal datasource when the
+        # operator omits its required environment value.
+        return None
     if any(effective_settings[path] != reference for path, reference in credential_paths.items()
            if path in effective_settings):
         return None
+    if require_current_configuration and any(
+        f"spring.datasource.{credential}" not in effective_settings
+        and f"spring.datasource.hikari.{credential}" not in effective_settings
+        for credential in ("username", "password")
+    ):
+        return None
 
     auto_configuration_enabled = effective_settings.pop(auto_configuration_switch, True)
-    if auto_configuration_enabled is not True and not (
-            isinstance(auto_configuration_enabled, str)
-            and auto_configuration_enabled.strip().lower() in {"true", "on", "yes", "1"}):
+    if spring_boolean(auto_configuration_enabled) is not True:
         return None
     if effective_exclusions is not None and any(
         name.strip().rsplit(".", 1)[-1] in {"FlywayAutoConfiguration", "DataSourceAutoConfiguration"}
@@ -1054,13 +1065,52 @@ def run_self_test() -> None:
         b"    table: flyway_schema_history_recovery_control\n"
     )
     datasource_url = RECOVERY_DATASOURCE_URL.encode()
-    datasource_setting = b"spring.datasource.url: " + datasource_url + b"\n"
+    datasource_setting = (
+        b"spring.datasource.url: " + datasource_url + b"\n"
+        b"spring.datasource.username: ${FIREMUD_RECOVERY_CONTROL_DB_USER}\n"
+        b"spring.datasource.password: ${FIREMUD_RECOVERY_CONTROL_DB_PASSWORD}\n"
+    )
     recovery_settings = (
         datasource_setting + b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n"
         + recovery_table_setting
     )
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
+    for credential in (b"username", b"password"):
+        missing_credential = datasource_setting.replace(
+            b"spring.datasource." + credential + b": ${FIREMUD_RECOVERY_CONTROL_DB_"
+            + (b"USER" if credential == b"username" else b"PASSWORD") + b"}\n",
+            b"",
+        )
+        check("current Recovery datasource requires canonical environment credentials", {
+            **recovery_history,
+            recovery_config: recovery_settings.replace(datasource_setting, missing_credential),
+        }, recovery_history, "historical effective migration no longer applied")
+    check("canonical Hikari-only credentials remain eligible", {
+        **recovery_history,
+        recovery_config: recovery_settings.replace(
+            b"spring.datasource.username:", b"spring.datasource.hikari.username:"
+        ).replace(b"spring.datasource.password:", b"spring.datasource.hikari.password:"),
+    }, recovery_history, None)
+    for hikari_credential in (b"username", b"password"):
+        check("noncanonical explicit Hikari credential cannot qualify Recovery history", {
+            **recovery_history,
+            recovery_config: recovery_settings + (
+                b"spring.datasource.hikari." + hikari_credential + b": packaged-default\n"
+            ),
+        }, recovery_history, "historical effective migration no longer applied")
+    check("packaged Recovery database host default cannot qualify history", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"FIREMUD_RECOVERY_CONTROL_DB_HOST: shared-postgres\n",
+    }, recovery_history, "historical effective migration no longer applied")
+    check("global auto-configuration accepts ordinary Java-trim padding", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"spring.boot.enable-auto-configuration: ' true '\n",
+    }, recovery_history, None)
+    check("global auto-configuration rejects non-Java whitespace padding", {
+        **recovery_history,
+        recovery_config: recovery_settings + "spring.boot.enable-auto-configuration: '\u00a0true\u00a0'\n".encode(),
+    }, recovery_history, "historical effective migration no longer applied")
     recovery_java_migration = RECOVERY_APP_JAVA_ROOT + "config/RecoveryMigrationConfiguration.java"
     if not relevant_path(recovery_java_migration):
         raise AssertionError("Recovery application-package Java sources must be snapshotted")

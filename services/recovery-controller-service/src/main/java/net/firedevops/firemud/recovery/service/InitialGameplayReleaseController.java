@@ -137,15 +137,20 @@ public final class InitialGameplayReleaseController {
         || outbox.state() == EffectOutboxState.RETRYABLE) {
       return applyEffect(operation, outbox);
     }
-    Operation reconciled = readBackEffect(operation, outbox);
-    if (outbox.effect().kind() == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF
-        && reconciled.phase() == Phase.RELEASING) {
-      return journal
-          .findHeldPreparationForRefresh(operationId)
-          .map(preparation -> readBackEffect(reconciled, preparation))
-          .orElse(reconciled);
+    return reconcileReadback(operation, outbox);
+  }
+
+  private Operation reconcileReadback(Operation operation, OutboxEntry outbox) {
+    Operation reconciled = readBackEffect(operation, outbox, false);
+    if (outbox.effect().kind() != EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF
+        || reconciled.phase() != Phase.RELEASING) {
+      return reconciled;
     }
-    return reconciled;
+    UUID operationId = operation.scope().operationId();
+    return journal
+        .findHeldPreparationForRefresh(operationId)
+        .map(preparation -> readBackEffect(reconciled, preparation, true))
+        .orElseGet(() -> requireOperation(operationId));
   }
 
   private Operation applyEffect(Operation operation, OutboxEntry outbox) {
@@ -185,10 +190,11 @@ public final class InitialGameplayReleaseController {
           dispatched, applyResult.outcomeCode(), clock.instant());
       return requireOperation(operation.scope().operationId());
     }
-    return readBackEffect(operation, dispatched);
+    return reconcileReadback(operation, dispatched);
   }
 
-  private Operation readBackEffect(Operation operation, OutboxEntry outbox) {
+  private Operation readBackEffect(
+      Operation operation, OutboxEntry outbox, boolean optionalPreparationRefresh) {
     tupleCodec.requireEffectMatchesOperation(outbox.effect(), operation);
     UUID attemptId = outbox.lastAttemptId();
     if (attemptId == null) {
@@ -215,7 +221,19 @@ public final class InitialGameplayReleaseController {
       throw new InitialGameplayReleaseConflictException(
           "IDEMPOTENCY_CONFLICT: effect readback observation time changed");
     }
-    return journal.recordEffectReadback(outbox, readback, now);
+    try {
+      return journal.recordEffectReadback(outbox, readback, now);
+    } catch (InitialGameplayReleaseConflictException conflict) {
+      if (optionalPreparationRefresh) {
+        // An independent journal read verifies the durable handoff receipt for FINALIZED.
+        Operation current = requireOperation(operation.scope().operationId());
+        if (current.phase() == Phase.FINALIZED) {
+          tupleCodec.requireEffectMatchesOperation(outbox.effect(), current);
+          return current;
+        }
+      }
+      throw conflict;
+    }
   }
 
   private PublicTransitionResult transition(
