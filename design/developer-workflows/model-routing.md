@@ -15,7 +15,7 @@ FireMUD runs on two providers: Codex (Sol and Luna) and Claude (Opus). Either ca
 
 ## Provider Mode
 
-The FireController operator variable `provider_mode` says which providers to lean on. The human sets it; agents read it and never check usage or quota themselves. Until the variable exists, or if it cannot be read, use `both`.
+The FireController operator variable `provider_mode` says which providers to lean on. The human sets it; agents read it and never check usage or quota themselves. If it is unset or cannot be read, use `both`.
 
 - `both`: both providers have room.
 - `codex_low`: Codex usage is low; move work to Claude.

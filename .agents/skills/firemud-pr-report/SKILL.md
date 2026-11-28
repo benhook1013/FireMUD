@@ -7,6 +7,4 @@ metadata:
 
 # FireMUD PR reporting
 
-Use when asked for a FireMUD "PR report", review-count history, or merge-readiness summary; do not use for implementing fixes or requesting CodeRabbit reviews.
-
-Resolve the current checkout root with `git rev-parse --show-toplevel`, then read [Pull Request Lifecycle](../../../design/developer-workflows/pr-lifecycle.md) relative to this `SKILL.md`. Gather and format the report according to that guide from existing hosted summaries/threads and owning-lane CLI checkpoint comments. Keep reporting read-only: do not trigger reviews, mutate CI, resume paused tasks, or merge.
+Read-only. Read the PR's review history from FireController with the `firecontroller-reviews` skill (`reviews runs`, `reviews readiness`), the record named in [Pull Request Lifecycle](../../../design/developer-workflows/pr-lifecycle.md#review-and-status). For each round report the reviewed head, raw and useful counts, new versus repeat findings, decisions, and what remains. Judge readiness only against [Review Completion Criteria](../../../design/developer-workflows/pr-lifecycle.md#review-completion-criteria). Do not request reviews, touch CI, resume paused tasks, or merge.

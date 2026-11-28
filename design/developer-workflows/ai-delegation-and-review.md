@@ -6,7 +6,7 @@ Use this guide when an orchestrator delegates to subagents or commissions an ind
 
 This applies only when the human sets up an Overseer.
 
-- The Overseer holds direction, priorities, consequential decisions, evidence adjudication, cross-lane coordination, and contact with the human. It delegates operational work (searches, audits, edits, tests, tooling) to orchestrators or subagents rather than doing it itself; if no capacity is available, it reports that.
+- The Overseer ([roles](../../AGENTS.md#roles)) delegates operational work (searches, audits, edits, tests, tooling) to orchestrators or subagents rather than doing it itself; if no capacity is available, it reports that.
 - On routine wakes the Overseer reads pending coordination and acts only when a decision or integration is due.
 - When a worker's behavior or understanding of its authority is wrong, the Overseer gives a direct, bounded correction and checks it took effect.
 - Workers own routine choices within accepted design, including fixes, retries, and test failures. They escalate only a real conflict with accepted design, a change to authority, priority, or scope, or a blocker that needs the Overseer, with a short evidence pointer and a proposed next step. They do not send debugging noise or ask permission for authorized steps.
@@ -47,5 +47,5 @@ The orchestrator may lift part of that block for a specific task by naming the e
 - Routine PR review runs through FireController's Hosted and CLI channels. Do not spawn subagents to review or re-review fix batches during normal PR polishing.
 - Commission a model-based review only for: a consequential check before the controller is available, a risk the controller cannot cover, a fresh whole-domain assessment, a deliberate audit, or an explicit request from the human or Overseer. Use a fresh-context reviewer, preferably from a different model family than the author, given the governing authority, the exact artifact and scope, and necessary facts, but not earlier findings or a desired conclusion.
 - An exhaustive audit requires per-item coverage, the sources read, and an explicit statement of anything not covered. "No findings" without that is not evidence.
-- Record commissioned review passes, findings, decisions, and fixes in FireController with the `firecontroller-use` skill. Do not keep parallel ledgers or status files. Scratch notes are fine but are not the record. If the controller is unavailable, keep the evidence and report the recording gap.
+- Record commissioned review passes, findings, decisions, and fixes in FireController with the `firecontroller-reviews` skill (`reviews subagent-record`). Do not keep parallel ledgers or status files. Scratch notes are fine but are not the record. If the controller is unavailable, keep the evidence and report the recording gap.
 - A completed review of a declared scope does not claim more than that scope.
