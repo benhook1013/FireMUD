@@ -37,13 +37,22 @@ assert_activation() {
 }
 
 assert_rejected() {
+  local reason=""
+  if [[ "$1" == --reason ]]; then
+    reason="$2"
+    shift 2
+  fi
   local output
   if output="$(cd "$repo" && bash "$detector" "$@" dev 2>&1)"; then
     echo "expected migration-mode classification to fail closed: $*" >&2
     exit 1
   fi
-  if grep -q '^activation=' <<<"$output"; then
+  if grep -Eq '^(activation|deployed_base_sha|account_origin_[a-z_]+)=' <<<"$output"; then
     echo "rejected migration-mode classification emitted an activation decision: $output" >&2
+    exit 1
+  fi
+  if [[ -n "$reason" ]] && ! grep -Fq "$reason" <<<"$output"; then
+    echo "expected migration-mode refusal '$reason'; got: $output" >&2
     exit 1
   fi
 }
@@ -130,8 +139,16 @@ done
 git -C "$repo" add .
 git -C "$repo" commit -qm "Account capacity origin prefix"
 capacity_prefix_sha="$(git -C "$repo" rev-parse HEAD)"
+namespace_for_head "$account_v25_sha"
+assert_activation true push "$account_v25_sha" "$capacity_prefix_sha"
+
+printf '%s\n' '-- capacity origin uniqueness migration fixture' \
+  >"$capacity_migration_dir/V1040.4__unique_capacity_origin_attempt.sql"
+git -C "$repo" add .
+git -C "$repo" commit -qm "Account capacity origin uniqueness migration"
+capacity_uniqueness_sha="$(git -C "$repo" rev-parse HEAD)"
+
 for migration in \
-  V1040.4__unique_capacity_origin_attempt.sql \
   V1040.5__arbitrate_origin_identity_before_refusal_budget.sql \
   V1040.6__index_retained_capacity_refusal_slots.sql; do
   printf '%s\n' '-- capacity origin migration fixture' >"$capacity_migration_dir/$migration"
@@ -139,26 +156,18 @@ done
 git -C "$repo" add .
 git -C "$repo" commit -qm "Account capacity origin migration series"
 capacity_origin_sha="$(git -C "$repo" rev-parse HEAD)"
-namespace_for_head "$account_v25_sha"
-assert_activation true push "$account_v25_sha" "$capacity_origin_sha"
-assert_activation true workflow_dispatch "" "$capacity_origin_sha"
-origin_receipt="$(cd "$repo" && bash "$detector" push "$account_v25_sha" "$capacity_origin_sha" dev)"
-grep -Fxq 'account_origin_probe=true' <<<"$origin_receipt"
-grep -Fxq 'account_origin_prefix=0' <<<"$origin_receipt"
-grep -Fxq "account_origin_base_sha=$account_v25_sha" <<<"$origin_receipt"
-grep -Fxq 'account_origin_namespace_uid=fixture-dev-uid' <<<"$origin_receipt"
-
+hold_uniqueness='Account V1040.4 retained activation is held pending an enforced writer fence through the diagnostic and Helm handoff'
 namespace_for_head "$capacity_prefix_sha"
-origin_receipt="$(cd "$repo" && bash "$detector" push "$capacity_prefix_sha" "$capacity_origin_sha" dev)"
-grep -Fxq 'account_origin_prefix=3' <<<"$origin_receipt"
-dispatch_receipt="$(cd "$repo" && bash "$detector" repository_dispatch "" "$capacity_origin_sha" dev)"
-grep -Fxq 'activation=true' <<<"$dispatch_receipt"
-grep -Fxq 'account_origin_probe=true' <<<"$dispatch_receipt"
-grep -Fxq 'account_origin_prefix=3' <<<"$dispatch_receipt"
-grep -Fxq "account_origin_base_sha=$capacity_prefix_sha" <<<"$dispatch_receipt"
-grep -Fxq 'account_origin_namespace_uid=fixture-dev-uid' <<<"$dispatch_receipt"
-FAKE_NAMESPACE_JSON="$(jq 'del(.metadata.uid)' <<<"$FAKE_NAMESPACE_JSON")"
-assert_rejected push "$capacity_prefix_sha" "$capacity_origin_sha"
+for target in "$capacity_uniqueness_sha" "$capacity_origin_sha"; do
+  assert_rejected --reason "$hold_uniqueness" push "$capacity_prefix_sha" "$target"
+  assert_rejected --reason "$hold_uniqueness" repository_dispatch "" "$target"
+done
+namespace_for_head "$account_v25_sha"
+assert_rejected --reason "$hold_uniqueness" push "$capacity_uniqueness_sha" "$capacity_origin_sha"
+
+namespace_for_head "$capacity_uniqueness_sha"
+assert_activation true push "$capacity_uniqueness_sha" "$capacity_origin_sha"
+assert_activation true repository_dispatch "" "$capacity_origin_sha"
 
 namespace_for_head "$capacity_origin_sha"
 assert_rejected workflow_dispatch "" "$capacity_origin_sha"
@@ -167,17 +176,11 @@ printf '%s\n' '-- held exact expired-denial migration' >"$capacity_migration_dir
 git -C "$repo" add .
 git -C "$repo" commit -qm "Account expired-denial migration"
 capacity_expired_sha="$(git -C "$repo" rev-parse HEAD)"
+hold_expired='Account V1040.7 retained activation is held pending an approved writer and consumer boundary'
 for deployed in "$capacity_origin_sha" "$capacity_prefix_sha"; do
   namespace_for_head "$deployed"
-  if hold_output="$(cd "$repo" && bash "$detector" push "$deployed" "$capacity_expired_sha" dev 2>&1)"; then
-    echo "held Account V1040.7 range received an activation decision" >&2
-    exit 1
-  fi
-  if grep -q '^activation=' <<<"$hold_output"; then
-    echo "held Account V1040.7 range emitted an activation decision" >&2
-    exit 1
-  fi
-  grep -Fq 'Account V1040.7 retained activation is held pending an approved writer and consumer boundary' <<<"$hold_output"
+  assert_rejected --reason "$hold_expired" push "$deployed" "$capacity_expired_sha"
+  assert_rejected --reason "$hold_expired" repository_dispatch "" "$capacity_expired_sha"
 done
 
 git -C "$repo" switch -qc unsupported-capacity-origin "$capacity_origin_sha"
