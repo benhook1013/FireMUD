@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(34);
+      assertThat(catalog.catalogEpoch()).isEqualTo(35);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -227,7 +227,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.18",
               "catalog-installation:1065.0.19",
               "catalog-installation:1065.0.20",
-              "catalog-installation:1065.0.21")
+              "catalog-installation:1065.0.21",
+              "catalog-installation:1065.0.22")
           .noneMatch(identity ->
               identity.contains(":1057:")
                   || identity.contains(":1058:")
@@ -262,7 +263,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   || identity.contains(":1065.0.18:")
                   || identity.contains(":1065.0.19:")
                   || identity.contains(":1065.0.20:")
-                  || identity.contains(":1065.0.21:"));
+                  || identity.contains(":1065.0.21:")
+                  || identity.contains(":1065.0.22:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -799,7 +801,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(34);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(35);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(fact ->
                 fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
@@ -977,7 +979,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "1065.0.18",
               "1065.0.19",
               "1065.0.20",
-              "1065.0.21")) {
+              "1065.0.21",
+              "1065.0.22")) {
         String columns =
             "installed_rank,version,description,type,script,checksum,installed_by,execution_time,success";
         var original =
@@ -1022,7 +1025,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           f.dsl.execute("DELETE FROM " + f.history + " WHERE installed_rank=10000");
         }
       }
-      assertThat(f.owner().capture(request()).catalog().catalogEpoch()).isEqualTo(34);
+      assertThat(f.owner().capture(request()).catalog().catalogEpoch()).isEqualTo(35);
     }
   }
 

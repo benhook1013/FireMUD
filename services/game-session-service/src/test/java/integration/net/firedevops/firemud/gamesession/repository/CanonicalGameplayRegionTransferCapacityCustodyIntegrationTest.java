@@ -1733,6 +1733,120 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
   }
 
   @Test
+  void laterReceiptOnlyItemMustMatchTheRetainedOriginalDispatchIncarnation() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID originalId = proof.begin();
+      proof.captureAndFence(originalId);
+      proof.verifyPage(originalId);
+      proof.transfers.within(
+          transferDeadline(), ignored -> proof.transfers.finishVerification(originalId));
+      var installed = proof.install(originalId);
+      String original = proof.itemImage(originalId);
+      var dispatch =
+          proof.sql.fetchSingle(
+              "SELECT fence_dispatch_id, fence_dispatch_incarnation"
+                  + " FROM game_session_region_owner_transfer_item WHERE transfer_id=?",
+              originalId);
+      assertThat(dispatch.get("fence_dispatch_id", UUID.class)).isNotNull();
+      String incarnation = dispatch.get("fence_dispatch_incarnation", String.class);
+      assertThat(incarnation).isNotBlank();
+
+      UUID laterId = proof.insertRawFrozenTransfer(proof.sql, proof.scope, installed);
+      proof.insertRawTransferItem(proof.sql, laterId, 0);
+      String enrolled = proof.itemImage(laterId);
+      String pin =
+          "UPDATE game_session_region_owner_transfer SET incarnation_digest=? WHERE transfer_id=?";
+      String retain =
+          "UPDATE game_session_region_owner_transfer_item later SET"
+              + " fence_readback=original.fence_readback,incarnation_digest=?,"
+              + " before_payload_digest=original.before_payload_digest,"
+              + " after_payload_digest=original.after_payload_digest"
+              + " FROM game_session_region_owner_transfer_item original"
+              + " WHERE later.transfer_id=? AND original.transfer_id=?";
+      String changed = "sha256:" + "0".repeat(64);
+      assertThat(changed).isNotEqualTo(incarnation);
+      assertThatThrownBy(() ->
+              proof.sql.transaction(configuration -> {
+                var transaction = DSL.using(configuration);
+                transaction.execute(pin, changed, laterId);
+                transaction.execute(retain, changed, laterId, originalId);
+              }))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Transfer receipt differs from the retained dispatch incarnation");
+      assertThat(proof.itemImage(laterId)).isEqualTo(enrolled);
+
+      proof.sql.transaction(configuration -> {
+        var transaction = DSL.using(configuration);
+        assertThat(transaction.execute(pin, incarnation, laterId)).isEqualTo(1);
+        assertThat(transaction.execute(retain, incarnation, laterId, originalId)).isEqualTo(1);
+      });
+      var receipt =
+          proof.sql.fetchSingle(
+              "SELECT fence_dispatch_id, incarnation_digest, fence_readback"
+                  + " FROM game_session_region_owner_transfer_item WHERE transfer_id=?",
+              laterId);
+      assertThat(receipt.get("fence_dispatch_id", UUID.class)).isNull();
+      assertThat(receipt.get("incarnation_digest", String.class)).isEqualTo(incarnation);
+      assertThat(receipt.get("fence_readback", byte[].class)).isNotEmpty();
+      assertThat(proof.itemImage(originalId)).isEqualTo(original);
+      assertThat(proof.currentOwner()).isEqualTo(installed);
+    }
+  }
+
+  @Test
+  void committedFenceDispatchKeepsItsParentIncarnationAfterOwnerReload() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID id = proof.begin();
+      var item =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.capture(id).getFirst());
+      long deadline = transferDeadline();
+      var dispatch =
+          proof.transfers.within(
+              deadline,
+              ignored ->
+                  proof.transfers.fenceDispatch(
+                      item, proof.receiver.observeForRegionOwnerTransfer(id, 0, deadline)));
+      assertThat(dispatch.receiptId()).isNotNull();
+      String incarnation = dispatch.incarnationDigest();
+      assertThat(incarnation).isNotBlank();
+      String dispatched = proof.itemImage(id);
+      String pinned = proof.transferImage(id);
+      assertThat(pinned).contains(incarnation);
+
+      proof.recreateTransferOwners();
+      var reloaded =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.page(id, -1).getFirst());
+      long reloadDeadline = transferDeadline();
+      var retained =
+          proof.transfers.within(
+              reloadDeadline,
+              ignored ->
+                  proof.transfers.fenceDispatch(
+                      reloaded,
+                      proof.receiver.observeForRegionOwnerTransfer(id, 0, reloadDeadline)));
+      assertThat(retained.receiptId()).isEqualTo(dispatch.receiptId());
+      assertThat(retained.incarnationDigest()).isEqualTo(incarnation);
+      String changed = "sha256:" + "0".repeat(64);
+      assertThat(changed).isNotEqualTo(incarnation);
+      assertThatThrownBy(() ->
+              proof.sql.execute(
+                  "UPDATE game_session_region_owner_transfer SET incarnation_digest=?"
+                      + " WHERE transfer_id=?",
+                  changed,
+                  id))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Region transfer source and completed custody are immutable");
+      assertThat(proof.transferImage(id)).isEqualTo(pinned);
+      assertThat(proof.itemImage(id)).isEqualTo(dispatched);
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+    }
+  }
+
+  @Test
   void terminalTransferCompletionRequiresItsExactInstalledSuccessor() throws Exception {
     try (var proof = new TransferSqlProof()) {
       UUID id = proof.insertRawFrozenTransfer(proof.sql);

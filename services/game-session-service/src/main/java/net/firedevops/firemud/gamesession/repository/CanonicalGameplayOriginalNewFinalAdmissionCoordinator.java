@@ -114,6 +114,29 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source =
           inventory.readOriginalNewFinalAdmissionSource(originalDecision);
       requireOriginalSource(source, originalDecision);
+      if (source.transitionStatus() == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+          && capacityRequest.evidence().permitsCreation()
+          && privateRegionInstallation
+                  .status
+                  .executorFence()
+                  .compareTo(source.regionAcknowledgement().executorFence())
+              > 0) {
+        var charge =
+            capacityExecution.reconcileSuccessorDenial(
+                source, capacityRequest, privateRegionInstallation, null, absoluteDeadlineMillis);
+        if (charge.accountDenial() != null) {
+          throw CapacityRefusedException.retainedAdmissionDenial(charge.accountDenial());
+        }
+        requireDeadline(absoluteDeadlineMillis);
+        Refusal denial =
+            capacityClient.readRetainedAdmissionDenial(capacityRequest, absoluteDeadlineMillis);
+        requireDeadline(absoluteDeadlineMillis);
+        source = readSameSource(source, originalDecision, false);
+        var settled =
+            capacityExecution.reconcileSuccessorDenial(
+                source, capacityRequest, privateRegionInstallation, denial, absoluteDeadlineMillis);
+        throw CapacityRefusedException.retainedAdmissionDenial(settled.accountDenial());
+      }
       var selectedOwner =
           capacityExecution.requireRequestBinding(source, capacityRequest, absoluteDeadlineMillis);
       CanonicalGameplayCapacityEvidenceBudget.RetainedCharge priorCharge = null;

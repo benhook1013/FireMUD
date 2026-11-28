@@ -32,6 +32,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Re
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -140,6 +141,16 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     if (budget == null)
       return within(deadline, owner -> owner.requireRequestBinding(source, request, deadline));
     budget.check();
+    requireExactRequest(source, request);
+    CurrentOwner selected = currentOwner(source.candidate());
+    if (selected.fence() != source.regionAcknowledgement().executorFence().longValueExact())
+      throw unavailable();
+    return selected;
+  }
+
+  private static void requireExactRequest(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      Request request) {
     // Account owns fresh policy denial; coherent non-creating evidence must reach that owner.
     request.requireStructurallyValid();
     var candidate = source.candidate();
@@ -169,10 +180,58 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         || !Objects.equals(
             request.evidence().fields().get("authorityTuple"),
             candidate.leaseEvidence().carrier().get("authorityTuple"))) throw unavailable();
-    CurrentOwner selected = currentOwner(candidate);
-    if (selected.fence() != source.regionAcknowledgement().executorFence().longValueExact())
-      throw unavailable();
-    return selected;
+  }
+
+  CanonicalGameplayCapacityEvidenceBudget.RetainedCharge reconcileSuccessorDenial(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      Request request,
+      CanonicalGameplayRegionLeaseOwner.Installation installation,
+      Refusal denial,
+      long deadline) {
+    return within(
+        deadline,
+        owner -> {
+          requireExactRequest(source, request);
+          OriginalNewCapacityExecution.requireOriginalNewRequest(request);
+          var successor = installation.status;
+          var original = source.regionAcknowledgement();
+          if (source.transitionStatus()
+                  != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+              || !request.evidence().permitsCreation()
+              || !original.tenantId().equals(successor.tenantId())
+              || !original.gameInstanceId().equals(successor.gameInstanceId())
+              || !original.regionId().equals(successor.regionId())
+              || original.regionEpoch().longValueExact() != successor.regionEpoch()
+              || successor.executorFence().compareTo(original.executorFence()) <= 0) {
+            throw unavailable();
+          }
+          var assignment =
+              owner.scopedTags().assignmentForTransition(request.identity().admissionId());
+          return owner
+              .sql()
+              .transactionResult(configuration -> {
+                var tx = DSL.using(configuration);
+                tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+                tx.fetch(
+                    "SELECT require_gs_capacity_denial_successor(?,?,?,?,?,?,?,?)",
+                    request.identity().tenantId(),
+                    request.identity().requestId(),
+                    request.identity().admissionId(),
+                    source.candidateDigest(),
+                    original.executorFence().longValueExact(),
+                    successor.ownerInstanceId(),
+                    successor.executorFence().longValueExact(),
+                    successor.leaseTokenCorrelation());
+                return CanonicalGameplayCapacityEvidenceBudget.reconcileSuccessorDenial(
+                    tx,
+                    request,
+                    source.candidateDigest(),
+                    assignment.tenantGameplayTag(),
+                    original.executorFence().longValueExact(),
+                    successor,
+                    denial);
+              });
+        });
   }
 
   /** Checks the caller's complete original request against the execution linked by the receipt. */

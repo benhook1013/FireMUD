@@ -190,25 +190,8 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         new CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources(
             binding.dsl(), binding.originalPreparedDecisionWithControlledAccountLease(), directory);
     region =
-        CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
-            binding.dsl(),
-            coordination,
-            coordinationUri,
-            scripts,
-            CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
-                ::controlledRegionIncarnation,
-            sources.resolver,
-            sources.entity,
-            new RuntimeIdentity(
-                "game-session-service",
-                "actual-final-composition",
-                "localhost",
-                Instant.now(),
-                "test",
-                "test",
-                "controlled-test-image"),
-            Duration.ofSeconds(30),
-            CLOCK);
+        new CanonicalGameplayRegionBindingBridgeOwner(
+            composeRegionLeaseOwner("actual-final-composition"), sources.entity);
     attestor = new CanonicalGameplayControlledInitialObservationFixture();
     initialRepository =
         new CanonicalGameplayAccountInitialBarrierInitializerRepository(binding.dsl());
@@ -954,27 +937,49 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
           execution,
           deadline);
     }
+    handoffOriginalRegion(deadline);
+    return reservation;
+  }
+
+  /** Replaces the original executor through the real acquire and transfer protocol. */
+  public void handoffOriginalRegion(long deadline) throws Exception {
     var repository = new CanonicalGameplayRegionOwnerTransferRepository(binding.dsl(), CLOCK, tags);
     var receiver =
         new CanonicalGameplayControlledRegionTransferObservationFixture()
             .receiver(repository, tags);
+    var executionOwner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            binding.dsl(), coordination, scripts, CLOCK, tags);
     var transfer =
         new CanonicalGameplayRegionOwnerTransferCoordinator(
             binding.dsl(), CLOCK, repository, executionOwner, receiver);
-    administration.sync().pexpire(ascii(regionInstallation.grant.key()), 0);
+    var original = regionInstallation;
+    var successor = composeRegionLeaseOwner("final-owner-handoff");
+    administration.sync().pexpire(ascii(original.grant.key()), 0);
     regionInstallation =
-        CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
-            binding.dsl(),
-            coordination,
-            coordinationUri,
-            scripts,
-            regionInstallation,
-            sources.resolver,
-            CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
-                ::controlledRegionIncarnation,
-            transfer,
-            deadline);
-    return reservation;
+        successor.installForTransition(
+            null, original.transitionId, original.worldRequest, transfer, deadline);
+    region = new CanonicalGameplayRegionBindingBridgeOwner(successor, sources.entity);
+  }
+
+  private CanonicalGameplayRegionLeaseOwner composeRegionLeaseOwner(String instanceId) {
+    return CanonicalGameplayRegionLeaseOwnerFactory.compose(
+        binding.dsl(),
+        coordination,
+        coordinationUri,
+        scripts,
+        CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture::controlledRegionIncarnation,
+        sources.resolver,
+        new RuntimeIdentity(
+            "game-session-service",
+            instanceId,
+            "localhost",
+            Instant.now(),
+            "test",
+            "test",
+            "controlled-test-image"),
+        Duration.ofSeconds(30),
+        CLOCK);
   }
 
   public Target target() {

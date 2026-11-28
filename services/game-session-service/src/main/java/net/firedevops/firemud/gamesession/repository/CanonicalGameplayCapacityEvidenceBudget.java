@@ -10,6 +10,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Re
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.SendDisposition;
+import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.exception.DataAccessException;
@@ -179,6 +180,50 @@ final class CanonicalGameplayCapacityEvidenceBudget {
     if (settled != 1) throw unavailable();
   }
 
+  static RetainedCharge reconcileSuccessorDenial(
+      DSLContext tx,
+      Request request,
+      String candidateDigest,
+      String tag,
+      long originalFence,
+      CanonicalGameplayRegionRuntimeStatus successor,
+      Refusal denial) {
+    lockBudget(tx, request, tag);
+    var charge = exactChargeIdentity(tx, request, candidateDigest, tag);
+    if (charge == null
+        || !Long.valueOf(originalFence).equals(charge.get("selected_owner_fence", Long.class))
+        || tx.fetchOne(
+                "SELECT 1 FROM game_session_original_new_capacity_execution"
+                    + " WHERE admission_attempt_id=? OR transition_id=? LIMIT 1",
+                request.admissionAttemptId(),
+                request.identity().admissionId())
+            != null) throw unavailable();
+    String state = charge.get("account_send_state", String.class);
+    if (state != null && !"MAY_HAVE_SENT".equals(state)) throw unavailable();
+    var retained = retainedDenial(charge);
+    if (retained != null) {
+      if (denial != null && !retained.equals(denial)) throw unavailable();
+      return new RetainedCharge(retained, false);
+    }
+    if (denial == null) return new RetainedCharge(null, true);
+    if (!denial.code().supportsDurableDenial() || denial.durableDenialId() == null) {
+      throw unavailable();
+    }
+    if (tx.execute(
+            "UPDATE game_session_capacity_evidence_charge SET account_denial_id=?,"
+                + " account_denial_kind=?,denial_settlement_owner_id=?,"
+                + " denial_settlement_owner_fence=?,denial_settlement_lease_correlation=?"
+                + " WHERE admission_attempt_id=? AND account_denial_id IS NULL",
+            denial.durableDenialId(),
+            denial.code().name(),
+            successor.ownerInstanceId(),
+            successor.executorFence().longValueExact(),
+            successor.leaseTokenCorrelation(),
+            request.admissionAttemptId())
+        != 1) throw unavailable();
+    return new RetainedCharge(denial, false);
+  }
+
   static void requireCharge(DSLContext tx, OriginalNewCapacityExecution execution, String tag) {
     var charge =
         exactCharge(
@@ -216,6 +261,18 @@ final class CanonicalGameplayCapacityEvidenceBudget {
       String candidateDigest,
       CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selected,
       String tag) {
+    var prior = exactChargeIdentity(tx, request, candidateDigest, tag);
+    if (prior != null
+        && (!selected.instanceId().equals(prior.get("selected_owner_id", String.class))
+            || !Long.valueOf(selected.fence())
+                .equals(prior.get("selected_owner_fence", Long.class)))) {
+      throw unavailable();
+    }
+    return prior;
+  }
+
+  private static Record exactChargeIdentity(
+      DSLContext tx, Request request, String candidateDigest, String tag) {
     var identity = request.identity();
     var prior =
         tx.fetchOne(
@@ -233,8 +290,6 @@ final class CanonicalGameplayCapacityEvidenceBudget {
         || !Long.valueOf(request.capacityRearmFence()).equals(prior.get(3))
         || !request.mutationDigest().equals(prior.get(4))
         || !candidateDigest.equals(prior.get(5))
-        || !selected.instanceId().equals(prior.get(6))
-        || !Long.valueOf(selected.fence()).equals(prior.get(7))
         || !tag.equals(prior.get(8))) throw unavailable();
     return prior;
   }
