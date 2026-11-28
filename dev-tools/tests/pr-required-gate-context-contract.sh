@@ -4409,13 +4409,16 @@ async function recoveredFinalFence(disposition, change = null) {
         ...(finalAttempts > 0 && change === "base" ? {baseSha: "e".repeat(40), mergeSha: "f".repeat(40)} : {})};
     }, selected => JSON.stringify([selected.baseRef, selected.baseSha, selected.headSha, selected.mergeSha, selected.sourceEvent]),
     value => Number.isSafeInteger(value) && value > 0, async selected => {
-      assert.deepEqual(selected, proofRun); finalAttempts++; return true;
+      assert.deepEqual(selected, proofRun);
+      finalAttempts++;
+      return change !== "rerun-after-identity" || postAttemptFences === 0;
     }, resolve => resolve(), 0, () => {resumedPolling = true;});
-  assert.equal(finalAttempts, disposition === "verified" || change === null ? 2 : 1);
+  const rejectedIdentity = change !== null && change !== "rerun-after-identity";
+  assert.equal(finalAttempts, (disposition === "verified" ? 2 : 1) + (rejectedIdentity ? 0 : 1));
   assert.equal(postAttemptFences, 1);
   assert.deepEqual(failures, []);
   assert.deepEqual(outputs, disposition === "verified" && change === null ? [["known_play_exception", "true"]] : []);
-  assert.equal(resumedPolling, ["base", "unavailable"].includes(change),
+  assert.equal(resumedPolling, ["base", "unavailable", "rerun-after-identity"].includes(change),
     "changed or unavailable final identity resumes polling; obsolete identity exits");
 }
 async function failedLegacyProof(stage, error, event = "pull_request") {
@@ -5454,7 +5457,7 @@ function markerAccepted(overrides = {}) {
     await selectedProducerFinalFence("repository_dispatch", false, false, false, change);
   }
   for (const disposition of ["ordinary", "verified"]) {
-    for (const change of [null, "base", "closed", "head", "retarget", "unavailable"]) {
+    for (const change of [null, "base", "closed", "head", "retarget", "unavailable", "rerun-after-identity"]) {
       await recoveredFinalFence(disposition, change);
     }
   }
