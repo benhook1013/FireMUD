@@ -34,6 +34,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.client.GameDesignFreshTenantIdentityClient;
+import net.firedevops.firemud.accountservice.client.GameDesignOriginalTenantCreationOutcomeClient;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -41,7 +42,14 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Binding;
+import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Outcome;
+import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository;
+import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeSnapshot;
+import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OutcomeStatus;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
+import net.firedevops.firemud.gamedesign.service.impl.OriginalTenantCreationOutcomeReadGrpcService;
 import net.firedevops.firemud.gamedesign.service.impl.TenantIdentityGrpcService;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
 import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
@@ -122,6 +130,66 @@ class AccountFreshTenantReceiptMtlsCrossServiceTest {
                 .setCreationRequestId(CREATION_REQUEST_ID.toString())
                 .setExpectedRequestDigest(expected.requestDigest())
                 .build());
+  }
+
+  @Test
+  void readsExactOriginalOutcomeAndRefusesChangedInitiatingAccountOverMtls() throws Exception {
+    FreshTenantCreationEvidence receipt = evidence();
+    Binding binding =
+        new Binding(
+            NAMESPACE,
+            CREATION_REQUEST_ID,
+            UUID.fromString("42345678-1234-4234-8234-123456789abc"),
+            UUID.fromString("52345678-1234-4234-8234-123456789abc"),
+            receipt.requestDigest(),
+            "sha256:" + "a".repeat(64));
+    Binding changedAccount =
+        new Binding(
+            NAMESPACE,
+            CREATION_REQUEST_ID,
+            binding.accountAuthorizationOperationId(),
+            UUID.fromString("62345678-1234-4234-8234-123456789abc"),
+            binding.creationRequestDigest(),
+            binding.accountAuthorizationDigest());
+    var outcomes = mock(GameTenantCreationOriginalOutcomeRepository.class);
+    var receipts = mock(GameTenantCreationRepository.class);
+    var snapshot =
+        new OriginalOutcomeSnapshot(
+            binding, OutcomeStatus.CREATED, receipt.operationId(), receipt.evidenceDigest());
+    when(outcomes.readCommitted(binding)).thenReturn(Optional.of(snapshot));
+    when(outcomes.readCommitted(changedAccount)).thenReturn(Optional.of(snapshot));
+    when(receipts.read(CREATION_REQUEST_ID, NAMESPACE)).thenReturn(Optional.of(receipt));
+    var service = new OriginalTenantCreationOutcomeReadGrpcService(outcomes, receipts, NAMESPACE);
+    server =
+        serverBuilder(pki.gameDesignServer())
+            .addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()))
+            .build()
+            .start();
+
+    ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
+    endpoints.setGameDesignService("localhost:" + server.getPort());
+    try (var originalClient =
+        new GameDesignOriginalTenantCreationOutcomeClient(
+            endpoints,
+            pki.clientProperties(temporaryDirectory),
+            new GrpcChannelFactory(),
+            NAMESPACE)) {
+      originalClient.init();
+
+      assertThat(originalClient.readOriginal(binding).evidence())
+          .isEqualTo(
+              new GameTenantCreationOriginalOutcomeEvidence(
+                  1, binding, Outcome.CREATED, Optional.of(receipt)));
+      assertThatThrownBy(() -> originalClient.readOriginal(changedAccount))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.FAILED_PRECONDITION));
+    }
+    verify(outcomes).readCommitted(binding);
+    verify(outcomes).readCommitted(changedAccount);
+    verify(receipts).read(CREATION_REQUEST_ID, NAMESPACE);
   }
 
   @Test
@@ -262,18 +330,22 @@ class AccountFreshTenantReceiptMtlsCrossServiceTest {
           }
         };
     server =
-        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
-            .sslContext(
-                GrpcSslContexts.configure(
-                        SslContextBuilder.forServer(identity.privateKey(), identity.certificate()))
-                    .trustManager(pki.caCertificate())
-                    .clientAuth(ClientAuth.REQUIRE)
-                    .build())
+        serverBuilder(identity)
             .addService(
                 ServerInterceptors.intercept(
                     service, countRpcStarts, new GrpcPeerIdentityInterceptor()))
             .build()
             .start();
+  }
+
+  private static NettyServerBuilder serverBuilder(TestIdentity identity) throws IOException {
+    return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+        .sslContext(
+            GrpcSslContexts.configure(
+                    SslContextBuilder.forServer(identity.privateKey(), identity.certificate()))
+                .trustManager(pki.caCertificate())
+                .clientAuth(ClientAuth.REQUIRE)
+                .build());
   }
 
   private GameDesignFreshTenantIdentityClient newClient(Server target) throws Exception {

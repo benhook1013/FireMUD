@@ -240,7 +240,8 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
 
     Draft draft = createDraft(gds);
     var worldSource = registerControlledWorldSource(gds, draft.target());
-    DraftCommitBinding commit = selectedCommit(gds, draft.target());
+    DraftCommitBinding commandCommit = authorGameplayCommand(gds, draft.target());
+    DraftCommitBinding commit = selectedCommit(draft.target(), commandCommit.commitId());
     applyGameDesignCommit(gds, commit);
     var delivery =
         new net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryRepository(
@@ -384,9 +385,19 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
               .orElseThrow();
       assertThat(synchronizedSources.command().definitions()).isEmpty();
       var gameplaySnapshot = synchronizedSources.gameplayEvidence().orElseThrow();
-      assertThat(gameplaySnapshot.manifest().families().get(GameplayRuleManifest.Family.COMMANDS))
-          .extracting(GameplayRuleManifest.Definition::key)
-          .containsExactly("LOOK");
+      assertThat(GameplayRuleSource.mutations(commit)).isEmpty();
+      assertThat(gameplaySnapshot.binding()).isEqualTo(commit);
+      assertThat(gameplaySnapshot.inheritedCommitId()).isEqualTo(commandCommit.commitId());
+      assertThat(gameplaySnapshot.entries())
+          .filteredOn(entry -> entry.family() == GameplayRuleManifest.Family.COMMANDS)
+          .singleElement()
+          .satisfies(
+              entry -> {
+                assertThat(entry.definition().key()).isEqualTo("LOOK");
+                assertThat(entry.sourceBinding()).isEqualTo(commandCommit);
+                assertThat(entry.revisionId())
+                    .isEqualTo(commandCommit.revisions().get(1).revisionId());
+              });
       var gameplaySource = new GameplayRuleSelectedSource(gameplaySnapshot.canonicalJson());
       var glAuthorization =
           new GameLogicIntakeAuthorizationBinding(
@@ -583,6 +594,14 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
           var selectedOwnerReservation = admission.admitAndReserve(intent, accountBinding);
           assertThat(selectedOwnerReservation.selection().canonicalBytes())
               .containsExactly(selectionBinding.canonicalBytes());
+          var retainedGameplayCapture =
+              new GameDesignSourceRepository(gds.dsl())
+                  .readCapture(selectedOwnerReservation.operation())
+                  .orElseThrow()
+                  .gameplay()
+                  .orElseThrow();
+          assertThat(retainedGameplayCapture.snapshot().canonicalBytes())
+              .containsExactly(gameplaySnapshot.canonicalBytes());
           var reservationReplay = admission.admitAndReserve(intent, accountBinding);
           assertThat(reservationReplay.operation().canonicalBytes())
               .containsExactly(selectedOwnerReservation.operation().canonicalBytes());
@@ -632,7 +651,13 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
           assertThat(participantDigests)
               .filteredOn(digest -> "GAME_LOGIC".equals(digest.participantKey()))
               .singleElement()
-              .satisfies(digest -> assertThat(digest.abilitySchemaDigest()).startsWith("sha256:"));
+              .satisfies(
+                  digest -> {
+                    assertThat(digest.contentDigest())
+                        .isEqualTo(
+                            committedGlTerminal.manifestDigest().substring("sha256:".length()));
+                    assertThat(digest.abilitySchemaDigest()).startsWith("sha256:");
+                  });
           gate.assertSelectedGatePassed(versionDto, participantDigests);
 
           var altered = new ArrayList<>(participantDigests);
@@ -799,6 +824,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                         return result;
                       });
           assertThat(written.attestationSchemaVersion()).isEqualTo("v4");
+          assertThat(written.commandDefinitions()).isEmpty();
           assertThat(written.participantDigests()).containsExactlyElementsOf(participantDigests);
           assertThat(written.worldPublishedStartLocationEvidence().canonicalBytes())
               .containsExactly(worldOwners.startLocationEvidence().canonicalBytes());
@@ -1624,9 +1650,8 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                     "Controlled selected World source"));
   }
 
-  private static DraftCommitBinding selectedCommit(Store gds, TargetProof target)
+  private static DraftCommitBinding selectedCommit(TargetProof target, UUID baseCommitId)
       throws com.google.protobuf.InvalidProtocolBufferException {
-    var genesis = new GameDesignSourceRepository(gds.dsl()).readGenesis(target).orElseThrow();
     UUID commitId = UUID.randomUUID();
     UUID regionId = UUID.randomUUID();
     UUID zoneId = UUID.randomUUID();
@@ -1714,56 +1739,6 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
 
     var revisions = new ArrayList<RevisionPayload>();
     var units = new ArrayList<AffectedUnit>();
-    var selectedWorldAction =
-        new GameplayRuleManifest.Action(
-            "selected-world-look",
-            "Look",
-            List.of("selected-world-admission"),
-            List.of(),
-            List.of(),
-            List.of(),
-            List.of(),
-            List.of());
-    var selectedWorldCommand =
-        new GameplayRuleManifest.Command(
-            "LOOK",
-            "selected-world-look",
-            "WORLD",
-            GameplayRuleManifest.ExecutionDiscipline.DURABLE_GAMEPLAY,
-            GameplayRuleManifest.Stage.GAMEPLAY,
-            GameplayRuleManifest.PromptPolicy.NEVER,
-            GameplayRuleManifest.ActionCategory.GAMEPLAY,
-            true,
-            List.of(),
-            List.of(GameplayRuleManifest.ActionTag.WORLD_BROWSE),
-            List.of("selected-world-admission"));
-    revisions.add(
-        new RevisionPayload(
-            "0",
-            UUID.randomUUID(),
-            Owner.GAME_DESIGN_CONTROL_PLANE,
-            GameplayRuleSource.upsertPayload(selectedWorldAction)));
-    units.add(
-        new AffectedUnit(
-            Owner.GAME_DESIGN_CONTROL_PLANE,
-            GameplayRuleSource.SCOPE,
-            target.canonicalVersionId().toString(),
-            GameplayRuleSource.SCOPE,
-            GameplayRuleSource.SCOPE_ID,
-            "0"));
-    revisions.add(
-        new RevisionPayload(
-            "1",
-            UUID.randomUUID(),
-            Owner.GAME_DESIGN_CONTROL_PLANE,
-            GameplayRuleSource.upsertPayload(selectedWorldCommand)));
-    revisions.add(
-        new RevisionPayload(
-            "2",
-            UUID.randomUUID(),
-            Owner.GAME_DESIGN_CONTROL_PLANE,
-            GameplayRuleSource.upsertPayload(
-                new GameplayRuleManifest.AdmissionTag("selected-world-admission"))));
     String policyPayload =
         "{\"revisionKind\":\"REALM_ENTRY_POLICY\",\"logicalRevisionId\":\"selected-public-realm\",\"policy\":{"
             + "\"schemaVersion\":1,\"worldSlug\":\"controlled-selected-world\",\"worldDisplayName\":\"World\","
@@ -1840,12 +1815,79 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
               "0"));
     }
     return DraftCommitBinding.create(
-        target,
-        UUID.randomUUID(),
-        commitId,
-        "genesis:" + genesis.policy().receiptId(),
-        revisions,
-        units);
+        target, UUID.randomUUID(), commitId, baseCommitId.toString(), revisions, units);
+  }
+
+  private static DraftCommitBinding authorGameplayCommand(Store gds, TargetProof target) {
+    var sources = new GameDesignSourceRepository(gds.dsl());
+    var genesis = sources.readGenesis(target).orElseThrow();
+    var selectedWorldAction =
+        new GameplayRuleManifest.Action(
+            "selected-world-look",
+            "Look",
+            List.of("selected-world-admission"),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of());
+    var selectedWorldCommand =
+        new GameplayRuleManifest.Command(
+            "LOOK",
+            "selected-world-look",
+            "WORLD",
+            GameplayRuleManifest.ExecutionDiscipline.DURABLE_GAMEPLAY,
+            GameplayRuleManifest.Stage.GAMEPLAY,
+            GameplayRuleManifest.PromptPolicy.NEVER,
+            GameplayRuleManifest.ActionCategory.GAMEPLAY,
+            true,
+            List.of(),
+            List.of(GameplayRuleManifest.ActionTag.WORLD_BROWSE),
+            List.of("selected-world-admission"));
+    var binding =
+        DraftCommitBinding.create(
+            target,
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "genesis:" + genesis.policy().receiptId(),
+            List.of(
+                new RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    GameplayRuleSource.upsertPayload(selectedWorldAction)),
+                new RevisionPayload(
+                    "1",
+                    UUID.randomUUID(),
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    GameplayRuleSource.upsertPayload(selectedWorldCommand)),
+                new RevisionPayload(
+                    "2",
+                    UUID.randomUUID(),
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    GameplayRuleSource.upsertPayload(
+                        new GameplayRuleManifest.AdmissionTag("selected-world-admission")))),
+            List.of(
+                new AffectedUnit(
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    GameplayRuleSource.SCOPE,
+                    target.canonicalVersionId().toString(),
+                    GameplayRuleSource.SCOPE,
+                    GameplayRuleSource.SCOPE_ID,
+                    "0")));
+    applyGameDesignCommit(gds, binding);
+    var coordinator = new DraftCommitCoordinatorRepository(gds.dsl());
+    gds.write()
+        .executeWithoutResult(
+            ignored -> {
+              var applied = sources.apply(binding);
+              coordinator.recordOwnerOutcome(binding, applied.ownerOutcome());
+              net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                  .advanceIsolatedSourceVisibility(
+                      gds.dsl(), binding, List.of(applied.ownerOutcome()));
+              coordinator.releaseApplicationSlot(binding);
+            });
+    return binding;
   }
 
   private static WorldDesignMutationRevision.Builder mutation(
