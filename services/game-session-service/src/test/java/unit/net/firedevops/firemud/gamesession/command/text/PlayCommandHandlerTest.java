@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
+import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationReadRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
@@ -537,7 +538,9 @@ class PlayCommandHandlerTest {
             scriptEventPublisher,
             meterRegistry);
     var gameDesignClient = tenantIdentity();
+    var retainedReader = Mockito.mock(GameSessionRetainedTenantAssociationReadRepository.class);
     localHandler.setGameDesignClient(gameDesignClient);
+    localHandler.setRetainedTenantAssociationReader(retainedReader);
     var context =
         new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -555,6 +558,7 @@ class PlayCommandHandlerTest {
     Mockito.verifyNoMoreInteractions(sessionAuthenticationService, sessionContextService);
     Mockito.verifyNoInteractions(
         gameDesignClient,
+        retainedReader,
         accountClient,
         entityManagementClient,
         moderationPolicyClient,
@@ -2113,6 +2117,105 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playReadsCanonicalEntitlementForTheUuidFromTheExactRetainedPointer() {
+    var pointer = retainedAdmissionPointer();
+    var localHandler = handlerForRetainedPointer(pointer);
+    var reader = Mockito.mock(GameSessionRetainedTenantAssociationReadRepository.class);
+    var gameDesignClient = tenantIdentity();
+    var tenantId = UUID.fromString("32bb3946-fd71-40d1-bdf7-6ef6e6f6474c");
+    localHandler.setGameDesignClient(gameDesignClient);
+    localHandler.setRetainedTenantAssociationReader(reader);
+    when(reader.readCanonicalTenantId(pointer)).thenReturn(Optional.of(tenantId));
+    when(accountClient.getTenantEntitlementsForRuntime(
+            Mockito.eq(tenantId.toString()), Mockito.anyString()))
+        .thenReturn(
+            entitlementResponse(false).toBuilder()
+                .setTenantId(tenantId.toString())
+                .setGameplayAvailable(false)
+                .build());
+
+    var result = localHandler.handle("1", new TextCommandParser().parse("PLAY demo production"));
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("TENANT_BILLING_BLOCKED");
+    var order = Mockito.inOrder(reader, accountClient);
+    order.verify(reader).readCanonicalTenantId(pointer);
+    order
+        .verify(accountClient)
+        .getTenantEntitlementsForRuntime(Mockito.eq(tenantId.toString()), Mockito.anyString());
+    Mockito.verifyNoMoreInteractions(reader, accountClient);
+    Mockito.verifyNoInteractions(gameDesignClient, entityManagementClient, moderationPolicyClient);
+    verifyNoGameplayBindingSideEffects();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"missing", "nil", "outage"})
+  void suppliedRetainedPointerReaderFailsClosedBeforeLegacyAuthority(String scenario) {
+    var pointer = retainedAdmissionPointer();
+    var localHandler = handlerForRetainedPointer(pointer);
+    var reader = Mockito.mock(GameSessionRetainedTenantAssociationReadRepository.class);
+    var gameDesignClient = tenantIdentity();
+    localHandler.setGameDesignClient(gameDesignClient);
+    localHandler.setRetainedTenantAssociationReader(reader);
+    var lookup = when(reader.readCanonicalTenantId(pointer));
+    switch (scenario) {
+      case "missing" -> lookup.thenReturn(Optional.empty());
+      case "nil" -> lookup.thenReturn(Optional.of(new UUID(0L, 0L)));
+      case "outage" -> lookup.thenThrow(new DataAccessResourceFailureException("unavailable"));
+      default -> throw new AssertionError("Unknown retained reader scenario " + scenario);
+    }
+
+    var result = localHandler.handle("1", new TextCommandParser().parse("PLAY demo production"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    verify(reader).readCanonicalTenantId(pointer);
+    Mockito.verifyNoInteractions(
+        gameDesignClient, accountClient, entityManagementClient, moderationPolicyClient);
+    verifyNoGameplayBindingSideEffects();
+  }
+
+  private PlayCommandHandler handlerForRetainedPointer(GameplayAdmissionPointerSnapshot pointer) {
+    var authority = Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    when(authority.listPointers()).thenReturn(List.of(pointer));
+    var context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    return new PlayCommandHandler(
+        sessionAuthenticationService,
+        sessionContextService,
+        sessionRoutingNormalizationService,
+        new GameplayWorldCatalog(authority),
+        gameLogicProperties,
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        firstPartyConnectContextRegistry,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher,
+        meterRegistry);
+  }
+
+  private static GameplayAdmissionPointerSnapshot retainedAdmissionPointer() {
+    return new GameplayAdmissionPointerSnapshot(
+        "demo",
+        "Demo World",
+        "production",
+        "Live Realm",
+        22L,
+        19L,
+        7L,
+        true,
+        true,
+        false,
+        "SHARED",
+        "PRESEEDED_ONLY",
+        13L,
+        UUID.fromString("8845d6f0-e260-4ca2-99d7-8ced4387f96b"),
+        UUID.fromString("6c4da6d7-b29d-4a67-a465-b78007868653"),
+        GameplayAdmissionPointerSnapshot.ORDINARY_REPRESENTATION_VERSION);
+  }
+
+  @Test
   void playFailsClosedWhenGameDesignHasNoCanonicalTenant() {
     SessionContext context =
         new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
@@ -2994,6 +3097,8 @@ class PlayCommandHandlerTest {
 
   @Test
   void firstPartyPlayRereadsCanonicalOwnerThenDeniesBeforeLegacyAdmissionEffects() {
+    var reader = Mockito.mock(GameSessionRetainedTenantAssociationReadRepository.class);
+    handler.setRetainedTenantAssociationReader(reader);
     var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
     FirstPartyConnectContext context = fixture.context();
     when(firstPartyConnectContextRegistry.find(1L))
@@ -3009,6 +3114,7 @@ class PlayCommandHandlerTest {
         .readCurrentTarget(
             net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture.TENANT);
     Mockito.verifyNoInteractions(
+        reader,
         accountClient,
         entityManagementClient,
         sessionAuthenticationService,

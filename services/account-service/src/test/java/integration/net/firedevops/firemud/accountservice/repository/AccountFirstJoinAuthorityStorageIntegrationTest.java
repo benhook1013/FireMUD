@@ -16,6 +16,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
+import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -73,6 +74,110 @@ class AccountFirstJoinAuthorityStorageIntegrationTest {
       jdbc.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
     }
     schemas.clear();
+  }
+
+  @Test
+  void v39PreservesRetainedAuditRowsAndRejectsMixedTenantIdentity() {
+    TestContext context = newTestContextAt("38");
+    DSLContext dsl = context.dsl();
+    UUID platformEventId = UUID.randomUUID();
+    UUID numericEventId = UUID.randomUUID();
+    String platformPayload = "{\"account\": \"retained platform evidence\"}";
+    String numericPayload = "{\"membership\": \"retained tenant evidence\"}";
+    dsl.execute(
+        """
+        INSERT INTO account_audit_outbox
+            (audit_event_id, scope, tenant_id, producer_service, event_type, occurred_at,
+             schema_version, payload_digest_version, payload_digest, payload, attempt_count)
+        VALUES (?, 'platform', NULL, 'account-service', 'ACCOUNT_REGISTERED',
+                TIMESTAMP '2026-10-01 12:34:56.123456', 1, 1, ?, ?, 2),
+               (?, 'tenant', 73, 'account-service', 'ACCOUNT_JOINED_PUBLIC_PRODUCTION',
+                TIMESTAMP '2026-10-01 12:35:56.123456', 1, 1, ?, ?, 3)
+        """,
+        platformEventId,
+        AccountAuditDigest.ofPayload(platformPayload),
+        platformPayload,
+        numericEventId,
+        AccountAuditDigest.ofPayload(numericPayload),
+        numericPayload);
+
+    String retainedRows =
+        """
+        SELECT (to_jsonb(audit) - 'tenant_identity_version' - 'tenant_uuid')::text AS row_image,
+               audit.xmin::text AS row_version
+        FROM account_audit_outbox audit
+        ORDER BY audit_event_id
+        """;
+    String heapQuery = "SELECT pg_relation_filenode(?::regclass)::text";
+    String auditRelation = context.schema() + ".account_audit_outbox";
+    var before = dsl.fetch(retainedRows);
+    var heapBefore = dsl.fetchSingle(heapQuery, auditRelation);
+    assertThat(before).hasSize(2);
+
+    migrateToVersion(context, "39");
+
+    assertThat(dsl.fetch(retainedRows)).isEqualTo(before);
+    assertThat(dsl.fetchSingle(heapQuery, auditRelation)).isEqualTo(heapBefore);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT column_default FROM information_schema.columns WHERE table_schema = ? "
+                        + "AND table_name = 'account_audit_outbox' "
+                        + "AND column_name = 'tenant_identity_version'",
+                    context.schema())
+                .get(0, String.class))
+        .isNull();
+    String fullRows =
+        """
+        SELECT to_jsonb(audit)::text AS row_image, audit.xmin::text AS row_version,
+               tenant_identity_version, tenant_uuid
+        FROM account_audit_outbox audit
+        ORDER BY audit_event_id
+        """;
+    var upgraded = dsl.fetch(fullRows);
+    assertThat(upgraded)
+        .allSatisfy(
+            row -> {
+              assertThat(row.get("tenant_identity_version", Integer.class)).isEqualTo(1);
+              assertThat(row.get("tenant_uuid", UUID.class)).isNull();
+            });
+
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE account_audit_outbox SET tenant_identity_version = 2, tenant_uuid = ? "
+                        + "WHERE audit_event_id = ?",
+                    UUID.randomUUID(),
+                    numericEventId))
+        .isInstanceOfSatisfying(
+            DataAccessException.class,
+            error -> {
+              assertThat(error.sqlState()).isEqualTo("23514");
+              assertThat(error.getMessage())
+                  .contains("Retained Account audit identity cannot change representation");
+            });
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    """
+                    INSERT INTO account_audit_outbox
+                        (audit_event_id, scope, tenant_id, producer_service, event_type,
+                         occurred_at, schema_version, payload_digest_version, payload_digest,
+                         payload, tenant_identity_version, tenant_uuid)
+                    SELECT ?, scope, NULL, producer_service, event_type,
+                           occurred_at, schema_version, payload_digest_version, payload_digest,
+                           payload, 2, ?
+                    FROM account_audit_outbox WHERE audit_event_id = ?
+                    """,
+                    UUID.randomUUID(),
+                    new UUID(0, 0),
+                    numericEventId))
+        .isInstanceOfSatisfying(
+            DataAccessException.class,
+            error -> {
+              assertThat(error.sqlState()).isEqualTo("23514");
+              assertThat(error.getMessage()).contains("account_audit_outbox_scope_identity_check");
+            });
+    assertThat(dsl.fetch(fullRows)).isEqualTo(upgraded);
   }
 
   @Test

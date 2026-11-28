@@ -28,9 +28,11 @@ import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationReadRepository;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
@@ -52,6 +54,7 @@ import org.springframework.util.StringUtils;
 @Component
 public class PlayCommandHandler {
   private static final Logger LOG = LoggerFactory.getLogger(PlayCommandHandler.class);
+  private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final String INVOCATIONS_METRIC = "gamesession.command.play.invocations";
   private static final String FAILURES_METRIC = "gamesession.command.play.failures";
   private static final String TAKEOVER_METRIC = "gamesession.session.takeover";
@@ -79,6 +82,8 @@ public class PlayCommandHandler {
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
   private volatile net.firedevops.firemud.gamesession.client.GameDesignClient gameDesignClient;
+  private volatile GameSessionRetainedTenantAssociationReadRepository
+      retainedTenantAssociationReader;
 
   public PlayCommandHandler(
       SessionAuthenticationService sessionAuthenticationService,
@@ -655,13 +660,41 @@ public class PlayCommandHandler {
     this.gameDesignClient = gameDesignClient;
   }
 
-  private Optional<UUID> resolveCanonicalTenantId(long tenantId) {
-    var client = gameDesignClient;
-    if (client == null) {
-      return Optional.empty();
-    }
+  /** Supplies the trusted, namespace-bound retained tenant reader for manual composition. */
+  public void setRetainedTenantAssociationReader(
+      GameSessionRetainedTenantAssociationReadRepository reader) {
+    retainedTenantAssociationReader = Objects.requireNonNull(reader, "reader");
+  }
+
+  private Optional<UUID> resolveCanonicalTenantId(
+      GameplayWorldCatalog.WorldView world, GameplayWorldCatalog.RealmView realm) {
+    var retainedReader = retainedTenantAssociationReader;
     try {
-      return client.resolveCanonicalTenantId(tenantId);
+      if (retainedReader != null) {
+        var target =
+            new GameplayAdmissionPointerSnapshot(
+                world.slug(),
+                world.displayName(),
+                realm.slug(),
+                realm.displayName(),
+                realm.tenantId(),
+                realm.gameInstanceId(),
+                realm.pointerVersion(),
+                realm.visible(),
+                realm.publicProductionRealm(),
+                realm.requiresCharacterSelection(),
+                realm.stateScope(),
+                realm.characterCreationPolicy(),
+                realm.catalogRevision(),
+                realm.realmId(),
+                realm.playableStateNamespaceId(),
+                realm.representationVersion());
+        return retainedReader
+            .readCanonicalTenantId(target)
+            .filter(tenantId -> !NIL_UUID.equals(tenantId));
+      }
+      var client = gameDesignClient;
+      return client == null ? Optional.empty() : client.resolveCanonicalTenantId(realm.tenantId());
     } catch (RuntimeException unavailable) {
       return Optional.empty();
     }
@@ -674,7 +707,7 @@ public class PlayCommandHandler {
       String tenantTag,
       long requestedCharacterId) {
     String requestId = context.sessionId() + ":" + UUID.randomUUID();
-    Optional<UUID> canonicalTenantId = resolveCanonicalTenantId(selectedRealm.tenantId());
+    Optional<UUID> canonicalTenantId = resolveCanonicalTenantId(selectedWorld, selectedRealm);
     if (canonicalTenantId.isEmpty()) {
       return Optional.of(
           entitlementUnavailableFailure(
