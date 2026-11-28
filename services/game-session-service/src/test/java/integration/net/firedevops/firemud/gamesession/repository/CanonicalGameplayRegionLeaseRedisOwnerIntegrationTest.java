@@ -10,8 +10,6 @@ import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
-import io.lettuce.core.event.command.CommandListener;
-import io.lettuce.core.event.command.CommandSucceededEvent;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
 import java.io.IOException;
@@ -30,6 +28,8 @@ import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEviden
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -191,8 +191,9 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
     }
   }
 
-  @Test
-  void handoffDeadlineFencesLateAcquireAndRenewOnRedisTime() throws Exception {
+  @ParameterizedTest
+  @ValueSource(ints = {-30, 30})
+  void boundedAcquireAndRepeatedRenewalUseRedisTime(int applicationOffsetSeconds) {
     try (RedisFixture redis = RedisFixture.open()) {
       var owner =
           new CanonicalGameplayRegionLeaseRedisOwner(
@@ -203,60 +204,24 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
           ascii(
               CanonicalGameplayRegionRedisKeys.lease(
                   TENANT_ID, GAME_INSTANCE_ID_A, OPERATIONAL_REGION_ID));
-      Clock behindRedis = Clock.offset(Clock.systemUTC(), Duration.ofSeconds(-30));
-      var late = owner.forHandoffDeadline(behindRedis, behindRedis.millis() + 4_000);
-      var acquired = new CompletableFuture<Object>();
-      CommandListener acquireObservation =
-          new CommandListener() {
-            @Override
-            public void commandSucceeded(CommandSucceededEvent event) {
-              if (event.getCommand().getType() == CommandType.EVALSHA) {
-                acquired.complete(event.getCommand().getOutput().get());
-              }
-            }
-          };
-      redis.ownerClient().addListener(acquireObservation);
-      try {
-        assertThatThrownBy(() -> late.acquire(source, 7L, Duration.ofSeconds(30), identity("late")))
-            .isInstanceOf(IllegalStateException.class);
-        assertThat(acquired.get(2, TimeUnit.SECONDS)).isEqualTo(0L);
-      } finally {
-        redis.ownerClient().removeListener(acquireObservation);
-      }
-      assertThat(redis.admin().get(leaseKey)).isNull();
+      Clock applicationClock =
+          Clock.offset(Clock.systemUTC(), Duration.ofSeconds(applicationOffsetSeconds));
+      long handoffMillis = 4_000;
+      var boundedOwner =
+          owner.forHandoffDeadline(applicationClock, applicationClock.millis() + handoffMillis);
 
-      Clock current = Clock.systemUTC();
-      long handoffDeadline = current.millis() + 4_000;
-      var timely = owner.forHandoffDeadline(current, handoffDeadline);
-      var grant = timely.acquire(source, 7L, Duration.ofSeconds(30), identity("timely"));
-      long expiresBeforeTimelyRenewal = redis.admin().pexpiretime(leaseKey);
-      assertThat(expiresBeforeTimelyRenewal).isPositive().isLessThanOrEqualTo(handoffDeadline);
-      timely.requireCurrent(grant);
-      timely.renew(grant, Duration.ofSeconds(30));
+      var grant = boundedOwner.acquire(source, 7L, Duration.ofSeconds(30), identity("bounded"));
+      long remainingLeaseMillis = redis.admin().pttl(leaseKey);
+      assertThat(remainingLeaseMillis).isPositive().isLessThanOrEqualTo(handoffMillis);
       byte[] token = redis.admin().get(leaseKey);
-      long expiresAt = redis.admin().pexpiretime(leaseKey);
-      assertThat(expiresAt).isGreaterThan(expiresBeforeTimelyRenewal);
-      var lateRenewal = owner.forHandoffDeadline(behindRedis, behindRedis.millis() + 4_000);
-      var renewed = new CompletableFuture<Object>();
-      CommandListener renewalObservation =
-          new CommandListener() {
-            @Override
-            public void commandSucceeded(CommandSucceededEvent event) {
-              if (event.getCommand().getType() == CommandType.EVALSHA) {
-                renewed.complete(event.getCommand().getOutput().get());
-              }
-            }
-          };
-      redis.ownerClient().addListener(renewalObservation);
-      try {
-        assertThatThrownBy(() -> lateRenewal.renew(grant, Duration.ofMinutes(2)))
-            .isInstanceOf(IllegalStateException.class);
-        assertThat(renewed.get(2, TimeUnit.SECONDS)).isEqualTo(0L);
-      } finally {
-        redis.ownerClient().removeListener(renewalObservation);
-      }
+      assertThat(token).isNotNull();
+
+      boundedOwner.requireCurrent(grant);
+      boundedOwner.renew(grant, Duration.ofSeconds(30));
+      assertThat(redis.admin().pttl(leaseKey)).isGreaterThan(handoffMillis);
+      boundedOwner.renew(grant, Duration.ofSeconds(60));
+      assertThat(redis.admin().pttl(leaseKey)).isGreaterThan(30_000);
       assertThat(redis.admin().get(leaseKey)).containsExactly(token);
-      assertThat(redis.admin().pexpiretime(leaseKey)).isPositive().isEqualTo(expiresAt);
     }
   }
 

@@ -1058,10 +1058,26 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           testSchema.dsl(), statusRepository, redis, source, preparation);
 
       for (CommandType write : List.of(CommandType.HSET, CommandType.SET)) {
+        var probeResult = new CompletableFuture<Object>();
+        var probeObserver =
+            new CommandListener() {
+              @Override
+              public void commandSucceeded(CommandSucceededEvent event) {
+                var command = event.getCommand();
+                if (command.getType() == CommandType.EVALSHA
+                    && command.getArgs().toCommandString().contains("value<PROBE>")) {
+                  probeResult.complete(command.getOutput().get());
+                }
+              }
+            };
+        var caseOwner =
+            validRedisOwner.forHandoffDeadline(
+                Clock.systemUTC(), System.currentTimeMillis() + 10_000L);
         redis.setOwnerWriteAllowed(write, false);
+        redis.ownerClient().addListener(probeObserver);
         try {
           assertThatThrownBy(() ->
-                  deadlineBoundRedisOwner.prepareTimelineInitialization(
+                  caseOwner.prepareTimelineInitialization(
                       preparation,
                       Duration.ofSeconds(30),
                       new RuntimeIdentity(
@@ -1073,9 +1089,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                           "controlled-sha",
                           "controlled-image")))
               .isInstanceOf(IllegalStateException.class);
+          assertThat(probeResult.get(2, TimeUnit.SECONDS))
+              .as("ACL refusal for %s", write)
+              .isEqualTo(-4L);
           assertPreparedTimelineUnchanged(
               testSchema.dsl(), statusRepository, redis, source, preparation);
         } finally {
+          redis.ownerClient().removeListener(probeObserver);
           redis.setOwnerWriteAllowed(write, true);
         }
       }
@@ -2468,8 +2488,10 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     }
   }
 
-  @Test
-  void laterPlacementReusesCurrentGrantWithoutChangingInitialTimeline() throws Exception {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void laterPlacementReusesCurrentGrantWithoutChangingInitialTimeline(boolean expireBeforeBridge)
+      throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema schema = newTestSchema();
     try {
@@ -2532,7 +2554,16 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                 first.resolver(),
                 entity.client(),
                 new CanonicalGameplayRegionOwnerCompositionFixture.SecondBinding(
-                    secondRequest, target.playableTarget(), first.resolver(), entity.client()));
+                    secondRequest,
+                    target.playableTarget(),
+                    first.resolver(),
+                    entity.client(),
+                    expireBeforeBridge));
+        if (expireBeforeBridge) {
+          assertThat(result.expiredGrantRejectedWithoutStateChange()).isTrue();
+          assertThat(result.second()).isNull();
+          return;
+        }
         assertThat(result.firstTimelineUnchanged()).isTrue();
         assertThat(result.initialMetaUnchanged()).isTrue();
         assertThat(result.first().exactLostReplyRetry()).isTrue();

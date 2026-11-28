@@ -5,7 +5,6 @@ import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
-import io.lettuce.core.SetArgs;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
@@ -1159,18 +1158,10 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       var secondInstallation =
           bridgeOwner.installForTransition(
               installation, secondTransitionId, secondBinding.worldRequest());
-      // Exercise the exact same provisional transition and reused installation with a live
-      // grant (above) and with an expired grant, before bridge acknowledgement changes phase.
-      byte[] liveGrant = redis.admin().get(redisKey);
-      Long originalExpiryMillis = redis.admin().pexpiretime(redisKey);
-      if (liveGrant == null
-          || originalExpiryMillis == null
-          || originalExpiryMillis <= 0L
-          || !redis.admin().pexpire(redisKey, 0L)) {
-        throw new IllegalStateException("Fixture requires a live reused region grant to expire");
-      }
-      boolean expiredProvisionalGrantRejectedWithoutStateChange;
-      try {
+      if (secondBinding.expireBeforeBridge()) {
+        if (!redis.admin().pexpire(redisKey, 0L)) {
+          throw new IllegalStateException("Fixture requires a live reused region grant to expire");
+        }
         List<List<String>> sqlBeforeExpiredGrant =
             snapshotRegionOwnerSqlState(
                 dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId());
@@ -1189,7 +1180,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                               .equals(CanonicalGameplayRegionLeaseRedisOwner.class.getName())
                           && frame.getMethodName().equals("requireCurrent"));
         }
-        expiredProvisionalGrantRejectedWithoutStateChange =
+        boolean expiredProvisionalGrantRejectedWithoutStateChange =
             rejectedAtCurrentGrantCheck
                 && sqlBeforeExpiredGrant.equals(
                     snapshotRegionOwnerSqlState(
@@ -1200,17 +1191,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
           throw new IllegalStateException(
               "Expired provisional grant did not fail at currentness without state changes");
         }
-      } finally {
-        // Restore only this isolated fixture's grant at Redis's original absolute deadline.
-        // NX prevents the fixture from overwriting any unexpected replacement.
-        if (!"OK"
-                .equals(
-                    redis
-                        .admin()
-                        .set(redisKey, liveGrant, SetArgs.Builder.pxAt(originalExpiryMillis).nx()))
-            || !originalExpiryMillis.equals(redis.admin().pexpiretime(redisKey))) {
-          throw new IllegalStateException("Fixture could not restore the original reuse lease");
-        }
+        return new TwoBindingProof(firstProof, null, firstAbort, false, false, false, false, true);
       }
       var secondAcknowledgement = bridgeOwner.bridge(secondInstallation).obligation();
       var secondLostReplyRetry = bridgeOwner.bridge(secondInstallation).obligation();
@@ -1992,7 +1973,16 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalInitialPlayerLocationRequest worldRequest,
       CanonicalPlayableTarget currentTarget,
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
-      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient) {}
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
+      boolean expireBeforeBridge) {
+    public SecondBinding(
+        CanonicalInitialPlayerLocationRequest worldRequest,
+        CanonicalPlayableTarget currentTarget,
+        CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+        CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient) {
+      this(worldRequest, currentTarget, worldRegionResolver, entityReferenceClient, false);
+    }
+  }
 
   public record TwoBindingProof(
       Proof first,

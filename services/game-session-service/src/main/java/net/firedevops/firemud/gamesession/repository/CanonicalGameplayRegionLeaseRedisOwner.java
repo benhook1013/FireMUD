@@ -330,22 +330,14 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     StatefulRedisConnection<byte[], byte[]> connection = null;
     try {
       connection = openConnection(budget);
-      if (deadlineBound
-          && (connection.getOptions() == null || connection.getOptions().isAutoReconnect())) {
-        throw unavailable();
-      }
+      if (deadlineBound) requireStableConnection(connection);
       RedisAsyncCommands<byte[], byte[]> commands = connection.async();
       requirePrincipal(await(commands::aclWhoami, budget));
       String loadedSha = await(() -> commands.scriptLoad(script), budget);
       if (!digest("SHA-1", script).equals(loadedSha)) throw unavailable();
       if (budget != null) {
-        long redisNowMillis = redisTimeMillis(await(commands::time, budget));
-        // Sampling first charges reply latency to the local budget. Keep the resulting Redis
-        // cutoff across the probe, source rechecks, SQL claim and sole prepared dispatch.
-        long remainingMillis = TimeUnit.NANOSECONDS.toMillis(budget.remainingNanos());
-        if (remainingMillis <= 0) throw unavailable();
-        arguments[arguments.length - 1] =
-            ascii(Long.toString(Math.addExact(redisNowMillis, remainingMillis)));
+        // Keep one translated cutoff across the probe, source rechecks, SQL claim and dispatch.
+        arguments[arguments.length - 1] = redisDeadlineArgument(commands, budget);
         byte[][] probe = arguments.clone();
         probe[1] = ascii("PROBE");
         Long result =
@@ -725,7 +717,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         };
     if (!deadlineBound) return executeInteger(script, keys, arguments);
     byte[][] deadlineArguments = Arrays.copyOf(arguments, arguments.length + 1);
-    return executeInteger(script, keys, deadlineArguments, true, false);
+    return executeInteger(script, keys, deadlineArguments, true);
   }
 
   private RedisScriptDescriptor timelineDescriptor(boolean deadlineBound) {
@@ -918,74 +910,45 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         };
     byte[][] arguments = grant.arguments(includeTtl ? ttlMillis : null);
     if (arguments.length != expectedArguments.size()) throw unavailable();
-    return executeInteger(
-        source,
-        keys,
-        arguments,
-        includeTtl,
-        CanonicalGameplayRegionLeaseRedisScriptContribution.ACQUIRE_ID.equals(scriptId));
+    return executeInteger(source, keys, arguments, includeTtl);
   }
 
   private long executeInteger(byte[] script, byte[][] keys, byte[][] arguments) {
-    return executeInteger(script, keys, arguments, false, false);
+    return executeInteger(script, keys, arguments, false);
   }
 
   private long executeInteger(
-      byte[] script,
-      byte[][] keys,
-      byte[][] arguments,
-      boolean hasLeaseDeadlineArgument,
-      boolean acquiring) {
+      byte[] script, byte[][] keys, byte[][] arguments, boolean hasDeadlineArgument) {
     requireNoAmbientTransaction();
     if (installationBudget != null) {
-      return executeBoundedInteger(
-          script, keys, arguments, hasLeaseDeadlineArgument, acquiring, installationBudget);
+      return executeInteger(script, keys, arguments, hasDeadlineArgument, installationBudget);
     }
     if (handoffClock != null) {
       return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
           handoffClock,
           handoffDeadlineMillis,
-          budget ->
-              executeBoundedInteger(
-                  script, keys, arguments, hasLeaseDeadlineArgument, acquiring, budget));
+          budget -> executeInteger(script, keys, arguments, hasDeadlineArgument, budget));
     }
-    return executeInteger(script, keys, arguments, null, false);
-  }
-
-  private long executeBoundedInteger(
-      byte[] script,
-      byte[][] keys,
-      byte[][] arguments,
-      boolean hasLeaseDeadlineArgument,
-      boolean acquiring,
-      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
-    if (hasLeaseDeadlineArgument) {
-      arguments = Arrays.copyOf(arguments, arguments.length);
-      arguments[arguments.length - 1] = ascii(Long.toString(budget.absoluteDeadlineMillis()));
-    }
-    return executeInteger(script, keys, arguments, budget, acquiring);
+    return executeInteger(script, keys, arguments, false, null);
   }
 
   private long executeInteger(
       byte[] script,
       byte[][] keys,
       byte[][] arguments,
-      CanonicalGameplayOriginalNewCapacityExecutionBudget budget,
-      boolean acquiring) {
+      boolean hasDeadlineArgument,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
     if (budget != null) budget.check();
     StatefulRedisConnection<byte[], byte[]> connection = openConnection(budget);
     try {
+      if (hasDeadlineArgument) requireStableConnection(connection);
       RedisAsyncCommands<byte[], byte[]> commands = connection.async();
       requirePrincipal(await(commands::aclWhoami, budget));
       String loadedSha = await(() -> commands.scriptLoad(script), budget);
       if (!digest("SHA-1", script).equals(loadedSha)) throw unavailable();
-      if (acquiring) {
-        // If the reply is lost, the new contender token must expire within one operation budget.
-        int ttlIndex = arguments.length - 2;
-        long configuredTtl =
-            Long.parseLong(new String(arguments[ttlIndex], StandardCharsets.US_ASCII));
-        arguments[ttlIndex] =
-            ascii(Long.toString(Math.min(configuredTtl, budget.remainingMillis())));
+      if (hasDeadlineArgument) {
+        // Acquire's Lua script also caps its initial TTL at the remaining Redis time.
+        arguments[arguments.length - 1] = redisDeadlineArgument(commands, budget);
       }
       Long result =
           await(
@@ -1137,6 +1100,23 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
 
   private static void requirePrincipal(String principal) {
     if (!PRINCIPAL.equals(principal)) throw unavailable();
+  }
+
+  private static void requireStableConnection(StatefulRedisConnection<byte[], byte[]> connection) {
+    // The TIME sample and script must address the same physical server connection.
+    if (connection.getOptions() == null || connection.getOptions().isAutoReconnect()) {
+      throw unavailable();
+    }
+  }
+
+  private static byte[] redisDeadlineArgument(
+      RedisAsyncCommands<byte[], byte[]> commands,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    // Read the remaining budget after TIME returns so sampling latency cannot extend it.
+    long redisNowMillis = redisTimeMillis(await(commands::time, budget));
+    long remainingMillis = TimeUnit.NANOSECONDS.toMillis(budget.remainingNanos());
+    if (remainingMillis <= 0) throw unavailable();
+    return ascii(Long.toString(Math.addExact(redisNowMillis, remainingMillis)));
   }
 
   private static long redisTimeMillis(List<byte[]> reply) {

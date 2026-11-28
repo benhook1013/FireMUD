@@ -118,6 +118,35 @@ final class CanonicalGameplayRegionLeaseOwner {
     }
   }
 
+  boolean recoverRetainedNoWriteForPreparation(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation current,
+      CanonicalGameplayRegionRuntimeStatusRepository budgetedStatusRepository) {
+    UUID operation = current.operationId();
+    RetainedNoWriteRecovery retained;
+    synchronized (noWriteRecoveries) {
+      retained = noWriteRecoveries.get(operation);
+      if (retained == null || retained.proof == null) return false;
+      if (retained.inUse || retained.cleanupActive) throw unavailable();
+      retained.inUse = true;
+    }
+    try {
+      if (!deadlineBoundInstallation) {
+        recoverNoWrite(retained.preparation, retained);
+        return true;
+      }
+      // The current scoped row selects the original operation. The repository still checks
+      // the retained immutable preparation and generation under the region lock.
+      budgetedStatusRepository.releaseInitialTimelineNoWrite(
+          retained.preparation, retained.proof, clock.instant());
+      synchronized (noWriteRecoveries) {
+        retained.proof = null;
+      }
+      return true;
+    } finally {
+      releaseNoWriteRecovery(operation, retained);
+    }
+  }
+
   void recoverNoWrite(
       CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
       RetainedNoWriteRecovery retained) {
@@ -296,6 +325,14 @@ final class CanonicalGameplayRegionLeaseOwner {
     if (prior == null) {
       if (existingRegionInstallation != null) throw unavailable();
       preparation = statusRepository.findTimelinePreparation(source).orElse(null);
+      // Use the retry's budgeted repository without taking another background permit.
+      if (preparation != null
+          && recoverRetainedNoWriteForPreparation(preparation, statusRepository)) {
+        preparation =
+            statusRepository
+                .findTimelinePreparation(source)
+                .orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
+      }
       if (preparation == null) {
         CanonicalGameplayRegionLeaseRedisOwner.TimelineAbsenceProof absenceProof =
             redisOwner.requireTimelineAbsent(source, incarnation);
@@ -325,7 +362,9 @@ final class CanonicalGameplayRegionLeaseOwner {
           redisOwner.prepareTimelineInitialization(preparation, leaseTtl, runtimeIdentity)) {
         var retained = reserveNoWriteRecovery(preparation.operationId());
         try {
-          recoverNoWrite(preparation, retained);
+          // A concurrent attempt can retain a proof after this retry read the scoped row.
+          // Let the next retry reconcile it before opening a prepared Redis session.
+          if (retained.proof != null) throw unavailable();
           // Any recovery wait belongs before the last source/incarnation qualification.
           CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
               readCurrentProvisionalEvidence(transitionId, bindingInventory);
