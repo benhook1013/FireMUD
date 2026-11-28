@@ -16,7 +16,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -159,22 +161,7 @@ class GameDesignSourcePostgresIntegrationTest {
     var originalGenesis = local.sources().readGenesis(local.target()).orElseThrow();
     var reference = DraftBaseReference.parse("genesis:" + originalGenesis.policy().receiptId());
     var original = local.tx(() -> reviewed.resolve(local.target(), reference));
-    TargetProof other =
-        local.tx(
-            () -> {
-              var version = new Version();
-              version.setTenantId(local.target().gameDesignVersionTenantKey());
-              version.setVersionNumber(2);
-              var saved = new VersionRepository(local.dsl()).save(version);
-              return new TargetProof(
-                  saved.getCanonicalTenantId(),
-                  saved.getCanonicalVersionId(),
-                  saved.getId(),
-                  saved.getTenantId(),
-                  saved.getIdentitySourceGameRowId(),
-                  saved.getIdentitySourceGameTenantKey(),
-                  saved.getIdentitySourceProvenanceKind());
-            });
+    TargetProof other = secondFullDraftInTenant(local).target();
     var otherGenesis = local.sources().readGenesis(other).orElseThrow();
     assertThat(otherGenesis.policy().receiptId()).isNotEqualTo(reference.identity());
     var before = reviewedClaimRows(local);
@@ -2056,7 +2043,7 @@ class GameDesignSourcePostgresIntegrationTest {
                 });
         try {
           assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
-          assertThat(awaitStorageBackendBlock(local, lifecyclePid, workerPid.get()))
+          assertThat(awaitStorageBackendBlock(local.dsl(), lifecyclePid, workerPid.get()))
               .as("slot writer backend blocked by lifecycle backend")
               .isTrue();
         } finally {
@@ -2112,7 +2099,7 @@ class GameDesignSourcePostgresIntegrationTest {
                 });
         try {
           assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
-          assertThat(awaitStorageBackendBlock(local, slotPid, workerPid.get()))
+          assertThat(awaitStorageBackendBlock(local.dsl(), slotPid, workerPid.get()))
               .as("lifecycle writer backend blocked by slot backend")
               .isTrue();
         } finally {
@@ -2128,6 +2115,110 @@ class GameDesignSourcePostgresIntegrationTest {
             .isPresent();
       }
     }
+  }
+
+  @Test
+  void concurrentPublicationRequestClaimsAcrossVersionsRetainOnlyOneSelection() throws Exception {
+    var first = fixture();
+    var second = secondFullDraftInTenant(first);
+    assertThat(second.target().canonicalTenantId()).isEqualTo(first.target().canonicalTenantId());
+    assertThat(second.target().canonicalVersionId())
+        .isNotEqualTo(first.target().canonicalVersionId());
+
+    String requestId = UUID.randomUUID().toString();
+    var firstIntent = synchronizedPublicationIntent(first, requestId);
+    var secondIntent = synchronizedPublicationIntent(second, requestId);
+    var selections = new AuthoredDraftPublishSelectionRepository(first.dsl(), first.coordinator());
+    var losingVersionBefore = selectionRaceVersionRow(second);
+    var losingFenceBefore = second.coordinator().readVisibilityFence(second.target()).orElseThrow();
+    var reviewedBefore = reviewedClaimRows(first);
+    var winningVersionBefore = versionFields(first);
+    var manager = Objects.requireNonNull(first.write().getTransactionManager());
+
+    try (var worker = Executors.newSingleThreadExecutor();
+        var observer =
+            DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      var observerSql = DSL.using(observer, SQLDialect.POSTGRES);
+      var transaction = manager.getTransaction(first.write());
+      try {
+        int winnerPid = storageBackendPid(first.dsl());
+        var winner = selections.reserve(firstIntent);
+        var winningRows = retainedSelectionRows(first);
+        assertThat(winningRows).hasSize(1);
+
+        var contenderPid = new CompletableFuture<Integer>();
+        var contender =
+            worker.submit(
+                () ->
+                    second.tx(
+                        () -> {
+                          second.dsl().execute("SET LOCAL lock_timeout = '10s'");
+                          contenderPid.complete(storageBackendPid(second.dsl()));
+                          return selections.reserve(secondIntent);
+                        }));
+        int losingPid = contenderPid.get(10, TimeUnit.SECONDS);
+        assertThat(awaitStorageBackendBlock(observerSql, winnerPid, losingPid))
+            .as("second Draft selection transaction blocked by first Draft selection transaction")
+            .isTrue();
+        manager.commit(transaction);
+
+        assertThatThrownBy(() -> contender.get(20, TimeUnit.SECONDS))
+            .isInstanceOf(ExecutionException.class)
+            .hasCauseInstanceOf(
+                DraftCommitCoordinatorRepository.DraftCommitIdentityConflictException.class)
+            .rootCause()
+            .isInstanceOfSatisfying(
+                PSQLException.class,
+                failure -> {
+                  assertThat(failure.getSQLState()).isEqualTo("23505");
+                  assertThat(
+                          Objects.requireNonNull(failure.getServerErrorMessage()).getConstraint())
+                      .isEqualTo("uq_gd_authored_draft_publish_operation");
+                });
+
+        var tenantId = firstIntent.canonicalTenantId();
+        assertThat(winner.selection().intent()).isEqualTo(firstIntent);
+        assertThat(selections.readByPublishRequest(tenantId, requestId)).contains(winner);
+        assertThat(selections.read(tenantId, firstIntent.canonicalVersionId(), requestId))
+            .contains(winner);
+        assertThat(selections.read(tenantId, secondIntent.canonicalVersionId(), requestId))
+            .isEmpty();
+        assertThat(first.tx(() -> selections.reserve(firstIntent))).isEqualTo(winner);
+        assertThatThrownBy(() -> second.tx(() -> selections.reserve(secondIntent)))
+            .isInstanceOf(
+                DraftCommitCoordinatorRepository.DraftCommitIdentityConflictException.class)
+            .hasMessageContaining("Publish request identity was reused");
+        assertThat(retainedSelectionRows(first)).isEqualTo(winningRows);
+        assertThat(versionFields(first)).isEqualTo(winningVersionBefore);
+        assertThat(selectionRaceVersionRow(second)).isEqualTo(losingVersionBefore);
+        assertThat(second.coordinator().readVisibilityFence(second.target()))
+            .contains(losingFenceBefore);
+        assertThat(second.coordinator().readApplicationSlot(second.target())).isEmpty();
+        assertThat(reviewedClaimRows(first)).isEqualTo(reviewedBefore);
+      } finally {
+        if (!transaction.isCompleted()) manager.rollback(transaction);
+      }
+    }
+  }
+
+  private static List<String> retainedSelectionRows(Fixture fixture) {
+    return fixture
+        .dsl()
+        .fetch(
+            "SELECT s.xmin::text || '/' || to_jsonb(s)::text "
+                + "FROM game_design_authored_draft_publish_selection s "
+                + "ORDER BY s.canonical_tenant_id, s.canonical_version_id")
+        .getValues(0, String.class);
+  }
+
+  private static String selectionRaceVersionRow(Fixture fixture) {
+    return fixture
+        .dsl()
+        .fetchSingle(
+            "SELECT v.xmin::text || '/' || to_jsonb(v)::text FROM version v WHERE v.id = ?",
+            fixture.target().gameDesignVersionRowId())
+        .get(0, String.class);
   }
 
   @Test
@@ -2158,7 +2249,7 @@ class GameDesignSourcePostgresIntegrationTest {
                 });
         try {
           assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
-          assertThat(awaitStorageBackendBlock(local, selectionPid, workerPid.get()))
+          assertThat(awaitStorageBackendBlock(local.dsl(), selectionPid, workerPid.get()))
               .as("slot writer backend blocked by selection backend")
               .isTrue();
         } finally {
@@ -2207,7 +2298,7 @@ class GameDesignSourcePostgresIntegrationTest {
                 });
         try {
           assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
-          assertThat(awaitStorageBackendBlock(local, slotPid, workerPid.get()))
+          assertThat(awaitStorageBackendBlock(local.dsl(), slotPid, workerPid.get()))
               .as("selection writer backend blocked by slot backend")
               .isTrue();
         } finally {
@@ -2242,18 +2333,16 @@ class GameDesignSourcePostgresIntegrationTest {
         .get(0, Integer.class);
   }
 
-  private boolean awaitStorageBackendBlock(Fixture local, int firstPid, int workerPid)
+  private boolean awaitStorageBackendBlock(DSLContext observer, int firstPid, int workerPid)
       throws InterruptedException {
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
     while (System.nanoTime() < deadline) {
       var activity =
-          local
-              .dsl()
-              .fetchOne(
-                  "SELECT ? = ANY(pg_blocking_pids(pid)) AND wait_event_type = 'Lock' AS blocked "
-                      + "FROM pg_stat_activity WHERE pid = ?",
-                  firstPid,
-                  workerPid);
+          observer.fetchOne(
+              "SELECT ? = ANY(pg_blocking_pids(pid)) AND wait_event_type = 'Lock' AS blocked "
+                  + "FROM pg_stat_activity WHERE pid = ?",
+              firstPid,
+              workerPid);
       if (activity != null && Boolean.TRUE.equals(activity.get("blocked", Boolean.class))) {
         return true;
       }
@@ -2352,20 +2441,23 @@ class GameDesignSourcePostgresIntegrationTest {
     return fixture.write();
   }
 
-  private static AuthoredDraftPublishSelection synchronizedStorageSelection(Fixture fixture) {
+  private static AuthoredDraftPublishSelection.PublishIntent synchronizedPublicationIntent(
+      Fixture fixture, String requestId) {
     var binding = storageBinding(fixture, "storage-selected");
-    var applied = apply(fixture, binding);
-    synchronize(fixture, binding, applied);
-    var intent =
-        new AuthoredDraftPublishSelection.PublishIntent(
-            fixture.target().canonicalTenantId(),
-            fixture.target().canonicalVersionId(),
-            UUID.randomUUID().toString(),
-            "1",
-            "controlled storage race",
-            binding.requestId(),
-            binding.commitId(),
-            binding.digest());
+    synchronize(fixture, binding, apply(fixture, binding));
+    return new AuthoredDraftPublishSelection.PublishIntent(
+        fixture.target().canonicalTenantId(),
+        fixture.target().canonicalVersionId(),
+        requestId,
+        "1",
+        "controlled storage race",
+        binding.requestId(),
+        binding.commitId(),
+        binding.digest());
+  }
+
+  private static AuthoredDraftPublishSelection synchronizedStorageSelection(Fixture fixture) {
+    var intent = synchronizedPublicationIntent(fixture, UUID.randomUUID().toString());
     return fixture.tx(
         () ->
             AuthoredDraftPublishSelection.capture(
@@ -2375,9 +2467,9 @@ class GameDesignSourcePostgresIntegrationTest {
                     .coordinator()
                     .requireSynchronizedPublicationEvidence(
                         fixture.target(),
-                        binding.requestId(),
-                        binding.commitId(),
-                        binding.digest())));
+                        intent.selectedCommitRequestId(),
+                        intent.selectedCommitId(),
+                        intent.selectedCommitDigest())));
   }
 
   private void insertRawSelection(DSLContext sql, AuthoredDraftPublishSelection selected) {
@@ -2404,6 +2496,35 @@ class GameDesignSourcePostgresIntegrationTest {
         intent.selectedCommitDigest(),
         selected.digest(),
         selected.canonicalJson());
+  }
+
+  private static Fixture secondFullDraftInTenant(Fixture fixture) {
+    var target =
+        fixture.tx(
+            () -> {
+              var version = new Version();
+              version.setTenantId(fixture.target().gameDesignVersionTenantKey());
+              version.setVersionNumber(2);
+              return target(new VersionRepository(fixture.dsl()).save(version));
+            });
+    return new Fixture(
+        fixture.schema(),
+        fixture.dsl(),
+        fixture.write(),
+        target,
+        fixture.sources(),
+        fixture.coordinator());
+  }
+
+  private static TargetProof target(Version version) {
+    return new TargetProof(
+        version.getCanonicalTenantId(),
+        version.getCanonicalVersionId(),
+        version.getId(),
+        version.getTenantId(),
+        version.getIdentitySourceGameRowId(),
+        version.getIdentitySourceGameTenantKey(),
+        version.getIdentitySourceProvenanceKind());
   }
 
   private static Fixture fixture() {
@@ -2445,15 +2566,7 @@ class GameDesignSourcePostgresIntegrationTest {
               var version = new Version();
               version.setTenantId(game.getTenantId());
               version.setVersionNumber(1);
-              version = new VersionRepository(dsl).save(version);
-              return new TargetProof(
-                  version.getCanonicalTenantId(),
-                  version.getCanonicalVersionId(),
-                  version.getId(),
-                  version.getTenantId(),
-                  version.getIdentitySourceGameRowId(),
-                  version.getIdentitySourceGameTenantKey(),
-                  version.getIdentitySourceProvenanceKind());
+              return target(new VersionRepository(dsl).save(version));
             });
     return new Fixture(
         schema,
