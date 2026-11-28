@@ -140,7 +140,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
-  void composesLeaseInstallRevalidationHandoffAndFailClosedSourceChanges() throws Exception {
+  void composesLeaseInstallRevalidationReuseAndFailClosedSourceChanges() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     ControlledConnectionFailureDataSource dataSource = dataSource();
     CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
@@ -374,31 +374,54 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(statusRepository.find(qualifiedSource)).contains(firstStatus);
       assertThat(redis.admin().persist(ascii(initialMetaKey))).isTrue();
 
-      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
-      assertThatThrownBy(() -> firstOwner.revalidateBeforeBridge(firstInstallation))
-          .isInstanceOf(IllegalStateException.class);
+      var reused =
+          firstOwner.installForTransition(firstInstallation, TRANSITION_ID, world.request());
+      assertThat(reused.grant).isSameAs(firstInstallation.grant);
+      assertThat(redis.admin().get(redisKey)).containsExactly(initialLeaseValue);
       assertThat(statusRepository.find(qualifiedSource)).contains(firstStatus);
+      assertThat(fenceSequenceValue(dsl)).isEqualTo(sequenceAfterInstall);
 
-      dsl.execute(
-          "UPDATE game_session_region_runtime_status"
-              + " SET last_committed_tick_batch_id = 'batch-0', last_committed_tick_id = 0"
-              + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?",
-          qualifiedSource.tenantId(),
-          qualifiedSource.gameInstanceId(),
-          qualifiedSource.regionId());
-      redis
-          .admin()
-          .hset(
-              ascii(
-                  CanonicalGameplayRegionRedisKeys.meta(
-                      qualifiedSource.tenantId(),
-                      qualifiedSource.gameInstanceId(),
-                      qualifiedSource.regionId())),
-              java.util.Map.of(
-                  ascii("current_tick_id"), ascii("0"),
-                  ascii("current_tick_state"), ascii("APPLIED"),
-                  ascii("current_tick_terminal_at_ms"), ascii("1792972800000")));
-      var secondOwner =
+      incarnationSource.changeStorageGeneration("storage-generation-2");
+      assertThatThrownBy(
+              () -> firstOwner.installForTransition(reused, TRANSITION_ID, world.request()))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(redis.admin().get(redisKey)).containsExactly(initialLeaseValue);
+      assertThat(statusRepository.find(qualifiedSource)).contains(firstStatus);
+      assertThat(fenceSequenceValue(dsl)).isEqualTo(sequenceAfterInstall);
+      incarnationSource.restoreStorageGeneration();
+
+      WorldCanonicalInstanceLifecycleEvidence changed = changedEvidence(world.originalEvidence());
+      for (int changedRead : new int[] {2, 3}) {
+        world.resetReads();
+        world.replaceOnRead(changedRead, changed);
+        assertThatThrownBy(
+                () -> firstOwner.installForTransition(reused, TRANSITION_ID, world.request()))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(statusRepository.find(qualifiedSource)).contains(firstStatus);
+        assertThat(redis.admin().get(redisKey)).containsExactly(initialLeaseValue);
+      }
+
+      world.resetReads();
+      world.setAfterRead(2, dataSource::failConnections);
+      Throwable sqlOutageFailure =
+          catchThrowable(
+              () -> firstOwner.installForTransition(reused, TRANSITION_ID, world.request()));
+      dataSource.restoreConnections();
+      assertThat(sqlOutageFailure)
+          .isInstanceOf(RuntimeException.class)
+          .hasRootCauseInstanceOf(SQLException.class);
+      assertThat(statusRepository.find(qualifiedSource)).contains(firstStatus);
+      assertThat(redis.admin().get(redisKey)).containsExactly(initialLeaseValue);
+
+      world.resetReads();
+      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
+      byte[] retainedMetadata = redis.admin().dump(ascii(initialMetaKey));
+      String timelineImageSql =
+          "SELECT to_jsonb(preparation)::text FROM game_session_region_timeline_preparation"
+              + " preparation WHERE transition_id = ?";
+      String retainedTimeline = dsl.fetchOne(timelineImageSql, TRANSITION_ID).get(0, String.class);
+      assertThat(retainedTimeline).isNotNull();
+      var replacementOwner =
           owner(
               bindingInventory,
               statusRepository,
@@ -406,130 +429,20 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               world,
               "instance-b",
               incarnationSource);
-      secondOwner.installForTransition(TRANSITION_ID, world.request());
-      var secondStatus = statusRepository.find(qualifiedSource).orElseThrow();
-      assertThat(secondStatus.executorFence()).isGreaterThan(firstStatus.executorFence());
-      assertThat(secondStatus.regionEpoch()).isEqualTo(firstStatus.regionEpoch());
-      assertThat(secondStatus.lastCommittedTickId()).isZero();
-      assertThat(secondStatus.lastCommittedTickBatchId()).isEqualTo("batch-0");
-      assertThat(secondStatus.ownerInstanceId()).isEqualTo("instance-b");
-      assertThatThrownBy(() -> firstOwner.revalidateBeforeBridge(firstInstallation))
-          .isInstanceOf(IllegalStateException.class);
-      assertThat(statusRepository.find(qualifiedSource)).contains(secondStatus);
-
-      dsl.execute(
-          "UPDATE game_session_region_runtime_status"
-              + " SET last_committed_tick_batch_id = 'batch-8', last_committed_tick_id = 8"
-              + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?",
-          qualifiedSource.tenantId(),
-          qualifiedSource.gameInstanceId(),
-          qualifiedSource.regionId());
-      redis
-          .admin()
-          .hset(
-              ascii(
-                  CanonicalGameplayRegionRedisKeys.meta(
-                      qualifiedSource.tenantId(),
-                      qualifiedSource.gameInstanceId(),
-                      qualifiedSource.regionId())),
-              java.util.Map.of(
-                  ascii("current_tick_id"), ascii("8"),
-                  ascii("current_tick_state"), ascii("APPLIED"),
-                  ascii("current_tick_terminal_at_ms"), ascii("1792972800000")));
-      var progressed = statusRepository.find(qualifiedSource).orElseThrow();
-      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
-
-      var thirdOwner =
-          owner(
-              bindingInventory,
-              statusRepository,
-              redisOwner,
-              world,
-              "instance-c",
-              incarnationSource);
-      var thirdInstallation = thirdOwner.installForTransition(TRANSITION_ID, world.request());
-      var thirdStatus = statusRepository.find(qualifiedSource).orElseThrow();
-      assertThat(thirdStatus.executorFence()).isGreaterThan(progressed.executorFence());
-      assertThat(thirdStatus.regionEpoch()).isEqualTo(1L);
-      assertThat(thirdStatus.lastCommittedTickId()).isEqualTo(8L);
-      assertThat(thirdStatus.lastCommittedTickBatchId()).isEqualTo("batch-8");
-      assertThat(thirdStatus.ownerInstanceId()).isEqualTo("instance-c");
-      assertThat(thirdInstallation).isNotNull();
-
-      byte[] liveLeaseBeforeIncarnationChange = redis.admin().get(redisKey);
-      Long fenceBeforeIncarnationChange = fenceSequenceValue(dsl);
-      incarnationSource.changeStorageGeneration("storage-generation-2");
-      var changedIncarnationOwner =
-          owner(
-              bindingInventory,
-              statusRepository,
-              redisOwner,
-              world,
-              "changed-incarnation",
-              incarnationSource);
       assertThatThrownBy(
-              () -> changedIncarnationOwner.installForTransition(TRANSITION_ID, world.request()))
+              () -> replacementOwner.installForTransition(TRANSITION_ID, world.request()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "Canonical Game Session region owner requires current exact assignment and lease evidence");
+      assertThatThrownBy(() -> firstOwner.revalidateBeforeBridge(reused))
           .isInstanceOf(IllegalStateException.class);
-      assertThat(redis.admin().get(redisKey)).containsExactly(liveLeaseBeforeIncarnationChange);
-      assertThat(statusRepository.find(qualifiedSource)).contains(thirdStatus);
-      assertThat(fenceSequenceValue(dsl)).isEqualTo(fenceBeforeIncarnationChange);
-      incarnationSource.restoreStorageGeneration();
-
-      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
-      WorldCanonicalInstanceLifecycleEvidence changed = changedEvidence(world.originalEvidence());
-      world.replaceOnRead(2, changed);
-      var fourthOwner =
-          owner(
-              bindingInventory,
-              statusRepository,
-              redisOwner,
-              world,
-              "instance-d",
-              incarnationSource);
-      assertThatThrownBy(() -> fourthOwner.installForTransition(TRANSITION_ID, world.request()))
-          .isInstanceOf(IllegalStateException.class);
-      assertThat(statusRepository.find(qualifiedSource)).contains(thirdStatus);
-
-      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
-      world.resetReads();
-      world.replaceOnRead(3, changed);
-      var fifthOwner =
-          owner(
-              bindingInventory,
-              statusRepository,
-              redisOwner,
-              world,
-              "instance-e",
-              incarnationSource);
-      assertThatThrownBy(() -> fifthOwner.installForTransition(TRANSITION_ID, world.request()))
-          .isInstanceOf(IllegalStateException.class);
-      var installedBeforeChangedSourceGate = statusRepository.find(qualifiedSource).orElseThrow();
-      assertThat(installedBeforeChangedSourceGate.executorFence())
-          .isGreaterThan(thirdStatus.executorFence());
-      assertThat(installedBeforeChangedSourceGate.lastCommittedTickId()).isEqualTo(8L);
-      assertThat(installedBeforeChangedSourceGate.ownerInstanceId()).isEqualTo("instance-e");
-      assertThat(redis.admin().pexpire(redisKey, 0L)).isTrue();
-
-      world.resetReads();
-      var ownerStatusBeforeSqlOutage = statusRepository.find(qualifiedSource).orElseThrow();
-      world.setAfterRead(2, dataSource::failConnections);
-      var sixthOwner =
-          owner(
-              bindingInventory,
-              statusRepository,
-              redisOwner,
-              world,
-              "instance-f",
-              incarnationSource);
-      Throwable sqlOutageFailure =
-          catchThrowable(() -> sixthOwner.installForTransition(TRANSITION_ID, world.request()));
-      dataSource.restoreConnections();
-      assertThat(sqlOutageFailure)
-          .isInstanceOf(RuntimeException.class)
-          .hasRootCauseInstanceOf(SQLException.class);
-      assertThat(statusRepository.find(qualifiedSource)).contains(ownerStatusBeforeSqlOutage);
-      assertThat(redis.admin().type(redisKey)).isEqualTo("string");
-      assertThat(redis.admin().pttl(redisKey)).isPositive();
+      assertThat(statusRepository.find(qualifiedSource)).contains(firstStatus);
+      assertThat(dsl.fetchOne(timelineImageSql, TRANSITION_ID).get(0, String.class))
+          .isEqualTo(retainedTimeline);
+      assertThat(fenceSequenceValue(dsl)).isEqualTo(sequenceAfterInstall);
+      assertThat(redis.admin().type(redisKey)).isEqualTo("none");
+      assertThat(redis.admin().dump(ascii(initialMetaKey))).containsExactly(retainedMetadata);
+      assertThat(redis.admin().pttl(ascii(initialMetaKey))).isEqualTo(-1L);
     }
   }
 
@@ -928,7 +841,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
-  void acknowledgedRegionBridgeSurvivesExpiredGrantReplacement() throws Exception {
+  void acknowledgedRegionBridgeSurvivesRefusedExpiredGrantReplacement() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();
     try {
@@ -942,24 +855,23 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               testSchema.dataSource(), UUID.randomUUID(), "firemud");
       WorldFixture world = WorldFixture.open(runtimeTarget);
       try (var entitySource = EntityReferenceFixture.open()) {
-        CanonicalGameplayRegionOwnerCompositionFixture.ChangedGrantProof proof =
-            CanonicalGameplayRegionOwnerCompositionFixture.installAndBridgeThenChangedGrantRefuses(
-                testSchema.dsl(),
-                REDIS.getHost(),
-                REDIS.getMappedPort(REDIS_PORT),
-                world.request(),
-                runtimeTarget.playableTarget(),
-                world.resolver(),
-                entitySource.client());
+        CanonicalGameplayRegionOwnerCompositionFixture.ExpiredGrantProof proof =
+            CanonicalGameplayRegionOwnerCompositionFixture
+                .installAndBridgeThenExpiredGrantReplacementRefuses(
+                    testSchema.dsl(),
+                    REDIS.getHost(),
+                    REDIS.getMappedPort(REDIS_PORT),
+                    world.request(),
+                    runtimeTarget.playableTarget(),
+                    world.resolver(),
+                    entitySource.client());
 
         assertThat(proof.acknowledgedBridge().exactLostReplyRetry()).isTrue();
-        assertThat(proof.replacementGrantInstalled()).isTrue();
-        assertThat(proof.replacementExecutorFence())
-            .isGreaterThan(proof.acknowledgedBridge().executorFence());
-        assertThat(proof.bridgeRefused()).isTrue();
+        assertThat(proof.replacementRefused()).isTrue();
         assertThat(proof.refusalMessage())
             .isEqualTo(
-                "A completed region bridge acknowledgement cannot be rewritten for a new grant");
+                "Canonical Game Session region owner requires current exact assignment and lease evidence");
+        assertThat(proof.ownerSqlStatePreserved()).isTrue();
         assertThat(proof.acknowledgementRowPreserved()).isTrue();
         assertThat(proof.inventoryStatePreserved()).isTrue();
         assertThat(proof.physicalBridgeStatePreserved()).isTrue();
@@ -1316,7 +1228,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
-  void laterPlacementAcquiresFreshGrantWithoutChangingInitialTimeline() throws Exception {
+  void laterPlacementReusesCurrentGrantWithoutChangingInitialTimeline() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema schema = newTestSchema();
     try {
@@ -1363,7 +1275,10 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           .thenAnswer(ignored -> first.original.preparationInputDigest());
       when(secondEvidence.operationalRegionAssignments())
           .thenAnswer(ignored -> first.original.operationalRegionAssignments());
-      var second = new WorldFixture(secondEvidence, secondRequest);
+      var secondResponse = regionResponse(secondRequest, secondEvidence);
+      when(first.initialClient.readInitialPlayerLocationRegion(secondRequest))
+          .thenReturn(secondResponse);
+      when(first.lifecycleClient.read(secondLifecycle)).thenReturn(secondEvidence);
       assertThat(secondLifecycle.readRequestId()).isNotEqualTo(original.readRequestId());
       try (var entity = EntityReferenceFixture.open(secondRequest.getCharacterUuid())) {
         var result =
@@ -1376,16 +1291,12 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                 first.resolver(),
                 entity.client(),
                 new CanonicalGameplayRegionOwnerCompositionFixture.SecondBinding(
-                    second.request(),
-                    target.playableTarget(),
-                    second.resolver(),
-                    entity.client(),
-                    true));
+                    secondRequest, target.playableTarget(), first.resolver(), entity.client()));
         assertThat(result.firstTimelineUnchanged()).isTrue();
         assertThat(result.initialMetaUnchanged()).isTrue();
         assertThat(result.first().exactLostReplyRetry()).isTrue();
         assertThat(result.second().exactLostReplyRetry()).isTrue();
-        assertThat(result.second().executorFence()).isGreaterThan(result.first().executorFence());
+        assertThat(result.second().executorFence()).isEqualTo(result.first().executorFence());
         assertThat(result.foreignOwnerCapabilityRejectedWithoutStateChange()).isTrue();
         assertThat(result.expiredGrantRejectedWithoutStateChange()).isTrue();
       }

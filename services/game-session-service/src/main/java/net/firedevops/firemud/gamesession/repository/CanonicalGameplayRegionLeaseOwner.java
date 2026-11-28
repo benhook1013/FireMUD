@@ -157,6 +157,8 @@ final class CanonicalGameplayRegionLeaseOwner {
                   preparation.sourceDigest()),
               clock.instant());
     } else {
+      // This slice can reuse current owner custody but cannot issue a replacement grant.
+      if (existingRegionInstallation == null) throw unavailable();
       preparation =
           statusRepository
               .findTimelinePreparation(source)
@@ -188,14 +190,10 @@ final class CanonicalGameplayRegionLeaseOwner {
       if (!matchesInitialization || !resumablePhase) {
         throw unavailable();
       }
-      if (existingRegionInstallation == null) {
-        grant = redisOwner.acquire(source, expectedRegionEpoch, leaseTtl, runtimeIdentity);
-      } else {
-        requireReusableRegionGrant(
-            existingRegionInstallation, source, incarnation, prior, expectedRegionEpoch);
-        grant = existingRegionInstallation.grant;
-        reusingRegionGrant = true;
-      }
+      requireReusableRegionGrant(
+          existingRegionInstallation, source, incarnation, prior, expectedRegionEpoch);
+      grant = existingRegionInstallation.grant;
+      reusingRegionGrant = true;
     }
     if (reusingRegionGrant) {
       redisOwner.requireGrantScope(

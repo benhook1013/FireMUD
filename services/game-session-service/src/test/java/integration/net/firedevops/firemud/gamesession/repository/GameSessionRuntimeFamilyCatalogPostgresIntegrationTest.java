@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(24);
+      assertThat(catalog.catalogEpoch()).isEqualTo(25);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -207,7 +207,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.10",
               "catalog-installation:1065.0.11",
               "catalog-installation:1065.0.11.1",
-              "catalog-installation:1065.0.11.2")
+              "catalog-installation:1065.0.11.2",
+              "catalog-installation:1065.0.11.3")
           .noneMatch(identity ->
               identity.contains(":1057:")
                   || identity.contains(":1058:")
@@ -232,7 +233,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   || identity.contains(":1065.0.10:")
                   || identity.contains(":1065.0.11:")
                   || identity.contains(":1065.0.11.1:")
-                  || identity.contains(":1065.0.11.2:"));
+                  || identity.contains(":1065.0.11.2:")
+                  || identity.contains(":1065.0.11.3:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -769,7 +771,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(24);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(25);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(fact ->
                 fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
@@ -937,7 +939,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "1065.0.10",
               "1065.0.11",
               "1065.0.11.1",
-              "1065.0.11.2")) {
+              "1065.0.11.2",
+              "1065.0.11.3")) {
         String columns =
             "installed_rank,version,description,type,script,checksum,installed_by,execution_time,success";
         var original =
@@ -982,7 +985,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           f.dsl.execute("DELETE FROM " + f.history + " WHERE installed_rank=10000");
         }
       }
-      assertThat(f.owner().capture(request()).catalog().catalogEpoch()).isEqualTo(24);
+      assertThat(f.owner().capture(request()).catalog().catalogEpoch()).isEqualTo(25);
     }
   }
 
@@ -1747,6 +1750,19 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   .get(
                       "game_session_original_new_capacity_execution.gs_capacity_close_after_final_receipt"))
           .contains("BEFORE UPDATE ON ", " FOR EACH ROW EXECUTE FUNCTION ");
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT t.tgqual IS NULL"
+                          + " FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid"
+                          + " JOIN pg_namespace n ON n.oid=c.relnamespace"
+                          + " WHERE n.nspname=? AND c.relname=? AND t.tgname=?"
+                          + " AND NOT t.tgisinternal",
+                      f.schema,
+                      "game_session_original_new_capacity_execution",
+                      "gs_capacity_close_after_final_receipt")
+                  .get(0, Boolean.class))
+          .isTrue();
     }
   }
 
@@ -1990,6 +2006,44 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void regionTransferInstallationAndIncarnationUpgradeRetainsPopulatedCatalogAtEpochTwentyFive() {
+    try (Fixture f = fixture("1065.0.11.2")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.11.3",
+          24,
+          "V1065.0.11.3__bind_region_transfer_installation_and_incarnation.sql",
+          Map.of(
+              "require_gs_region_transfer_successor_installation()",
+              List.of(
+                  "s.region_epoch=NEW.region_epoch",
+                  "s.owner_instance_id=NEW.new_owner_id",
+                  "s.executor_fence=NEW.new_owner_fence",
+                  "s.lease_token_correlation=NEW.new_lease_correlation"),
+              "require_gs_region_transfer_dispatch_incarnation()",
+              List.of("i.fence_dispatch_incarnation IS DISTINCT FROM NEW.incarnation_digest"),
+              "preserve_gs_region_fence_dispatch()",
+              List.of(
+                  "WHERE transfer_id=NEW.transfer_id FOR UPDATE",
+                  "SET incarnation_digest=NEW.fence_dispatch_incarnation")),
+          Map.of(
+              "game_session_region_owner_transfer.gs_region_transfer_successor_installation",
+              "require_gs_region_transfer_successor_installation()",
+              "game_session_region_owner_transfer.gs_region_transfer_dispatch_incarnation",
+              "require_gs_region_transfer_dispatch_incarnation()"),
+          Map.of(
+              "game_session_region_owner_transfer.gs_region_transfer_successor_installation",
+              List.of("TRIGGER")),
+          Map.of());
+      assertThat(
+              f.guards()
+                  .get(
+                      "game_session_region_owner_transfer.gs_region_transfer_successor_installation"))
+          .contains("DEFERRABLE INITIALLY DEFERRED");
+    }
+  }
+
   private static void assertCapacityCatalogGuardUpgrade(
       Fixture f,
       String target,
@@ -2180,6 +2234,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             case "reject_gs_capacity_close_after_final_receipt()",
                 "require_gs_region_fence_dispatch_completion()" ->
                 "BEFORE UPDATE";
+            case "require_gs_region_transfer_successor_installation()" -> "AFTER UPDATE";
+            case "require_gs_region_transfer_dispatch_incarnation()" ->
+                "BEFORE UPDATE OF incarnation_digest";
             default -> "BEFORE INSERT";
           };
       assertThat(installedGuards.get(trigger))

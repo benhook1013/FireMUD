@@ -19,6 +19,7 @@ import static org.mockito.Mockito.when;
 import com.zaxxer.hikari.HikariDataSource;
 import com.zaxxer.hikari.pool.HikariProxyConnection;
 import io.grpc.Context;
+import io.grpc.Deadline;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisFuture;
@@ -134,7 +135,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         Long.MAX_VALUE,
         budget -> {
           var provider = budget.sql(source).configuration().connectionProvider();
-          Connection borrowed = provider.acquire();
+          Connection borrowed = java.util.Objects.requireNonNull(provider.acquire());
           try {
             assertThatThrownBy(borrowed::rollback)
                 .isInstanceOf(SQLException.class)
@@ -676,12 +677,17 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     }
   }
 
-  @Test
-  void uncertainProviderReleaseRetainsOnePermitAndExposesItThroughMicrometer() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void uncertainProviderReleaseRetainsOnePermitAndExposesItThroughMicrometer(boolean fatalCleanup)
+      throws Exception {
     ConnectionProvider provider = mock();
     Connection first = mock(), second = mock();
     when(provider.acquire()).thenReturn(first, second);
-    doThrow(new IllegalStateException("Controlled uncertain pool return"))
+    doThrow(
+            fatalCleanup
+                ? new AssertionError("Controlled uncertain pool return")
+                : new IllegalStateException("Controlled uncertain pool return"))
         .when(provider)
         .release(org.mockito.ArgumentMatchers.any(Connection.class));
     AtomicReference<CanonicalGameplayOriginalNewCapacityExecutionBudget> captured =
@@ -711,6 +717,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       int available = permits.availablePermits();
       var rollbackFailure = new AtomicReference<Throwable>();
       var autoCommitFailure = new AtomicReference<Throwable>();
+      var borrowed = new AtomicReference<Connection>();
       var logicalFinishes = new AtomicInteger();
       try {
         assertThatThrownBy(() ->
@@ -724,18 +731,27 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                           budget.sql(source(provider)).configuration().connectionProvider();
                       Connection proxy = java.util.Objects.requireNonNull(scoped.acquire());
                       scoped.acquire();
-                      assertThatThrownBy(() -> scoped.release(proxy))
-                          .hasMessage("Controlled uncertain pool return");
-                      rollbackFailure.set(
-                          org.assertj.core.api.Assertions.catchThrowable(proxy::rollback));
-                      autoCommitFailure.set(
-                          org.assertj.core.api.Assertions.catchThrowable(
-                              () -> proxy.setAutoCommit(true)));
+                      borrowed.set(proxy);
+                      if (!fatalCleanup) {
+                        assertThatThrownBy(() -> scoped.release(proxy))
+                            .hasMessage("Controlled uncertain pool return");
+                        rollbackFailure.set(
+                            org.assertj.core.api.Assertions.catchThrowable(proxy::rollback));
+                        autoCommitFailure.set(
+                            org.assertj.core.api.Assertions.catchThrowable(
+                                () -> proxy.setAutoCommit(true)));
+                      }
                       return true;
                     },
                     logicalFinishes::incrementAndGet))
             .isInstanceOf(IllegalStateException.class);
         assertThat(logicalFinishes).hasValue(1);
+        if (fatalCleanup) {
+          Connection proxy = borrowed.get();
+          rollbackFailure.set(org.assertj.core.api.Assertions.catchThrowable(proxy::rollback));
+          autoCommitFailure.set(
+              org.assertj.core.api.Assertions.catchThrowable(() -> proxy.setAutoCommit(true)));
+        }
         assertThat(rollbackFailure.get()).isInstanceOf(java.sql.SQLException.class);
         assertThat(autoCommitFailure.get()).isInstanceOf(java.sql.SQLException.class);
         assertThat(
@@ -1252,6 +1268,56 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
   }
 
   @Test
+  void blockedAcquisitionExpiresBeforeLateConnectionIsRetired() throws Exception {
+    ConnectionProvider provider = mock();
+    Connection connection = mock();
+    CountDownLatch acquiring = new CountDownLatch(1), returnConnection = new CountDownLatch(1);
+    when(provider.acquire())
+        .thenAnswer(ignored -> {
+          acquiring.countDown();
+          awaitUninterruptibly(returnConnection);
+          return connection;
+        });
+    var controlled = new ControlledConnectionProvider(provider);
+    DSLContext dsl = source(controlled);
+    var captured = new AtomicReference<CanonicalGameplayOriginalNewCapacityExecutionBudget>();
+    long deadline = CLOCK.millis() + 500;
+
+    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var caller =
+          executor.submit(() ->
+              assertThatThrownBy(() ->
+                      CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                          CLOCK,
+                          deadline,
+                          budget -> {
+                            captured.set(budget);
+                            return execute(budget.sql(dsl));
+                          }))
+                  .isInstanceOf(
+                      CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class));
+      try {
+        assertThat(acquiring.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThatThrownBy(() -> caller.get(50, TimeUnit.MILLISECONDS))
+            .isInstanceOf(java.util.concurrent.TimeoutException.class);
+        caller.get(2, TimeUnit.SECONDS);
+        assertThat(CLOCK.millis()).isGreaterThanOrEqualTo(deadline);
+        verify(provider).acquire();
+        verify(provider, never()).release(connection);
+
+        returnConnection.countDown();
+        verify(provider, timeout(2000)).release(connection);
+        Awaitility.await()
+            .atMost(2, TimeUnit.SECONDS)
+            .untilAsserted(() -> assertThat(controlled.retired(connection)).isTrue());
+        assertNoOwnedConnections(captured.get());
+      } finally {
+        returnConnection.countDown();
+      }
+    }
+  }
+
+  @Test
   void cancellationWorkerStartupFailureRetainsOnlyActualOutstandingResources() throws Exception {
     ConnectionProvider provider = mock();
     PreparedStatement statement = mock();
@@ -1386,6 +1452,32 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             });
 
     assertThat(retainedDeadline).isEqualTo(initial + 5_000L);
+  }
+
+  @Test
+  void fiveSecondMonotonicDeadlineAlreadyRunsWhileTheInitialWallClockReadWaits() {
+    Clock clock = mock();
+    long fixedWallMillis = 1_800_000_000_000L;
+    long capMillis = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS;
+    var wallReadCutoff = new AtomicReference<Deadline>();
+    when(clock.millis())
+        .thenAnswer(ignored -> {
+          wallReadCutoff.set(Deadline.after(capMillis, TimeUnit.MILLISECONDS));
+          Thread.sleep(200);
+          return fixedWallMillis;
+        })
+        .thenReturn(fixedWallMillis);
+
+    Deadline actual =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+            clock,
+            Long.MAX_VALUE,
+            budget -> {
+              assertThat(budget.absoluteDeadlineMillis()).isEqualTo(fixedWallMillis + capMillis);
+              return budget.operationDeadline();
+            });
+
+    assertThat(actual.isBefore(java.util.Objects.requireNonNull(wallReadCutoff.get()))).isTrue();
   }
 
   @Test

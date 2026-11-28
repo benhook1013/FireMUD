@@ -985,7 +985,11 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         binding
             .dsl()
             .fetchSingle(
-                "SELECT status FROM game_session_original_new_capacity_execution WHERE transition_id = ?",
+                "SELECT execution.status FROM game_session_canonical_binding_transition transition"
+                    + " JOIN game_session_original_new_capacity_execution execution ON"
+                    + " execution.execution_digest ="
+                    + " transition.original_new_capacity_execution_digest"
+                    + " WHERE transition.transition_id = ? AND execution.status = 'COMMITTED'",
                 decisionId())
             .get(0, String.class);
     if (!"COMMITTED".equals(state))
