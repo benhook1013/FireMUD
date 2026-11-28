@@ -223,13 +223,16 @@ jobs:
           exit 1
 
       - name: Reset dev-demo namespace for clean deploy
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.v2-migration-mode.outputs.activation != 'true' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.v2-migration-mode.outputs.activation == 'false' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
+          EXPECTED_NAMESPACE_UID: ${{ steps.v2-migration-mode.outputs.namespace_uid }}
+          EXPECTED_DEPLOYED_HEAD: ${{ steps.v2-migration-mode.outputs.deployed_base_sha }}
         run: |
           bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
-            "${{ needs.dev-demo-plan.outputs.release_name }}"
+            "${{ needs.dev-demo-plan.outputs.release_name }}" \
+            "$EXPECTED_NAMESPACE_UID" "$EXPECTED_DEPLOYED_HEAD"
 
       - name: Ensure dev-demo namespace exists
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' }}
@@ -407,6 +410,13 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.image_tag }}" \
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify migration writer inventory access
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.v2-migration-mode.outputs.activation == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
+        run: kubectl --request-timeout=10s -n "$RUNTIME_NAMESPACE" auth can-i list replicasets.apps
 
       - name: Retain migration deployment intent
         id: retain-deployment-intent
@@ -1135,7 +1145,7 @@ jobs:
               elif [[ "$BOOTSTRAP_RESULT_READY" == true ]]; then
                 echo "The target was recorded and bootstrap ran, but its result was not retained. Use the [verification procedure]($guide) and obtain owner readback of the original bootstrap. Hold smoke verification until the owners establish the result."
               else
-                echo "The target was recorded but the original smoke bootstrap did not complete successfully in this attempt. Use the [verification procedure]($guide) to inspect the existing release and refer bootstrap recovery to the affected owners."
+                echo "The target was recorded, but this attempt could not verify completion of the original smoke bootstrap. Use the [verification procedure]($guide) to inspect the existing release and refer bootstrap recovery to the affected owners."
               fi
               if [[ "$failure_stage" == bootstrap-cleanup ]]; then
                 echo "Bootstrap cleanup failed after producing the result. Verify cleanup of the temporary bootstrap resources before proceeding."

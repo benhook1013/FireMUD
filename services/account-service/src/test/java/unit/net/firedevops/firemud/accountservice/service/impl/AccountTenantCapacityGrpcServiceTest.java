@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.Any;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.protobuf.StatusProto;
@@ -34,6 +35,7 @@ import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixtu
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.jooq.ConnectionRunnable;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -453,6 +455,18 @@ class AccountTenantCapacityGrpcServiceTest {
     var error = ArgumentCaptor.forClass(Throwable.class);
     verify(observer).onError(error.capture());
     var expectedFailure = expected.toStatusException();
+    if (expected == Failure.ENTITLEMENT_UNAVAILABLE) {
+      assertThat(Status.fromThrowable(error.getValue()).getCode())
+          .isEqualTo(Status.Code.UNAVAILABLE);
+      var status = StatusProto.fromThrowable(error.getValue());
+      assertThat(status.getDetailsList())
+          .containsExactly(
+              Any.pack(
+                  ErrorDetail.newBuilder()
+                      .setCode("ENTITLEMENT_UNAVAILABLE")
+                      .setMessage(status.getMessage())
+                      .build()));
+    }
     assertThat(Status.fromThrowable(error.getValue()).getCode())
         .isEqualTo(expectedFailure.getStatus().getCode());
     assertThat(StatusProto.fromThrowable(error.getValue()))

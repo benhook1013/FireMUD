@@ -271,10 +271,11 @@ if wait_mode == "pull-request":
     matching_runs = [
         run for run in workflow_runs
         if (run.get("event") == "repository_dispatch" and
-            (run.get("display_title") == f"Publish PR Runtime Images {source_suffix}"
+            ((source_event == "repository_dispatch" and
+              run.get("display_title") == f"Publish PR Runtime Images {source_suffix}")
              or (source_event == "pull_request" and
                  run.get("display_title") == f"Publish PR Runtime Images requalification {source_suffix}")))
-        or (run.get("event") == "workflow_run" and
+        or (source_event == "pull_request" and run.get("event") == "workflow_run" and
         (tokens := run.get("display_title", "").split())[:8] == [
             "Publish", "PR", "Runtime", "Images", "Build", "Runtime", "Images",
             "secure-pr-artifact",
@@ -297,6 +298,7 @@ if not matching_runs:
 # publication for this exact source attempt. Keep that retained success usable
 # only when the complete exact-tuple inventory has one unambiguous latest
 # failed requalification and one earlier successful original publisher.
+# The exact failed attempt must subsequently prove it skipped tag access.
 # Other terminal failures, active candidates, and ambiguous histories retain
 # their existing fail-closed behavior.
 run_ids = [run.get("id") for run in matching_runs]
@@ -319,8 +321,11 @@ if (len(ordered) > 1 and run.get("event") == "repository_dispatch"
             or earlier[0].get("status") != "completed"
             or earlier[0].get("conclusion") != "success"):
         raise SystemExit(1)
+    failed_id, failed_attempt, failed_workflow = run.get("id"), run.get("run_attempt"), run.get("workflow_id")
+    if any(type(value) is not int or value <= 0 for value in (failed_attempt, failed_workflow)):
+        raise SystemExit(1)
+    selection_reason = f"retained-after-failed-requalification:{failed_id}:{failed_attempt}:{failed_workflow}"
     run = earlier[0]
-    selection_reason = "retained-after-failed-requalification"
 attempt, workflow_id = run.get("run_attempt"), run.get("workflow_id")
 if any(type(value) is not int or value <= 0 for value in (attempt, workflow_id)):
     raise SystemExit(1)
@@ -347,7 +352,7 @@ import time
 from datetime import datetime, timedelta
 
 (repository, base_sha, head_sha, merge_sha, run_id, attempt, workflow_id, event, title,
- source_id, source_attempt, source_workflow_id, source_event, remaining) = sys.argv[1:]
+ source_id, source_attempt, source_workflow_id, source_event, selection_reason, remaining) = sys.argv[1:]
 deadline = time.monotonic() + int(remaining)
 
 def unavailable(reason):
@@ -374,7 +379,8 @@ def positive_int(value):
 def successful(record):
     return record.get("status") == "completed" and record.get("conclusion") == "success"
 
-def verify_run(record, expected_id, expected_attempt, expected_workflow_id, expected_event, workflow_path):
+def verify_run(record, expected_id, expected_attempt, expected_workflow_id, expected_event, workflow_path,
+               expected_conclusion="success"):
     branch, sha = record.get("head_branch"), record.get("head_sha")
     paths = {workflow_path, f"{workflow_path}@{branch}", f"{workflow_path}@refs/heads/{branch}"}
     if expected_event == "pull_request":
@@ -384,7 +390,8 @@ def verify_run(record, expected_id, expected_attempt, expected_workflow_id, expe
     if (any(not positive_int(record.get(field)) or record[field] != int(expected)
             for field, expected in (("id", expected_id), ("run_attempt", expected_attempt),
                                     ("workflow_id", expected_workflow_id)))
-            or record.get("event") != expected_event or not successful(record)
+            or record.get("event") != expected_event
+            or record.get("status") != "completed" or record.get("conclusion") != expected_conclusion
             or not isinstance(branch, str) or not branch or not isinstance(sha, str)
             or not re.fullmatch(r"[0-9a-f]{40}", sha)
             or not isinstance(record.get("path"), str) or record["path"] not in paths
@@ -430,6 +437,33 @@ if publisher.get("display_title") != title or publisher.get("name") not in ("Pub
 requalification = title == f"Publish PR Runtime Images requalification source-run-{source_id} attempt-{source_attempt}"
 if requalification and (event != "repository_dispatch" or source_event != "pull_request"):
     unavailable("publication requalification requires an original pull_request source run")
+if selection_reason != "latest":
+    failed = re.fullmatch(r"retained-after-failed-requalification:([1-9][0-9]*):([1-9][0-9]*):([1-9][0-9]*)",
+                          selection_reason)
+    if not failed or failed[3] != workflow_id or event != "workflow_run" or source_event != "pull_request":
+        unavailable("failed requalification selection is not bound to the publisher workflow")
+    failed_id, failed_attempt, failed_workflow = failed.groups()
+    failed_path = f"runs/{failed_id}/attempts/{failed_attempt}"
+    requalification_run = read_object(failed_path)
+    verify_run(requalification_run, failed_id, failed_attempt, failed_workflow, "repository_dispatch",
+               ".github/workflows/publish-pr-runtime-images.yml", "failure")
+    expected_title = f"Publish PR Runtime Images requalification source-run-{source_id} attempt-{source_attempt}"
+    if (requalification_run.get("display_title") != expected_title
+            or requalification_run.get("name") not in ("Publish PR Runtime Images", expected_title)):
+        unavailable("failed requalification does not bind the selected source")
+    failed_jobs = read_jobs(requalification_run, failed_path)
+    failed_publish_jobs = [job for job in failed_jobs if job.get("name") == "Publish Fixed PR Merge Image Tags"]
+    if (len(failed_publish_jobs) != 1
+            or failed_publish_jobs[0].get("head_sha") != requalification_run["head_sha"]
+            or failed_publish_jobs[0].get("status") != "completed"):
+        unavailable("failed requalification publisher job is unproven")
+    failed_steps = failed_publish_jobs[0].get("steps")
+    if not isinstance(failed_steps, list) or any(not isinstance(step, dict) for step in failed_steps):
+        unavailable("failed requalification step inventory is unproven")
+    tag_steps = [step for step in failed_steps if step.get("name") == "Publish fixed PR image tags"]
+    if (len(tag_steps) != 1 or tag_steps[0].get("status") != "completed"
+            or tag_steps[0].get("conclusion") != "skipped" or tag_steps[0].get("started_at") is not None):
+        unavailable("failed requalification has no proof it skipped fixed-tag checks")
 job = successful_job(publisher, publisher_path, ("Publish Fixed PR Merge Image Tags",))
 download = successful_step(job, "Download successful PR image artifacts")
 validate = successful_step(job, "Validate exact PR source and artifact before registry login")
@@ -611,7 +645,7 @@ wait_for_pr_publisher() {
     fi
 
     if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
-      if [[ "${selection_reason}" == "retained-after-failed-requalification" ]]; then
+      if [[ "${selection_reason}" == retained-after-failed-requalification:* ]]; then
         local source_status=0
         check_current_source "${publisher_deadline}" "${source_run_id}" "${source_run_attempt}" \
           "${source_created_at}" "${source_event}" "${source_workflow_id}" || source_status=$?
@@ -624,7 +658,7 @@ wait_for_pr_publisher() {
       local artifact_evidence
       if ! artifact_evidence="$(verify_publisher_attempt "${run_id}" "${publisher_attempt}" \
         "${publisher_workflow_id}" "${publisher_event}" "${publisher_title}" \
-        "${source_run_id}" "${source_run_attempt}" "${source_workflow_id}" "${source_event}" "$((publisher_deadline - SECONDS))")"; then
+        "${source_run_id}" "${source_run_attempt}" "${source_workflow_id}" "${source_event}" "${selection_reason}" "$((publisher_deadline - SECONDS))")"; then
         printf 'Exact PR image publication and artifact proof is unavailable for run %s attempt %s.\n' \
           "${run_id}" "${publisher_attempt}" >&2
         local source_status=0

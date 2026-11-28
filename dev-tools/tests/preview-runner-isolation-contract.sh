@@ -356,10 +356,41 @@ refresh_scripts = [
 ]
 if len(refresh_scripts) != 1:
     raise AssertionError("preview runtime base refresh must use exactly one pinned GitHub dispatcher")
-if 'event_type: "pr-runtime-base-refresh-request"' not in refresh_scripts[0] or "preview_only: true" not in refresh_scripts[0]:
-    raise AssertionError("preview runtime base refresh lost its preview-only trusted admission request")
-if not all(f"{field}:" in refresh_scripts[0] for field in ("pr_number", "base_ref", "base_sha", "head_sha", "merge_sha")):
-    raise AssertionError("preview runtime base refresh dispatch lost its exact merge tuple")
+subprocess.run(
+    ["node", "-e", r"""
+const assert = require("node:assert/strict");
+const [base, head, merge] = ["a", "b", "c"].map(character => character.repeat(40));
+const repository = "example/FireMUD";
+const repo = {owner: "example", repo: "FireMUD"};
+const context = {repo, payload: {repository: {full_name: repository}}};
+const dispatches = [];
+const github = {rest: {
+  pulls: {get: async () => ({data: {
+    state: "open", base: {ref: "develop", repo: {full_name: repository}},
+    head: {sha: head, repo: {full_name: repository}}, merge_commit_sha: merge,
+  }})},
+  git: {getRef: async () => ({data: {object: {sha: base}}})},
+  repos: {
+    getCommit: async () => ({data: {sha: merge, parents: [{sha: base}, {sha: head}]}}),
+    createDispatchEvent: async request => dispatches.push(request),
+  },
+}};
+const core = {info: () => {}, setFailed: assert.fail};
+const processFixture = {env: {
+  BASE_REFRESH_REQUIRED: "true", PR_NUMBER: "42", BASE_REF: "develop",
+  BASE_SHA: base, HEAD_SHA: head, MERGE_SHA: merge, IMAGE_TAG: "pr-42-image",
+}};
+const source = require("node:fs").readFileSync(0, "utf8");
+const run = new Function("github", "context", "core", "process", "return (async () => {" + source + "\n})();");
+run(github, context, core, processFixture).then(() => assert.deepEqual(dispatches, [{
+  ...repo, event_type: "pr-runtime-base-refresh-request",
+  client_payload: {
+    pr_number: "42", base_ref: "develop", base_sha: base, head_sha: head, merge_sha: merge, preview_only: true,
+  },
+}])).catch(error => {console.error(error); process.exitCode = 1;});
+"""],
+    input=refresh_scripts[0], text=True, check=True,
+)
 
 # Keep the permission boundary regression-tested independently of the live
 # workflow. A render write grant is always forbidden; the trusted dispatcher

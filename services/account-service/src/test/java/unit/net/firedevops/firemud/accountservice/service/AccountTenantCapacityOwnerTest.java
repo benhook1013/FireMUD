@@ -30,6 +30,7 @@ import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateExpiredException;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner;
@@ -168,6 +169,7 @@ class AccountTenantCapacityOwnerTest {
     QUOTA,
     EXPIRES_AT_MEMBERSHIP_OBSERVATION,
     EXPIRES_DURING_SCOPE_QUALIFICATION,
+    EXPIRES_DURING_DELEGATION_READ,
     EXPIRES_DURING_USAGE_LOCK
   }
 
@@ -257,6 +259,15 @@ class AccountTenantCapacityOwnerTest {
     switch (path) {
       case QUOTA -> {}
       case EXPIRES_AT_MEMBERSHIP_OBSERVATION -> f.onDatabaseObservation = expire;
+      case EXPIRES_DURING_DELEGATION_READ ->
+          when(f.issuances.readCurrentCommittedCandidateByJti(
+                  CapacityAdmissionTestFixture.DELEGATION_JTI))
+              .thenAnswer(ignored -> {
+                expire.run();
+                throw new CommittedCandidateExpiredException(
+                    CapacityAdmissionTestFixture.DELEGATION_JTI,
+                    f.request.evidence().expiresAt().getEpochSecond());
+              });
       case EXPIRES_DURING_SCOPE_QUALIFICATION ->
           when(f.scopes.findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request)))
               .thenAnswer(ignored -> {
@@ -287,11 +298,16 @@ class AccountTenantCapacityOwnerTest {
     UUID committedId = genericRefusal.get("decision_id", UUID.class);
     if (path == InitialDenialPath.EXPIRES_AT_MEMBERSHIP_OBSERVATION) {
       verifyNoInteractions(f.issuances, f.scopes);
+    } else if (path == InitialDenialPath.EXPIRES_DURING_DELEGATION_READ) {
+      verify(f.issuances)
+          .readCurrentCommittedCandidateByJti(CapacityAdmissionTestFixture.DELEGATION_JTI);
+      verifyNoInteractions(f.scopes);
     } else {
       verify(f.scopes).findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request));
     }
     if (path == InitialDenialPath.EXPIRES_AT_MEMBERSHIP_OBSERVATION
-        || path == InitialDenialPath.EXPIRES_DURING_SCOPE_QUALIFICATION) {
+        || path == InitialDenialPath.EXPIRES_DURING_SCOPE_QUALIFICATION
+        || path == InitialDenialPath.EXPIRES_DURING_DELEGATION_READ) {
       verify(f.dsl, never())
           .fetchOne(
               startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
@@ -321,6 +337,31 @@ class AccountTenantCapacityOwnerTest {
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
     verify(f.dsl, never())
         .fetchOne(startsWith("SELECT * FROM account_tenant_capacity_usage "), any(Object[].class));
+  }
+
+  @Test
+  void unavailableDelegationDuringExpiryDoesNotRetainDenial() throws Exception {
+    var f = new Fixture(false, qualifiedRequest(true));
+    f.existing = false;
+    f.retained = true;
+    qualifySources(f);
+    when(f.issuances.readCurrentCommittedCandidateByJti(
+            CapacityAdmissionTestFixture.DELEGATION_JTI))
+        .thenAnswer(ignored -> {
+          when(f.clock.instant()).thenReturn(f.request.evidence().expiresAt());
+          f.databaseExpired = true;
+          throw new AccountGameplayDelegationIssuanceRepository.StorageUnavailableException();
+        });
+
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> {
+              assertThat(failure.code()).isEqualTo(Failure.ENTITLEMENT_UNAVAILABLE);
+              assertThat(failure.durableDenialId()).isNull();
+            });
+    verifyNoInteractions(f.scopes);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
 
   @Test

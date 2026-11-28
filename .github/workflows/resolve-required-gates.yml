@@ -33,17 +33,77 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Check cancelled source against the current pull head
+        id: source-head
+        if: ${{ github.event.workflow_run.conclusion == 'cancelled' }}
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const {action, repository, workflow_run: source} = context.payload;
+            const positiveInteger = value => Number.isSafeInteger(value) && value > 0;
+            const isSha = value => typeof value === 'string' && /^[0-9a-f]{40}$/i.test(value);
+            const isRef = value => typeof value === 'string' && value.length > 0;
+            const isSameRepository = candidate => candidate?.id === repository.id;
+            const workflowNames = new Map([
+              ['.github/workflows/ci.yml', 'CI — Validation'],
+              ['.github/workflows/security.yml', 'Security Gate'],
+              ['.github/workflows/codeql.yml', 'CodeQL Analysis'],
+              ['.github/workflows/license-scan.yml', 'License Gate'],
+              ['.github/workflows/smoke.yml', 'PR Smoke Gate'],
+            ]);
+            const {owner, repo} = context.repo;
+            if (action !== 'completed' || source?.event !== 'pull_request' ||
+                source.status !== 'completed' || source.conclusion !== 'cancelled' ||
+                !positiveInteger(repository?.id) || repository.full_name !== `${owner}/${repo}` ||
+                !positiveInteger(source.id) || !positiveInteger(source.workflow_id) ||
+                !isSameRepository(source.repository) || !isSameRepository(source.head_repository) ||
+                !isSha(source.head_sha) || !isRef(source.head_branch) ||
+                typeof source.path !== 'string' || typeof source.display_title !== 'string' ||
+                !Array.isArray(source.pull_requests) || source.pull_requests.length !== 1) return;
+
+            const [association] = source.pull_requests;
+            const [workflowPath] = source.path.split('@', 1);
+            const workflowName = workflowNames.get(workflowPath);
+            const title = /^(.*) pr-([1-9][0-9]*) base-([0-9a-fA-F]{40}) head-([0-9a-fA-F]{40})$/.exec(source.display_title);
+            if (!workflowName || source.path === `${workflowPath}@` ||
+                (source.name !== workflowName && source.name !== source.display_title) ||
+                title?.[1] !== workflowName || title[4] !== source.head_sha ||
+                !positiveInteger(association?.number) || title[2] !== String(association.number) ||
+                !isSameRepository(association.head?.repo) || !isSameRepository(association.base?.repo) ||
+                association.head.ref !== source.head_branch || !isRef(association.base.ref) ||
+                !isSha(association.head.sha) || association.head.sha.toLowerCase() === source.head_sha.toLowerCase()) return;
+
+            // The attached head only selects this fast check. The current PR read decides it.
+            let pull;
+            try {
+              ({data: pull} = await github.rest.pulls.get({owner, repo, pull_number: association.number}));
+            } catch {
+              core.notice('Current pull head unavailable; using normal gate resolution.');
+              return;
+            }
+            if (pull?.number === association.number && pull.state === 'open' &&
+                isSameRepository(pull.head?.repo) && isSameRepository(pull.base?.repo) &&
+                pull.head.ref === source.head_branch && pull.base.ref === association.base.ref &&
+                isSha(pull.head.sha) && pull.head.sha.toLowerCase() !== source.head_sha.toLowerCase()) {
+              core.notice('Cancelled source head is obsolete; skipping gate resolution.');
+              core.setOutput('obsolete', 'true');
+            }
+
       - name: Check out trusted resolver
+        if: ${{ steps.source-head.outputs.obsolete != 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Set up canonical GitHub CLI
+        if: ${{ steps.source-head.outputs.obsolete != 'true' }}
         uses: ./.github/actions/setup-gh
 
       - name: Preflight deferred gate resolution
         id: preflight
+        if: ${{ steps.source-head.outputs.obsolete != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/actions/preserve-required-gate/resolve-deferred-gate.sh preflight
@@ -62,7 +122,7 @@ jobs:
         run: ':'
 
       - name: Reconcile supplementary required gate status
-        if: ${{ always() }}
+        if: ${{ always() && steps.source-head.outputs.obsolete != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/actions/preserve-required-gate/resolve-deferred-gate.sh reconcile
