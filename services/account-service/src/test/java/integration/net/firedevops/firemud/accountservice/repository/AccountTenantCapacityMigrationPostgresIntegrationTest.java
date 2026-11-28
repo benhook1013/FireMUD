@@ -164,6 +164,15 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                   status -> budgets.requireReady(tenant.canonicalTenantId(), 5, 2)))
           .isEqualTo(2);
       assertThatThrownBy(() ->
+              transaction.execute(status -> budgets.requireReady(tenant.canonicalTenantId(), 6, 2)))
+          .isInstanceOfSatisfying(
+              AccountTenantCapacityRepository.CapacityException.class,
+              failure ->
+                  assertThat(failure.code())
+                      .isEqualTo(
+                          net.firedevops.firemud.common.account.capacity
+                              .TenantCapacityAdmissionGrpcCodec.Failure.IDEMPOTENCY_CONFLICT));
+      assertThatThrownBy(() ->
               transaction.execute(status -> budgets.requireReady(tenant.canonicalTenantId(), 5, 3)))
           .isInstanceOfSatisfying(
               AccountTenantCapacityRepository.CapacityException.class,
@@ -1208,6 +1217,84 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void v1040_8RollsBackNewReservationWhenEvaluationExpiresBeforeDeferredValidation() {
+    String schema = "capacity_commit_expiry_" + UUID.randomUUID().toString().replace("-", "");
+    new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
+    var data = POSTGRES.dataSource(schema);
+    try {
+      capacityMigrations(data, schema).target("1040.7").load().migrate();
+      var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
+      var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
+      var tenant = source();
+      var tenantId = tenant.canonicalTenantId();
+      var operations = new AccountTenantCreationBootstrapOperationRepository(dsl);
+      transaction.executeWithoutResult(status -> {
+        new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant);
+        var claimed =
+            AccountTenantCreatorBootstrapIntegrationFixture.claimBootstrap(
+                operations, new AccountRepository(dsl).save(creator()), tenant);
+        var current = operations.findForUpdate(claimed.requestId()).orElseThrow();
+        operations.complete(
+            current.requestId(),
+            AccountTenantCreatorBootstrapIntegrationFixture.completion(current));
+      });
+      var retained = freshAcceptedAttempt();
+      transaction.executeWithoutResult(
+          status -> insertAcceptedCapacityAttempt(dsl, tenantId, retained, 0, 1));
+      var oldReservations = reservationRows(dsl, tenantId);
+      var oldOrigins = originRows(dsl, tenantId);
+      var oldUsage = usageRows(dsl, tenantId);
+      capacityMigrations(data, schema).target("1040.8").load().migrate();
+      assertThat(reservationRows(dsl, tenantId)).isEqualTo(oldReservations);
+      assertThat(originRows(dsl, tenantId)).isEqualTo(oldOrigins);
+      assertThat(usageRows(dsl, tenantId)).isEqualTo(oldUsage);
+
+      var provisional = new java.util.concurrent.atomic.AtomicBoolean();
+      assertThatThrownBy(() ->
+              transaction.executeWithoutResult(status -> {
+                Instant evaluatedAt =
+                    dsl.fetchSingle("SELECT clock_timestamp() AS observed")
+                        .get("observed", java.time.OffsetDateTime.class)
+                        .toInstant();
+                Instant expiresAt = evaluatedAt.plusSeconds(3);
+                var expiresDuringTransaction =
+                    acceptedAttempt(evaluatedAt, expiresAt, expiresAt.minusMillis(1));
+                insertAcceptedCapacityAttempt(dsl, tenantId, expiresDuringTransaction, 1, 2);
+                assertThat(
+                        dsl.fetchSingle(
+                                "SELECT clock_timestamp() < ?::timestamptz AS fresh",
+                                AccountTenantCapacityRepository.at(expiresAt))
+                            .get("fresh", Boolean.class))
+                    .isTrue();
+                dsl.execute(
+                    "SELECT pg_sleep_until(?::timestamptz)",
+                    AccountTenantCapacityRepository.at(expiresAt));
+                provisional.set(true);
+              }))
+          .rootCause()
+          .isInstanceOfSatisfying(
+              java.sql.SQLException.class,
+              failure -> assertThat(failure.getSQLState()).isEqualTo("P1040"))
+          .hasMessageContaining(
+              "Retained capacity evaluation expired before deferred reservation validation");
+      assertThat(provisional).isTrue();
+      assertThat(originRows(dsl, tenantId)).isEqualTo(oldOrigins);
+      assertThat(reservationRows(dsl, tenantId)).isEqualTo(oldReservations);
+      assertThat(usageRows(dsl, tenantId)).isEqualTo(oldUsage);
+      assertThat(dsl.fetchCount(DSL.table("account_tenant_capacity_evaluations"))).isOne();
+
+      var fresh = freshAcceptedAttempt();
+      transaction.executeWithoutResult(
+          status -> insertAcceptedCapacityAttempt(dsl, tenantId, fresh, 1, 2));
+      assertThat(reservationRows(dsl, tenantId)).hasSize(2);
+      assertThat(originRows(dsl, tenantId)).hasSize(2);
+      assertTenantCapacityInventoryMatches(dsl, tenantId);
+    } finally {
+      new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
+    }
+  }
+
   private static List<RefusalSlot> refusalSlots(org.jooq.DSLContext dsl) {
     return dsl.fetch(
             "SELECT tenant_uuid, slot, decision_id FROM account_capacity_origin_refusal_slots ORDER"
@@ -1220,10 +1307,13 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
   }
 
   private static AcceptedCapacityAttempt freshAcceptedAttempt() {
-    UUID requestId = UUID.randomUUID();
     Instant evaluatedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
-    Instant evaluationExpiresAt = evaluatedAt.plusSeconds(60);
-    Instant reservationExpiresAt = evaluatedAt.plusSeconds(30);
+    return acceptedAttempt(evaluatedAt, evaluatedAt.plusSeconds(60), evaluatedAt.plusSeconds(30));
+  }
+
+  private static AcceptedCapacityAttempt acceptedAttempt(
+      Instant evaluatedAt, Instant evaluationExpiresAt, Instant reservationExpiresAt) {
+    UUID requestId = UUID.randomUUID();
     return new AcceptedCapacityAttempt(
         requestId,
         UUID.randomUUID(),

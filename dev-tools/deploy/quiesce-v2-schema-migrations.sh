@@ -7,7 +7,7 @@ Usage: quiesce-v2-schema-migrations.sh [--verify-only] <namespace>
 
 Close service admission for Account, Game Session, and Automation, prove their
 EndpointSlices are empty, scale their schema writers to zero, and prove their
-Deployment and Pod state is quiescent. On failure after closure begins, the
+Deployment, ReplicaSet, and Pod state is quiescent. On failure after closure begins, the
 helper attempts to keep all canonical Services closed. If closure cannot be
 verified or reapplied, an operator must verify and repair admission before
 retrying a migration. On success, canonical selectors are restored while all
@@ -88,17 +88,48 @@ read_endpoint_slices() {
 
 verify_writer_quiescence() {
   local writer_deadline="$1"
-  local service deployment_json replicas pods_json pod_count
+  local service deployment_json replicas deployment_observed replicasets_json active_replicasets pods_json pod_count
   for service in "${services[@]}"; do
     while :; do
       if ! deployment_json="$(kubectl --request-timeout=10s -n "$namespace" get deployment "$service" --ignore-not-found -o json)"; then
         fail "cannot verify Deployment/$service after quiesce"
       fi
+      deployment_observed=true
       if [[ -n "$deployment_json" ]]; then
         replicas="$(jq -er '.spec.replicas | select(type == "number")' <<<"$deployment_json")" ||
           fail "cannot read desired replicas for Deployment/$service"
         [[ "$replicas" == 0 ]] ||
           fail "Deployment/$service did not remain at zero replicas"
+        if ! jq -e '
+          (.metadata.generation | type == "number" and . >= 1)
+          and (.status.observedGeneration == .metadata.generation)
+        ' <<<"$deployment_json" >/dev/null; then
+          deployment_observed=false
+        fi
+      fi
+
+      if ! replicasets_json="$(kubectl --request-timeout=10s -n "$namespace" get replicasets -o json)"; then
+        fail "cannot verify ReplicaSets for Deployment/$service"
+      fi
+      if ! active_replicasets="$(jq -er --arg service "$service" '
+        if (.kind != "ReplicaSetList" and .kind != "List")
+          or (.items | type != "array")
+          or any(.items[]; .kind != "ReplicaSet")
+        then error("invalid ReplicaSet inventory")
+        else
+          [.items[]
+            | select(
+                any(.metadata.ownerReferences[]?;
+                  .kind == "Deployment" and .name == $service and .controller == true)
+                or .spec.template.metadata.labels.app == $service
+                or any(.spec.template.spec.containers[]?;
+                  .name == $service
+                  or ((.image // "") | split("@")[0] | split("/")[-1] | split(":")[0]) == $service))
+            | select(.spec.replicas != 0)]
+          | length
+        end
+      ' <<<"$replicasets_json")"; then
+        fail "cannot parse ReplicaSets for Deployment/$service"
       fi
 
       if ! pods_json="$(kubectl --request-timeout=10s -n "$namespace" get pods -o json)"; then
@@ -126,11 +157,11 @@ verify_writer_quiescence() {
       ' <<<"$pods_json")"; then
         fail "cannot parse pods for Deployment/$service"
       fi
-      if [[ "$pod_count" == 0 ]]; then
+      if [[ "$deployment_observed" == true && "$active_replicasets" == 0 && "$pod_count" == 0 ]]; then
         break
       fi
       (( SECONDS < writer_deadline )) ||
-        fail "old writer pods for $service remain present ($pod_count)"
+        fail "writer $service is not quiescent (Deployment observed: $deployment_observed, active ReplicaSets: $active_replicasets, old writer pods: $pod_count)"
       sleep 2
     done
   done

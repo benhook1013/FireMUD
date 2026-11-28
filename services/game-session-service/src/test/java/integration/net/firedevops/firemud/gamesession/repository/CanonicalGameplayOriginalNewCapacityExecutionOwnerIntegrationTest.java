@@ -106,7 +106,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
           new AtomicReference<CanonicalGameplayOriginalNewCapacityExecutionBudget>();
       var executingDriver = new AtomicReference<PgConnection>();
       var backendPid = new java.util.concurrent.atomic.AtomicInteger();
-      Context deadline = Context.current().withDeadlineAfter(10, TimeUnit.SECONDS, scheduler);
+      // Use a caller deadline shorter than the owner's five-second ceiling.
+      Context deadline = Context.current().withDeadlineAfter(4, TimeUnit.SECONDS, scheduler);
       try (var execution = Executors.newVirtualThreadPerTaskExecutor()) {
         var caller =
             execution.submit(() -> {
@@ -137,6 +138,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                     .isInstanceOf(
                         CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable
                             .class);
+                assertThat(deadline.getDeadline().isExpired())
+                    .as("the active SQL call remained pending through the caller deadline")
+                    .isTrue();
               } finally {
                 deadline.detach(previous);
               }
@@ -161,7 +165,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
                   }
                 }
               });
-          caller.get(8, TimeUnit.SECONDS);
+          caller.get(7, TimeUnit.SECONDS);
         } finally {
           execution.shutdownNow();
         }
@@ -596,21 +600,18 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
             + assignment.tenantGameplayTag()
             + "}:"
             + controlledCapacity.request().admissionAttemptId();
+    var account = controlledAccountOpen();
+    var issuer = issuerOpen();
     admin.del(ascii(key));
     String rows = sqlImage();
+    var physical = physicalImage();
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var raw = credential.template();
         var template = raw.bindCapacityExecution(controlledCapacity)) {
       assertThatThrownBy(() ->
               capacityOwner()
-                  .authorize(
-                      source,
-                      template,
-                      controlledAccountOpen(),
-                      issuerOpen(),
-                      controlledCapacity,
-                      deadline()))
+                  .authorize(source, template, account, issuer, controlledCapacity, deadline()))
           .isInstanceOf(IllegalStateException.class);
     }
     assertThatThrownBy(() ->
@@ -626,6 +627,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionOwnerIntegrationTest
     assertThat(admin.get(ascii(installation.sessionKey())))
         .containsExactly(source.candidate().canonicalBytes());
     assertThat(sqlImage()).isEqualTo(rows);
+    assertThat(physicalImage()).isEqualTo(physical);
   }
 
   @Test

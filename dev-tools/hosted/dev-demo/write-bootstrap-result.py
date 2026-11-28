@@ -94,6 +94,7 @@ def read_verified_receipt(intent_path, result_path):
     receipt = json.loads(result_path.read_text(encoding="utf-8"))
     if not isinstance(receipt, dict) or set(receipt) != {"schema", "intent", "accountUuid", "gameSession"}:
         raise ValueError
+    validate_intent(receipt["intent"])
     if receipt["schema"] != "dev-demo-bootstrap-result/v1" or receipt["intent"] != intent:
         raise ValueError
     account_id = receipt["accountUuid"]

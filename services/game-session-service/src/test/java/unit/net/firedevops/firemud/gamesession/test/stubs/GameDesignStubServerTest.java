@@ -18,7 +18,8 @@ class GameDesignStubServerTest {
     try (GameDesignStubServer server = new GameDesignStubServer(0)) {
       ManagedChannel channel =
           ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
-      try {
+      try (AutoCloseable stopChannel =
+          () -> assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue()) {
         GetPublishedReleaseBundleResponse response =
             GameDesignServiceGrpc.newBlockingStub(channel)
                 .getPublishedReleaseBundle(
@@ -32,8 +33,6 @@ class GameDesignStubServerTest {
         assertThat(response.getBundle().getVersionId()).isEqualTo(7L);
         assertThat(response.getBundle().getCommandDefinitionsList()).isEmpty();
         assertThat(server.publishedReleaseBundleRequests()).isEqualTo(1);
-      } finally {
-        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
       }
     }
   }

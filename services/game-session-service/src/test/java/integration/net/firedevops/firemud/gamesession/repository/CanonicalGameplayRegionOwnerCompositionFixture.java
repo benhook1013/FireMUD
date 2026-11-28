@@ -989,6 +989,11 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     UUID sessionId = UUID.randomUUID();
     var resolved = worldRegionResolver.resolve(worldRequest);
     requireExactCurrentTarget(worldRequest, currentTarget);
+    var secondResolved =
+        secondBinding == null ? null : worldRegionResolver.resolve(secondBinding.worldRequest());
+    if (secondBinding != null) {
+      requireExactCurrentTarget(secondBinding.worldRequest(), secondBinding.currentTarget());
+    }
     var identity =
         new CanonicalGameplayBindingIdentity(
             UUID.fromString(worldRequest.getCanonicalAccountUuid()),
@@ -1162,9 +1167,6 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       byte[] firstMetaDigest =
           redis.admin().hget(ascii(initialMetaKey), ascii("first_timeline_source_digest"));
 
-      var secondResolved =
-          secondBinding.worldRegionResolver().resolve(secondBinding.worldRequest());
-      requireExactCurrentTarget(secondBinding.worldRequest(), secondBinding.currentTarget());
       UUID secondTransitionId = UUID.randomUUID();
       UUID secondSessionId = UUID.randomUUID();
       var secondIdentity =
@@ -1407,7 +1409,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               redis.ownerUri,
               scriptCatalog,
               stableSource,
-              secondBinding.worldRegionResolver(),
+              worldRegionResolver,
               secondBinding.entityReferenceClient(),
               runtimeIdentity,
               Duration.ofSeconds(30),
@@ -2171,13 +2173,14 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         .admin()
         .hgetall(ascii(metaKey))
         .forEach((field, value) -> metadata.put(asciiString(field), asciiString(value)));
+    byte[] sessionBindingKey =
+        ascii(
+            CanonicalGameplayRegionRedisKeys.sessionBinding(
+                tenantId, gameInstanceId, regionId, runtimeEntityId));
     Map<String, String> sessionBinding = new LinkedHashMap<>();
     redis
         .admin()
-        .hgetall(
-            ascii(
-                CanonicalGameplayRegionRedisKeys.sessionBinding(
-                    tenantId, gameInstanceId, regionId, runtimeEntityId)))
+        .hgetall(sessionBindingKey)
         .forEach((field, value) -> sessionBinding.put(asciiString(field), asciiString(value)));
     return new RegionBridgeRedisState(
         asciiString(
@@ -2188,7 +2191,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                         CanonicalGameplayRegionRedisKeys.lease(
                             tenantId, gameInstanceId, regionId)))),
         Map.copyOf(metadata),
-        Map.copyOf(sessionBinding));
+        Map.copyOf(sessionBinding),
+        redis.admin().pexpiretime(sessionBindingKey));
   }
 
   private static Set<String> snapshotAccountMembers(RegionRedis redis, UUID accountId) {
@@ -2266,7 +2270,10 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       String leaseType, String leaseValue, Map<String, String> metadata, long metadataTtlMillis) {}
 
   private record RegionBridgeRedisState(
-      String leaseValue, Map<String, String> metadata, Map<String, String> sessionBindingValue) {}
+      String leaseValue,
+      Map<String, String> metadata,
+      Map<String, String> sessionBindingValue,
+      long sessionBindingExpiresAt) {}
 
   public record MemberRepairProof(
       Proof regionBridge,

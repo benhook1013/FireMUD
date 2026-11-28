@@ -223,13 +223,16 @@ jobs:
           exit 1
 
       - name: Reset dev-demo namespace for clean deploy
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.v2-migration-mode.outputs.activation != 'true' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.v2-migration-mode.outputs.activation == 'false' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
+          EXPECTED_NAMESPACE_UID: ${{ steps.v2-migration-mode.outputs.namespace_uid }}
+          EXPECTED_DEPLOYED_HEAD: ${{ steps.v2-migration-mode.outputs.deployed_base_sha }}
         run: |
           bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \
             "${{ needs.dev-demo-plan.outputs.namespace }}" \
-            "${{ needs.dev-demo-plan.outputs.release_name }}"
+            "${{ needs.dev-demo-plan.outputs.release_name }}" \
+            "$EXPECTED_NAMESPACE_UID" "$EXPECTED_DEPLOYED_HEAD"
 
       - name: Ensure dev-demo namespace exists
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' }}
@@ -408,9 +411,44 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.hostname }}" \
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Verify migration writer inventory access
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.v2-migration-mode.outputs.activation == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
+        run: kubectl --request-timeout=10s -n "$RUNTIME_NAMESPACE" auth can-i list replicasets.apps
+
+      - name: Retain migration deployment intent
+        id: retain-deployment-intent
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.v2-migration-mode.outputs.activation == 'true' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
+          NAMESPACE_UID: ${{ steps.v2-migration-mode.outputs.namespace_uid }}
+          DEPLOYED_BASE_SHA: ${{ steps.v2-migration-mode.outputs.deployed_base_sha }}
+          HEAD_SHA: ${{ needs.dev-demo-plan.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          echo "DEV_DEMO_STAGE=retain-deployment-intent" >> "$GITHUB_ENV"
+          resource_version="$(
+            kubectl --request-timeout=10s get namespace "$RUNTIME_NAMESPACE" -o json |
+              jq -er --arg uid "$NAMESPACE_UID" --arg base "$DEPLOYED_BASE_SHA" --arg head "$HEAD_SHA" '
+                select(.metadata.name == "dev" and .metadata.uid == $uid
+                  and .metadata.labels["firemud.dev/dev-demo"] == "true"
+                  and .metadata.labels["firemud.dev/environment-class"] == "dev-demo-cluster"
+                  and .metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == $base
+                  and .metadata.annotations["firemud.dev/requested-dev-demo-head-sha"] == $head
+                  and (.metadata.annotations | has("firemud.dev/pending-dev-demo-deployment") | not))
+                | .metadata.resourceVersion | select(type == "string" and length > 0)
+              '
+          )"
+          intent="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${DEPLOYED_BASE_SHA}:${HEAD_SHA}"
+          kubectl --request-timeout=10s annotate namespace "$RUNTIME_NAMESPACE" \
+            --resource-version="$resource_version" "firemud.dev/pending-dev-demo-deployment=${intent}" >/dev/null
+
       - name: Quiesce Account, Game Session, and Automation migration writers
         id: quiesce-writers
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.v2-migration-mode.outputs.activation == 'true' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.v2-migration-mode.outputs.activation == 'true' && steps.retain-deployment-intent.outcome == 'success' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
@@ -435,6 +473,9 @@ jobs:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
           HEAD_SHA: ${{ needs.dev-demo-plan.outputs.head_sha }}
+          RETAINED_ACTIVATION: ${{ steps.v2-migration-mode.outputs.activation }}
+          NAMESPACE_UID: ${{ steps.v2-migration-mode.outputs.namespace_uid }}
+          DEPLOYED_BASE_SHA: ${{ steps.v2-migration-mode.outputs.deployed_base_sha }}
         run: |
           set -euo pipefail
           if [[ "$RUNTIME_NAMESPACE" != dev ]]; then
@@ -445,9 +486,28 @@ jobs:
             echo "::error title=Invalid dev-demo head SHA::Expected exactly 40 lowercase hexadecimal characters." >&2
             exit 1
           fi
-          kubectl annotate namespace "$RUNTIME_NAMESPACE" \
-            "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" \
-            --overwrite >/dev/null
+          if [[ "${RETAINED_ACTIVATION:-}" == true ]]; then
+            intent="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${DEPLOYED_BASE_SHA}:${HEAD_SHA}"
+            resource_version="$(
+              kubectl --request-timeout=10s get namespace "$RUNTIME_NAMESPACE" -o json |
+                jq -er --arg uid "$NAMESPACE_UID" --arg base "$DEPLOYED_BASE_SHA" --arg head "$HEAD_SHA" --arg intent "$intent" '
+                  select(.metadata.name == "dev" and .metadata.uid == $uid
+                    and .metadata.labels["firemud.dev/dev-demo"] == "true"
+                    and .metadata.labels["firemud.dev/environment-class"] == "dev-demo-cluster"
+                    and .metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == $base
+                    and .metadata.annotations["firemud.dev/requested-dev-demo-head-sha"] == $head
+                    and .metadata.annotations["firemud.dev/pending-dev-demo-deployment"] == $intent)
+                  | .metadata.resourceVersion | select(type == "string" and length > 0)
+                '
+            )"
+            kubectl --request-timeout=10s annotate namespace "$RUNTIME_NAMESPACE" \
+              --resource-version="$resource_version" \
+              "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" \
+              "firemud.dev/pending-dev-demo-deployment-" --overwrite >/dev/null
+          else
+            kubectl annotate namespace "$RUNTIME_NAMESPACE" \
+              "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" --overwrite >/dev/null
+          fi
 
       - name: Show deployed dev-demo services
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' }}
@@ -1058,12 +1118,15 @@ jobs:
           DEPLOY_OUTCOME: ${{ steps.deploy-release.outcome }}
           RECORD_OUTCOME: ${{ steps.record-deployed-head.outcome }}
           BOOTSTRAP_OUTCOME: ${{ steps.bootstrap-smoke.outcome }}
+          BOOTSTRAP_RESULT_READY: ${{ steps.bootstrap-smoke.outputs.result_ready }}
           BOOTSTRAP_RETENTION_OUTCOME: ${{ steps.retain-bootstrap-result.outcome }}
         run: |
           failure_stage="${DEV_DEMO_STAGE:-unknown}"
           if [[ "$DEPLOY_OUTCOME" == success && "$RECORD_OUTCOME" != success ]]; then
             failure_stage=record-deployed-head
-          elif [[ "$BOOTSTRAP_OUTCOME" == success && "$BOOTSTRAP_RETENTION_OUTCOME" != success ]]; then
+          elif [[ "$BOOTSTRAP_RESULT_READY" == true && "$BOOTSTRAP_OUTCOME" == failure ]]; then
+            failure_stage=bootstrap-cleanup
+          elif [[ "$BOOTSTRAP_RESULT_READY" == true && "$BOOTSTRAP_RETENTION_OUTCOME" != success ]]; then
             failure_stage=retain-bootstrap-result
           fi
           bash ./dev-tools/hosted/dev-demo/write-dev-demo-summary.sh \
@@ -1077,12 +1140,15 @@ jobs:
             guide="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_WORKFLOW_SHA}/design/architecture/system-architecture-database-migrations.md#verification-after-the-dev-demo-target-is-recorded"
             {
               echo ""
-              if [[ "$BOOTSTRAP_OUTCOME" == success && "$BOOTSTRAP_RETENTION_OUTCOME" == success ]]; then
+              if [[ "$BOOTSTRAP_RESULT_READY" == true && "$BOOTSTRAP_RETENTION_OUTCOME" == success ]]; then
                 echo "The target was recorded and the original smoke bootstrap result was retained in this attempt. Use the [verification procedure]($guide) to check the existing release and migration state before repeating readiness or smoke."
-              elif [[ "$BOOTSTRAP_OUTCOME" == success ]]; then
+              elif [[ "$BOOTSTRAP_RESULT_READY" == true ]]; then
                 echo "The target was recorded and bootstrap ran, but its result was not retained. Use the [verification procedure]($guide) and obtain owner readback of the original bootstrap. Hold smoke verification until the owners establish the result."
               else
-                echo "The target was recorded but the original smoke bootstrap did not complete successfully in this attempt. Use the [verification procedure]($guide) to inspect the existing release and refer bootstrap recovery to the affected owners."
+                echo "The target was recorded, but this attempt could not verify completion of the original smoke bootstrap. Use the [verification procedure]($guide) to inspect the existing release and refer bootstrap recovery to the affected owners."
+              fi
+              if [[ "$failure_stage" == bootstrap-cleanup ]]; then
+                echo "Bootstrap cleanup failed after producing the result. Verify cleanup of the temporary bootstrap resources before proceeding."
               fi
               echo "Keep the recorded target and existing namespace. Do not replay Helm or bootstrap to verify this release."
             } >> "$GITHUB_STEP_SUMMARY"

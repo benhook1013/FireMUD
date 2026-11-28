@@ -262,6 +262,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
                 .closeOriginalAttempt(
                     controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
+    // CLOSE refuses the negative result after it observes COMMITTED and retains the positive
+    // evidence. The following exact read proves that reconciliation preserved the Redis result.
     var retained =
         capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
     assertThat(retained.disposition()).isEqualTo("COMMITTED");

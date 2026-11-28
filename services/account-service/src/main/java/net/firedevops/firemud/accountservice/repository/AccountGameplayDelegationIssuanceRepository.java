@@ -601,8 +601,6 @@ public class AccountGameplayDelegationIssuanceRepository {
     if (!requestDigest(exactIntent).equals(identity.requestDigest())) {
       throw new IdempotencyConflictException();
     }
-    requireUnexpired(identity);
-
     AccountAuthEvidenceBundle bundle;
     try {
       bundle = evidenceBundles.readStoredNonAuthorizingValue(operationId);
@@ -634,6 +632,8 @@ public class AccountGameplayDelegationIssuanceRepository {
           case "EXACT_RETRY" -> PendingRegistrationOutcome.EXACT_RETRY;
           default -> throw new StorageUnavailableException();
         };
+    // Report elapsed time only after validating the exact retained issuance.
+    requireUnexpired(identity);
 
     return new CommittedCandidateVerificationData(
         identity,
@@ -660,7 +660,9 @@ public class AccountGameplayDelegationIssuanceRepository {
    * runs the same full current-authority/commit-proof read used by the issuance owner. The JTI is a
    * lookup hint, never authentication or permission by itself.
    */
-  @Transactional(propagation = Propagation.MANDATORY)
+  @Transactional(
+      propagation = Propagation.MANDATORY,
+      noRollbackFor = CommittedCandidateExpiredException.class)
   public java.util.Optional<CommittedCandidateVerificationData> readCurrentCommittedCandidateByJti(
       UUID tokenJti) {
     requireWritableAccountTransaction();
@@ -696,9 +698,12 @@ public class AccountGameplayDelegationIssuanceRepository {
     long latestIssuedAt = now > Long.MAX_VALUE - 5L ? Long.MAX_VALUE : now + 5L;
     if (now <= 0L
         || identity.notBeforeEpochSecond() > now
-        || identity.issuedAtEpochSecond() > latestIssuedAt
-        || identity.expiresAtEpochSecond() <= now) {
+        || identity.issuedAtEpochSecond() > latestIssuedAt) {
       throw new StorageUnavailableException();
+    }
+    if (identity.expiresAtEpochSecond() <= now) {
+      throw new CommittedCandidateExpiredException(
+          identity.tokenJti(), identity.expiresAtEpochSecond());
     }
   }
 
@@ -2547,6 +2552,22 @@ public class AccountGameplayDelegationIssuanceRepository {
   public static class StorageUnavailableException extends IllegalStateException {
     public StorageUnavailableException() {
       super("Account gameplay delegation issuance storage is unavailable or ambiguous");
+    }
+  }
+
+  public static final class CommittedCandidateExpiredException extends StorageUnavailableException {
+    private final UUID tokenJti;
+    private final long expiresAtEpochSecond;
+
+    public CommittedCandidateExpiredException(UUID tokenJti, long expiresAtEpochSecond) {
+      this.tokenJti = tokenJti;
+      this.expiresAtEpochSecond = expiresAtEpochSecond;
+    }
+
+    public boolean matches(UUID expectedTokenJti, java.time.Instant expectedExpiry) {
+      return expectedTokenJti.equals(tokenJti)
+          && expectedExpiry.getNano() == 0
+          && expectedExpiry.getEpochSecond() == expiresAtEpochSecond;
     }
   }
 

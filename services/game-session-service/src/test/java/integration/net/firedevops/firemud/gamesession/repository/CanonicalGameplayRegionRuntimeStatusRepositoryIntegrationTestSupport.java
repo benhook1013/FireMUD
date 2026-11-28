@@ -34,6 +34,7 @@ import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEviden
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
 import org.jooq.Record;
@@ -253,10 +254,17 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
     final CanonicalGameplayRegionOwnerCompositionFixture.ExistingBinding region;
 
     TransferSqlProof() throws Exception {
+      this(null);
+    }
+
+    TransferSqlProof(MigrationVersion migrationTarget) throws Exception {
       this(
           TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
           TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES,
-          TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS);
+          TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
+          TEST_TRANSFER_HISTORY_MAXIMUM_TRANSFERS,
+          TEST_TRANSFER_HISTORY_MAXIMUM_ITEMS,
+          migrationTarget);
     }
 
     TransferSqlProof(int maximumRecords, long maximumBindingBytes, int maximumRetainedRecords)
@@ -275,6 +283,23 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
         int maximumRetainedRecords,
         int maximumTransfers,
         int maximumItems)
+        throws Exception {
+      this(
+          maximumRecords,
+          maximumBindingBytes,
+          maximumRetainedRecords,
+          maximumTransfers,
+          maximumItems,
+          null);
+    }
+
+    private TransferSqlProof(
+        int maximumRecords,
+        long maximumBindingBytes,
+        int maximumRetainedRecords,
+        int maximumTransfers,
+        int maximumItems,
+        MigrationVersion migrationTarget)
         throws Exception {
       String password = UUID.randomUUID().toString();
       try (var administrator =
@@ -353,7 +378,10 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
                 BigInteger.ONE,
                 BigInteger.valueOf(64));
         fixture =
-            new CanonicalGameplayAdmissionAbortCompositionFixture(dataSource, candidate, redis);
+            migrationTarget == null
+                ? new CanonicalGameplayAdmissionAbortCompositionFixture(dataSource, candidate, redis)
+                : CanonicalGameplayAdmissionAbortCompositionFixture.atMigrationFrontier(
+                    dataSource, candidate, redis, migrationTarget);
         acquiredFixture = fixture;
         sql = fixture.dsl();
         tags = new CanonicalGameplayTenantGameplayTagRepository(sql, "test", 1);

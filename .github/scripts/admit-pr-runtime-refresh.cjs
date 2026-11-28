@@ -222,32 +222,38 @@ module.exports = async function admitPrRuntimeRefresh({
     throw new Error('Incomplete runtime run inventory.');
   };
   const rankRuns = (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at);
-  const readNewestExact = async () => {
+  const readNewestExactSnapshot = async () => {
     const exactRuns = [];
     const observedRunIds = new Set();
-    try {
-      for (const event of inventoryEvents) {
-        for (const status of activeStatuses) {
-          await collectInventory(event, status, undefined, exactRuns, observedRunIds);
-        }
+    for (const event of inventoryEvents) {
+      for (const status of activeStatuses) {
+        await collectInventory(event, status, undefined, exactRuns, observedRunIds);
       }
-
-      exactRuns.sort(rankRuns);
-      if (exactRuns.length === 0) return null;
-      // An older active producer only matters if no newer completed run supersedes it.
-      const createdSince = secondsUtc(Date.parse(exactRuns[0].created_at));
-      for (const event of inventoryEvents) {
-        await collectInventory(event, 'completed', createdSince, exactRuns, observedRunIds);
-      }
-      exactRuns.sort(rankRuns);
-      if (exactRuns.length > 1 && Date.parse(exactRuns[0].created_at) === Date.parse(exactRuns[1].created_at)) {
-        throw new Error('Newest exact runtime runs have equal chronology.');
-      }
-      return exactRuns[0];
-    } catch {
-      core.warning('Runtime active-run inventory was incomplete or ambiguous; preserving the required refresh fallback.');
-      return null;
     }
+
+    exactRuns.sort(rankRuns);
+    if (exactRuns.length === 0) return null;
+    // An older active producer only matters if no newer completed run supersedes it.
+    const createdSince = secondsUtc(Date.parse(exactRuns[0].created_at));
+    for (const event of inventoryEvents) {
+      await collectInventory(event, 'completed', createdSince, exactRuns, observedRunIds);
+    }
+    exactRuns.sort(rankRuns);
+    if (exactRuns.length > 1 && Date.parse(exactRuns[0].created_at) === Date.parse(exactRuns[1].created_at)) {
+      throw new Error('Newest exact runtime runs have equal chronology.');
+    }
+    return exactRuns[0];
+  };
+  const readNewestExact = async () => {
+    for (let observation = 0; observation < 2; observation += 1) {
+      try {
+        return await readNewestExactSnapshot();
+      } catch {
+        if (observation === 0) await sleep(2000);
+      }
+    }
+    core.warning('Runtime active-run inventory remained incomplete or ambiguous; no dispatch.');
+    return undefined;
   };
 
   const selectedProducerIsActive = async newestExact => {
@@ -582,10 +588,12 @@ module.exports = async function admitPrRuntimeRefresh({
     core.info('Runtime refresh tuple changed during admission; no dispatch.');
     return 'obsolete';
   }
+  if (newestExact === undefined) return 'inventory-unavailable';
   if (activeProducerVerified) {
     // Tuple resolution can wait for merge computation. Do not suppress a repair
     // using producer evidence from before that final live comparison lookup.
     const currentProducer = await readNewestExact();
+    if (currentProducer === undefined) return 'inventory-unavailable';
     if (currentProducer && isExactActiveRun(currentProducer) && await selectedProducerIsActive(currentProducer)) {
       core.info('The unique newest exact runtime producer is already active; no dispatch.');
       return 'already-active';

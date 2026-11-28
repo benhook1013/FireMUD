@@ -1313,11 +1313,14 @@ if classifier.get("run", "").count("detect-hosted-v2-migration-activation.sh") !
     raise SystemExit("dev-demo must derive migration activation from the trusted event range")
 expected_classified_paths = {
     "Reset dev-demo namespace for clean deploy":
-        " && steps.v2-migration-mode.outputs.activation != 'true'",
+        " && steps.v2-migration-mode.outputs.activation == 'false'",
     "Ensure dev-demo namespace exists": "",
     "Record exact dev-demo runtime target": "",
     "Bind scoped runtime and certificate roles": "",
-    quiesce["name"]: " && steps.v2-migration-mode.outputs.activation == 'true'",
+    "Verify migration writer inventory access": " && steps.v2-migration-mode.outputs.activation == 'true'",
+    "Retain migration deployment intent": " && steps.v2-migration-mode.outputs.activation == 'true'",
+    quiesce["name"]: " && steps.v2-migration-mode.outputs.activation == 'true' && "
+        "steps.retain-deployment-intent.outcome == 'success'",
     "Deploy dev-demo release":
         " && (steps.v2-migration-mode.outputs.activation != 'true' || "
         "steps.quiesce-writers.outcome == 'success')",
@@ -1327,8 +1330,22 @@ for step_name, condition in expected_classified_paths.items():
         raise SystemExit(f"migration classification must precede {step_name}")
     if deploy_by_name[step_name].get("if") != classified_deployment + condition + " }}":
         raise SystemExit(f"{step_name} must require successful migration classification and its activation guard")
-if deploy_names.index(quiesce["name"]) >= deploy_names.index("Deploy dev-demo release"):
-    raise SystemExit("dev-demo migration writers must be quiesced before Helm activation")
+if not (
+    deploy_names.index("Verify migration writer inventory access")
+    < deploy_names.index("Retain migration deployment intent") < deploy_names.index(quiesce["name"])
+    < deploy_names.index("Deploy dev-demo release")
+):
+    raise SystemExit("dev-demo must retain its deployment intent and quiesce writers before Helm activation")
+inventory_access = deploy_by_name["Verify migration writer inventory access"]
+if (
+    inventory_access["env"].get("KUBECONFIG") != "${{ runner.temp }}/dev-demo-runtime.kubeconfig"
+    or "auth can-i list replicasets.apps" not in inventory_access["run"]
+):
+    raise SystemExit("dev-demo must verify the actual writer inventory credentials before retaining intent")
+if deploy_by_name["Retain migration deployment intent"]["env"]["KUBECONFIG"] != (
+    "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig"
+):
+    raise SystemExit("retained deployment intent must use the scoped namespace manager")
 for obsolete in (
     "dev-account-v1040-4-probe.sh",
     "account_origin_",
@@ -1407,11 +1424,88 @@ if "firemud.dev/requested-dev-demo-head-sha=${head_sha}" not in annotator:
     raise SystemExit("pre-Helm namespace preparation lacks requested-head evidence")
 if "firemud.dev/last-dev-demo-head-sha=${head_sha}" in annotator:
     raise SystemExit("pre-Helm namespace preparation falsely records deployed-head evidence")
+clean_reset = deploy_by_name["Reset dev-demo namespace for clean deploy"]
+if ("steps.v2-migration-mode.outputs.activation == 'false'" not in clean_reset["if"] or
+        clean_reset["env"].get("EXPECTED_NAMESPACE_UID") != "${{ steps.v2-migration-mode.outputs.namespace_uid }}" or
+        clean_reset["env"].get("EXPECTED_DEPLOYED_HEAD") != "${{ steps.v2-migration-mode.outputs.deployed_base_sha }}" or
+        '"$EXPECTED_NAMESPACE_UID" "$EXPECTED_DEPLOYED_HEAD"' not in clean_reset["run"]):
+    raise SystemExit("automatic dev-demo reset must carry the classified UID and deployed head")
 deployed_head_step = deploy_by_name["Record exact deployed dev-demo head"]
 if "steps.deploy-release.outcome == 'success'" not in deployed_head_step.get("if", ""):
     raise SystemExit("deployed-head evidence is not gated on successful Helm completion")
 if "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" not in deployed_head_step["run"]:
     raise SystemExit("successful Helm completion does not record exact deployed-head evidence")
+with tempfile.TemporaryDirectory() as directory:
+    fixture = Path(directory)
+    calls = fixture / "annotation-calls"
+    snapshot = fixture / "namespace.json"
+    base_sha = "b" * 40
+    target_sha = "a" * 40
+    pending_key = "firemud.dev/pending-dev-demo-deployment"
+    pending_value = f"123:2:{base_sha}:{target_sha}"
+    metadata = {
+        "name": "dev", "uid": "namespace-uid", "resourceVersion": "7",
+        "labels": {"firemud.dev/dev-demo": "true", "firemud.dev/environment-class": "dev-demo-cluster"},
+        "annotations": {
+            "firemud.dev/last-dev-demo-head-sha": base_sha,
+            "firemud.dev/requested-dev-demo-head-sha": target_sha,
+        },
+    }
+    fake_kubectl = """
+kubectl() {
+  case "$*" in
+    '--request-timeout=10s get namespace dev -o json') cat "$NAMESPACE_SNAPSHOT" ;;
+    *'annotate namespace dev'*)
+      printf '%s\\n' "$*" >> "$ANNOTATION_CALLS"
+      [[ "$*" == '--request-timeout=10s annotate namespace dev --resource-version='* && "$ANNOTATION_ALLOWED" == true ]]
+      ;;
+    *) return 2 ;;
+  esac
+}
+"""
+
+    def run_retained_step(step, annotations, allowed=True, namespace_uid="namespace-uid"):
+        calls.write_text("", encoding="utf-8")
+        snapshot.write_text(json.dumps({
+            "metadata": {
+                **metadata, "uid": namespace_uid, "annotations": {**metadata["annotations"], **annotations},
+            }
+        }), encoding="utf-8")
+        result = subprocess.run(
+            ["bash", "-e", "-c", fake_kubectl + step["run"]],
+            env={
+                **os.environ, "GITHUB_ENV": str(fixture / "env"), "GITHUB_RUN_ID": "123",
+                "GITHUB_RUN_ATTEMPT": "2", "RUNTIME_NAMESPACE": "dev", "NAMESPACE_UID": "namespace-uid",
+                "RETAINED_ACTIVATION": "true", "DEPLOYED_BASE_SHA": base_sha, "HEAD_SHA": target_sha,
+                "ANNOTATION_CALLS": str(calls), "NAMESPACE_SNAPSHOT": str(snapshot),
+                "ANNOTATION_ALLOWED": str(allowed).lower(),
+            },
+            capture_output=True,
+        )
+        return result.returncode, calls.read_text(encoding="utf-8").splitlines()
+
+    retain_deployment = deploy_by_name["Retain migration deployment intent"]
+    retained_call = f"--request-timeout=10s annotate namespace dev --resource-version=7 {pending_key}={pending_value}"
+    if run_retained_step(retain_deployment, {}) != (0, [retained_call]):
+        raise SystemExit("migration deployment intent must bind the exact namespace version and attempt before Helm")
+    for annotations, uid in (({pending_key: pending_value}, "namespace-uid"), ({}, "different-uid")):
+        status, mutations = run_retained_step(retain_deployment, annotations, namespace_uid=uid)
+        if status == 0 or mutations:
+            raise SystemExit("migration deployment intent must preserve an existing hold and refuse namespace replacement")
+
+    record_call = (
+        f"--request-timeout=10s annotate namespace dev --resource-version=7 "
+        f"firemud.dev/last-dev-demo-head-sha={target_sha} {pending_key}- --overwrite"
+    )
+    if run_retained_step(deployed_head_step, {pending_key: pending_value}) != (0, [record_call]):
+        raise SystemExit("recording the retained target must settle the exact hold in the same version-fenced request")
+    status, mutations = run_retained_step(deployed_head_step, {pending_key: pending_value}, allowed=False)
+    if status == 0 or mutations != [record_call]:
+        raise SystemExit("ambiguous retained-head recording must fail without an unfenced follow-up write")
+    for annotations in ({}, {pending_key: "other-attempt"}):
+        status, mutations = run_retained_step(deployed_head_step, annotations)
+        if status == 0 or mutations:
+            raise SystemExit("retained-head recording must require this attempt's exact deployment intent")
 bootstrap_step = deploy_by_name["Create dev-demo smoke account"]
 intent_step = deploy_by_name["Capture dev-demo bootstrap intent"]
 retain_intent = deploy_by_name["Retain dev-demo bootstrap intent before sending"]
@@ -1430,8 +1524,10 @@ if bootstrap_step["env"]["BOOTSTRAP_REQUEST_ID"] != "${{ steps.bootstrap-intent.
     raise SystemExit("dev-demo bootstrap request must consume the captured attempt identity")
 if retain_result["if"] != "${{ always() && steps.bootstrap-smoke.outputs.result_ready == 'true' }}":
     raise SystemExit("validated bootstrap evidence must upload even when cleanup fails")
-if bootstrap_step["run"].index("write-bootstrap-result.py") > bootstrap_step["run"].index(
-    'delete pod dev-demo-bootstrap'
+if not (
+    bootstrap_step["run"].index("write-bootstrap-result.py")
+    < bootstrap_step["run"].index('echo "result_ready=true"')
+    < bootstrap_step["run"].rindex('delete pod dev-demo-bootstrap')
 ):
     raise SystemExit("dev-demo must validate and write the bootstrap result before resource cleanup")
 if "dev-demo-smoke-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" not in intent_step["run"]:
@@ -1458,6 +1554,8 @@ if (
     raise SystemExit("dev-demo bootstrap must carry the recorded identity into the request and receipt")
 bootstrap_python = bootstrap_step["run"].split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
 compile(bootstrap_python, "dev-demo-bootstrap.py", "exec")
+if 'account_file.write(str(account_id))' not in bootstrap_python:
+    raise SystemExit("dev-demo Account UUID file must contain the canonical UUID without a line ending")
 session_function = "def bootstrap_session(" + bootstrap_python.split(
     "def bootstrap_session(", 1
 )[1].split("\ndef ensure_demo_account(", 1)[0]
@@ -1536,37 +1634,9 @@ with tempfile.TemporaryDirectory() as directory:
     }
     if json.loads(receipt.read_text(encoding="utf-8")) != expected:
         raise SystemExit("dev-demo result lost exact IDs or copied unapproved response material")
-    if subprocess.run(command, capture_output=True).returncode == 0:
-        raise SystemExit("dev-demo result was allowed to overwrite its immutable receipt")
-    incomplete_write_intent = dict(intent)
-    incomplete_write_intent.pop("workflowSha")
-    (evidence / "intent.json").write_text(json.dumps(incomplete_write_intent), encoding="utf-8")
-    receipt.unlink()
-    if subprocess.run(command, capture_output=True).returncode == 0 or receipt.exists():
-        raise SystemExit("dev-demo result writer accepted an intent missing a required v1 field")
-    verify_intent = {
-        "schema": "dev-demo-bootstrap-intent/v1",
-        "repository": "benhook1013/FireMUD", "workflowSha": "b" * 40,
-        "deployedBaseSha": "c" * 40, "certificateProfile": "standalone",
-        "imageTag": "image", "renderedManifestSha256": "d" * 64,
-        "renderedValuesSha256": "e" * 64,
-        "runId": "123", "attempt": "2", "headSha": "a" * 40,
-        "namespace": "dev", "namespaceUid": "namespace-uid",
-        "release": "dev", "helmRevision": "7",
-        "controlPlaneRequestId": "dev-demo-smoke-bootstrap-123-2",
-        "tenantId": 1, "gameTemplateId": 1,
-    }
-    verify_result = {
-        "schema": "dev-demo-bootstrap-result/v1", "intent": verify_intent,
-        "accountUuid": account_uuid, "gameSession": session,
-    }
-    intent_path = evidence / "downloaded-intent.json"
-    result_path = evidence / "downloaded-result.json"
-    intent_path.write_text(json.dumps(verify_intent), encoding="utf-8")
-    result_path.write_text(json.dumps(verify_result), encoding="utf-8")
     verify_command = [
         "python3", str(repository_root / "dev-tools/hosted/dev-demo/write-bootstrap-result.py"),
-        "verify", str(intent_path), str(result_path),
+        "verify", str(evidence / "intent.json"), str(receipt),
         "--run-id", "123", "--attempt", "2", "--target-sha", "a" * 40,
         "--namespace-uid", "namespace-uid", "--helm-revision", "7",
         "--account-uuid", account_uuid, "--game-session-id", str(session["id"]),
@@ -1574,6 +1644,22 @@ with tempfile.TemporaryDirectory() as directory:
     verified = subprocess.run(verify_command, capture_output=True, text=True)
     if verified.returncode != 0 or verified.stdout != "bootstrap receipt verified\n":
         raise SystemExit("dev-demo offline receipt verification must accept the exact synthetic receipt")
+    original_receipt = receipt.read_bytes()
+    if subprocess.run(command, capture_output=True).returncode == 0:
+        raise SystemExit("dev-demo result was allowed to overwrite its immutable receipt")
+    if receipt.read_bytes() != original_receipt:
+        raise SystemExit("dev-demo result changed the immutable receipt during a refused rewrite")
+    incomplete_write_intent = dict(intent)
+    incomplete_write_intent.pop("workflowSha")
+    (evidence / "intent.json").write_text(json.dumps(incomplete_write_intent), encoding="utf-8")
+    receipt.unlink()
+    if subprocess.run(command, capture_output=True).returncode == 0 or receipt.exists():
+        raise SystemExit("dev-demo result writer accepted an intent missing a required v1 field")
+    verify_intent = intent
+    verify_result = expected
+    intent_path = evidence / "downloaded-intent.json"
+    result_path = evidence / "downloaded-result.json"
+    verify_command[3:5] = [str(intent_path), str(result_path)]
     incomplete_intent = dict(verify_intent)
     incomplete_intent.pop("workflowSha")
     intent_path.write_text(json.dumps(incomplete_intent), encoding="utf-8")
@@ -1584,6 +1670,14 @@ with tempfile.TemporaryDirectory() as directory:
     if incomplete.returncode == 0 or incomplete.stdout != "bootstrap receipt refused\n":
         raise SystemExit("dev-demo offline receipt verification must reject a field omitted from both artifacts")
     intent_path.write_text(json.dumps(verify_intent), encoding="utf-8")
+    for key in ("tenantId", "gameTemplateId"):
+        invalid_embedded_intent = {**verify_intent, key: True}
+        result_path.write_text(
+            json.dumps({**verify_result, "intent": invalid_embedded_intent}), encoding="utf-8"
+        )
+        invalid = subprocess.run(verify_command, capture_output=True, text=True)
+        if invalid.returncode == 0 or invalid.stdout != "bootstrap receipt refused\n":
+            raise SystemExit("embedded intent must independently satisfy the v1 schema")
     result_path.write_text(json.dumps(verify_result), encoding="utf-8")
     for option, mismatch in (("--run-id", "124"), ("--attempt", "3"),
                              ("--target-sha", "b" * 40), ("--namespace-uid", "other-uid"),
@@ -1604,6 +1698,7 @@ if failure_summary["env"] != {
     "DEPLOY_OUTCOME": "${{ steps." + deploy_by_name["Deploy dev-demo release"]["id"] + ".outcome }}",
     "RECORD_OUTCOME": "${{ steps." + deployed_head_step["id"] + ".outcome }}",
     "BOOTSTRAP_OUTCOME": "${{ steps." + bootstrap_step["id"] + ".outcome }}",
+    "BOOTSTRAP_RESULT_READY": "${{ steps." + bootstrap_step["id"] + ".outputs.result_ready }}",
     "BOOTSTRAP_RETENTION_OUTCOME": "${{ steps." + deploy_by_name["Retain successful dev-demo bootstrap result"]["id"] + ".outcome }}",
 }:
     raise SystemExit("recorded-target verification advice must use this attempt's native outcomes")
@@ -1619,16 +1714,18 @@ for name, value in {
     )
 with tempfile.TemporaryDirectory() as directory:
     summary = Path(directory) / "summary.md"
-    for deployed, recorded, bootstrap, retention, stage, expected in (
-        ("failure", "skipped", "skipped", "skipped", "deploy", None),
-        ("skipped", "skipped", "skipped", "skipped", "unknown", None),
-        ("success", "failure", "skipped", "skipped", "deploy", None),
-        ("success", "skipped", "skipped", "skipped", "deploy", None),
-        ("success", "success", "failure", "skipped", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
-        ("success", "success", "skipped", "skipped", "runtime-readiness", "refer bootstrap recovery to the affected owners"),
-        ("success", "success", "cancelled", "skipped", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
-        ("success", "success", "success", "failure", "bootstrap", "obtain owner readback of the original bootstrap"),
-        ("success", "success", "success", "success", "smoke", "before repeating readiness or smoke"),
+    for deployed, recorded, bootstrap, ready, retention, stage, expected in (
+        ("failure", "skipped", "skipped", "", "skipped", "deploy", None),
+        ("skipped", "skipped", "skipped", "", "skipped", "unknown", None),
+        ("success", "failure", "skipped", "", "skipped", "deploy", None),
+        ("success", "skipped", "skipped", "", "skipped", "deploy", None),
+        ("success", "success", "failure", "", "skipped", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "skipped", "", "skipped", "runtime-readiness", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "cancelled", "", "skipped", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
+        ("success", "success", "success", "true", "failure", "bootstrap", "obtain owner readback of the original bootstrap"),
+        ("success", "success", "success", "true", "success", "smoke", "before repeating readiness or smoke"),
+        ("success", "success", "failure", "true", "success", "bootstrap", "original smoke bootstrap result was retained"),
+        ("success", "success", "failure", "true", "failure", "bootstrap", "obtain owner readback of the original bootstrap"),
     ):
         summary.write_text("", encoding="utf-8")
         subprocess.run(
@@ -1644,6 +1741,7 @@ with tempfile.TemporaryDirectory() as directory:
                 "DEPLOY_OUTCOME": deployed,
                 "RECORD_OUTCOME": recorded,
                 "BOOTSTRAP_OUTCOME": bootstrap,
+                "BOOTSTRAP_RESULT_READY": ready,
                 "BOOTSTRAP_RETENTION_OUTCOME": retention,
             },
             check=True,
@@ -1652,7 +1750,11 @@ with tempfile.TemporaryDirectory() as directory:
         guide = "/blob/" + "b" * 40 + "/design/architecture/"
         unconfirmed_recording = deployed == "success" and recorded != "success"
         expected_stage = "record-deployed-head" if unconfirmed_recording else stage
-        if bootstrap == "success" and retention != "success":
+        if ready == "true" and bootstrap == "failure":
+            expected_stage = "bootstrap-cleanup"
+            if "Bootstrap cleanup failed after producing the result" not in evidence:
+                raise SystemExit("dev-demo summary omitted the independent cleanup failure")
+        elif ready == "true" and retention != "success":
             expected_stage = "retain-bootstrap-result"
         if f"Failed stage: `{expected_stage}`" not in evidence:
             raise SystemExit("dev-demo failure summary misidentified the failed stage")
@@ -1674,9 +1776,9 @@ with tempfile.TemporaryDirectory() as directory:
         elif expected not in evidence or guide not in evidence or "Do not replay Helm or bootstrap" not in evidence:
             raise SystemExit("recorded target lacks the correct verification boundary")
         if deployed == "success" and recorded == "success":
-            if (bootstrap != "success" or retention != "success") and "before repeating readiness or smoke" in evidence:
+            if (ready != "true" or retention != "success") and "before repeating readiness or smoke" in evidence:
                 raise SystemExit("incomplete original bootstrap must not receive smoke verification advice")
-            if bootstrap == "success" and "refer bootstrap recovery to the affected owners" in evidence:
+            if ready == "true" and "refer bootstrap recovery to the affected owners" in evidence:
                 raise SystemExit("completed original bootstrap must not receive bootstrap replay advice")
 runtime_target_run = deploy_by_name["Record exact dev-demo runtime target"]["run"]
 target_validator_call = (

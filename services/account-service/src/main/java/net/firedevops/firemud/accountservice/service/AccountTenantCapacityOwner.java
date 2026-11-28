@@ -23,6 +23,7 @@ import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeM
 import net.firedevops.firemud.accountservice.repository.AccountCapacityOriginDecisionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateExpiredException;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
@@ -59,6 +60,7 @@ public final class AccountTenantCapacityOwner {
   private static final int TRANSACTION_TIMEOUT_SECONDS = 5;
   private static final int MAX_SERIALIZATION_ATTEMPTS = 4;
   private static final long INITIAL_RETRY_DELAY_MILLIS = 5;
+  private static final String DEFERRED_EVALUATION_EXPIRED_SQLSTATE = "P1040";
 
   private final DSLContext dsl;
   private final AccountRepository accounts;
@@ -175,7 +177,16 @@ public final class AccountTenantCapacityOwner {
           requireSupportedShape(request);
           EvaluationLifetime lifetime = observeLifetime(evidence, retainedExpiry);
           if (!lifetime.expired()) {
-            currentDelegationAndScope(request, parsed, lifetime.accountNow());
+            try {
+              currentDelegationAndScope(request, parsed, lifetime.accountNow());
+            } catch (CommittedCandidateExpiredException expired) {
+              if (!evidence.permitsCreation()
+                  || !expired.matches(sourceTokenJti(evidence), retainedExpiry))
+                throw unavailable();
+              lifetime = observeLifetime(evidence, retainedExpiry);
+              if (!lifetime.expired()) throw unavailable();
+              return refuseExpired(request);
+            }
             lifetime = observeLifetime(evidence, retainedExpiry);
           }
           if (lifetime.expired() && evidence.permitsCreation()) return refuseExpired(request);
@@ -255,14 +266,15 @@ public final class AccountTenantCapacityOwner {
       if (!"RESERVED".equals(row.get("state", String.class))
           || !"NOT_EXECUTED_AFTER_AUTHORIZATION".equals(row.get("execution_status", String.class))
           || row.get("owner_readback", byte[].class) == null) throw conflict();
-      capacity.requireRetained(next.evidence());
+      Instant retainedExpiry = capacity.requireRetained(next.evidence());
       current(next, clock.instant());
       requireSupportedShape(next);
       // Match the fresh reservation/refusal path before arbitrating the attempt UUID.
       capacity.usage(next);
+      requireFresh(observeLifetime(next.evidence(), retainedExpiry));
       originDecisions.accept(next);
       requireClaim(row, recoveryOwner, claimFence, clock.instant());
-      requireCurrentLifetime(next.evidence(), clock.instant());
+      requireFresh(observeLifetime(next.evidence(), retainedExpiry));
       int history =
           dsl.execute(
               "INSERT INTO account_tenant_capacity_attempt_history "
@@ -279,7 +291,7 @@ public final class AccountTenantCapacityOwner {
       int changed =
           dsl.execute(
               "UPDATE account_tenant_capacity_reservations SET admission_attempt_id = ?, capacity_rearm_fence = ?, reservation_fence = ?, mutation_digest = ?, canonical_payload = ?, evaluation_identity = ?, expires_at = ?::timestamptz, reconcile_deadline = ?::timestamptz, next_reconcile_at = NULL, recovery_attempt_count = 0, execution_status = 'OWNER_EXECUTION_PENDING', owner_readback = NULL, owner_readback_digest = NULL "
-                  + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND admission_attempt_id = ? AND capacity_rearm_fence = ? AND mutation_digest = ? AND recovery_owner = ? AND recovery_claim_fence = ? AND state = 'RESERVED' AND execution_status = 'NOT_EXECUTED_AFTER_AUTHORIZATION'",
+                  + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND admission_attempt_id = ? AND capacity_rearm_fence = ? AND mutation_digest = ? AND recovery_owner = ? AND recovery_claim_fence = ? AND state = 'RESERVED' AND execution_status = 'NOT_EXECUTED_AFTER_AUTHORIZATION' AND clock_timestamp() < ?::timestamptz",
               next.admissionAttemptId(),
               next.capacityRearmFence(),
               Math.incrementExact(number(row, "reservation_fence")),
@@ -295,7 +307,9 @@ public final class AccountTenantCapacityOwner {
               prior.capacityRearmFence(),
               prior.mutationDigest(),
               recoveryOwner,
-              claimFence);
+              claimFence,
+              at(retainedExpiry));
+      requireFresh(observeLifetime(next.evidence(), retainedExpiry));
       if (changed != 1) throw conflict();
       // Reservation identity and both usage columns are deliberately untouched.
       return capacity.exact(next, Objects.requireNonNull(capacity.find(next.identity())));
@@ -306,7 +320,11 @@ public final class AccountTenantCapacityOwner {
     var evidence = request.evidence();
     requireCurrentLifetime(evidence, now);
     var parsed = currentMembership(request);
-    currentDelegationAndScope(request, parsed, now);
+    try {
+      currentDelegationAndScope(request, parsed, now);
+    } catch (CommittedCandidateExpiredException expired) {
+      throw unavailable();
+    }
     requireCurrentLifetime(evidence, clock.instant());
   }
 
@@ -344,8 +362,7 @@ public final class AccountTenantCapacityOwner {
     if (!(fields.get("sourceReferences") instanceof Map<?, ?> source)) throw unavailable();
     var issuance =
         qualifiedSource(() ->
-                issuances.readCurrentCommittedCandidateByJti(
-                    UUID.fromString((String) source.get("callerTokenJti"))))
+                issuances.readCurrentCommittedCandidateByJti(sourceTokenJti(request.evidence())))
             .orElseThrow(AccountTenantCapacityRepository::unavailable);
     if (!issuance.identity().accountId().equals(player.accountId())
         || !issuance.identity().callerWorkload().equals(request.evidence().callerWorkload())
@@ -372,9 +389,17 @@ public final class AccountTenantCapacityOwner {
         || !now.isBefore(Instant.parse(scope.connectScopeExpiresAt()))) throw unavailable();
   }
 
+  private static UUID sourceTokenJti(Evidence evidence) {
+    if (!(evidence.fields().get("sourceReferences") instanceof Map<?, ?> source))
+      throw unavailable();
+    return UUID.fromString((String) source.get("callerTokenJti"));
+  }
+
   private static <T> T qualifiedSource(Supplier<T> read) {
     try {
       return read.get();
+    } catch (CommittedCandidateExpiredException expired) {
+      throw expired;
     } catch (IllegalArgumentException | IllegalStateException unqualifiedSource) {
       throw unavailable();
     }
@@ -425,6 +450,8 @@ public final class AccountTenantCapacityOwner {
           return action.get();
         });
       } catch (RuntimeException failure) {
+        if (hasSqlState(failure, DEFERRED_EVALUATION_EXPIRED_SQLSTATE))
+          throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
         // A PostgreSQL serialization failure rolls back the whole transaction. Retry outside
         // that transaction so a concurrent original can become exact replay or conflict.
         if (attempt >= MAX_SERIALIZATION_ATTEMPTS
@@ -451,10 +478,16 @@ public final class AccountTenantCapacityOwner {
 
   private static boolean serializationFailure(RuntimeException failure) {
     for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-      if (cause instanceof CannotSerializeTransactionException
-          || cause instanceof org.jooq.exception.DataAccessException jooq
-              && "40001".equals(jooq.sqlState())
-          || cause instanceof SQLException sql && "40001".equals(sql.getSQLState())) return true;
+      if (cause instanceof CannotSerializeTransactionException) return true;
+    }
+    return hasSqlState(failure, "40001");
+  }
+
+  private static boolean hasSqlState(Throwable failure, String sqlState) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof org.jooq.exception.DataAccessException jooq
+              && sqlState.equals(jooq.sqlState())
+          || cause instanceof SQLException sql && sqlState.equals(sql.getSQLState())) return true;
     }
     return false;
   }

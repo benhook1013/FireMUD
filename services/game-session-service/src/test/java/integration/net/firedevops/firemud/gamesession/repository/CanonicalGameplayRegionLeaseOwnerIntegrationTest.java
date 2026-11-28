@@ -2163,9 +2163,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
       assertThat(redis.admin().type(metaKey)).isEqualTo("none");
 
-      // Model process loss after the SQL commit but before any INITIALIZE Redis call:
-      // discard the sole returned creation permit, without changing SQL or deleting keys.
-      assertThat(statusRepository.beginInitialTimeline(preparation, NOW)).isPresent();
+      // Model process loss after the SQL commit but before any INITIALIZE Redis call.
+      var permit = statusRepository.beginInitialTimeline(preparation, NOW).orElseThrow();
+      assertThat(
+              testSchema
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT initialization_claim_generation"
+                          + " FROM game_session_region_timeline_preparation WHERE transition_id = ?",
+                      TRANSITION_ID)
+                  .get(0, UUID.class))
+          .isEqualTo(permit.generation());
       var initializing = statusRepository.findTimelinePreparation(qualifiedSource).orElseThrow();
       assertThat(initializing.phase())
           .isEqualTo(

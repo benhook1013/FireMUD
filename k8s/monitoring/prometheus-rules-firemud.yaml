@@ -294,7 +294,7 @@ spec:
             component: capacity
             severity: P1
             owner: gameplay
-            runbook: design/architecture/microservices/game-session-service/operations.md#original-new-capacity-sql-retire-failure
+            runbook: design/architecture/microservices/game-session-service/operations.md#original-new-capacity-sql-retirement-failure
           annotations:
             summary: Original NEW capacity SQL permits remain in unproved connection retirement custody
             description: Connection retirement could not be proved and the affected process retained an operation permit. Preserve original SQL and execution evidence, isolate new capacity work and follow the owner reconciliation procedure; restart or a zero gauge does not prove resource disposal or non-execution.

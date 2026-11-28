@@ -969,7 +969,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             if (!candidate.equals(finalSession.candidate())) throw unavailable();
           }
           Map<String, byte[]> executionPhysical =
-              readExecution(execution, assignment.tenantGameplayTag());
+              readExecution(commands, execution, assignment.tenantGameplayTag());
           exactPhysicalBinding(executionPhysical, execution, "COMMITTED");
           if (!text(executionPhysical.get("sessionSha1")).equals(sha1(actual))) throw unavailable();
           Record receipt = transition(execution);

@@ -299,6 +299,25 @@ test('a newer exact failure visible during live identity lookup defeats stale ac
   assert.ok(identityReads >= 4, 'changed inventory must recheck tuple before claim and dispatch');
 });
 
+test('incomplete active inventory must converge or leave the refresh undispatched', async () => {
+  for (const recovers of [true, false]) {
+    const f = admissionFixture();
+    const actions = f.admission.github.rest.actions;
+    const list = actions.listWorkflowRuns;
+    let reads = 0;
+    actions.listWorkflowRuns = async input => {
+      if (input.status === 'queued' && (++reads === 1 || !recovers)) {
+        return {data: {total_count: 1, workflow_runs: []}};
+      }
+      return list(input);
+    };
+    f.runs.push(f.makePullRequestRun());
+    assert.equal(await admitRuntimeRefresh(f.admission), recovers ? 'already-active' : 'inventory-unavailable');
+    assert.equal(f.state.waits.filter(delay => delay === 2000).length, 1);
+    assert.equal(f.sent.length, 0);
+  }
+});
+
 test('identity retries are bounded and do not retry authorization failure', async () => {
   for (const [status, observations] of [[503, 6], [403, 1]]) {
     const f = admissionFixture();
@@ -778,10 +797,19 @@ test('only the exact successful admission attempt can prove an unsent or rejecte
         else f.state.dispatchError = dispatchValidationError();
         assert.equal(await admitRuntimeRefresh(f.admission), kind === 'unsent' ? 'obsolete' : 'dispatch-rejected');
         const evidence = completeOwnerReceiptAttempt(f, kind);
-        change(f, {...evidence, run: kind === 'rejected' ? evidence.originalAttempt : evidence.run, kind});
+        // Rejection is attributed to historical evidence. Current-run movement
+        // blocks unsent receipts, while historical contradictions block either kind.
+        const receiptRun = kind === 'rejected' && name !== 'attempt moves during marker read'
+          ? evidence.originalAttempt : evidence.run;
+        change(f, {...evidence, run: receiptRun, kind});
         delete f.state.dispatchError;
-        assert.equal(await admitOrdinaryRefresh(f), 'claim-held');
-        assert.equal(f.sent.length, kind === 'unsent' ? 0 : 1);
+        const historicalRejection = kind === 'rejected' && name === 'attempt moves during marker read';
+        assert.equal(await admitOrdinaryRefresh(f), historicalRejection ? 'dispatched-observed' : 'claim-held');
+        assert.equal(f.sent.length, historicalRejection ? 2 : kind === 'unsent' ? 0 : 1);
+        if (historicalRejection) {
+          assert.equal(evidence.run.run_attempt, 2);
+          assert.equal(evidence.originalAttempt.run_attempt, 1);
+        }
         if (kind === 'unsent' && name === 'attempt moves during marker read') {
           assert.deepEqual(f.state.ownerReads, [1, 2]);
         }

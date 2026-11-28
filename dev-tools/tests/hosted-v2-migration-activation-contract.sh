@@ -42,20 +42,53 @@ assert_rejected() {
     reason="$2"
     shift 2
   fi
-  local output
-  if output="$(cd "$repo" && bash "$detector" "$@" dev 2>&1)"; then
+  if (cd "$repo" && bash "$detector" "$@" dev) >"$fixture_dir/refused.stdout" 2>"$fixture_dir/refused.stderr"; then
     echo "expected migration-mode classification to fail closed: $*" >&2
     exit 1
   fi
-  if grep -Eq '^(activation|deployed_base_sha|account_origin_[a-z_]+)=' <<<"$output"; then
-    echo "rejected migration-mode classification emitted an activation decision: $output" >&2
+  if [[ -s "$fixture_dir/refused.stdout" ]]; then
+    echo "rejected migration-mode classification emitted deployment outputs" >&2
     exit 1
   fi
-  if [[ -n "$reason" ]] && ! grep -Fq "$reason" <<<"$output"; then
-    echo "expected migration-mode refusal '$reason'; got: $output" >&2
+  if [[ -n "$reason" ]] && ! grep -Fq "$reason" "$fixture_dir/refused.stderr"; then
+    echo "expected migration-mode refusal '$reason'" >&2
+    cat "$fixture_dir/refused.stderr" >&2
     exit 1
   fi
 }
+
+# The automatic reset must authorize deletion from the fresh owned snapshot.
+(
+  delete_helper="$ROOT_DIR/dev-tools/hosted/shared/delete-hosted-namespace.sh"
+  delete_request="$fixture_dir/delete-request.json"
+  base_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  namespace_for_head "$base_sha"
+  export FAKE_NAMESPACE_JSON DELETE_REQUEST="$delete_request"
+  FAKE_NAMESPACE_JSON="$(jq -c '.metadata.resourceVersion = "7"' <<<"$FAKE_NAMESPACE_JSON")"
+  kubectl() {
+    case "$*" in
+      'get namespace dev --ignore-not-found -o json')
+        [[ -s "$DELETE_REQUEST" ]] || printf '%s\n' "$FAKE_NAMESPACE_JSON"
+        ;;
+      'delete --raw /api/v1/namespaces/dev -f -') cat >"$DELETE_REQUEST" ;;
+      'wait --for=delete namespace/dev --timeout=180s') ;;
+      *) return 2 ;;
+    esac
+  }
+  export -f kubectl
+  clean_snapshot="$FAKE_NAMESPACE_JSON"
+  for change in     '.metadata.uid = "replacement"'     '.metadata.annotations["firemud.dev/last-dev-demo-head-sha"] = "changed"'     '.metadata.annotations["firemud.dev/pending-dev-demo-deployment"] = ""'     'del(.metadata.resourceVersion)'; do
+    FAKE_NAMESPACE_JSON="$(jq -c "$change" <<<"$clean_snapshot")"
+    if bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" >"$fixture_dir/reset.stdout" 2>"$fixture_dir/reset.stderr" ||
+      [[ -e "$delete_request" ]]; then
+      echo "automatic reset did not refuse changed namespace evidence: $change" >&2
+      exit 1
+    fi
+  done
+  FAKE_NAMESPACE_JSON="$clean_snapshot"
+  bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" >"$fixture_dir/reset.stdout"
+  jq -e '.preconditions == {uid:"fixture-dev-uid",resourceVersion:"7"}' "$delete_request" >/dev/null
+)
 
 mkdir -p "$repo/services/example/src/main/resources/db/migration"
 printf '%s\n' 'CREATE TABLE baseline (id integer PRIMARY KEY);' \
@@ -103,6 +136,17 @@ later_push_sha="$(git -C "$repo" rev-parse HEAD)"
 namespace_for_head "$game_session_v2_sha"
 assert_activation true push "$supported_v2_sha" "$later_push_sha"
 assert_activation true push "" "$later_push_sha"
+
+# An unresolved attempt holds its original target and later pushes at the same boundary.
+FAKE_NAMESPACE_JSON="$(jq -c --arg base "$game_session_v2_sha" --arg target "$supported_v2_sha" '
+  .metadata.annotations["firemud.dev/pending-dev-demo-deployment"] = ("123:1:" + $base + ":" + $target)
+' <<<"$FAKE_NAMESPACE_JSON")"
+for target in "$supported_v2_sha" "$later_push_sha"; do
+  assert_rejected --reason 'unresolved retained deployment requires owner verification' repository_dispatch "" "$target"
+done
+namespace_for_head "$supported_v2_sha"
+assert_rejected --reason 'the namespace already records the target SHA' repository_dispatch "" "$supported_v2_sha"
+assert_activation false repository_dispatch "" "$later_push_sha"
 
 echo 'retained migration edit' >>"$repo/services/game-session-service/src/main/resources/db/migration/V2__scope_gameplay_command_identity.sql"
 git -C "$repo" add .
