@@ -9,6 +9,8 @@ import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
+import io.lettuce.core.event.connection.ConnectedEvent;
+import io.lettuce.core.event.connection.DisconnectedEvent;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
 import java.math.BigInteger;
@@ -21,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
@@ -32,6 +35,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
+import reactor.core.Disposable;
 
 @SuppressWarnings("resource")
 abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSupport {
@@ -47,6 +51,9 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
 
   RedisClient administrator;
   RedisClient ownerClient;
+  private final AtomicInteger ownerConnected = new AtomicInteger();
+  private final AtomicInteger ownerDisconnected = new AtomicInteger();
+  private Disposable ownerEvents;
   RedisURI ownerUri;
   StatefulRedisConnection<byte[], byte[]> adminConnection;
   RedisCommands<byte[], byte[]> admin;
@@ -98,6 +105,16 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
     ownerUri = redisUri(PRINCIPAL, password);
     ownerClient = RedisClient.create(ownerUri);
     ownerClient.setOptions(ClientOptions.builder().autoReconnect(false).build());
+    ownerEvents =
+        ownerClient
+            .getResources()
+            .eventBus()
+            .get()
+            .subscribe(
+                event -> {
+                  if (event instanceof ConnectedEvent) ownerConnected.incrementAndGet();
+                  if (event instanceof DisconnectedEvent) ownerDisconnected.incrementAndGet();
+                });
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName("org.postgresql.Driver");
     String jdbcUrl = postgresContainer().getJdbcUrl();
@@ -143,6 +160,7 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
       try {
         if (fixture != null) fixture.close();
       } finally {
+        if (ownerEvents != null) ownerEvents.dispose();
         if (adminConnection != null) adminConnection.close();
         if (ownerClient != null) ownerClient.shutdown(Duration.ZERO, Duration.ofSeconds(2));
         if (administrator != null) administrator.shutdown(Duration.ZERO, Duration.ofSeconds(2));
@@ -182,15 +200,26 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTestSup
   }
 
   void bridge(boolean authorizeCapacity, int maximumRecords, long maximumBindingBytes) {
-    regionBinding =
-        CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
-            fixture.dsl(),
-            ownerClient,
-            ownerUri,
-            fixture.transitionId(),
-            sources.request,
-            sources.resolver,
-            sources.entity);
+    try {
+      regionBinding =
+          CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
+              fixture.dsl(),
+              ownerClient,
+              ownerUri,
+              fixture.transitionId(),
+              sources.request,
+              sources.resolver,
+              sources.entity);
+    } catch (IllegalStateException failure) {
+      // Keep the original failure and record only event counts; events may lag the failure thread.
+      failure.addSuppressed(
+          new IllegalStateException(
+              "Region fixture Redis owner events before teardown: connected="
+                  + ownerConnected.get()
+                  + ", disconnected="
+                  + ownerDisconnected.get()));
+      throw failure;
+    }
     assertThat(regionBinding.owner().bridge(regionBinding.installation()).obligation())
         .isEqualTo(regionBinding.acknowledgement().obligation());
     var assignment = tags.assignmentForTransition(fixture.transitionId());

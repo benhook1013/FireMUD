@@ -43,7 +43,6 @@ import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
-import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import org.slf4j.Logger;
@@ -64,7 +63,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private static final Logger LOGGER = LoggerFactory.getLogger(ScriptWorkItemServiceImpl.class);
-  private static final String PARTICIPANT_KEY_AUTOMATION_SCRIPTING = "AUTOMATION_SCRIPTING";
   private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_EVALUATING = "EVALUATING";
   private static final String STATUS_CANCELED = "CANCELED";
@@ -1292,11 +1290,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       return new PublicationMetadata(baseVersionId, "", publication);
     }
     String abilitySchemaDigest =
-        releaseBundleResponse.getBundle().getParticipantDigestsList().stream()
-            .filter(
-                digest -> PARTICIPANT_KEY_AUTOMATION_SCRIPTING.equals(digest.getParticipantKey()))
-            .map(ParticipantDigest::getContentDigest)
-            .findFirst()
+        PublishedAbilitySchemaEvidence.read(releaseBundleResponse.getBundle(), baseVersionId)
             .orElse("");
     return new PublicationMetadata(baseVersionId, abilitySchemaDigest, publication);
   }

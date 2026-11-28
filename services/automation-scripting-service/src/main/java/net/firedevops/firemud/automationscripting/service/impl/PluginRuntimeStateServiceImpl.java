@@ -24,7 +24,6 @@ import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstance
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
-import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.PluginComponentPolicyDecision;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
@@ -44,7 +43,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService {
   private static final Logger logger = LoggerFactory.getLogger(PluginRuntimeStateServiceImpl.class);
-  private static final String PARTICIPANT_KEY_AUTOMATION_SCRIPTING = "AUTOMATION_SCRIPTING";
   private static final String ACTOR_POLICY_RECONCILER = "automation-scripting-policy-reconciler";
   private static final String DEFAULT_DISABLED_REASON = "not_activated";
   private static final String OPERATION_ACTIVATE = "ACTIVATE";
@@ -411,16 +409,13 @@ public class PluginRuntimeStateServiceImpl implements PluginRuntimeStateService 
       throw new IllegalArgumentException(
           "GAME_INSTANCE_RUNTIME_UNAVAILABLE: " + releaseBundle.getError().getMessage());
     }
-    ParticipantDigest automationDigest =
-        releaseBundle.getBundle().getParticipantDigestsList().stream()
-            .filter(
-                digest -> PARTICIPANT_KEY_AUTOMATION_SCRIPTING.equals(digest.getParticipantKey()))
-            .findFirst()
+    String runtimeAbilitySchemaDigest =
+        PublishedAbilitySchemaEvidence.read(releaseBundle.getBundle(), runtimeVersionId)
             .orElseThrow(
                 () ->
                     new IllegalArgumentException(
                         "PLUGIN_ABILITY_SCHEMA_MISMATCH: runtime ability schema digest is unavailable"));
-    if (!automationDigest.getContentDigest().equals(pluginAbilitySchemaDigest)) {
+    if (!runtimeAbilitySchemaDigest.equals(pluginAbilitySchemaDigest)) {
       throw new IllegalArgumentException(
           "PLUGIN_ABILITY_SCHEMA_MISMATCH: plugin ability schema digest does not match runtime version");
     }

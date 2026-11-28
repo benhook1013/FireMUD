@@ -3,7 +3,12 @@ package net.firedevops.firemud.common.authoring;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.grpc.BindableService;
+import io.grpc.Metadata;
 import io.grpc.Server;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
@@ -26,6 +31,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Outcome;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
@@ -40,11 +46,12 @@ import net.firedevops.firemud.gamedesign.v1.ReadGameDesignDraftTerminalOutcomeRe
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldDraftTerminalOutcomeRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldDraftTerminalOutcomeResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldDraftTerminalReadServiceGrpc;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** Physical mTLS loopback proof for large exact terminal-read responses from both owners. */
+/** Physical mTLS loopback proof for exact terminal-read responses and server workload refusal. */
 class DraftTerminalReadClientMtlsTest {
   private static final int MAX_KEYTOOL_FAILURE_OUTPUT_BYTES = 64 * 1024;
   private static final long KEYTOOL_TIMEOUT_SECONDS = 30L;
@@ -52,6 +59,10 @@ class DraftTerminalReadClientMtlsTest {
   private static final String NAMESPACE = "test";
   private static final String GAME_DESIGN_URI = "spiffe://firemud/ns/test/sa/game-design-service";
   private static final String WORLD_URI = "spiffe://firemud/ns/test/sa/world-management-service";
+  private static final String OTHER_NAMESPACE_GAME_DESIGN_URI =
+      "spiffe://firemud/ns/other-test/sa/game-design-service";
+  private static final String OTHER_NAMESPACE_WORLD_URI =
+      "spiffe://firemud/ns/other-test/sa/world-management-service";
   private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/account-service";
   private static final String STORE_PASSWORD = "test-only-store-password";
 
@@ -65,19 +76,14 @@ class DraftTerminalReadClientMtlsTest {
 
   @Test
   void gameDesignClientAcceptsBoundedResponseAboveOldFourMiBTransportLimit() throws Exception {
-    var base = AuthoringFixtures.freshGraphRequest();
-    var request =
-        new GameDesignDraftTerminalReadEvidence.Request(
-            1,
-            NAMESPACE,
-            UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
-            base.originalAccountBinding());
+    var request = gameDesignRequest();
     var readback =
         largeAbort(request.accountBinding(), Owner.GAME_DESIGN, request.originalAccountBinding());
     var response = GameDesignDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(readback));
     AtomicReference<ReadGameDesignDraftTerminalOutcomeRequest> received = new AtomicReference<>();
 
-    try (TransportServer server = startGameDesignServer(response, received);
+    try (TransportServer server =
+            startGameDesignServer(pki.gameDesignServer(), response, received);
         GameDesignDraftTerminalReadClient client = gameDesignClient(server.port())) {
       client.init();
       var configuredStub = gameDesignStub(client);
@@ -97,6 +103,7 @@ class DraftTerminalReadClientMtlsTest {
       var actual = client.read(request);
       assertThat(actual.ownerReadback().orElseThrow().canonicalBytes())
           .containsExactly(readback.canonicalBytes());
+      assertThat(server.applicationMetadataCalls()).hasValue(2);
       assertThat(received.get()).isEqualTo(GameDesignDraftTerminalReadGrpcCodec.toRequest(request));
       assertThat(configuredStub.getCallOptions().getMaxInboundMessageSize())
           .isEqualTo(DraftTerminalReadGrpcLimits.MAX_RESPONSE_WIRE_BYTES);
@@ -111,7 +118,7 @@ class DraftTerminalReadClientMtlsTest {
     var response = WorldDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(readback));
     AtomicReference<ReadWorldDraftTerminalOutcomeRequest> received = new AtomicReference<>();
 
-    try (TransportServer server = startWorldServer(response, received);
+    try (TransportServer server = startWorldServer(pki.worldServer(), response, received);
         WorldDraftTerminalReadClient client = worldClient(server.port())) {
       client.init();
       var configuredStub = worldStub(client);
@@ -131,10 +138,66 @@ class DraftTerminalReadClientMtlsTest {
       var actual = client.read(request);
       assertThat(actual.ownerReadback().orElseThrow().canonicalBytes())
           .containsExactly(readback.canonicalBytes());
+      assertThat(server.applicationMetadataCalls()).hasValue(2);
       assertThat(received.get()).isEqualTo(WorldDraftTerminalReadGrpcCodec.toRequest(request));
       assertThat(configuredStub.getCallOptions().getMaxInboundMessageSize())
           .isEqualTo(DraftTerminalReadGrpcLimits.MAX_RESPONSE_WIRE_BYTES);
     }
+  }
+
+  @Test
+  void gameDesignClientWithholdsMetadataAndBodyFromTrustedWrongWorkloadAndNamespace()
+      throws Exception {
+    var request = gameDesignRequest();
+    var response = GameDesignDraftTerminalReadGrpcCodec.toResponse(request, Optional.empty());
+    for (TestIdentity identity : List.of(pki.worldServer(), pki.otherNamespaceGameDesignServer())) {
+      AtomicReference<ReadGameDesignDraftTerminalOutcomeRequest> received = new AtomicReference<>();
+      try (TransportServer server = startGameDesignServer(identity, response, received);
+          GameDesignDraftTerminalReadClient client = gameDesignClient(server.port())) {
+        client.init();
+        assertRequestWithheld(identity, server, received, () -> client.read(request));
+      }
+    }
+  }
+
+  @Test
+  void worldClientWithholdsMetadataAndBodyFromTrustedWrongWorkloadAndNamespace() throws Exception {
+    var request = AuthoringFixtures.freshGraphRequest();
+    var response = WorldDraftTerminalReadGrpcCodec.toResponse(request, Optional.empty());
+    for (TestIdentity identity : List.of(pki.gameDesignServer(), pki.otherNamespaceWorldServer())) {
+      AtomicReference<ReadWorldDraftTerminalOutcomeRequest> received = new AtomicReference<>();
+      try (TransportServer server = startWorldServer(identity, response, received);
+          WorldDraftTerminalReadClient client = worldClient(server.port())) {
+        client.init();
+        assertRequestWithheld(identity, server, received, () -> client.read(request));
+      }
+    }
+  }
+
+  private static void assertRequestWithheld(
+      TestIdentity identity,
+      TransportServer server,
+      AtomicReference<?> received,
+      ThrowingCallable read) {
+    assertThatThrownBy(read)
+        .as(identity.alias())
+        .isInstanceOfSatisfying(
+            StatusRuntimeException.class,
+            failure -> {
+              assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
+              assertThat(failure.getStatus().getDescription())
+                  .isEqualTo("Request requires the exact authenticated server workload identity");
+            });
+    assertThat(server.applicationMetadataCalls()).as(identity.alias()).hasValue(0);
+    assertThat(received.get()).as(identity.alias()).isNull();
+  }
+
+  private static GameDesignDraftTerminalReadEvidence.Request gameDesignRequest() throws Exception {
+    return new GameDesignDraftTerminalReadEvidence.Request(
+        1,
+        NAMESPACE,
+        UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+        AuthoringFixtures.freshGraphRequest().originalAccountBinding());
   }
 
   private static DraftAuthorizationFenceBinding.OwnerReadback largeAbort(
@@ -151,6 +214,7 @@ class DraftTerminalReadClientMtlsTest {
   }
 
   private static TransportServer startGameDesignServer(
+      TestIdentity identity,
       ReadGameDesignDraftTerminalOutcomeResponse response,
       AtomicReference<ReadGameDesignDraftTerminalOutcomeRequest> received)
       throws Exception {
@@ -165,10 +229,11 @@ class DraftTerminalReadClientMtlsTest {
             observer.onCompleted();
           }
         };
-    return startServer(pki.gameDesignServer(), service);
+    return startServer(identity, service);
   }
 
   private static TransportServer startWorldServer(
+      TestIdentity identity,
       ReadWorldDraftTerminalOutcomeResponse response,
       AtomicReference<ReadWorldDraftTerminalOutcomeRequest> received)
       throws Exception {
@@ -183,11 +248,23 @@ class DraftTerminalReadClientMtlsTest {
             observer.onCompleted();
           }
         };
-    return startServer(pki.worldServer(), service);
+    return startServer(identity, service);
   }
 
-  private static TransportServer startServer(TestIdentity identity, io.grpc.BindableService service)
+  private static TransportServer startServer(TestIdentity identity, BindableService service)
       throws Exception {
+    AtomicInteger applicationMetadataCalls = new AtomicInteger();
+    ServerInterceptor countApplicationMetadata =
+        new ServerInterceptor() {
+          @Override
+          public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+              ServerCall<ReqT, RespT> call,
+              Metadata metadata,
+              ServerCallHandler<ReqT, RespT> next) {
+            applicationMetadataCalls.incrementAndGet();
+            return next.startCall(call, metadata);
+          }
+        };
     Server server =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
             .sslContext(
@@ -196,10 +273,11 @@ class DraftTerminalReadClientMtlsTest {
                     .trustManager(pki.caCertificate())
                     .clientAuth(ClientAuth.REQUIRE)
                     .build())
+            .intercept(countApplicationMetadata)
             .addService(service)
             .build()
             .start();
-    return new TransportServer(server);
+    return new TransportServer(server, applicationMetadataCalls);
   }
 
   private static GameDesignDraftTerminalReadClient gameDesignClient(int port) throws Exception {
@@ -233,7 +311,8 @@ class DraftTerminalReadClientMtlsTest {
         field.get(client);
   }
 
-  private record TransportServer(Server server) implements AutoCloseable {
+  private record TransportServer(Server server, AtomicInteger applicationMetadataCalls)
+      implements AutoCloseable {
     private int port() {
       return server.getPort();
     }
@@ -253,6 +332,8 @@ class DraftTerminalReadClientMtlsTest {
       X509Certificate caCertificate,
       TestIdentity gameDesignServer,
       TestIdentity worldServer,
+      TestIdentity otherNamespaceGameDesignServer,
+      TestIdentity otherNamespaceWorldServer,
       TestIdentity accountClient) {
     private static TestPki create(Path directory) throws Exception {
       Path caStore = directory.resolve("test-ca.p12");
@@ -299,6 +380,20 @@ class DraftTerminalReadClientMtlsTest {
           caCertificate,
           issueIdentity(directory, caStore, caFile, "game-design-server", GAME_DESIGN_URI, true),
           issueIdentity(directory, caStore, caFile, "world-server", WORLD_URI, true),
+          issueIdentity(
+              directory,
+              caStore,
+              caFile,
+              "other-namespace-game-design-server",
+              OTHER_NAMESPACE_GAME_DESIGN_URI,
+              true),
+          issueIdentity(
+              directory,
+              caStore,
+              caFile,
+              "other-namespace-world-server",
+              OTHER_NAMESPACE_WORLD_URI,
+              true),
           issueIdentity(directory, caStore, caFile, "account-client", ACCOUNT_URI, false));
     }
 

@@ -459,6 +459,125 @@ class VersionAssetExportCandidateServiceImplTest {
     assertEquals(original, candidateService.readExportCandidate(TENANT_ID, VERSION_NUMBER));
   }
 
+  @Test
+  void selectedFullV4RepairReusesFrozenCandidateWithExactModernWorldEvidence() throws Exception {
+    ExportedAssetManifest published = exporter.exportAssets(TENANT_ID, VERSION_NUMBER);
+    var selected = selectedFullBundle(published, false, false);
+    markPublished();
+    FrozenAssetExportCandidate original =
+        candidateService.readExportCandidate(TENANT_ID, VERSION_NUMBER);
+    objectStore.clear();
+    clearInvocations(s3Client, artifactRepository);
+
+    assertEquals(published, exporter.repairPublishedAssets(TENANT_ID, VERSION_NUMBER, selected));
+    assertEquals(original, candidateService.readExportCandidate(TENANT_ID, VERSION_NUMBER));
+    ArgumentCaptor<PutObjectRequest> puts = ArgumentCaptor.forClass(PutObjectRequest.class);
+    verify(s3Client, times(2)).putObject(puts.capture(), any(RequestBody.class));
+    assertEquals(
+        List.of("*", "*"),
+        puts.getAllValues().stream().map(PutObjectRequest::ifNoneMatch).toList());
+    assertEquals(2, objectStore.size());
+    verify(artifactRepository, never()).save(any(VersionAssetArtifact.class));
+  }
+
+  @Test
+  void selectedFullV4ForeignWorldTargetIsDeniedBeforeAnyRepairObjectWrite() throws Exception {
+    ExportedAssetManifest published = exporter.exportAssets(TENANT_ID, VERSION_NUMBER);
+    var selected = selectedFullBundle(published, true, false);
+    markPublished();
+    objectStore.clear();
+    clearInvocations(s3Client);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> exporter.repairPublishedAssets(TENANT_ID, VERSION_NUMBER, selected));
+    verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    assertEquals(0, objectStore.size());
+  }
+
+  @Test
+  void selectedFullV4MixedParticipantProfileIsDeniedBeforeAnyRepairObjectWrite() throws Exception {
+    ExportedAssetManifest published = exporter.exportAssets(TENANT_ID, VERSION_NUMBER);
+    var selected = selectedFullBundle(published, false, true);
+    markPublished();
+    objectStore.clear();
+    clearInvocations(s3Client);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> exporter.repairPublishedAssets(TENANT_ID, VERSION_NUMBER, selected));
+    verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    assertEquals(0, objectStore.size());
+  }
+
+  private void markPublished() {
+    attempt.setStatus(PublishAttemptStatus.SUCCEEDED);
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    version.setVersionStateEpoch(4L);
+    artifact.setArtifactState(VersionAssetArtifactState.PUBLISHED);
+    artifact.setStateEpoch(3L);
+  }
+
+  // Isolated upstream evidence, not proof that a live World/Account producer is enabled.
+  private PublishedReleaseBundleDto selectedFullBundle(
+      ExportedAssetManifest manifest, boolean foreignTarget, boolean mixedProfile)
+      throws Exception {
+    var selector =
+        PublishedWorldSelectorFixtures.selectedFullSeed(
+            new net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof(
+                foreignTarget ? UUID.randomUUID() : CANONICAL_TENANT_ID,
+                CANONICAL_VERSION_ID,
+                VERSION_ID,
+                TENANT_ID,
+                3L,
+                TENANT_ID,
+                "NEW_GAME_ROW"),
+            "genesis:8b0c1a0f-b8c9-4c4b-9021-381f57699003");
+    var participants =
+        new java.util.ArrayList<>(
+            PublishedWorldSelectorFixtures.participants(
+                VERSION_ID,
+                selector,
+                net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence
+                    .SELECTED_FULL_SCHEMA_VERSION));
+    if (mixedProfile) {
+      var original = participants.get(3);
+      participants.set(
+          3,
+          new net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto(
+              original.participantKey(),
+              original.scopeValue(),
+              original.baseVersionId(),
+              original.appliedCommitId(),
+              original.contentDigest(),
+              5,
+              original.abilitySchemaDigest(),
+              original.errorCode(),
+              original.errorMessage()));
+    }
+    return new PublishedReleaseBundleDto(
+        1L,
+        TENANT_ID,
+        VERSION_ID,
+        VERSION_NUMBER,
+        "v4",
+        selector.request().publishWorkflowId(),
+        manifest.manifestHash(),
+        manifest.requiredManifestAssetKeys(),
+        participants,
+        List.of(),
+        "generation-1",
+        false,
+        null,
+        java.time.LocalDateTime.now(),
+        CANONICAL_TENANT_ID,
+        CANONICAL_VERSION_ID,
+        "opaque-release-ref",
+        manifest.manifestSchemaVersion(),
+        manifest.artifactDigests(),
+        selector);
+  }
+
   private PublishedReleaseBundleDto publishedBundle(ExportedAssetManifest manifest) {
     return publishedBundleWithHash(manifest, manifest.manifestHash());
   }

@@ -45,6 +45,9 @@ import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 
 class PluginRuntimeStateServiceImplTest {
+  private static final String ABILITY_SCHEMA_DIGEST = "sha256:" + "a".repeat(64);
+  private static final String AGGREGATE_DIGEST = "b".repeat(64);
+
   @Test
   void listsActivePluginVersionsForCurrentRuntimeScope() {
     PluginRuntimeState enabledMatching = new PluginRuntimeState();
@@ -165,7 +168,7 @@ class PluginRuntimeStateServiceImplTest {
                         .setBaseVersionId(7L)
                         .setPublicationState(
                             VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
-                        .setAbilitySchemaDigest("ability-1")
+                        .setAbilitySchemaDigest(ABILITY_SCHEMA_DIGEST)
                         .setBundleDigest("bundle-1")
                         .setManifestSchemaVersion(1)
                         .setSignerKeyId("signer-1")
@@ -188,19 +191,7 @@ class PluginRuntimeStateServiceImplTest {
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "")).thenReturn(runtimeState);
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
         .thenReturn(runtimeState);
-    when(gameDesignClient.getPublishedReleaseBundle("1", 7L))
-        .thenReturn(
-            GetPublishedReleaseBundleResponse.newBuilder()
-                .setBundle(
-                    PublishedReleaseBundle.newBuilder()
-                        .setVersionId(7L)
-                        .addParticipantDigests(
-                            ParticipantDigest.newBuilder()
-                                .setParticipantKey("AUTOMATION_SCRIPTING")
-                                .setContentDigest("ability-1")
-                                .build())
-                        .build())
-                .build());
+    when(gameDesignClient.getPublishedReleaseBundle("1", 7L)).thenReturn(publishedReleaseBundle());
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
             repository,
@@ -582,19 +573,7 @@ class PluginRuntimeStateServiceImplTest {
             .build();
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
         .thenReturn(runtimeState);
-    when(gameDesignClient.getPublishedReleaseBundle("1", 7L))
-        .thenReturn(
-            GetPublishedReleaseBundleResponse.newBuilder()
-                .setBundle(
-                    PublishedReleaseBundle.newBuilder()
-                        .setVersionId(7L)
-                        .addParticipantDigests(
-                            ParticipantDigest.newBuilder()
-                                .setParticipantKey("AUTOMATION_SCRIPTING")
-                                .setContentDigest("ability-1")
-                                .build())
-                        .build())
-                .build());
+    when(gameDesignClient.getPublishedReleaseBundle("1", 7L)).thenReturn(publishedReleaseBundle());
     PluginRuntimeStateServiceImpl service =
         new PluginRuntimeStateServiceImpl(
             repository,
@@ -1185,7 +1164,7 @@ class PluginRuntimeStateServiceImplTest {
                         .setBaseVersionId(7L)
                         .setPublicationState(
                             VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
-                        .setAbilitySchemaDigest("ability-1")
+                        .setAbilitySchemaDigest(ABILITY_SCHEMA_DIGEST)
                         .setBundleDigest("bundle-1")
                         .setManifestSchemaVersion(1)
                         .setSignerKeyId("signer-1")
@@ -1232,7 +1211,7 @@ class PluginRuntimeStateServiceImplTest {
                         .setBaseVersionId(7L)
                         .setPublicationState(
                             VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
-                        .setAbilitySchemaDigest("ability-1")
+                        .setAbilitySchemaDigest(ABILITY_SCHEMA_DIGEST)
                         .setBundleDigest("bundle-1")
                         .setManifestSchemaVersion(1)
                         .setSignerKeyId("signer-1")
@@ -1278,7 +1257,7 @@ class PluginRuntimeStateServiceImplTest {
                         .setBaseVersionId(9L)
                         .setPublicationState(
                             VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
-                        .setAbilitySchemaDigest("ability-1")
+                        .setAbilitySchemaDigest(ABILITY_SCHEMA_DIGEST)
                         .setBundleDigest("bundle-1")
                         .setManifestSchemaVersion(1)
                         .setSignerKeyId("signer-1")
@@ -1301,19 +1280,7 @@ class PluginRuntimeStateServiceImplTest {
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "")).thenReturn(runtimeState);
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
         .thenReturn(runtimeState);
-    when(gameDesignClient.getPublishedReleaseBundle("1", 7L))
-        .thenReturn(
-            GetPublishedReleaseBundleResponse.newBuilder()
-                .setBundle(
-                    PublishedReleaseBundle.newBuilder()
-                        .setVersionId(7L)
-                        .addParticipantDigests(
-                            ParticipantDigest.newBuilder()
-                                .setParticipantKey("AUTOMATION_SCRIPTING")
-                                .setContentDigest("ability-1")
-                                .build())
-                        .build())
-                .build());
+    when(gameDesignClient.getPublishedReleaseBundle("1", 7L)).thenReturn(publishedReleaseBundle());
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
             repository,
@@ -1396,7 +1363,7 @@ class PluginRuntimeStateServiceImplTest {
                         .setBaseVersionId(7L)
                         .setPublicationState(
                             VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
-                        .setAbilitySchemaDigest("ability-plugin")
+                        .setAbilitySchemaDigest("sha256:" + "c".repeat(64))
                         .setBundleDigest("bundle-1")
                         .setManifestSchemaVersion(1)
                         .setSignerKeyId("signer-1")
@@ -1419,19 +1386,7 @@ class PluginRuntimeStateServiceImplTest {
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "")).thenReturn(runtimeState);
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
         .thenReturn(runtimeState);
-    when(gameDesignClient.getPublishedReleaseBundle("1", 7L))
-        .thenReturn(
-            GetPublishedReleaseBundleResponse.newBuilder()
-                .setBundle(
-                    PublishedReleaseBundle.newBuilder()
-                        .setVersionId(7L)
-                        .addParticipantDigests(
-                            ParticipantDigest.newBuilder()
-                                .setParticipantKey("AUTOMATION_SCRIPTING")
-                                .setContentDigest("ability-runtime")
-                                .build())
-                        .build())
-                .build());
+    when(gameDesignClient.getPublishedReleaseBundle("1", 7L)).thenReturn(publishedReleaseBundle());
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
             repository,
@@ -1448,6 +1403,81 @@ class PluginRuntimeStateServiceImplTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage(
             "PLUGIN_ABILITY_SCHEMA_MISMATCH: plugin ability schema digest does not match runtime version");
+  }
+
+  @Test
+  void rejectsActivationWithoutMutationWhenOnlyAggregateAbilityEvidenceExists() {
+    PluginRuntimeState existing = activePluginState();
+    existing.setPluginActivationEpoch(4L);
+    existing.setLifecycleRevision(9L);
+    PluginRuntimeState expected = activePluginState();
+    expected.setPluginActivationEpoch(4L);
+    expected.setLifecycleRevision(9L);
+    PluginRuntimeStateRepository repository = Mockito.mock(PluginRuntimeStateRepository.class);
+    PluginRuntimeEventRepository eventRepository = Mockito.mock(PluginRuntimeEventRepository.class);
+    PluginRuntimeRequestHistoryRepository historyRepository =
+        Mockito.mock(PluginRuntimeRequestHistoryRepository.class);
+    GameDesignControlPlaneClient gameDesignClient =
+        Mockito.mock(GameDesignControlPlaneClient.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptScheduleInstanceService scheduleService =
+        Mockito.mock(ScriptScheduleInstanceService.class);
+    PluginActivationPreflightService preflightService =
+        Mockito.mock(PluginActivationPreflightService.class);
+    when(repository.findByTenantIdAndGameInstanceIdAndPluginId("1", "game-1", "plugin-1"))
+        .thenReturn(Optional.of(existing));
+    when(gameDesignClient.getPublishedPluginVersion("1", "plugin-1", "plugin-v1"))
+        .thenReturn(
+            publishedPluginVersion(
+                PluginComponentPolicyDecision.PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED, false));
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    GameInstanceRuntimeState.newBuilder()
+                        .setTenantId("1")
+                        .setGameInstanceId("game-1")
+                        .setRegionId("region-7")
+                        .setRegionEpoch(12L)
+                        .setRuntimeVersionId("7"))
+                .build());
+    when(gameDesignClient.getPublishedReleaseBundle("1", 7L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setVersionId(7L)
+                        .addParticipantDigests(
+                            ParticipantDigest.newBuilder()
+                                .setParticipantKey("AUTOMATION_SCRIPTING")
+                                .setScopeValue("7")
+                                .setAppliedCommitId("commit-7")
+                                .setContentDigest(ABILITY_SCHEMA_DIGEST)
+                                .setDigestSchemaVersion(1)))
+                .build());
+    PluginRuntimeStateService service =
+        new PluginRuntimeStateServiceImpl(
+            repository,
+            eventRepository,
+            gameDesignClient,
+            gameSessionClient,
+            scheduleService,
+            preflightService,
+            historyRepository);
+
+    assertThatThrownBy(
+            () ->
+                service.setActiveVersion(
+                    new PluginRuntimeStateService.ActivationCommand(
+                        "1", "game-1", "plugin-1", "plugin-v1", "req-1", "admin", "activation")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("PLUGIN_ABILITY_SCHEMA_MISMATCH: runtime ability schema digest is unavailable");
+
+    assertThat(existing).usingRecursiveComparison().isEqualTo(expected);
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+    Mockito.verify(historyRepository, Mockito.never()).insertOrGet(Mockito.any());
+    Mockito.verifyNoInteractions(eventRepository, scheduleService, preflightService);
   }
 
   @Test
@@ -2194,19 +2224,7 @@ class PluginRuntimeStateServiceImplTest {
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "")).thenReturn(runtimeState);
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-7"))
         .thenReturn(runtimeState);
-    when(gameDesignClient.getPublishedReleaseBundle("1", 7L))
-        .thenReturn(
-            GetPublishedReleaseBundleResponse.newBuilder()
-                .setBundle(
-                    PublishedReleaseBundle.newBuilder()
-                        .setVersionId(7L)
-                        .addParticipantDigests(
-                            ParticipantDigest.newBuilder()
-                                .setParticipantKey("AUTOMATION_SCRIPTING")
-                                .setContentDigest("ability-1")
-                                .build())
-                        .build())
-                .build());
+    when(gameDesignClient.getPublishedReleaseBundle("1", 7L)).thenReturn(publishedReleaseBundle());
     PluginRuntimeStateService service =
         new PluginRuntimeStateServiceImpl(
             repository,
@@ -2351,6 +2369,22 @@ class PluginRuntimeStateServiceImplTest {
     return history;
   }
 
+  private static GetPublishedReleaseBundleResponse publishedReleaseBundle() {
+    return GetPublishedReleaseBundleResponse.newBuilder()
+        .setBundle(
+            PublishedReleaseBundle.newBuilder()
+                .setVersionId(7L)
+                .addParticipantDigests(
+                    ParticipantDigest.newBuilder()
+                        .setParticipantKey("GAME_LOGIC")
+                        .setScopeValue("7")
+                        .setAppliedCommitId("commit-7")
+                        .setContentDigest(AGGREGATE_DIGEST)
+                        .setDigestSchemaVersion(1)
+                        .setAbilitySchemaDigest(ABILITY_SCHEMA_DIGEST)))
+        .build();
+  }
+
   private static GetPublishedPluginVersionResponse publishedPluginVersion(
       PluginComponentPolicyDecision componentPolicyDecision, boolean signerRevoked) {
     return GetPublishedPluginVersionResponse.newBuilder()
@@ -2361,7 +2395,7 @@ class PluginRuntimeStateServiceImplTest {
                 .setPluginVersionId("plugin-v1")
                 .setBaseVersionId(7L)
                 .setPublicationState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
-                .setAbilitySchemaDigest("ability-1")
+                .setAbilitySchemaDigest(ABILITY_SCHEMA_DIGEST)
                 .setBundleDigest("bundle-1")
                 .setManifestSchemaVersion(1)
                 .setSignerKeyId("signer-1")

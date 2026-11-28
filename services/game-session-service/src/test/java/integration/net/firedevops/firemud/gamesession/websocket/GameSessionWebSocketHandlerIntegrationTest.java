@@ -619,9 +619,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
       var before = sessionContextService.findByTenantAndSessionId(22L, 41L);
       assertThat(before).isPresent();
 
-      client.send("LOGOUT");
-      client.awaitStartsWith("ERROR LOGOUT_UNAVAILABLE");
-      assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isEqualTo(before);
+      for (int attempt = 0; attempt < 2; attempt++) {
+        int responseCount = client.responses().size();
+        client.send("LOGOUT");
+        client.awaitTranscriptContainingAllAfter(
+            responseCount, "ERROR LOGOUT_UNAVAILABLE", "Logout is temporarily unavailable");
+        assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isEqualTo(before);
+      }
 
       client.send("WHO");
       client.awaitStartsWith("OK WHO");
@@ -640,6 +644,32 @@ class GameSessionWebSocketHandlerIntegrationTest {
       verify(screenBufferService, never()).get(22L, 1L, 123L);
       verify(screenBufferService, never()).clear(22L, 1L, 123L);
     }
+  }
+
+  @Test
+  void freshLoginAfterUnavailableLogoutAndClientCloseDoesNotReplayStaleReconnectBuffer()
+      throws Exception {
+    when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
+        .thenReturn(
+            Optional.of(
+                new ScreenBufferService.BufferedScreen(
+                    java.util.List.of(
+                        ScreenBufferService.BufferedEntry.fromText(
+                            "STALE REPLAY SHOULD NOT APPEAR")),
+                    1,
+                    1,
+                    System.currentTimeMillis())));
+
+    performUnavailableLogoutAndClientClose("41");
+
+    List<String> secondPayloads;
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
+      secondPayloads = client.responses();
+    }
+
+    assertThat(secondPayloads)
+        .noneMatch(payload -> payload.contains("STALE REPLAY SHOULD NOT APPEAR"));
+    verify(screenBufferService, never()).get(22L, 1L, 123L);
   }
 
   @Test
@@ -1061,6 +1091,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   private URI websocketUri() {
     return URI.create("ws://localhost:" + port + "/ws/game");
+  }
+
+  private void performUnavailableLogoutAndClientClose(String sessionId) throws Exception {
+    try (GameplayWebSocketDriver client = openAdmittedGameplayDriver(sessionId)) {
+      client.send("LOGOUT");
+      client.awaitStartsWith("ERROR LOGOUT_UNAVAILABLE");
+      assertThat(sessionContextService.findByTenantAndSessionId(22L, Long.parseLong(sessionId)))
+          .isPresent();
+      // Closing this client is not successful logout or a durable Account revocation.
+    }
   }
 
   private void bumpProductionAdmissionPointer(

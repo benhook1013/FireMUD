@@ -3,9 +3,11 @@ package net.firedevops.firemud.common.account.authority;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,6 +22,50 @@ class AccountSecurityStateAuthorityEventV1CodecTest {
       AccountSecurityStateAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "account/" + ACCOUNT_ID;
   private static final String LARGE_COUNTER = "9223372036854775807";
   private static final ObjectMapper JSON = new ObjectMapper();
+
+  private static final String ORIGINAL_DIGEST =
+      "sha256:6e6b82b81006e447301262b666825022462f4298a8b3fc0d44ce4a73895b3374";
+  private static final String CANONICAL_PREIMAGE =
+      "{\"accountAuthorityGeneration\":\"2\",\"accountId\":\""
+          + ACCOUNT_ID
+          + "\",\"accountSecurityCutoff\":{\"accountAuthorityGeneration\":\"2\","
+          + "\"outboxSequence\":\"1\",\"outboxStreamKey\":\""
+          + STREAM
+          + "\"},\"accountState\":{\"emailVerified\":true,\"globalRoles\":[],"
+          + "\"lifecycleState\":\"ACTIVE\",\"loginAuthModes\":[\"EMAIL_OTP\",\"PASSWORD\"]},"
+          + "\"eventId\":\"account-security-state-event-v1:"
+          + REQUEST_ID
+          + "\",\"eventType\":\"ACCOUNT_SECURITY_STATE_CHANGED\","
+          + "\"mutationKinds\":[\"EMAIL_LOGIN_ELIGIBILITY_CHANGED\",\"LOGIN_AUTH_MODES_CHANGED\"],"
+          + "\"outboxSequence\":\"1\",\"outboxStreamKey\":\""
+          + STREAM
+          + "\",\"requestId\":\""
+          + REQUEST_ID
+          + "\",\"schemaVersion\":\"account-auth-account-security-state-event/v1\","
+          + "\"sourceScope\":\"account/"
+          + ACCOUNT_ID
+          + "\",\"sourceVersion\":\"2\"}";
+  private static final String CANONICAL_WIRE =
+      CANONICAL_PREIMAGE.replace(
+          "\"eventId\":", "\"eventDigest\":\"" + ORIGINAL_DIGEST + "\",\"eventId\":");
+
+  @Test
+  void fixedCombinedFamilyVectorSealsAndVerifiesExactCanonicalBytesAndHash() throws Exception {
+    Map<String, Object> preimage = JSON.readValue(CANONICAL_PREIMAGE, new TypeReference<>() {});
+    var sealed = AccountSecurityStateAuthorityEventV1Codec.seal(preimage);
+    var verified = AccountSecurityStateAuthorityEventV1Codec.verify(CANONICAL_WIRE);
+    assertThat(sealed.eventDigest()).isEqualTo(ORIGINAL_DIGEST);
+    assertThat(sealed.canonicalJson()).isEqualTo(CANONICAL_WIRE);
+    assertThat(verified.canonicalJsonUtf8())
+        .isEqualTo(CANONICAL_WIRE.getBytes(StandardCharsets.UTF_8));
+    assertThat(verified.accountId()).isEqualTo(ACCOUNT_ID);
+    assertThat(verified.requestId()).isEqualTo(REQUEST_ID);
+    assertThat(verified.sourceScope()).isEqualTo("account/" + ACCOUNT_ID);
+    assertThat(verified.accountState().globalRoles()).isEmpty();
+    assertThat(verified.mutationKinds())
+        .containsExactly("EMAIL_LOGIN_ELIGIBILITY_CHANGED", "LOGIN_AUTH_MODES_CHANGED");
+    assertThat(verified.accountSecurityCutoff().outboxSequence()).isEqualTo("1");
+  }
 
   @Test
   void sealsCompleteSecurityStateAndAllowsEmptyGlobalRoles() throws Exception {

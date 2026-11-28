@@ -18,6 +18,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.OwnerReadback;
@@ -37,10 +38,13 @@ import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteListener;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -70,6 +74,114 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
   @BeforeAll
   static void setUpSchema() {
     fixture = createFixture(null);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void concurrentChangedClaimPreservesOriginalBindingAndOwners(boolean reuseRequest)
+      throws Exception {
+    TargetProof target = fixture.newTarget();
+    DraftCommitBinding original = binding(target);
+    DraftCommitBinding contender =
+        DraftCommitBinding.create(
+            target,
+            reuseRequest ? original.requestId() : UUID.randomUUID(),
+            original.commitId(),
+            original.baseCommitId(),
+            reuseRequest
+                ? List.of(
+                    new RevisionPayload(
+                        "0",
+                        original.revisions().getFirst().revisionId(),
+                        Owner.WORLD_MANAGEMENT,
+                        "changed concurrent world revision"),
+                    original.revisions().get(1))
+                : original.revisions(),
+            original.affectedUnits());
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try {
+      PendingDraftClaim pending =
+          fixture.inTransaction(
+              () -> {
+                fixture.coordinator().claim(original);
+                int ownerPid =
+                    fixture.dsl().fetchSingle("SELECT pg_backend_pid()").get(0, int.class);
+                List<String> images = draftClaimImages(target);
+                var contenderPid = new AtomicInteger();
+                var connected = new CountDownLatch(1);
+                Future<FinalizeAttempt> rejection =
+                    executor.submit(
+                        () ->
+                            attempt(
+                                () -> {
+                                  contenderPid.set(
+                                      fixture
+                                          .dsl()
+                                          .fetchSingle("SELECT pg_backend_pid()")
+                                          .get(0, int.class));
+                                  connected.countDown();
+                                  return fixture.coordinator().claim(contender);
+                                }));
+                await(connected);
+                assertBackendWaitsForOwner(contenderPid.get(), ownerPid);
+                return new PendingDraftClaim(rejection, images);
+              });
+
+      FinalizeAttempt result = pending.rejection().get(20, TimeUnit.SECONDS);
+      assertThat(result.succeeded()).isFalse();
+      assertThat(result.failure())
+          .isInstanceOf(
+              DraftCommitCoordinatorRepository.DraftCommitIdentityConflictException.class);
+      var replay = fixture.inTransaction(() -> fixture.coordinator().claim(original));
+      assertThat(replay.binding().canonicalBytes()).containsExactly(original.canonicalBytes());
+      assertThat(replay.ownerStates())
+          .containsOnlyKeys(Owner.WORLD_MANAGEMENT, Owner.ENTITY_MANAGEMENT);
+      assertThat(pending.originalImages()).hasSize(1 + original.requiredOwners().size());
+      assertThat(draftClaimImages(target)).isEqualTo(pending.originalImages());
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  private static List<String> draftClaimImages(TargetProof target) {
+    return fixture
+        .dsl()
+        .fetch(
+            """
+            SELECT 'commit/' || draft.xmin::text || '/' || to_jsonb(draft)::text
+              FROM game_design_draft_commit draft
+             WHERE draft.canonical_tenant_id = ? AND draft.canonical_version_id = ?
+            UNION ALL
+            SELECT 'owner/' || owner_result.xmin::text || '/' || to_jsonb(owner_result)::text
+              FROM game_design_draft_commit_owner_result owner_result
+             WHERE owner_result.canonical_tenant_id = ? AND owner_result.canonical_version_id = ?
+            ORDER BY 1
+            """,
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            target.canonicalTenantId(),
+            target.canonicalVersionId())
+        .getValues(0, String.class);
+  }
+
+  private static void assertBackendWaitsForOwner(int contenderPid, int ownerPid) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadline) {
+      boolean blocked =
+          fixture
+              .dsl()
+              .fetchSingle("SELECT ? = ANY(pg_blocking_pids(?))", ownerPid, contenderPid)
+              .get(0, boolean.class);
+      if (blocked) return;
+      try {
+        TimeUnit.MILLISECONDS.sleep(10);
+      } catch (InterruptedException interruption) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException(
+            "Interrupted while observing concurrent Draft claim", interruption);
+      }
+    }
+    throw new AssertionError("The competing Draft claim never waited for the original transaction");
   }
 
   @Test
@@ -106,6 +218,82 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
             () -> fixture.inTransaction(() -> fixture.coordinator().claim(binding, changed)))
         .isInstanceOf(DraftCommitCoordinatorRepository.DraftCommitIdentityConflictException.class);
     assertThat(retainedOperation.accountBindingBytes()).containsExactly(account.canonicalBytes());
+  }
+
+  @Test
+  void accountOperationClaimedAfterValidationRollsBackCompetingVersion() {
+    DraftCommitBinding contender = binding(fixture.newTarget());
+    DraftCommitBinding winner = binding(fixture.newTarget());
+    DraftAuthorizationFenceBinding contenderAccount =
+        accountBinding(contender, "stipulated-contender");
+    UUID operationId = contenderAccount.operationId();
+    DraftAuthorizationFenceBinding winnerAccount =
+        accountBinding(
+            winner,
+            operationId,
+            UUID.randomUUID(),
+            contenderAccount.actorAccountId(),
+            "stipulated-winner");
+    var independentTransaction =
+        new TransactionTemplate(
+            fixture.transaction().getTransactionManager(), fixture.transaction());
+    independentTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    String operationLookupSql =
+        "SELECT * FROM game_design_draft_terminal_operation WHERE operation_id = ? FOR UPDATE";
+    var operationLookups = new AtomicInteger();
+    var listener =
+        ExecuteListener.onExecuteStart(
+            context -> {
+              if (operationLookupSql.equals(context.sql())
+                  && operationLookups.incrementAndGet() == 3) {
+                // Both validation lookups missed. The contender has inserted its Draft and owners.
+                assertThat(draftClaimImages(contender.target()))
+                    .hasSize(1 + contender.requiredOwners().size());
+                independentTransaction.execute(
+                    status -> fixture.coordinator().claim(winner, winnerAccount));
+              }
+            });
+    DSLContext observed = DSL.using(fixture.dsl().configuration().deriveAppending(listener));
+    var contenderCoordinator = new DraftCommitCoordinatorRepository(observed);
+
+    assertThatThrownBy(
+            () ->
+                fixture.inTransaction(
+                    () -> contenderCoordinator.claim(contender, contenderAccount)))
+        .isExactlyInstanceOf(
+            DraftCommitCoordinatorRepository.DraftCommitIdentityConflictException.class)
+        .hasMessage("Account operation identity was reused with changed original canonical bytes");
+    assertThat(operationLookups).hasValue(3);
+    assertThat(draftClaimImages(contender.target())).isEmpty();
+
+    var persisted =
+        new GameDesignDraftTerminalOutcomeRepository(fixture.dsl())
+            .readOperation(operationId)
+            .orElseThrow();
+    assertThat(persisted.accountBindingBytes()).containsExactly(winnerAccount.canonicalBytes());
+    assertThat(persisted.gameDesignBinding().canonicalBytes())
+        .containsExactly(winner.canonicalBytes());
+    String operationImage = operationClaimImage(operationId);
+    List<String> winnerImages = draftClaimImages(winner.target());
+    assertThat(winnerImages).hasSize(1 + winner.requiredOwners().size());
+
+    var replay = fixture.inTransaction(() -> fixture.coordinator().claim(winner, winnerAccount));
+    assertThat(replay.binding().canonicalBytes()).containsExactly(winner.canonicalBytes());
+    assertThat(operationClaimImage(operationId)).isEqualTo(operationImage);
+    assertThat(draftClaimImages(winner.target())).isEqualTo(winnerImages);
+  }
+
+  private static String operationClaimImage(UUID operationId) {
+    return fixture
+        .dsl()
+        .fetchSingle(
+            """
+            SELECT retained.xmin::text || '/' || to_jsonb(retained)::text
+              FROM game_design_draft_terminal_operation retained
+             WHERE retained.operation_id = ?
+            """,
+            operationId)
+        .get(0, String.class);
   }
 
   @Test
@@ -728,6 +916,9 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
   }
 
   private record FinalizeAttempt(boolean succeeded, RuntimeException failure) {}
+
+  private record PendingDraftClaim(
+      Future<FinalizeAttempt> rejection, List<String> originalImages) {}
 
   private record Fixture(
       String schema,

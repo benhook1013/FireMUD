@@ -29,6 +29,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadGrpcService;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftTerminalReconciliationService;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
@@ -64,6 +65,7 @@ import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryRepository;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
@@ -71,6 +73,7 @@ import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceReadGrpcService;
 import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateGrpcService;
 import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateService;
+import net.firedevops.firemud.gamedesign.service.impl.GameAuthoredWorldSourceDeliveryService;
 import net.firedevops.firemud.gamedesign.service.impl.TenantIdentityGrpcService;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -90,6 +93,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalDraftGraphAppl
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalDraftGraphApplyGrpcService;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
+import net.firedevops.firemud.worldmanagement.v1.WorldAuthoredSourceIntakeServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
@@ -106,10 +110,14 @@ import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionSystemException;
+import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
@@ -205,6 +213,175 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
   @Test
   void deniedAccountCreatorRequestReachesNeitherOwnerAndExactRetryRecovers() throws Exception {
     compose(Failure.ACCOUNT_REFUSED);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void durableGameDesignDeliveryAcknowledgesExactWorldReceiptAcrossAuthenticatedSockets(
+      boolean loseRemoteAcknowledgement) throws Exception {
+    var gd = gameDesign();
+    var world = store(WORLD, "world-management");
+    var pki = new GenuineWorldSourceProofPki(temporary.resolve("pki"));
+    var gdHandlers = new MutableHandlerRegistry();
+    var worldHandlers = new MutableHandlerRegistry();
+    Server gdServer = server(pki, "game-design-service", gdHandlers);
+    Server worldServer = null;
+    try {
+      worldServer = server(pki, "world-management-service", worldHandlers);
+      var endpoints = new ServiceEndpointsProperties();
+      endpoints.setGameDesignService("localhost:" + gdServer.getPort());
+      endpoints.setWorldManagementService("localhost:" + worldServer.getPort());
+      var factory = new GrpcChannelFactory();
+      var sources = new GameAuthoredWorldSourceRepository(gd.store().dsl());
+      var deliveries = new GameAuthoredWorldSourceDeliveryRepository(gd.store().dsl());
+      register(gdHandlers, new AuthoredWorldSourceReadGrpcService(sources, NAMESPACE));
+      var source =
+          Objects.requireNonNull(
+              transaction(gd.store())
+                  .execute(
+                      ignored ->
+                          sources.register(
+                              NAMESPACE,
+                              UUID.randomUUID(),
+                              gd.target().canonicalTenantId(),
+                              "genuine-tenant",
+                              "delivery-world",
+                              "Durably delivered authored World")));
+      var claim = deliveries.read(source.operationId()).orElseThrow();
+      var secondGame = new Game();
+      secondGame.setTenantId(UUID.randomUUID().toString());
+      secondGame.setName("Second authored World source");
+      secondGame.setDescription("A distinct pending claim for delivery pagination");
+      var savedSecondGame =
+          Objects.requireNonNull(
+              transaction(gd.store())
+                  .execute(ignored -> new GameRepository(gd.store().dsl()).save(secondGame)));
+      var secondSource =
+          Objects.requireNonNull(
+              transaction(gd.store())
+                  .execute(
+                      ignored ->
+                          sources.register(
+                              NAMESPACE,
+                              UUID.randomUUID(),
+                              savedSecondGame.getCanonicalTenantId(),
+                              "second-genuine-tenant",
+                              "second-delivery-world",
+                              "Second authored World")));
+      var firstPage = deliveries.readPending(NAMESPACE, null, 1);
+      assertThat(firstPage).hasSize(1);
+      var first = firstPage.get(0);
+      var secondPage = deliveries.readPending(NAMESPACE, first.request().intakeRequestId(), 1);
+      assertThat(secondPage).hasSize(1);
+      var second = secondPage.get(0);
+      assertThat(List.of(first.source(), second.source()))
+          .containsExactlyInAnyOrder(source, secondSource);
+      assertThat(deliveries.readPending(NAMESPACE, second.request().intakeRequestId(), 1))
+          .isEmpty();
+      var intakes = new WorldAuthoredSourceIntakeRepository(world.dsl());
+      assertThat(intakes.read(NAMESPACE, claim.request().intakeRequestId())).isEmpty();
+      assertThat(claim.acknowledgedReceipt()).isEmpty();
+      var intakeCalls = new AtomicInteger();
+      var lostWorldResponse = new AtomicBoolean(loseRemoteAcknowledgement);
+
+      try (var sourceClient =
+              new AuthoredWorldSourceClient(
+                  endpoints, pki.client("world-management-service"), factory, NAMESPACE);
+          var intakeClient =
+              new WorldAuthoredSourceIntakeClient(
+                  endpoints, pki.client("game-design-service"), factory, NAMESPACE)) {
+        sourceClient.init();
+        worldHandlers.addService(
+            ServerInterceptors.intercept(
+                new WorldAuthoredSourceIntakeGrpcService(
+                    new WorldAuthoredSourceIntakeService(
+                        sourceClient, intakes, world.transactions(), NAMESPACE),
+                    NAMESPACE),
+                new GrpcPeerIdentityInterceptor(),
+                observeDeliveryIntakes(intakeCalls, lostWorldResponse)));
+        intakeClient.init();
+        var delivery =
+            new GameAuthoredWorldSourceDeliveryService(
+                deliveries, intakeClient, gd.store().transactions(), NAMESPACE);
+        if (loseRemoteAcknowledgement) {
+          assertThatThrownBy(() -> delivery.deliver(source.operationId()))
+              .isInstanceOf(io.grpc.StatusRuntimeException.class)
+              .satisfies(
+                  failure ->
+                      assertThat(Status.fromThrowable(failure).getCode())
+                          .isEqualTo(Status.Code.UNAVAILABLE));
+          assertThat(lostWorldResponse).isFalse();
+          assertThat(intakeCalls).hasValue(1);
+          assertThat(deliveries.read(source.operationId())).contains(claim);
+          var committed = intakes.read(NAMESPACE, claim.request().intakeRequestId()).orElseThrow();
+          assertThat(committed.source()).isEqualTo(source);
+          try (var restartedClient =
+              new WorldAuthoredSourceIntakeClient(
+                  endpoints,
+                  pki.client("game-design-service"),
+                  new GrpcChannelFactory(),
+                  NAMESPACE)) {
+            restartedClient.init();
+            var restartedDelivery =
+                new GameAuthoredWorldSourceDeliveryService(
+                    new GameAuthoredWorldSourceDeliveryRepository(gd.store().dsl()),
+                    restartedClient,
+                    gd.store().transactions(),
+                    NAMESPACE);
+            var recovered = restartedDelivery.deliver(source.operationId());
+            assertThat(recovered.request()).isEqualTo(claim.request());
+            assertThat(recovered.acknowledgedReceipt().orElseThrow().receiptDigest())
+                .isEqualTo(committed.receiptDigest());
+            assertThat(intakes.read(NAMESPACE, claim.request().intakeRequestId()))
+                .contains(committed);
+            assertThat(deliveries.read(source.operationId())).contains(recovered);
+            assertThat(restartedDelivery.deliver(source.operationId())).isEqualTo(recovered);
+            assertThat(intakeCalls).hasValue(2);
+          }
+        }
+        var acknowledged = delivery.deliver(source.operationId());
+        var receipt = acknowledged.acknowledgedReceipt().orElseThrow();
+        var worldReceipt = intakes.read(NAMESPACE, claim.request().intakeRequestId()).orElseThrow();
+        assertThat(acknowledged.source()).isEqualTo(source);
+        assertThat(acknowledged.request()).isEqualTo(claim.request());
+        assertThat(worldReceipt.source()).isEqualTo(source);
+        assertThat(worldReceipt.receiptDigest()).isEqualTo(receipt.receiptDigest());
+        assertThat(deliveries.read(source.operationId())).contains(acknowledged);
+        assertThat(delivery.deliver(source.operationId())).isEqualTo(acknowledged);
+        assertThat(deliveries.readPending(NAMESPACE, null, 2))
+            .singleElement()
+            .satisfies(remaining -> assertThat(remaining.source()).isEqualTo(secondSource));
+        assertThat(intakeCalls).hasValue(loseRemoteAcknowledgement ? 2 : 1);
+
+        var lostAcknowledgement = new AtomicBoolean();
+        var recoveryDelivery =
+            new GameAuthoredWorldSourceDeliveryService(
+                deliveries,
+                intakeClient,
+                loseDeliveryCommitAcknowledgement(gd.store(), lostAcknowledgement),
+                NAMESPACE);
+        var recovered = recoveryDelivery.deliver(secondSource.operationId());
+        var recoveredReceipt = recovered.acknowledgedReceipt().orElseThrow();
+        var recoveredWorld =
+            intakes.read(NAMESPACE, recovered.request().intakeRequestId()).orElseThrow();
+
+        assertThat(lostAcknowledgement).isTrue();
+        assertThat(recovered.source()).isEqualTo(secondSource);
+        assertThat(recoveredWorld.source()).isEqualTo(secondSource);
+        assertThat(recoveredReceipt.receiptDigest()).isEqualTo(recoveredWorld.receiptDigest());
+        assertThat(deliveries.read(secondSource.operationId())).contains(recovered);
+        assertThat(recoveryDelivery.deliver(secondSource.operationId())).isEqualTo(recovered);
+        assertThat(intakeCalls).hasValue(loseRemoteAcknowledgement ? 3 : 2);
+        assertThat(deliveries.readPending(NAMESPACE, null, 2)).isEmpty();
+      }
+    } finally {
+      gdServer.shutdownNow();
+      if (worldServer != null) {
+        worldServer.shutdownNow();
+        assertThat(worldServer.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      }
+      assertThat(gdServer.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+    }
   }
 
   private void compose(Failure failure) throws Exception {
@@ -597,6 +774,25 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
     }
   }
 
+  private static ServerInterceptor observeDeliveryIntakes(
+      AtomicInteger calls, AtomicBoolean loseWorldResponse) {
+    String method =
+        WorldAuthoredSourceIntakeServiceGrpc.getIntakeAuthoredWorldSourceMethod()
+            .getFullMethodName();
+    ServerInterceptor fault = failureInterceptor(Failure.LOST_ACKNOWLEDGEMENT, loseWorldResponse);
+    return new ServerInterceptor() {
+      @Override
+      public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+          ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
+        if (method.equals(call.getMethodDescriptor().getFullMethodName())) {
+          calls.incrementAndGet();
+          return fault.interceptCall(call, headers, next);
+        }
+        return next.startCall(call, headers);
+      }
+    };
+  }
+
   private static ServerInterceptor failureInterceptor(Failure failure, AtomicBoolean pending) {
     return new ServerInterceptor() {
       @Override
@@ -726,6 +922,19 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
     var result = new TransactionTemplate(store.transactions());
     result.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     return result;
+  }
+
+  private static DataSourceTransactionManager loseDeliveryCommitAcknowledgement(
+      Store store, AtomicBoolean lostAcknowledgement) {
+    return new DataSourceTransactionManager(
+        Objects.requireNonNull(store.transactions().getDataSource())) {
+      @Override
+      protected void doCommit(DefaultTransactionStatus status) {
+        super.doCommit(status);
+        lostAcknowledgement.set(true);
+        throw new TransactionSystemException("Test-only lost Game Design commit acknowledgement");
+      }
+    };
   }
 
   private static Server server(

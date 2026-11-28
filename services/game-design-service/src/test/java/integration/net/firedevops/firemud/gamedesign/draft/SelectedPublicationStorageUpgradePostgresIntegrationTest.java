@@ -12,9 +12,11 @@ import java.security.MessageDigest;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
@@ -41,11 +43,13 @@ import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -161,6 +165,167 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
                 .get(0, Integer.class))
         .isEqualTo(expectedMigrations.highestIntegerVersion());
     assertEnabledGuards(dsl, schema);
+  }
+
+  @Test
+  void v503RejectsConflictingRetainedRequestsAcrossVersionsWithoutDiscardingEitherHistory() {
+    String schema = "gd_selection_collision_" + UUID.randomUUID().toString().replace("-", "");
+    var source =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    source.setSchema(schema);
+    flyway(source, schema, "50.2").migrate();
+    var write = new TransactionTemplate(new DataSourceTransactionManager(source));
+    write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    var dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT tgenabled::text FROM pg_trigger "
+                        + "WHERE tgrelid = 'game_design_authored_draft_publish_selection'::regclass "
+                        + "AND tgname = 'trg_gd_authored_draft_publish_selection'")
+                .get(0, String.class))
+        .isEqualTo("O");
+
+    var requested = new Game();
+    requested.setTenantId("retained-selection-collision");
+    requested.setName("Historical publication request collision");
+    var game = new GameRepository(dsl).save(requested);
+    var versions = new VersionRepository(dsl);
+    var firstVersion =
+        versions.findById(insertHistoricalDraftVersion(dsl, game.getId())).orElseThrow();
+    var secondVersion =
+        versions.findById(insertHistoricalDraftVersion(dsl, game.getId(), 2)).orElseThrow();
+
+    String requestId = UUID.randomUUID().toString();
+    var coordinator = new DraftCommitCoordinatorRepository(dsl);
+    var selections = new AuthoredDraftPublishSelectionRepository(dsl, coordinator);
+    var first =
+        Objects.requireNonNull(
+            write.execute(
+                status -> retainV502Selection(dsl, coordinator, firstVersion, requestId)));
+    var second =
+        Objects.requireNonNull(
+            write.execute(
+                status -> retainV502Selection(dsl, coordinator, secondVersion, requestId)));
+    assertThat(second.target().canonicalTenantId()).isEqualTo(first.target().canonicalTenantId());
+    assertThat(second.target().canonicalVersionId())
+        .isNotEqualTo(first.target().canonicalVersionId());
+
+    String selectionImagesQuery =
+        """
+        SELECT s.xmin::text, to_jsonb(s)::text
+          FROM game_design_authored_draft_publish_selection s
+         ORDER BY s.canonical_tenant_id, s.canonical_version_id
+        """;
+    var selectionImages = dsl.fetch(selectionImagesQuery);
+    assertThat(selectionImages).hasSize(2);
+    String historyImagesQuery =
+        """
+        SELECT h.xmin::text, to_jsonb(h)::text
+          FROM flyway_schema_history_game_design_service h
+         ORDER BY h.installed_rank
+        """;
+    var historyImages = dsl.fetch(historyImagesQuery);
+
+    assertThatThrownBy(() -> flyway(source, schema, "50.3").migrate())
+        .isInstanceOf(FlywayException.class)
+        .hasMessageContaining("50.3")
+        .rootCause()
+        .isInstanceOfSatisfying(
+            PSQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23505");
+              assertThat(Objects.requireNonNull(failure.getServerErrorMessage()).getConstraint())
+                  .isEqualTo("uq_gd_authored_draft_publish_operation");
+            });
+
+    assertThat(dsl.fetch(selectionImagesQuery)).isEqualTo(selectionImages);
+    assertThat(dsl.fetch(historyImagesQuery)).isEqualTo(historyImages);
+    assertThat(
+            dsl.fetch(
+                    "SELECT version FROM flyway_schema_history_game_design_service "
+                        + "WHERE version IN ('50.2', '50.3') AND success ORDER BY installed_rank")
+                .getValues(0, String.class))
+        .containsExactly("50.2");
+    for (var original : List.of(first, second)) {
+      var target = original.target();
+      assertThat(
+              selections.read(target.canonicalTenantId(), target.canonicalVersionId(), requestId))
+          .hasValueSatisfying(retained -> assertThat(retained.selection()).isEqualTo(original));
+    }
+  }
+
+  @Test
+  void legacyAttemptDigestsAndRowsSurviveSelectedDigestWidthAndRevisionUpgrades() {
+    String schema = "gd_legacy_attempts_" + UUID.randomUUID().toString().replace("-", "");
+    var source =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    source.setSchema(schema);
+    flyway(source, schema, "50.3").migrate();
+    var dsl = DSL.using(source, SQLDialect.POSTGRES);
+
+    var requested = new Game();
+    requested.setTenantId("retained-attempt-test");
+    requested.setName("Historical publication attempts");
+    var game = new GameRepository(dsl).save(requested);
+    long versionId = insertHistoricalDraftVersion(dsl, game.getId());
+    dsl.execute(
+        """
+        INSERT INTO publish_attempt
+          (tenant_id, publish_workflow_id, publish_type, status, version_id,
+           version_number, request_digest)
+        VALUES (?, 'retained-pending', 'FULL_VERSION', 'PENDING', ?, 1, ?),
+               (?, 'retained-success', 'FULL_VERSION', 'SUCCEEDED', ?, 1, ?),
+               (?, 'retained-patch', 'SCRIPT_PATCH', 'FAILED', ?, 1, NULL)
+        """,
+        game.getTenantId(),
+        versionId,
+        "a".repeat(64),
+        game.getTenantId(),
+        versionId,
+        "b".repeat(64),
+        game.getTenantId(),
+        versionId);
+
+    String attemptImageQuery =
+        """
+        SELECT attempt.xmin::text, (to_jsonb(attempt) - 'revision')::text
+          FROM publish_attempt attempt
+         ORDER BY attempt.id
+        """;
+    var attemptImages = dsl.fetch(attemptImageQuery);
+    assertThat(attemptImages).hasSize(3);
+    int priorRank =
+        dsl.fetchSingle("SELECT max(installed_rank) FROM flyway_schema_history_game_design_service")
+            .get(0, int.class);
+    String historyQuery =
+        """
+        SELECT to_jsonb(history)::text FROM flyway_schema_history_game_design_service history
+         WHERE installed_rank <= ? ORDER BY installed_rank
+        """;
+    var history = dsl.fetch(historyQuery, priorRank);
+
+    flyway(source, schema, "50.4").migrate();
+    assertThat(dsl.fetch(attemptImageQuery)).isEqualTo(attemptImages);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT character_maximum_length FROM information_schema.columns "
+                        + "WHERE table_schema = ? AND table_name = 'publish_attempt' AND column_name = 'request_digest'",
+                    schema)
+                .get(0, int.class))
+        .isEqualTo(71);
+
+    var latest = flyway(source, schema, null);
+    latest.migrate();
+    latest.validate();
+    assertThat(dsl.fetch(attemptImageQuery)).isEqualTo(attemptImages);
+    assertThat(dsl.fetch(historyQuery, priorRank)).isEqualTo(history);
+    assertThat(
+            dsl.fetch("SELECT revision FROM publish_attempt ORDER BY id").getValues(0, Long.class))
+        .containsExactly(1L, 1L, 1L);
+    assertThat(dsl.fetchCount(DSL.table("game_design_publication_operation"))).isZero();
+    assertThat(dsl.fetchCount(DSL.table("game_design_draft_terminal_operation"))).isZero();
   }
 
   @Test
@@ -748,29 +913,11 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
               var game = new GameRepository(dsl).save(requested);
               // Reproduce the original owner insertion under its actual pre-tail schema. The
               // current Version writer requires ordinary asset genesis, which did not exist here.
-              var inserted =
-                  java.util.Objects.requireNonNull(
-                      dsl.fetchOne(
-                          "INSERT INTO version (tenant_id, canonical_version_id, canonical_tenant_id, "
-                              + "identity_source_game_row_id, identity_source_game_tenant_key, "
-                              + "identity_source_provenance_kind, version_number, version_state, "
-                              + "version_state_epoch, is_script_only, created_at, updated_at) "
-                              + "SELECT g.tenant_id, ?, g.canonical_tenant_id, g.id, g.tenant_id, "
-                              + "g.tenant_identity_provenance_kind, 1, 'DRAFT', 1, FALSE, "
-                              + "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM game g WHERE g.id = ? RETURNING id",
-                          UUID.randomUUID(),
-                          game.getId()));
               var version =
-                  new VersionRepository(dsl).findById(inserted.get("id", Long.class)).orElseThrow();
-              var target =
-                  new TargetProof(
-                      version.getCanonicalTenantId(),
-                      version.getCanonicalVersionId(),
-                      version.getId(),
-                      version.getTenantId(),
-                      version.getIdentitySourceGameRowId(),
-                      version.getIdentitySourceGameTenantKey(),
-                      version.getIdentitySourceProvenanceKind());
+                  new VersionRepository(dsl)
+                      .findById(insertHistoricalDraftVersion(dsl, game.getId()))
+                      .orElseThrow();
+              var target = target(version);
               RealmPolicyGenesis reviewedGenesis = null;
               String reviewedBaseReference = null;
               if (retainReviewedV1) {
@@ -881,6 +1028,184 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
     attempt.setRequestDigest(operation.selectionDigest());
     new PublishAttemptRepository(dsl).save(attempt);
     return operation;
+  }
+
+  private AuthoredDraftPublishSelection retainV502Selection(
+      DSLContext dsl,
+      DraftCommitCoordinatorRepository coordinator,
+      Version version,
+      String requestId) {
+    var target = target(version);
+    var owner = DraftCommitBinding.Owner.WORLD_MANAGEMENT;
+    var unit =
+        new DraftCommitBinding.AffectedUnit(
+            owner, "WORLD_TEMPLATE", "world-17", "ROOM_SCOPE", "room-scope-5", "7");
+    var commit =
+        DraftCommitBinding.create(
+            target,
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "historical-world-base",
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    owner,
+                    "{\"completeWorldMutation\":{\"opaque\":\"retained\"}}")),
+            List.of(unit));
+    String resultIdentity = "historical-world-result-" + commit.commitId();
+    byte[] resultBytes = resultIdentity.getBytes(StandardCharsets.UTF_8);
+    var appliedUnits =
+        List.of(
+            Map.of(
+                "aggregateType", unit.aggregateType(),
+                "aggregateId", unit.aggregateId(),
+                "scopeType", unit.scopeType(),
+                "scopeId", unit.scopeId(),
+                "expectedEpoch", unit.expectedEpoch(),
+                "resultingEpoch", "8"));
+    String resultVector =
+        new String(
+            canonical(
+                List.of(
+                    Map.of(
+                        "owner", owner.name(),
+                        "status", "APPLIED",
+                        "commitId", commit.commitId().toString(),
+                        "bindingDigest", commit.digest(),
+                        "resultIdentity", resultIdentity,
+                        "resultBytesBase64", Base64.getEncoder().encodeToString(resultBytes),
+                        "appliedEpochs", appliedUnits))),
+            StandardCharsets.UTF_8);
+
+    coordinator.claim(commit);
+    // Reproduce the V50.1 transitions under its installed guards. The current application
+    // writers require the terminal-operation table added after V50.2.
+    dsl.execute(
+        "INSERT INTO game_design_draft_commit_application_slot "
+            + "(canonical_tenant_id, canonical_version_id, request_id, commit_id) VALUES (?, ?, ?, ?)",
+        target.canonicalTenantId(),
+        target.canonicalVersionId(),
+        commit.requestId(),
+        commit.commitId());
+    dsl.execute(
+        "UPDATE game_design_draft_commit SET workflow_state = 'APPLYING' WHERE request_id = ?",
+        commit.requestId());
+    dsl.execute(
+        "UPDATE game_design_draft_commit_owner_result SET status = 'IN_PROGRESS' WHERE request_id = ? AND owner = ?",
+        commit.requestId(),
+        owner.name());
+    dsl.execute(
+        "UPDATE game_design_draft_commit_owner_result SET status = 'APPLIED', result_commit_id = ?, "
+            + "result_binding_digest = ?, result_identity = ?, result_bytes = ?, applied_units_json = ? "
+            + "WHERE request_id = ? AND owner = ?",
+        commit.commitId(),
+        commit.digest(),
+        resultIdentity,
+        resultBytes,
+        new String(canonical(appliedUnits), StandardCharsets.UTF_8),
+        commit.requestId(),
+        owner.name());
+    dsl.execute(
+        "INSERT INTO game_design_draft_commit_visibility_fence "
+            + "(canonical_tenant_id, canonical_version_id, request_id, commit_id, input_digest, result_vector_json) "
+            + "VALUES (?, ?, ?, ?, ?, ?)",
+        target.canonicalTenantId(),
+        target.canonicalVersionId(),
+        commit.requestId(),
+        commit.commitId(),
+        commit.digest(),
+        resultVector);
+    dsl.execute(
+        "UPDATE game_design_draft_commit SET workflow_state = 'SYNCHRONIZED' WHERE request_id = ?",
+        commit.requestId());
+    dsl.execute(
+        "INSERT INTO game_design_draft_commit_visibility "
+            + "(canonical_tenant_id, canonical_version_id, request_id, commit_id, input_digest) "
+            + "VALUES (?, ?, ?, ?, ?)",
+        target.canonicalTenantId(),
+        target.canonicalVersionId(),
+        commit.requestId(),
+        commit.commitId(),
+        commit.digest());
+    coordinator.releaseApplicationSlot(commit);
+
+    var intent =
+        new AuthoredDraftPublishSelection.PublishIntent(
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            requestId,
+            Long.toString(version.getVersionStateEpoch()),
+            "Historical selection for Version " + version.getVersionNumber(),
+            commit.requestId(),
+            commit.commitId(),
+            commit.digest());
+    var selection =
+        AuthoredDraftPublishSelection.capture(
+            intent,
+            target,
+            coordinator.requireSynchronizedPublicationEvidence(
+                target, commit.requestId(), commit.commitId(), commit.digest()));
+    // V50.2 permits one selection per Version. The current reserve path assumes the
+    // V50.3 tenant/request key, so use the original guarded table for both reservations.
+    dsl.execute(
+        """
+        INSERT INTO game_design_authored_draft_publish_selection
+          (canonical_tenant_id, canonical_version_id, game_design_version_row_id,
+           game_design_version_tenant_key, source_game_row_id, source_game_tenant_key,
+           source_provenance_kind, publish_request_id, version_state_epoch, selected_commit_request_id,
+           selected_commit_id, selected_commit_digest, selection_digest, selection_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        target.canonicalTenantId(),
+        target.canonicalVersionId(),
+        target.gameDesignVersionRowId(),
+        target.gameDesignVersionTenantKey(),
+        target.sourceGameRowId(),
+        target.sourceGameTenantKey(),
+        target.sourceProvenanceKind(),
+        intent.publishRequestId(),
+        version.getVersionStateEpoch(),
+        intent.selectedCommitRequestId(),
+        intent.selectedCommitId(),
+        intent.selectedCommitDigest(),
+        selection.digest(),
+        selection.canonicalJson());
+    return selection;
+  }
+
+  private static TargetProof target(Version version) {
+    return new TargetProof(
+        version.getCanonicalTenantId(),
+        version.getCanonicalVersionId(),
+        version.getId(),
+        version.getTenantId(),
+        version.getIdentitySourceGameRowId(),
+        version.getIdentitySourceGameTenantKey(),
+        version.getIdentitySourceProvenanceKind());
+  }
+
+  private static long insertHistoricalDraftVersion(DSLContext dsl, long gameId) {
+    return insertHistoricalDraftVersion(dsl, gameId, 1);
+  }
+
+  private static long insertHistoricalDraftVersion(DSLContext dsl, long gameId, int versionNumber) {
+    return dsl.fetchSingle(
+            """
+            INSERT INTO version
+              (tenant_id, canonical_version_id, canonical_tenant_id, identity_source_game_row_id,
+               identity_source_game_tenant_key, identity_source_provenance_kind, version_number,
+               version_state, version_state_epoch, is_script_only, created_at, updated_at)
+            SELECT g.tenant_id, ?, g.canonical_tenant_id, g.id, g.tenant_id,
+                   g.tenant_identity_provenance_kind, ?, 'DRAFT', 1, FALSE,
+                   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+              FROM game g WHERE g.id = ?
+            RETURNING id
+            """,
+            UUID.randomUUID(),
+            versionNumber,
+            gameId)
+        .get(0, long.class);
   }
 
   private byte[] historicalReviewedGenesisBytes(

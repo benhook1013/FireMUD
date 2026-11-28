@@ -457,51 +457,56 @@ class DraftAuthorizationFencePostgresIntegrationTest {
 
   @Test
   void bothMixedDirectionsRemainPendingAndPreserveOriginalReadbacks() {
-    for (Outcome worldOutcome : List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED)) {
-      Context context = context();
-      DraftAuthorizationFenceBinding binding = binding(context);
-      tx(context, () -> context.repository().reserve(binding));
-      var ordered = tx(context, () -> context.repository().claimCommitOrder(binding));
-      SourceChange change = change(binding);
-      assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isFalse();
-      var waiting = tx(context, () -> context.repository().readSourceChange(change));
-      owner(context, binding, Owner.WORLD, worldOutcome, new byte[] {1});
-      var originalWorld =
-          tx(context, () -> context.repository().readOwnerResult(binding, Owner.WORLD))
-              .orElseThrow();
-      assertThat(tx(context, () -> context.repository().readSettlement(binding)))
-          .isEqualTo(Settlement.PENDING);
-      assertThat(tx(context, () -> context.repository().sourceMutationPermitted(change))).isFalse();
-      assertSourceGuardBlocked(context, change);
-      Outcome gameDesignOutcome =
-          worldOutcome == Outcome.COMMITTED ? Outcome.DEFINITIVELY_ABORTED : Outcome.COMMITTED;
-      owner(context, binding, Owner.GAME_DESIGN, gameDesignOutcome, new byte[] {2});
-      assertThat(tx(context, () -> context.repository().readSettlement(binding)))
-          .isEqualTo(Settlement.PENDING);
-      assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isFalse();
-      assertThat(tx(context, () -> context.repository().sourceMutationPermitted(change))).isFalse();
-      assertThat(tx(context, () -> context.repository().sourceAbortPermitted(change))).isFalse();
-      assertSourceGuardBlocked(context, change);
-      var held = tx(context, () -> context.repository().readSourceChange(change));
-      assertThat(held.status()).isEqualTo("WAITING");
-      assertThat(held.binding()).containsExactly(waiting.binding());
-      assertThat(held.requestedAt()).isEqualTo(waiting.requestedAt());
-      assertThat(tx(context, () -> context.repository().read(binding)).ordering())
-          .isEqualTo(Ordering.COMMIT_ORDER);
-      assertThat(tx(context, () -> context.repository().read(binding)).orderedAt())
-          .isEqualTo(ordered.orderedAt());
-      owner(context, binding, Owner.WORLD, worldOutcome, new byte[] {1});
-      var replay =
-          tx(context, () -> context.repository().readOwnerResult(binding, Owner.WORLD))
-              .orElseThrow();
-      assertThat(replay.outcome()).isEqualTo(originalWorld.outcome());
-      assertThat(replay.readback()).containsExactly(originalWorld.readback());
-      assertThat(replay.recordedAt()).isEqualTo(originalWorld.recordedAt());
-      assertThatThrownBy(() -> owner(context, binding, Owner.WORLD, worldOutcome, new byte[] {9}))
-          .isInstanceOf(IllegalArgumentException.class);
-      assertThatThrownBy(
-              () -> owner(context, binding, Owner.WORLD, gameDesignOutcome, new byte[] {1}))
-          .isInstanceOf(IllegalArgumentException.class);
+    for (SourceKind sourceKind :
+        List.of(SourceKind.ACCOUNT, SourceKind.ISSUER, SourceKind.TENANT, SourceKind.MEMBERSHIP)) {
+      for (Outcome worldOutcome : List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED)) {
+        Context context = context();
+        DraftAuthorizationFenceBinding binding = binding(context, sourceKind);
+        tx(context, () -> context.repository().reserve(binding));
+        var ordered = tx(context, () -> context.repository().claimCommitOrder(binding));
+        SourceChange change = change(binding);
+        assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isFalse();
+        var waiting = tx(context, () -> context.repository().readSourceChange(change));
+        owner(context, binding, Owner.WORLD, worldOutcome, new byte[] {1});
+        var originalWorld =
+            tx(context, () -> context.repository().readOwnerResult(binding, Owner.WORLD))
+                .orElseThrow();
+        assertThat(tx(context, () -> context.repository().readSettlement(binding)))
+            .isEqualTo(Settlement.PENDING);
+        assertThat(tx(context, () -> context.repository().sourceMutationPermitted(change)))
+            .isFalse();
+        assertSourceGuardBlocked(context, change);
+        Outcome gameDesignOutcome =
+            worldOutcome == Outcome.COMMITTED ? Outcome.DEFINITIVELY_ABORTED : Outcome.COMMITTED;
+        owner(context, binding, Owner.GAME_DESIGN, gameDesignOutcome, new byte[] {2});
+        assertThat(tx(context, () -> context.repository().readSettlement(binding)))
+            .isEqualTo(Settlement.PENDING);
+        assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isFalse();
+        assertThat(tx(context, () -> context.repository().sourceMutationPermitted(change)))
+            .isFalse();
+        assertThat(tx(context, () -> context.repository().sourceAbortPermitted(change))).isFalse();
+        assertSourceGuardBlocked(context, change);
+        var held = tx(context, () -> context.repository().readSourceChange(change));
+        assertThat(held.status()).isEqualTo("WAITING");
+        assertThat(held.binding()).containsExactly(waiting.binding());
+        assertThat(held.requestedAt()).isEqualTo(waiting.requestedAt());
+        assertThat(tx(context, () -> context.repository().read(binding)).ordering())
+            .isEqualTo(Ordering.COMMIT_ORDER);
+        assertThat(tx(context, () -> context.repository().read(binding)).orderedAt())
+            .isEqualTo(ordered.orderedAt());
+        owner(context, binding, Owner.WORLD, worldOutcome, new byte[] {1});
+        var replay =
+            tx(context, () -> context.repository().readOwnerResult(binding, Owner.WORLD))
+                .orElseThrow();
+        assertThat(replay.outcome()).isEqualTo(originalWorld.outcome());
+        assertThat(replay.readback()).containsExactly(originalWorld.readback());
+        assertThat(replay.recordedAt()).isEqualTo(originalWorld.recordedAt());
+        assertThatThrownBy(() -> owner(context, binding, Owner.WORLD, worldOutcome, new byte[] {9}))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(
+                () -> owner(context, binding, Owner.WORLD, gameDesignOutcome, new byte[] {1}))
+            .isInstanceOf(IllegalArgumentException.class);
+      }
     }
   }
 
@@ -1288,6 +1293,10 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   }
 
   private DraftAuthorizationFenceBinding binding(Context context) {
+    return binding(context, SourceKind.ACCOUNT);
+  }
+
+  private DraftAuthorizationFenceBinding binding(Context context, SourceKind sourceKind) {
     // Database-owned UUID/provenance satisfies the current Account-before-source lock.
     // The captured source epochs and authenticated owner evidence remain fixture stipulations.
     UUID suffix = UUID.randomUUID();
@@ -1308,15 +1317,6 @@ class DraftAuthorizationFencePostgresIntegrationTest {
         .isEqualTo(row.get("id", Long.class));
     assertThat(row.get("account_uuid_provenance", String.class))
         .isEqualTo("ACCOUNT_DATABASE_INSERT");
-    SourceEvidence source =
-        new SourceEvidence(
-            SourceKind.ACCOUNT,
-            account.toString(),
-            "3",
-            "5",
-            "stream/" + account,
-            "2",
-            new byte[] {7});
     DraftCommitBinding complete =
         completeBinding(
             UUID.randomUUID(),
@@ -1326,6 +1326,15 @@ class DraftAuthorizationFencePostgresIntegrationTest {
             "opaque/base:9007199254740993",
             "world-payload",
             UUID.randomUUID());
+    String tenant = complete.target().canonicalTenantId().toString();
+    String scopeId =
+        switch (sourceKind) {
+          case MEMBERSHIP -> account + "/" + tenant;
+          case TENANT -> tenant;
+          default -> account.toString();
+        };
+    SourceEvidence source =
+        new SourceEvidence(sourceKind, scopeId, "3", "5", "stream/" + account, "2", new byte[] {7});
     return new DraftAuthorizationFenceBinding(
         UUID.randomUUID(),
         complete.requestId(),

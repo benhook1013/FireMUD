@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -75,6 +76,8 @@ class VersionServiceImplTest {
   private static final String PUBLISH_REQUEST_ID = "publish-request-1";
   private static final String PARTICIPANT_DEPENDENCY_FAILURE_CODE =
       "PARTICIPANT_DEPENDENCY_UNAVAILABLE";
+  private static final String LIVE_ABILITY_DIGEST = "sha256:" + "b".repeat(64);
+  private static final String REQUESTED_ABILITY_DIGEST = "sha256:" + "c".repeat(64);
   private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
   private static final UUID CANONICAL_TENANT_ID =
       UUID.fromString("12345678-1234-4234-8234-123456789abc");
@@ -1403,23 +1406,26 @@ class VersionServiceImplTest {
         .assertGatePassed(any(VersionDto.class), any(List.class));
   }
 
-  @Test
-  void publishPluginVersionRequiresPublishedBaseVersionAbilityDigestMatch() {
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void publishPluginVersionRequiresPublishedBaseVersionAbilityDigestMatch(
+      boolean hasOwnerEvidence) {
     Version version = new Version();
     version.setId(7L);
     version.setTenantId("tenant-1");
     when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
     PublishedPluginVersion uploaded = uploadedPluginVersion("tenant-1", "plugin-1", "plugin-v1");
-    uploaded.setAbilitySchemaDigest("digest-requested");
+    uploaded.setAbilitySchemaDigest(REQUESTED_ABILITY_DIGEST);
     when(publishedPluginVersionRepository.findByTenantIdAndPluginIdAndPluginVersionId(
             "tenant-1", "plugin-1", "plugin-v1"))
         .thenReturn(Optional.of(uploaded));
     when(pluginBundleStorageService.loadPluginBundle("tenant-1", "plugin-1", "plugin-v1"))
         .thenReturn(new byte[] {1, 2, 3});
     when(pluginBundleIntakeService.parseAndVerify(any()))
-        .thenReturn(parsedPluginBundle("plugin-1", "plugin-v1", 7L, "digest-requested"));
+        .thenReturn(parsedPluginBundle("plugin-1", "plugin-v1", 7L, REQUESTED_ABILITY_DIGEST));
     when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
-        .thenReturn(publishedReleaseBundle("tenant-1", 7L, "digest-live"));
+        .thenReturn(
+            publishedReleaseBundle("tenant-1", 7L, hasOwnerEvidence ? LIVE_ABILITY_DIGEST : null));
 
     IllegalArgumentException thrown =
         assertThrows(
@@ -1430,7 +1436,7 @@ class VersionServiceImplTest {
                     "plugin-1",
                     "plugin-v1",
                     7L,
-                    "digest-requested",
+                    REQUESTED_ABILITY_DIGEST,
                     "bundle-1",
                     1,
                     null,
@@ -1440,7 +1446,11 @@ class VersionServiceImplTest {
                     "ALLOWED",
                     "notes"));
 
-    assertTrue(thrown.getMessage().contains("VALIDATION_FAILED_DESIGN"));
+    assertTrue(
+        thrown
+            .getMessage()
+            .contains(hasOwnerEvidence ? "VALIDATION_FAILED_DESIGN" : "lacks exact Game Logic"));
+    verify(pluginBundleStorageService, never()).exportPluginAssets(any(), any(), any(), any());
   }
 
   @Test
@@ -1462,7 +1472,7 @@ class VersionServiceImplTest {
                     "plugin-1",
                     "plugin-v1",
                     7L,
-                    "digest-live",
+                    LIVE_ABILITY_DIGEST,
                     "bundle-1",
                     1,
                     null,
@@ -1494,7 +1504,7 @@ class VersionServiceImplTest {
                     "plugin-1",
                     "plugin-v1",
                     7L,
-                    "digest-live",
+                    LIVE_ABILITY_DIGEST,
                     "bundle-1",
                     1,
                     null,
@@ -1519,9 +1529,9 @@ class VersionServiceImplTest {
     when(pluginBundleStorageService.loadPluginBundle("tenant-1", "plugin-1", "plugin-v1"))
         .thenReturn(new byte[] {1, 2, 3});
     when(pluginBundleIntakeService.parseAndVerify(any()))
-        .thenReturn(parsedPluginBundle("plugin-1", "plugin-v1", 7L, "digest-live"));
+        .thenReturn(parsedPluginBundle("plugin-1", "plugin-v1", 7L, LIVE_ABILITY_DIGEST));
     when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
-        .thenReturn(publishedReleaseBundle("tenant-1", 7L, "digest-live"));
+        .thenReturn(publishedReleaseBundle("tenant-1", 7L, LIVE_ABILITY_DIGEST));
     when(pluginBundleStorageService.exportPluginAssets(
             org.mockito.ArgumentMatchers.eq("tenant-1"),
             any(ParsedPluginBundle.class),
@@ -1538,7 +1548,7 @@ class VersionServiceImplTest {
                     "plugin-1",
                     "plugin-v1",
                     7L,
-                    "digest-live",
+                    LIVE_ABILITY_DIGEST,
                     "bundle-1",
                     1,
                     "",
@@ -1572,9 +1582,9 @@ class VersionServiceImplTest {
     when(pluginBundleStorageService.loadPluginBundle("tenant-1", "plugin-1", "plugin-v2"))
         .thenReturn(new byte[] {1, 2, 3});
     when(pluginBundleIntakeService.parseAndVerify(any()))
-        .thenReturn(parsedPluginBundle("plugin-1", "plugin-v2", 7L, "digest-live"));
+        .thenReturn(parsedPluginBundle("plugin-1", "plugin-v2", 7L, LIVE_ABILITY_DIGEST));
     when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
-        .thenReturn(publishedReleaseBundle("tenant-1", 7L, "digest-live"));
+        .thenReturn(publishedReleaseBundle("tenant-1", 7L, LIVE_ABILITY_DIGEST));
     when(pluginBundleStorageService.exportPluginAssets(
             org.mockito.ArgumentMatchers.eq("tenant-1"),
             any(ParsedPluginBundle.class),
@@ -1593,7 +1603,7 @@ class VersionServiceImplTest {
             "plugin-1",
             "plugin-v2",
             7L,
-            "digest-live",
+            LIVE_ABILITY_DIGEST,
             "bundle-1",
             1,
             "",
@@ -1628,7 +1638,7 @@ class VersionServiceImplTest {
                       "plugin-1",
                       "plugin-v1",
                       7L,
-                      "digest-live",
+                      LIVE_ABILITY_DIGEST,
                       "bundle-1",
                       1,
                       "",
@@ -2014,7 +2024,7 @@ class VersionServiceImplTest {
   }
 
   private PublishedReleaseBundleDto publishedReleaseBundle(
-      String tenantId, long versionId, String automationDigest) {
+      String tenantId, long versionId, String gameLogicAbilityDigest) {
     return new PublishedReleaseBundleDto(
         1L,
         tenantId,
@@ -2029,8 +2039,18 @@ class VersionServiceImplTest {
                 "AUTOMATION_SCRIPTING",
                 String.valueOf(versionId),
                 "version:" + versionId,
-                automationDigest,
+                REQUESTED_ABILITY_DIGEST,
+                6,
+                null,
+                null),
+            new PublishParticipantDigestDto(
+                "GAME_LOGIC",
+                String.valueOf(versionId),
+                null,
+                "version:" + versionId,
+                "a".repeat(64),
                 1,
+                gameLogicAbilityDigest,
                 null,
                 null)),
         "genrev-1",
@@ -2060,7 +2080,7 @@ class VersionServiceImplTest {
     entity.setPluginVersionId(pluginVersionId);
     entity.setBaseVersionId(7L);
     entity.setPublicationState(VersionLifecycleState.SIGNATURE_VERIFIED);
-    entity.setAbilitySchemaDigest("digest-live");
+    entity.setAbilitySchemaDigest(LIVE_ABILITY_DIGEST);
     entity.setBundleDigest("bundle-1");
     entity.setManifestSchemaVersion(1);
     entity.setDistributionManifestHash("");

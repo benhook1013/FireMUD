@@ -221,7 +221,7 @@ Retry identity and timer catch-up behavior follow the linked scripting contract.
 
 The service exposes control-plane read and lifecycle surfaces for script patch visibility and plugin runtime lifecycle management:
 
-- `GetScriptPatchStatus(tenantId, scriptPatchVersion)` – returns the current runtime-readiness lifecycle state plus the published script patch `baseVersionId`, compatibility digest metadata, timestamps, and any last-error details. Target `abilitySchemaDigest` must come only from the dedicated Game Logic-owned release attestation; if that attestation is missing or unavailable, the status/compatibility result must fail closed or report an explicit unavailable compatibility state, never fall back to Automation's aggregate participant digest. The current response is not compliant: it returns an empty digest when release-attestation lookup fails and otherwise derives the field from Automation's aggregate participant digest, so it does not prove ability-schema compatibility.
+- `GetScriptPatchStatus(tenantId, scriptPatchVersion)` – returns the current runtime-readiness lifecycle state plus the published script patch `baseVersionId`, compatibility digest metadata, timestamps, and any last-error details. The `abilitySchemaDigest` comes from one supported Game Logic participant in the exact full base Version release bundle. An empty digest denotes unavailable compatibility evidence. Malformed, conflicting or unavailable evidence produces an empty digest for status reads and refuses plugin activation. The registered Game Design release read remains held. The local selector alone does not verify the canonical tenant UUID association.
 - `ListScriptPatchStatuses(tenantId, status?, changedAfter?, changedBefore?)` – lists known tenant patch statuses with the same publication metadata fields used by the single-patch read.
 - `ScriptPatchTenantStatusChanged` – emitted whenever `<tenantId, scriptPatchVersion>` transitions between tenant readiness lifecycle states.
 - `ScriptPatchPinChanged` – consumed only as a non-authoritative notification to refresh Automation's observed pin/convergence projection. Game Session's direct current-pin and bounded rollout-history reads remain authoritative. Any legacy patch-only `PINNED`, `REPINNED`, and `ROLLED_BACK` projection statuses/events are internal migration diagnostics only; they must never be exposed or consumed as public rollout status/event semantics. The target projection remains exact-epoch observed state and must not derive rollout history locally.
@@ -297,3 +297,20 @@ The selected-empty service also requires the complete incoming publication reque
 For publication-gate calls, `GetDraftDesignDigest` is not an admin or user operation. The target receiver authorization is a method-level allowlist for the authenticated Game Design workload identity, under the shared [Security Architecture](../../system-architecture-security.md) and [Authentication & Authorization](../../system-architecture-authentication.md) owner rules. The call must carry and validate the exact `{tenantId, scope}` (`versionId` or `scriptPatchVersion`) together with the stable caller `publishRequestId`, derived workflow identity, and canonical `requestDigest`; omitted or changed binding fails closed. This context is authorization and replay evidence, not a digest input. Other internal workloads are denied, and no user/admin JWT is accepted as a substitute. Game Design's Temporal activities must never forward the initiating human operator JWT; operator authority terminates at workflow admission.
 
 **Current status:** `GetDraftDesignDigest` invokes `PublicationReadGuard` for the exact Automation publication-read method. The guard requires the authenticated exact Game Design workload mTLS peer in the configured trusted namespace and denies account, global-role, or scoped-role context. It does not add an end-user JWT requirement; a role-free internal identity is neither workload authorization nor an independent denial condition when the exact peer is present. The request proto carries tenant, typed scope, the patch `baseVersionId` when applicable, stable `publishRequestId`, derived workflow identity, and canonical `requestDigest`; the handler validates that complete binding before returning `UNSUPPORTED_SCOPE` for either selector. Focused unit proof covers the allowlisted peer without end-user context, missing/wrong peer, account/global/scoped-role context denial, and changed request digest. This does not claim live mounted-certificate or real Temporal-activity proof. The selected-empty schema-6 primitive remains unregistered; exact version mapping and the base-bound patch manifest are still required before a publication digest can be returned. See the [Game Design publication/Temporal contract](../game-design-service/version-control.md#owner-to-owner-digest-authorization-and-tenant-identity) for the coordinator-side boundary.
+
+### Private script-patch content seal
+
+The standalone, unregistered `ScriptPatchPublicationSealService` captures exact
+definitions and event bindings in a physically verified writable READ COMMITTED
+transaction under the same PostgreSQL patch-row lock acquired
+by raw writes to definitions, bindings and retained base bindings. Forward V1006
+stores a numeric base, schema-5 content digest and immutable snapshot with the
+canonical publication request and workflow binding. Identical replay retains the
+original bytes; changed content, request or base refuses. Historical authored rows
+are not assigned a seal, and catalog epoch 3 explicitly classifies the new source
+family while retaining preceding catalog epochs and evidence.
+
+This is a private content-storage primitive, not an authenticated publication
+receiver or affected-handler readiness manifest. It deliberately does not infer
+`onLoadHandlerIds` from script names. Existing `UNSUPPORTED_SCOPE` and
+`SCRIPT_PATCH_MANIFEST_UNAVAILABLE` boundaries remain unchanged.

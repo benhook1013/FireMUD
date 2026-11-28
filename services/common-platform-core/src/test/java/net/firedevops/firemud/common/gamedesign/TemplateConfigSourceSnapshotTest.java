@@ -24,6 +24,31 @@ class TemplateConfigSourceSnapshotTest {
   private static final UUID GENESIS = UUID.fromString("33333333-3333-4333-8333-333333333333");
 
   @Test
+  void configRequiresNonblankBindingAndScopeKeysButAllowsEmptyScopeId() {
+    String event =
+        "{\"eventType\":\"onEnter\",\"eventSchemaVersion\":\"1\","
+            + "\"bindingId\":\"binding-1\",\"targetScopeType\":\"ROOM\",\"targetScopeId\":\"\"}";
+    String valid =
+        config()
+            .replace(
+                "\"scripts\":[]",
+                "\"scripts\":[{\"scriptId\":\"onEnter\",\"eventBindings\":[" + event + "]}]");
+    assertThat(new TemplateConfigSourceValues.Config(valid).hasAutomationReferences()).isTrue();
+
+    for (String field : List.of("bindingId", "targetScopeType")) {
+      String original = field.equals("bindingId") ? "binding-1" : "ROOM";
+      for (String blank : List.of("", " ")) {
+        String invalid =
+            valid.replace(
+                "\"" + field + "\":\"" + original + "\"", "\"" + field + "\":\"" + blank + "\"");
+        assertThatThrownBy(() -> new TemplateConfigSourceValues.Config(invalid))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining(field);
+      }
+    }
+  }
+
+  @Test
   void directDecoderPreservesV1BytesAndMissingDeclarationEvidence() throws Exception {
     var config = new TemplateConfigSourceValues.Config(config());
     var original = binding(TemplateConfigSourceValues.createPayload("Starter", config));

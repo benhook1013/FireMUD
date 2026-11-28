@@ -2,6 +2,11 @@ package integration.net.firedevops.firemud.gamedesign.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -9,9 +14,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.CommittedReceipt;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.IntakeRequest;
@@ -20,6 +29,7 @@ import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliv
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryRepository.DeliveryClaim;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.service.impl.GameAuthoredWorldSourceDeliveryService;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -200,6 +210,64 @@ class GameAuthoredWorldSourceDeliveryIntegrationTest {
     assertThat(fixture.dsl().fetchCount(SOURCE_OPERATIONS)).isZero();
     assertThat(fixture.dsl().fetchCount(TENANT_BINDINGS)).isZero();
     assertThat(fixture.dsl().fetchCount(DELIVERIES)).isZero();
+  }
+
+  @Test
+  void concurrentExactDeliveriesReturnOneDurableAckAndRefuseChangedReceipt() throws Exception {
+    Fixture fixture = fixture(null);
+    AuthoredWorldSourceEvidence source = fixture.registerFresh(33);
+    DeliveryClaim pending = fixture.deliveryRepository().read(source.operationId()).orElseThrow();
+    CommittedReceipt receipt =
+        committedReceipt(pending.request(), uuid("44444444-4444-4444-8444-444444444444"), 'a');
+    WorldAuthoredSourceIntakeClient worldClient = mock(WorldAuthoredSourceIntakeClient.class);
+    var intakeCalls = new CountDownLatch(2);
+    var releaseIntake = new CountDownLatch(1);
+    when(worldClient.intake(pending.request()))
+        .thenAnswer(
+            invocation -> {
+              intakeCalls.countDown();
+              assertThat(releaseIntake.await(10, TimeUnit.SECONDS)).isTrue();
+              return receipt;
+            });
+    when(worldClient.read(any(WorldAuthoredSourceIntakeGrpcCodec.ReadRequest.class)))
+        .thenReturn(receipt);
+    var delivery =
+        new GameAuthoredWorldSourceDeliveryService(
+            fixture.deliveryRepository(), worldClient, fixture.transactionManager(), NAMESPACE);
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var first = executor.submit(() -> delivery.deliver(source.operationId()));
+      var second = executor.submit(() -> delivery.deliver(source.operationId()));
+      assertThat(intakeCalls.await(10, TimeUnit.SECONDS)).isTrue();
+      releaseIntake.countDown();
+
+      DeliveryClaim firstResult = first.get(10, TimeUnit.SECONDS);
+      assertThat(second.get(10, TimeUnit.SECONDS)).isEqualTo(firstResult);
+      assertThat(firstResult.acknowledgedReceipt()).contains(receipt);
+      assertThat(fixture.deliveryRepository().read(source.operationId())).contains(firstResult);
+      assertThat(fixture.dsl().fetchCount(DELIVERIES)).isEqualTo(1);
+      verify(worldClient, times(2)).intake(pending.request());
+      verify(worldClient, times(2)).read(any(WorldAuthoredSourceIntakeGrpcCodec.ReadRequest.class));
+    } finally {
+      releaseIntake.countDown();
+      executor.shutdownNow();
+    }
+
+    CommittedReceipt changed = committedReceipt(pending.request(), receipt.operationId(), 'b');
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .transactionTemplate()
+                    .execute(status -> fixture.deliveryRepository().acknowledge(pending, changed)))
+        .isInstanceOf(GameAuthoredWorldSourceDeliveryRepository.DeliveryConflictException.class)
+        .hasMessageContaining("different World receipt");
+    assertThat(
+            fixture
+                .deliveryRepository()
+                .read(source.operationId())
+                .orElseThrow()
+                .acknowledgedReceipt())
+        .contains(receipt);
   }
 
   @Test
