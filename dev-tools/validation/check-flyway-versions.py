@@ -30,7 +30,7 @@ RECOVERY_RESOURCE_ROOT = f"services/{RECOVERY_PROJECT}/src/main/resources"
 RECOVERY_CONFIG_DIRECTORY = f"{RECOVERY_RESOURCE_ROOT}/config"
 RECOVERY_SQL_ROOT = f"{RECOVERY_RESOURCE_ROOT}/db/recovery-control-migration/"
 RECOVERY_JAVA_ROOT = f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration/"
-RECOVERY_APP_JAVA_ROOT = f"services/{RECOVERY_PROJECT}/src/main/java/net/firedevops/firemud/recovery/"
+RECOVERY_MAIN_JAVA_ROOT = f"services/{RECOVERY_PROJECT}/src/main/java/"
 RECOVERY_MIGRATION_ROOTS = (RECOVERY_SQL_ROOT, RECOVERY_JAVA_ROOT)
 RECOVERY_MIGRATION_ANCESTORS = {
     path.as_posix()
@@ -215,7 +215,7 @@ def recovery_config_path(path: str) -> bool:
 
 def relevant_path(path: str) -> bool:
     return path == RECOVERY_CONFIG_DIRECTORY or path in RECOVERY_MIGRATION_ANCESTORS or bool(migration_path(path)) or (
-        path.startswith(RECOVERY_APP_JAVA_ROOT) and path.endswith(".java")
+        path.startswith(RECOVERY_MAIN_JAVA_ROOT) and path.endswith(".java")
     ) or (
         path.startswith("services/")
         and (path.endswith("/build.gradle.kts")
@@ -239,7 +239,7 @@ def current_snapshot(repo_root: Path) -> Snapshot:
              *repo_root.glob("services/*/src/main/resources/config/application*.xml"),
              *repo_root.glob("services/*/src/main/resources/db/migration/**/*"),
              *repo_root.glob("services/*/src/main/java/db/migration/**/*"),
-             *repo_root.glob(f"{RECOVERY_APP_JAVA_ROOT}**/*.java"),
+             *repo_root.glob(f"{RECOVERY_MAIN_JAVA_ROOT}**/*.java"),
              *repo_root.glob("buildSrc/**/*.kt"), *repo_root.glob("buildSrc/**/*.kts")]
     for root in RECOVERY_MIGRATION_ROOTS:
         if not root.startswith(linked_prefixes):
@@ -401,15 +401,18 @@ def recovery_input_issues(snapshot: Snapshot) -> list[str]:
     """Apply the SQL-only Recovery input policy to either side of a comparison."""
     issues = []
     for path in sorted(snapshot):
-        if path.startswith(RECOVERY_APP_JAVA_ROOT) and path.endswith(".java"):
+        if path.startswith(RECOVERY_MAIN_JAVA_ROOT) and path.endswith(".java"):
             source = snapshot[path].decode("utf-8", errors="replace")
-            if re.search(
-                r"(?<![\w$])(?:JavaMigration|BaseJavaMigration)(?![\w$])",
-                java_code_tokens(source),
-            ):
+            tokens = java_code_tokens(source)
+            if re.search(r"(?<![\w$])(?:JavaMigration|BaseJavaMigration)(?![\w$])", tokens):
                 issues.append(
                     f"{path}: Recovery JavaMigration classes and beans are unsupported; "
                     "migration version authority must remain SQL-only"
+                )
+            if re.search(r"(?<![\w$])FlywayMigrationStrategy(?![\w$])", tokens):
+                issues.append(
+                    f"{path}: Recovery FlywayMigrationStrategy beans are unsupported; "
+                    "packaged SQL must use the default Flyway initializer"
                 )
         if snapshot[path] == SYMLINK_SNAPSHOT and (
             path in RECOVERY_MIGRATION_ANCESTORS or path.startswith(RECOVERY_MIGRATION_ROOTS)
@@ -701,7 +704,13 @@ def recovery_flyway_config(
                     or "spring.profiles" in ambiguous
                     or any(obsolete_profile_index.match(path) for path in properties)):
                 return None
-            if config_path in profile_paths:
+            activation = properties.get("spring.config.activate")
+            profile_or_activated = (
+                config_path in profile_paths
+                or (isinstance(activation, dict) and bool(activation))
+                or any(path.startswith("spring.config.activate.") for path in properties)
+            )
+            if profile_or_activated:
                 for path, value in properties.items():
                     if profile_selection.fullmatch(path) and (
                         not isinstance(value, dict) or any(type(key) is int and key == 0 for key in value)
@@ -724,30 +733,13 @@ def recovery_flyway_config(
                     (exclusion_property + "[", exclusion_property + "."))
             }
             if exclusion_paths:
-                activation = properties.get("spring.config.activate")
-                if config_path in profile_paths or (isinstance(activation, dict) and activation) or any(
-                    path.startswith("spring.config.activate.") for path in properties
-                ):
+                if profile_or_activated:
                     return None
                 if exclusion_paths & ambiguous:
                     return None
-                # Boot binds bracketed list indices. YAML integer map keys also
-                # flatten to bracketed indices, unlike string keys such as "0".
-                if exclusion_property in exclusion_paths:
-                    exclusion_value = properties[exclusion_property]
-                    if exclusion_paths != {exclusion_property}:
-                        return None
-                    if isinstance(exclusion_value, dict):
-                        indices = range(len(exclusion_value))
-                        if (not exclusion_value or any(type(key) is not int for key in exclusion_value)
-                                or set(exclusion_value) != set(indices)):
-                            return None
-                        exclusion_value = [exclusion_value[index] for index in indices]
-                else:
-                    indexed_paths = [f"{exclusion_property}[{index}]" for index in range(len(exclusion_paths))]
-                    if exclusion_paths != set(indexed_paths):
-                        return None
-                    exclusion_value = [properties[path] for path in indexed_paths]
+                if not decode_indexed_string_list(properties, ambiguous, exclusion_property):
+                    return None
+                exclusion_value = properties[exclusion_property]
                 if exclusion_value is None:
                     # An explicit null scalar clears a lower-priority exclusion list.
                     exclusion_value = []
@@ -785,7 +777,7 @@ def recovery_flyway_config(
                                  "spring.flyway.sqlmigrationseparator",
                                  "spring.flyway.repeatablesqlmigrationprefix",
                                  "spring.flyway.skipdefaultresolvers", "spring.flyway.executeintransaction",
-                                 "spring.flyway.mixed",
+                                 "spring.flyway.mixed", "spring.flyway.group",
                                  "spring.flyway.skipexecutingmigrations",
                                  "spring.flyway.dryrunoutput",
                                  "spring.flyway.encoding", "spring.flyway.detectencoding",
@@ -807,10 +799,7 @@ def recovery_flyway_config(
             if guard_paths & ambiguous or not guard_paths <= exact_guard_paths:
                 return None
 
-            activation = properties.get("spring.config.activate")
-            if config_path in profile_paths or (isinstance(activation, dict) and activation) or any(
-                path.startswith("spring.config.activate.") for path in properties
-            ):
+            if profile_or_activated:
                 # The active profile/cloud environment is unknown, so the checker
                 # cannot qualify an activation-dependent override of these guards.
                 return None
@@ -883,6 +872,8 @@ def recovery_flyway_config(
                 not isinstance(pool_sql, str) or pool_sql.strip(JAVA_TRIM_CHARACTERS)):
             return None
     if spring_boolean(flyway.get("mixed", False)) is not False:
+        return None
+    if spring_boolean(flyway.get("group", False)) is not False:
         return None
     target = flyway.get("target", "latest")
     if not isinstance(target, str) or target.casefold() != "latest":
@@ -1215,15 +1206,10 @@ def run_self_test() -> None:
         **recovery_history,
         recovery_config: recovery_settings + "spring.boot.enable-auto-configuration: '\u00a0true\u00a0'\n".encode(),
     }, recovery_history, "historical effective migration no longer applied")
-    recovery_java_migration = RECOVERY_APP_JAVA_ROOT + "config/RecoveryMigrationConfiguration.java"
-    if not relevant_path(recovery_java_migration):
-        raise AssertionError("Recovery application-package Java sources must be snapshotted")
-    with tempfile.TemporaryDirectory() as fixture_root:
-        source_path = Path(fixture_root) / recovery_java_migration
-        source_path.parent.mkdir(parents=True)
-        source_path.write_text("class RecoveryApplicationSource {}", encoding="utf-8")
-        if recovery_java_migration not in current_snapshot(Path(fixture_root)):
-            raise AssertionError("Recovery application-package Java source was omitted from snapshot")
+    recovery_java_migration = (
+        RECOVERY_MAIN_JAVA_ROOT + "net/firedevops/firemud/recovery/config/RecoveryMigrationConfiguration.java"
+    )
+    sibling_migration = RECOVERY_MAIN_JAVA_ROOT + "net/firedevops/firemud/sibling/RecoveryMigration.java"
     check("Java comments and literals do not create migration declarations", {
         **recovery_history,
         recovery_java_migration: (
@@ -1255,6 +1241,32 @@ def run_self_test() -> None:
             b"@Bean JavaMigration recoveryMigration() { return migration; }\n"
         ),
     }, recovery_history, "JavaMigration classes and beans are unsupported")
+    check("Recovery migration strategy cannot replace the default Flyway initializer", {
+        **recovery_history,
+        recovery_java_migration: (
+            b"import org.springframework.boot.flyway.autoconfigure.FlywayMigrationStrategy;\n"
+            b"@Bean FlywayMigrationStrategy recoveryStrategy() { return migrationStrategy; }\n"
+        ),
+    }, recovery_history, "FlywayMigrationStrategy beans are unsupported")
+    check("Recovery Java migration in a sibling package cannot override SQL version authority", {
+        **recovery_history,
+        recovery_java_migration: (
+            b"package net.firedevops.firemud.recovery.config;\n"
+            b"import net.firedevops.firemud.sibling.RecoveryMigration;\n"
+            b"import org.springframework.context.annotation.Bean;\n"
+            b"class RecoveryMigrationConfiguration {\n"
+            b"  @Bean RecoveryMigration recoveryMigration() { return new RecoveryMigration(); }\n"
+            b"}\n"
+        ),
+        sibling_migration: (
+            b"package net.firedevops.firemud.sibling;\n"
+            b"import org.flywaydb.core.api.migration.BaseJavaMigration;\n"
+            b"import org.flywaydb.core.api.migration.Context;\n"
+            b"public class RecoveryMigration extends BaseJavaMigration {\n"
+            b"  @Override public void migrate(Context context) {}\n"
+            b"}\n"
+        ),
+    }, recovery_history, f"{sibling_migration}: Recovery JavaMigration classes and beans are unsupported")
     check("comma-delimited Flyway scalar trims its location entry", {
         **recovery_history,
         recovery_config: recovery_settings.replace(
@@ -1540,6 +1552,8 @@ def run_self_test() -> None:
         ("spring.datasource.hikari.username", "${OTHER_FIXTURE_USER}", "historical effective migration no longer applied"),
         ("spring.datasource.hikari.password", "literal-test-value", "historical effective migration no longer applied"),
         ("spring.flyway.validate-on-migrate", "false", "historical effective migration no longer applied"),
+        ("spring.flyway.group", "true", "historical effective migration no longer applied"),
+        ("spring.flyway.group", "false", None),
         ("spring.datasource.hikari.connection-test-query", "SELECT 1",
          "historical effective migration no longer applied"),
     ):
@@ -1873,6 +1887,7 @@ def run_self_test() -> None:
     redis_auto_configuration = b"org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration"
     for exclusion_key, expected in (
         (b"spring.autoconfigure.exclude[0]: ", None),
+        (b"spring.autoconfigure.exclude:\n  '[0]': ", None),
         (b"spring.autoconfigure.exclude.0: ", "historical effective migration no longer applied"),
         (b"spring.autoconfigure.exclude:\n  '0': ", "historical effective migration no longer applied"),
     ):
@@ -1984,16 +1999,22 @@ def run_self_test() -> None:
         (b"spring:\n  profiles:\n    include: [ops]\n", "include"),
         (b"spring.profiles.include:\n  0: ops\n", "include"),
     ):
-        invalid_profile = {**configured_profile, profile_config: setting}
-        for current, parent in ((invalid_profile, recovery_history), (recovery_history, invalid_profile)):
-            try:
-                collect_issues(current, parent)
-            except ValueError as error:
-                if str(error) != (f"{profile_config}: spring.profiles.{error_property} "
-                                  "is invalid in profile-specific Spring configuration"):
-                    raise
-            else:
-                raise AssertionError(f"profile-specific setting was accepted: {setting!r}")
+        base_document = configured_profile[recovery_config]
+        for config, data in (
+            (profile_config, setting),
+            (recovery_config, base_document + b"---\nspring.config.activate.on-profile: dev\n" + setting),
+            (recovery_config, base_document + b"---\nspring.config.activate.on-cloud-platform: kubernetes\n" + setting),
+        ):
+            invalid_profile = {**configured_profile, config: data}
+            for current, parent in ((invalid_profile, recovery_history), (recovery_history, invalid_profile)):
+                try:
+                    collect_issues(current, parent)
+                except ValueError as error:
+                    if str(error) != (f"{config}: spring.profiles.{error_property} "
+                                      "is invalid in profile-specific Spring configuration"):
+                        raise
+                else:
+                    raise AssertionError(f"profile-specific setting was accepted: {setting!r}")
     check("Flyway SQL suffix override cannot disconnect the recovery journal", {
         **recovery_history,
         recovery_config: recovery_settings + b"    sql-migration-suffixes: [.ddl]\n",
@@ -2424,7 +2445,12 @@ def run_self_test() -> None:
         }
         unicode_migration = "services/unicode-service/src/main/resources/db/migration/V1__café.sql"
         unrelated_non_utf8 = os.fsdecode(b"services/example-service/src/main/resources/unrelated-\xff.txt")
-        combined_fixture = {**history, **recovery_history, unicode_migration: "-- café\n".encode()}
+        combined_fixture = {
+            **history,
+            **recovery_history,
+            unicode_migration: "-- café\n".encode(),
+            sibling_migration: b"package net.firedevops.firemud.sibling; class RecoveryMigration {}\n",
+        }
         for path, data in {**combined_fixture, **outside_recovery}.items():
             target = root / path
             target.parent.mkdir(parents=True, exist_ok=True)

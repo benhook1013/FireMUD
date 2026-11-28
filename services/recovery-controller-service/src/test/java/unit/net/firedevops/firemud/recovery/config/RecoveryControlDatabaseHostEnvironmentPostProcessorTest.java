@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Resources;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -527,6 +529,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   @ParameterizedTest
   @CsvSource({
     "spring.flyway.execute-in-transaction, false",
+    "spring.flyway.group, true",
     "spring.flyway.validate-on-migrate, false",
     "spring.flyway.validate-on-migrate, ''",
     "spring.datasource.hikari.connection-test-query, SELECT 1",
@@ -558,6 +561,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
     var environment =
         fixtureEnvironment()
             .withProperty("spring.flyway.execute-in-transaction", "true")
+            .withProperty("spring.flyway.group", "false")
             .withProperty("spring.flyway.validate-on-migrate", "true")
             .withProperty("spring.datasource.hikari.connection-test-query", " \t")
             .withProperty("spring.flyway.skip-default-resolvers", "false")
@@ -602,6 +606,34 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         .hasMessageStartingWith("spring.datasource.hikari.connection-init-sql must be empty")
         .hasMessageNotContaining(initSql)
         .hasNoCause();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"fixture-pool.properties", ""})
+  @ResourceLock(Resources.SYSTEM_PROPERTIES)
+  void refusesNativeHikariConfigFileBeforePoolSetup(String configuredFile) {
+    String property = "hikaricp.configurationFile";
+    String previous = System.getProperty(property);
+    var environment = fixtureEnvironment();
+    try {
+      System.clearProperty(property);
+      assertThatCode(
+              () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+          .doesNotThrowAnyException();
+
+      System.setProperty(property, configuredFile);
+      assertThatThrownBy(
+              () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("hikaricp.configurationFile must be unset for the recovery datasource")
+          .hasNoCause();
+    } finally {
+      if (previous == null) {
+        System.clearProperty(property);
+      } else {
+        System.setProperty(property, previous);
+      }
+    }
   }
 
   @Test

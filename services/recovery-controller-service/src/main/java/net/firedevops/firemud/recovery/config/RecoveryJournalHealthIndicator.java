@@ -325,6 +325,14 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                   || ' AND (last_attempt_id IS NOT NULL)'
                   || ' AND (last_attempt_id <> ''00000000-0000-0000-0000-000000000000''::uuid)'
                   || ' AND (last_dispatched_at IS NOT NULL)))')
+            AND (SELECT count(*) = 2
+              FROM pg_catalog.pg_attribute
+              WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+                AND NOT attisdropped
+                AND ((attname = 'attempt_count'
+                      AND attnotnull AND atttypid = 'pg_catalog.int4'::regtype)
+                  OR (attname = 'last_attempt_id'
+                      AND NOT attnotnull AND NOT atthasdef AND atttypid = 'pg_catalog.uuid'::regtype)))
             AND EXISTS (
               SELECT 1
               FROM pg_catalog.pg_constraint c
@@ -397,6 +405,12 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               WHERE a.attrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
                 AND a.attname IN ('expected_phase', 'result_phase') AND NOT a.attisdropped
                 AND a.attnotnull AND a.atttypid = 'pg_catalog.varchar'::regtype AND a.atttypmod = 36)
+            AND EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_attribute a
+              WHERE a.attrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
+                AND a.attname = 'tuple_payload' AND NOT a.attisdropped AND a.attnotnull
+                AND a.atttypid = 'pg_catalog.jsonb'::regtype AND a.atttypmod = -1)
             AND NOT EXISTS (
               SELECT operation_id, operation_kind, target_namespace, playable_state_namespace_id,
                      peer_storage_binding, scope_payload, evidence_ref, scope_digest,

@@ -29,6 +29,11 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
   public void postProcessEnvironment(
       ConfigurableEnvironment environment, SpringApplication application) {
     try {
+      // Hikari loads this JVM property whenever present, before Spring binds pool settings.
+      if (System.getProperty("hikaricp.configurationFile") != null) {
+        throw new SafeOverrideException(
+            "hikaricp.configurationFile must be unset for the recovery datasource");
+      }
       String host = environment.getProperty(HOST_PROPERTY);
       if (!isSingleHost(host)) {
         throw new SafeOverrideException(
@@ -151,6 +156,10 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
         || placeholderSuffix.contains("${")) {
       throw new SafeOverrideException(
           "spring.flyway placeholder delimiters must not contain runtime substitutions");
+    }
+    if (Boolean.TRUE.equals(binder.bind("spring.flyway.group", Boolean.class).orElse(null))) {
+      throw new SafeOverrideException(
+          "spring.flyway.group must be disabled for the recovery migrations");
     }
     if (Boolean.TRUE.equals(binder.bind("spring.flyway.mixed", Boolean.class).orElse(null))) {
       throw new SafeOverrideException(
