@@ -31,6 +31,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 import net.firedevops.firemud.recovery.RecoveryControllerServiceApplication;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseConflictException;
@@ -38,6 +42,7 @@ import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal.RetrySource;
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseTupleCodec;
 import net.firedevops.firemud.recovery.journal.JooqInitialGameplayReleaseJournal;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.ContinueRecovery;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.Resume;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.CommitOwnerAuthorizedHandoffEffect;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectKind;
@@ -80,6 +85,7 @@ import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.conf.Settings;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.jooq.tools.LoggerListener;
 import org.junit.jupiter.api.AfterAll;
@@ -123,7 +129,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           "V4__retain_typed_retry_provenance.sql",
           "V5__retain_local_dispatch_uncertainty.sql",
           "V6__retain_latest_preparation_observation.sql",
-          "V7__retain_preparation_receipt_identities.sql");
+          "V7__retain_preparation_receipt_identities.sql",
+          "V8__require_pending_effect_without_dispatch_timestamp.sql");
   private static final String DIGEST = "b".repeat(64);
   private static final java.util.logging.Logger POSTGRES_PROTOCOL_LOG =
       java.util.logging.Logger.getLogger("org.postgresql.core.v3.QueryExecutorImpl");
@@ -809,7 +816,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .hasStackTraceContaining(
               "spring.flyway.mixed must be disabled for the recovery migrations");
       try (var application = startPackagedApplication(false, "--spring.flyway.mixed=true")) {
-        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+        assertThat(application.getBean(ApplicationAvailability.class).getLivenessState())
+            .isEqualTo(LivenessState.CORRECT);
       }
     } finally {
       dsl.execute("DROP DATABASE " + database);
@@ -1131,7 +1140,11 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         "local_no_send_key",
         "maintenance_lock",
         "outbox_dispatch",
-        "weakened_outbox_dispatch"
+        "weakened_outbox_dispatch",
+        "pending_dispatch_timestamp",
+        "weakened_pending_dispatch_timestamp",
+        "closure_primary_key",
+        "closure_outbox_unique"
       })
   @ResourceLock("packaged-recovery-control-fixture-database")
   void migratedPackagedDatabaseWithMissingOrWeakenedRequiredConstraintIsNotReady(String drift)
@@ -1166,6 +1179,25 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               ADD CONSTRAINT ck_release_outbox_non_pending_attempt CHECK (true)
             """);
         assertValidatedDispatchAttemptConstraint(packaged);
+      } else if ("pending_dispatch_timestamp".equals(drift)) {
+        packaged.execute(
+            "ALTER TABLE recovery_control.initial_gameplay_release_outbox"
+                + " DROP CONSTRAINT ck_release_outbox_pending_dispatch_timestamp");
+      } else if ("weakened_pending_dispatch_timestamp".equals(drift)) {
+        packaged.execute(
+            """
+            ALTER TABLE recovery_control.initial_gameplay_release_outbox
+              DROP CONSTRAINT ck_release_outbox_pending_dispatch_timestamp,
+              ADD CONSTRAINT ck_release_outbox_pending_dispatch_timestamp CHECK (true)
+            """);
+      } else if ("closure_primary_key".equals(drift)) {
+        packaged.execute(
+            "ALTER TABLE recovery_control.initial_gameplay_release_attempt_closure"
+                + " DROP CONSTRAINT initial_gameplay_release_attempt_closure_pkey");
+      } else if ("closure_outbox_unique".equals(drift)) {
+        packaged.execute(
+            "ALTER TABLE recovery_control.initial_gameplay_release_attempt_closure"
+                + " ADD UNIQUE (outbox_id)");
       } else {
         String lockKey =
             packaged
@@ -1309,14 +1341,17 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
 
   @ParameterizedTest
   @CsvSource({
-    "readback_digest, TYPE char(63)",
-    "readback_digest, TYPE varchar(64)",
-    "readback_digest, DROP NOT NULL",
-    "dispatched_at, TYPE timestamptz(0)"
+    "attempt_closure, attempt_id, TYPE text USING attempt_id::text",
+    "attempt_closure, readback_digest, TYPE char(63)",
+    "attempt_closure, readback_digest, TYPE varchar(64)",
+    "attempt_closure, readback_digest, DROP NOT NULL",
+    "attempt_closure, dispatched_at, TYPE timestamptz(0)",
+    "transition, expected_phase, TYPE varchar(1)",
+    "transition, result_phase, DROP NOT NULL"
   })
   @ResourceLock("packaged-recovery-control-fixture-database")
-  void closureColumnsMustHaveRequiredShapeForJournalReadiness(String column, String alteration)
-      throws Exception {
+  void receiptColumnsMustHaveRequiredShapeForJournalReadiness(
+      String tableSuffix, String column, String alteration) throws Exception {
     String database = "firemud_recovery_control";
     String fixtureUrl = POSTGRES.getJdbcUrl();
     String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
@@ -1328,7 +1363,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
       DSL.using(connection, SQLDialect.POSTGRES)
           .execute(
-              "ALTER TABLE recovery_control.initial_gameplay_release_attempt_closure"
+              "ALTER TABLE recovery_control.initial_gameplay_release_"
+                  + tableSuffix
                   + " ALTER COLUMN "
                   + column
                   + " "
@@ -1422,28 +1458,28 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   void migratedPackagedDatabaseInReadOnlyModeIsNotJournalReadyButProcessIsLive() throws Exception {
     String database = "firemud_recovery_control";
     dsl.execute("CREATE DATABASE " + database);
-    try {
-      try (var migration = startPackagedApplication(true)) {
-        assertThat(journalHealth(migration).health().getStatus()).isEqualTo(Status.UP);
+    try (var application =
+        startPackagedApplication(true, "--spring.datasource.hikari.maximum-pool-size=1")) {
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      // The dedicated one-connection pool gives the probe the same read-only session.
+      try (var connection = application.getBean(DataSource.class).getConnection();
+          var statement = connection.createStatement()) {
+        statement.execute("SET default_transaction_read_only = on");
+        try (var result = statement.executeQuery("SHOW transaction_read_only")) {
+          assertThat(result.next()).isTrue();
+          assertThat(result.getString(1)).isEqualTo("on");
+        }
       }
-      dsl.execute("ALTER DATABASE " + database + " SET default_transaction_read_only = on");
-      try (var application = startPackagedApplication(false);
-          var readOnly = application.getBean(DataSource.class).getConnection();
-          var statement = readOnly.prepareStatement("SHOW transaction_read_only");
-          var result = statement.executeQuery()) {
-        assertThat(result.next()).isTrue();
-        assertThat(result.getString(1)).isEqualTo("on");
-        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
-        var health = application.getBean(HealthEndpoint.class);
-        assertThat(health.healthForPath("readiness"))
-            .isNotNull()
-            .extracting(probe -> probe.getStatus())
-            .isEqualTo(Status.DOWN);
-        assertThat(health.healthForPath("liveness"))
-            .isNotNull()
-            .extracting(probe -> probe.getStatus())
-            .isEqualTo(Status.UP);
-      }
+      assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+      var health = application.getBean(HealthEndpoint.class);
+      assertThat(health.healthForPath("readiness"))
+          .isNotNull()
+          .extracting(probe -> probe.getStatus())
+          .isEqualTo(Status.DOWN);
+      assertThat(health.healthForPath("liveness"))
+          .isNotNull()
+          .extracting(probe -> probe.getStatus())
+          .isEqualTo(Status.UP);
     } finally {
       dsl.execute("DROP DATABASE " + database);
     }
@@ -1472,8 +1508,15 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         owner.execute(
             "GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA recovery_control TO " + role);
         try (var application =
-            startPackagedApplication(
-                false, "--spring.datasource.hikari.connection-init-sql=SET ROLE " + role)) {
+            startPackagedApplication(true, "--spring.datasource.hikari.maximum-pool-size=1")) {
+          try (var session = application.getBean(DataSource.class).getConnection();
+              var statement = session.createStatement()) {
+            statement.execute("SET ROLE " + role);
+            try (var result = statement.executeQuery("SELECT current_user")) {
+              assertThat(result.next()).isTrue();
+              assertThat(result.getString(1)).isEqualTo(role);
+            }
+          }
           assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
           owner.execute(
               "ALTER TABLE recovery_control.initial_gameplay_release_outbox ENABLE ROW LEVEL SECURITY");
@@ -2432,6 +2475,83 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     assertThat(next.attemptCount()).isEqualTo(2);
   }
 
+  @Test
+  void overlappingReadinessRefreshCannotReplaceEvidenceUsedByContinuation() throws Exception {
+    Scope scope = scope();
+    var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
+    journal.create(scope, lock.identity());
+    var evidence = evidence(scope);
+    var otherEvidence =
+        new InitialGameplayReleaseEvidence(
+            evidence.evidenceRef(),
+            "different-owner-evidence",
+            evidence.migration(),
+            evidence.issuerLayout(),
+            evidence.writerFencing(),
+            evidence.worldInitialization(),
+            evidence.entityInitialization(),
+            evidence.regionLease());
+    var effectPort = mock(InitialGameplayReleaseEffectPort.class);
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            tupleCodec,
+            ignored ->
+                InitialGameplayReleaseEvidenceProvider.EvidenceResolution.available(evidence),
+            effectPort);
+    var command =
+        new ContinueRecovery(scope.operationId(), Phase.READY_TO_REOPEN, lock, scope.evidenceRef());
+
+    var refreshStarted = new CompletableFuture<Void>();
+    var finishOwnerRead = new CompletableFuture<Void>();
+    try (var otherConnection =
+            DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+        var executor = Executors.newSingleThreadExecutor()) {
+      var otherJournal =
+          new JooqInitialGameplayReleaseJournal(
+              DSL.using(otherConnection, SQLDialect.POSTGRES), tupleCodec);
+      var otherController =
+          new InitialGameplayReleaseController(
+              otherJournal,
+              tupleCodec,
+              ignored -> {
+                refreshStarted.complete(null);
+                finishOwnerRead.orTimeout(30, TimeUnit.SECONDS).join();
+                return InitialGameplayReleaseEvidenceProvider.EvidenceResolution.available(
+                    otherEvidence);
+              },
+              effectPort);
+      var delayedRefresh =
+          executor.submit(() -> otherController.refreshReadiness(scope.operationId(), lock));
+      try {
+        // The other refresh already read the collecting operation before this one binds evidence.
+        refreshStarted.get(30, TimeUnit.SECONDS);
+        var ready = controller.refreshReadiness(scope.operationId(), lock);
+        var result = controller.continueRecovery(command);
+        var transitioned = journal.find(scope.operationId()).orElseThrow();
+        assertThat(result)
+            .isEqualTo(new PublicTransitionResult(scope.operationId(), Phase.AWAITING_RESUME));
+        assertThat(transitioned.evidence()).isEqualTo(evidence);
+
+        finishOwnerRead.complete(null);
+        assertThatThrownBy(() -> delayedRefresh.get(30, TimeUnit.SECONDS))
+            .isInstanceOf(ExecutionException.class)
+            .hasCauseInstanceOf(InitialGameplayReleaseConflictException.class)
+            .hasRootCauseMessage("IDEMPOTENCY_CONFLICT: owner evidence changed after it was bound");
+        assertThat(otherController.continueRecovery(command)).isEqualTo(result);
+        assertThat(
+                otherJournal.findTransition(
+                    transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY)))
+            .contains(result);
+        assertThat(otherJournal.find(scope.operationId())).contains(transitioned);
+      } finally {
+        finishOwnerRead.complete(null);
+      }
+    }
+    verifyNoInteractions(effectPort);
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {true, false})
   void oversizedOwnerEvidenceDoesNotReachHashOrJournalWrite(boolean resume) {
@@ -3043,6 +3163,27 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @Test
+  void operationCreationRejectsNonNfcEvidenceReferenceBeforeHashing() {
+    Scope original = scope();
+    Scope decomposed =
+        new Scope(
+            original.operationId(),
+            original.canonicalTenantId(),
+            original.targetNamespace(),
+            original.playableStateNamespaceId(),
+            original.peerStorageBinding(),
+            "proof/cafe\u0301");
+    var observingCodec = spy(new InitialGameplayReleaseTupleCodec());
+    var observingJournal = new JooqInitialGameplayReleaseJournal(dsl, observingCodec);
+
+    assertThatThrownBy(() -> observingJournal.create(decomposed, UUID.randomUUID()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Operation evidence reference must be NFC");
+    verifyNoInteractions(observingCodec);
+    assertThat(journal.find(original.operationId())).isEmpty();
+  }
+
+  @Test
   void scopeReaderRejectsResealedScopeForAnotherRowKey() {
     Scope original = scope();
     journal.create(original, UUID.randomUUID());
@@ -3229,18 +3370,35 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     String setDispatchTime =
         "UPDATE recovery_control.initial_gameplay_release_outbox"
             + " SET last_dispatched_at = CAST(? AS timestamptz) WHERE outbox_id = ?";
-    dsl.execute(setDispatchTime, base.atOffset(ZoneOffset.UTC), pending.outboxId());
-    String malformed = storedOutbox(operationId, effectId);
-    assertThatThrownBy(() -> journal.findNextEffect(operationId))
-        .isInstanceOf(InitialGameplayReleaseConflictException.class)
-        .hasMessageContaining("pending effect has a dispatch timestamp");
-    assertThatThrownBy(() ->
-            journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(4)))
-        .isInstanceOf(InitialGameplayReleaseConflictException.class)
-        .hasMessageContaining("pending effect has a dispatch timestamp");
-    assertThat(storedOutbox(operationId, effectId)).isEqualTo(malformed);
+    assertThatThrownBy(
+            () -> dsl.execute(setDispatchTime, base.atOffset(ZoneOffset.UTC), pending.outboxId()))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ck_release_outbox_pending_dispatch_timestamp");
 
-    dsl.execute(setDispatchTime, null, pending.outboxId());
+    // Simulate disposable schema drift to exercise the journal checks as well.
+    dsl.execute(
+        "ALTER TABLE recovery_control.initial_gameplay_release_outbox"
+            + " DROP CONSTRAINT ck_release_outbox_pending_dispatch_timestamp");
+    try {
+      dsl.execute(setDispatchTime, base.atOffset(ZoneOffset.UTC), pending.outboxId());
+      String malformed = storedOutbox(operationId, effectId);
+      assertThatThrownBy(() -> journal.findNextEffect(operationId))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("pending effect has a dispatch timestamp");
+      assertThatThrownBy(() ->
+              journal.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(4)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("pending effect has a dispatch timestamp");
+      assertThat(storedOutbox(operationId, effectId)).isEqualTo(malformed);
+    } finally {
+      dsl.execute(setDispatchTime, null, pending.outboxId());
+      dsl.execute(
+          """
+          ALTER TABLE recovery_control.initial_gameplay_release_outbox
+            ADD CONSTRAINT ck_release_outbox_pending_dispatch_timestamp
+              CHECK (state <> 'pending' OR last_dispatched_at IS NULL)
+          """);
+    }
     assertThat(journal.findNextEffect(operationId)).contains(pending);
     assertThat(
             journal
@@ -5999,6 +6157,57 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                   base.plusSeconds(4));
           assertThat(claimedHandoff.state()).isEqualTo(EffectOutboxState.DISPATCHED);
           assertThat(claimedHandoff.lastAttemptId()).isNotNull();
+        }
+        assertThat(retainedOutboxRow(legacyDsl)).isEqualTo(retained);
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"pristine pending", "valid dispatched", "pending with dispatch timestamp"})
+  void v8ValidatesRetainedPendingDispatchTimestampsWithoutChangingRows(String variant)
+      throws Exception {
+    String database = "legacy_pending_timestamp_" + UUID.randomUUID().toString().replace("-", "");
+    dsl.execute("CREATE DATABASE " + database);
+    String fixtureUrl = POSTGRES.getJdbcUrl();
+    String legacyUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
+    try {
+      journalFlyway(legacyUrl, "7").migrate();
+      try (var legacyConnection =
+          DriverManager.getConnection(legacyUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        var legacyDsl = DSL.using(legacyConnection, SQLDialect.POSTGRES);
+        Instant base = Instant.parse("2026-09-01T00:00:00Z");
+        seedImmutableV1Journal(legacyDsl, "valid dispatched".equals(variant), base);
+        boolean invalid = "pending with dispatch timestamp".equals(variant);
+        if (invalid) {
+          assertThat(
+                  legacyDsl.execute(
+                      "UPDATE recovery_control.initial_gameplay_release_outbox"
+                          + " SET last_dispatched_at=CAST(? AS timestamptz) WHERE outbox_id=?",
+                      base.atOffset(ZoneOffset.UTC),
+                      V1_OUTBOX_ID))
+              .isEqualTo(1);
+        }
+        String retained = retainedOutboxRow(legacyDsl);
+        Flyway upgrade = journalFlyway(legacyUrl, "8");
+        if (invalid) {
+          assertThatThrownBy(upgrade::migrate)
+              .hasStackTraceContaining("ck_release_outbox_pending_dispatch_timestamp");
+          assertThat(upgrade.info().current().getVersion().getVersion()).isEqualTo("7");
+          assertThat(
+                  legacyDsl.fetch(
+                      """
+                      SELECT 1 FROM pg_catalog.pg_constraint
+                      WHERE conrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+                        AND conname = 'ck_release_outbox_pending_dispatch_timestamp'
+                      """))
+              .isEmpty();
+        } else {
+          upgrade.migrate();
+          assertCompletePackagedMigrationReceipts(legacyUrl);
         }
         assertThat(retainedOutboxRow(legacyDsl)).isEqualTo(retained);
       }

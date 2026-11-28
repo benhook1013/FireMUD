@@ -6,7 +6,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.intThat;
 import static org.mockito.Mockito.atLeast;
-import static org.mockito.Mockito.atMost;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -21,10 +20,14 @@ import java.sql.SQLException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.health.contributor.Status;
 
 class RecoveryJournalHealthIndicatorTest {
@@ -121,7 +124,7 @@ class RecoveryJournalHealthIndicatorTest {
     when(rows.next()).thenReturn(true);
     when(rows.getBoolean(1)).thenReturn(true);
 
-    var indicator = new RecoveryJournalHealthIndicator(source);
+    var indicator = new RecoveryJournalHealthIndicator(source, TimeUnit.SECONDS.toNanos(15));
     try {
       var first = new FutureTask<>(indicator::health);
       Thread.ofVirtual().start(first);
@@ -139,6 +142,40 @@ class RecoveryJournalHealthIndicatorTest {
       verify(source, times(1)).getConnection();
     } finally {
       releaseQuery.countDown();
+      indicator.stopProbes();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @ResourceLock("postgresql-driver-protocol-logger")
+  void readinessChecksDriverTracingAgainAfterSuccessfulProbe(boolean enableTracingDuringProbe)
+      throws SQLException {
+    DataSource source = mock(DataSource.class);
+    Connection connection = mock(Connection.class);
+    PreparedStatement statement = mock(PreparedStatement.class);
+    ResultSet rows = mock(ResultSet.class);
+    var logger = Logger.getLogger("org.postgresql.core.v3.QueryExecutorImpl");
+    Level prior = logger.getLevel();
+    when(source.getConnection()).thenReturn(connection);
+    when(connection.getAutoCommit()).thenReturn(true);
+    when(connection.prepareStatement(anyString())).thenReturn(statement);
+    when(statement.executeQuery()).thenReturn(rows);
+    when(rows.next()).thenReturn(true);
+    when(rows.getBoolean(1))
+        .thenAnswer(ignored -> {
+          if (enableTracingDuringProbe) logger.setLevel(Level.FINEST);
+          return true;
+        });
+
+    var indicator = new RecoveryJournalHealthIndicator(source);
+    try {
+      logger.setLevel(Level.INFO);
+      assertThat(indicator.health().getStatus())
+          .isEqualTo(enableTracingDuringProbe ? Status.DOWN : Status.UP);
+      verify(connection).close();
+    } finally {
+      logger.setLevel(prior);
       indicator.stopProbes();
     }
   }
@@ -177,16 +214,20 @@ class RecoveryJournalHealthIndicatorTest {
       var first = new FutureTask<>(indicator::health);
       Thread.ofVirtual().start(first);
       assertThat(closing.await(5, TimeUnit.SECONDS)).isTrue();
-      first.get(2, TimeUnit.SECONDS);
-      indicator.health();
+      assertThat(first.get(2, TimeUnit.SECONDS).getStatus()).isEqualTo(Status.DOWN);
+      assertThat(indicator.health().getStatus()).isEqualTo(Status.DOWN);
       verify(source, times(1)).getConnection();
 
       release.countDown();
       assertThat(closeFinished.await(5, TimeUnit.SECONDS)).isTrue();
-      assertThat(indicator.health().getStatus()).isIn(Status.DOWN, Status.UP);
-      assertThat(indicator.health().getStatus()).isEqualTo(Status.UP);
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      Status status = indicator.health().getStatus();
+      while (!Status.UP.equals(status) && System.nanoTime() < deadline) {
+        Thread.sleep(10);
+        status = indicator.health().getStatus();
+      }
+      assertThat(status).isEqualTo(Status.UP);
       verify(source, atLeast(2)).getConnection();
-      verify(source, atMost(3)).getConnection();
     } finally {
       release.countDown();
       indicator.stopProbes();

@@ -689,6 +689,7 @@ class InitialGameplayReleaseControllerTest {
     var operation = mock(Operation.class);
     var retainedEvidence = mock(InitialGameplayReleaseEvidence.class);
     var ownerEvidence = mock(InitialGameplayReleaseEvidence.class);
+    String evidenceDigest = "c".repeat(64);
     var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
     Instant now = Instant.parse("2026-09-01T00:00:00Z");
     when(operation.scope()).thenReturn(scope);
@@ -697,8 +698,8 @@ class InitialGameplayReleaseControllerTest {
     when(retainedEvidence.evidenceIdentity()).thenReturn("proof");
     when(ownerEvidence.evidenceIdentity()).thenReturn("proof");
     when(codec.digest(scope)).thenReturn(DIGEST);
-    when(codec.digest(retainedEvidence)).thenReturn(DIGEST);
-    when(codec.digest(ownerEvidence)).thenReturn(DIGEST);
+    when(codec.digest(retainedEvidence)).thenReturn(evidenceDigest);
+    when(codec.digest(ownerEvidence)).thenReturn(evidenceDigest);
     when(journal.find(scope.operationId())).thenReturn(Optional.of(operation));
 
     var tuple =
@@ -710,7 +711,7 @@ class InitialGameplayReleaseControllerTest {
             lock.identity(),
             scope.evidenceRef(),
             "proof",
-            DIGEST);
+            evidenceDigest);
     var authorized = new PublicTransitionResult(scope.operationId(), Phase.RESUME_AUTHORIZED);
     when(journal.findTransition(tuple)).thenReturn(Optional.empty());
     when(provider.read(scope))
@@ -768,13 +769,14 @@ class InitialGameplayReleaseControllerTest {
     var before = mock(Operation.class);
     var after = new PublicTransitionResult(scope.operationId(), Phase.RESUME_AUTHORIZED);
     var evidence = mock(InitialGameplayReleaseEvidence.class);
+    String evidenceDigest = "c".repeat(64);
     var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
     when(before.scope()).thenReturn(scope);
     when(before.maintenanceLockIdentity()).thenReturn(lock.identity());
     when(before.evidence()).thenReturn(evidence);
     when(evidence.evidenceIdentity()).thenReturn("proof");
     when(codec.digest(scope)).thenReturn(DIGEST);
-    when(codec.digest(evidence)).thenReturn(DIGEST);
+    when(codec.digest(evidence)).thenReturn(evidenceDigest);
     when(journal.find(scope.operationId())).thenReturn(java.util.Optional.of(before));
     var tuple =
         new PublicTransitionTuple(
@@ -785,7 +787,7 @@ class InitialGameplayReleaseControllerTest {
             lock.identity(),
             scope.evidenceRef(),
             "proof",
-            DIGEST);
+            evidenceDigest);
     var retainedTransition =
         new AtomicReference<>(java.util.Optional.<PublicTransitionResult>empty());
     when(journal.findTransition(tuple)).thenAnswer(invocation -> retainedTransition.get());

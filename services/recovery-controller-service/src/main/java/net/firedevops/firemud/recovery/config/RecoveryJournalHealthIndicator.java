@@ -13,11 +13,14 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.sql.DataSource;
 import net.firedevops.firemud.recovery.journal.JooqInitialGameplayReleaseJournal;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
+import org.springframework.boot.sql.init.dependency.DependsOnDatabaseInitialization;
 import org.springframework.stereotype.Component;
 
 @Component
+@DependsOnDatabaseInitialization
 final class RecoveryJournalHealthIndicator implements HealthIndicator {
   private static final int PROBE_TIMEOUT_SECONDS = 2;
   private static final long PROBE_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(PROBE_TIMEOUT_SECONDS);
@@ -35,7 +38,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       """
           + JooqInitialGameplayReleaseJournal.DURABLE_JOURNAL_RELATIONS
           + """
-            AND (SELECT count(DISTINCT version) = 7
+            AND (SELECT count(DISTINCT version) = 8
              FROM recovery_control.flyway_schema_history_recovery_control
              WHERE success AND (
                (version = '1' AND script = 'V1__initial_gameplay_release_journal.sql')
@@ -49,7 +52,9 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                OR (version = '6'
                    AND script = 'V6__retain_latest_preparation_observation.sql')
                OR (version = '7'
-                   AND script = 'V7__retain_preparation_receipt_identities.sql')))
+                   AND script = 'V7__retain_preparation_receipt_identities.sql')
+               OR (version = '8'
+                   AND script = 'V8__require_pending_effect_without_dispatch_timestamp.sql')))
             AND has_table_privilege(
               'recovery_control.initial_gameplay_release_attempt_local_no_send', 'INSERT')
             AND has_table_privilege(
@@ -241,6 +246,32 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_attempt_closure'::regclass
+                AND attname = 'attempt_id' AND NOT attisdropped AND attnotnull
+                AND atttypid = 'pg_catalog.uuid'::regtype)
+            AND EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_index i
+              JOIN pg_catalog.pg_attribute outbox
+                ON outbox.attrelid = i.indrelid AND outbox.attnum = i.indkey[0]
+              JOIN pg_catalog.pg_attribute attempt
+                ON attempt.attrelid = i.indrelid AND attempt.attnum = i.indkey[1]
+              WHERE i.indrelid = 'recovery_control.initial_gameplay_release_attempt_closure'::regclass
+                AND i.indisprimary AND i.indisvalid AND i.indisready AND i.indimmediate
+                AND i.indpred IS NULL AND i.indnkeyatts = 2
+                AND outbox.attname = 'outbox_id' AND NOT outbox.attisdropped
+                AND outbox.attnotnull AND outbox.atttypid = 'pg_catalog.uuid'::regtype
+                AND attempt.attname = 'attempt_id')
+            AND NOT EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_index i
+              JOIN pg_catalog.pg_attribute outbox
+                ON outbox.attrelid = i.indrelid AND outbox.attnum = i.indkey[0]
+              WHERE i.indrelid = 'recovery_control.initial_gameplay_release_attempt_closure'::regclass
+                AND i.indisunique AND i.indisvalid AND i.indisready AND i.indnkeyatts = 1
+                AND outbox.attname = 'outbox_id' AND NOT outbox.attisdropped)
+            AND EXISTS (
+              SELECT 1 FROM pg_catalog.pg_attribute
+              WHERE attrelid = 'recovery_control.initial_gameplay_release_attempt_closure'::regclass
                 AND attname = 'readback_digest' AND NOT attisdropped AND attnotnull
                 AND atttypid = 'pg_catalog.bpchar'::regtype AND atttypmod = 68)
             AND EXISTS (
@@ -272,6 +303,14 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                   || ' AND (last_attempt_id IS NOT NULL)'
                   || ' AND (last_attempt_id <> ''00000000-0000-0000-0000-000000000000''::uuid)'
                   || ' AND (last_dispatched_at IS NOT NULL)))')
+            AND EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_constraint c
+              WHERE c.conrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+                AND c.conname = 'ck_release_outbox_pending_dispatch_timestamp'
+                AND c.contype = 'c' AND c.convalidated AND c.conenforced
+                AND pg_catalog.pg_get_expr(c.conbin, c.conrelid) =
+                  '(((state)::text <> ''pending''::text) OR (last_dispatched_at IS NULL))')
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_attempt_closure'::regclass
@@ -325,6 +364,11 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                 AND a.attname = 'created_at' AND NOT a.attisdropped AND a.attnotnull
                 AND a.atttypid = 'pg_catalog.timestamptz'::regtype AND a.atttypmod = -1
                 AND pg_catalog.pg_get_expr(d.adbin, d.adrelid) = 'CURRENT_TIMESTAMP')
+            AND (SELECT count(*) = 2
+              FROM pg_catalog.pg_attribute a
+              WHERE a.attrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
+                AND a.attname IN ('expected_phase', 'result_phase') AND NOT a.attisdropped
+                AND a.attnotnull AND a.atttypid = 'pg_catalog.varchar'::regtype AND a.atttypmod = 36)
             AND NOT EXISTS (
               SELECT operation_id, operation_kind, target_namespace, playable_state_namespace_id,
                      peer_storage_binding, scope_payload, evidence_ref, scope_digest,
@@ -359,6 +403,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
           """;
 
   private final DataSource dataSource;
+  private final boolean startupMigrationEnabled;
   private final long probeTimeoutNanos;
   private final AtomicReference<CompletableFuture<Boolean>> inFlightProbe = new AtomicReference<>();
   private final ThreadPoolExecutor probes =
@@ -375,12 +420,24 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
           });
 
   @Autowired
+  RecoveryJournalHealthIndicator(
+      DataSource dataSource,
+      @Value("${spring.flyway.enabled:true}") boolean startupMigrationEnabled) {
+    this(dataSource, PROBE_TIMEOUT_NANOS, startupMigrationEnabled);
+  }
+
   RecoveryJournalHealthIndicator(DataSource dataSource) {
     this(dataSource, PROBE_TIMEOUT_NANOS);
   }
 
   RecoveryJournalHealthIndicator(DataSource dataSource, long probeTimeoutNanos) {
+    this(dataSource, probeTimeoutNanos, true);
+  }
+
+  private RecoveryJournalHealthIndicator(
+      DataSource dataSource, long probeTimeoutNanos, boolean startupMigrationEnabled) {
     this.dataSource = dataSource;
+    this.startupMigrationEnabled = startupMigrationEnabled;
     if (probeTimeoutNanos <= 0) {
       throw new IllegalArgumentException("Probe timeout must be positive");
     }
@@ -389,7 +446,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
 
   @Override
   public Health health() {
-    if (!JooqInitialGameplayReleaseJournal.driverLoggingIsRedacted()) {
+    if (!startupMigrationEnabled || !JooqInitialGameplayReleaseJournal.driverLoggingIsRedacted()) {
       return Health.down().build();
     }
     long requestDeadline = System.nanoTime() + probeTimeoutNanos;
@@ -398,6 +455,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       long remaining = requestDeadline - System.nanoTime();
       return remaining > 0
               && probe.get(remaining, TimeUnit.NANOSECONDS)
+              && JooqInitialGameplayReleaseJournal.driverLoggingIsRedacted()
               && requestDeadline - System.nanoTime() > 0
           ? Health.up().build()
           : Health.down().build();
