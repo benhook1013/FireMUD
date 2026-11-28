@@ -335,7 +335,7 @@ def saga_runtime_projects(snapshot: Snapshot) -> set[str]:
 
 
 def saga_adopters(
-    snapshot: Snapshot, *, require_placeholder_replacement_disabled: bool = True,
+    snapshot: Snapshot, *, require_current_configuration: bool = True,
 ) -> set[str]:
     adopters = set()
     for project in saga_runtime_projects(snapshot):
@@ -347,7 +347,7 @@ def saga_adopters(
             # a root location list; root-only scanning would invent Saga adoption.
             config = recovery_flyway_config(
                 snapshot, project,
-                require_placeholder_replacement_disabled=require_placeholder_replacement_disabled,
+                require_current_configuration=require_current_configuration,
             )
             loads_saga_location = config is not None and any(
                 location in {"classpath:db/migration", "classpath:db/migration/saga"}
@@ -387,7 +387,7 @@ def effective_sets(
     migrations: list[MigrationFile],
     recovery_locations: set[str],
     *,
-    require_placeholder_replacement_disabled: bool = True,
+    require_current_configuration: bool = True,
 ) -> dict[str, list[MigrationFile]]:
     grouped: dict[str, list[MigrationFile]] = {}
     for item in migrations:
@@ -396,7 +396,7 @@ def effective_sets(
         grouped.setdefault(item.project, []).append(item)
     shared = grouped.get("common-saga", [])
     for adopter in saga_adopters(
-            snapshot, require_placeholder_replacement_disabled=require_placeholder_replacement_disabled):
+            snapshot, require_current_configuration=require_current_configuration):
         grouped.setdefault(adopter, []).extend(shared)
     return grouped
 
@@ -405,7 +405,7 @@ def recovery_flyway_config(
     snapshot: Snapshot,
     project: str,
     *,
-    require_placeholder_replacement_disabled: bool = True,
+    require_current_configuration: bool = True,
 ) -> RecoveryFlywayConfig | None:
     def flatten_properties(
         value: object,
@@ -427,19 +427,24 @@ def recovery_flyway_config(
             properties[path] = child
             flatten_properties(child, (*prefix, *parts), properties, ambiguous)
 
-    def reject_recursive_aliases(value: object, active: set[int], config_path: str) -> None:
+    def reject_recursive_aliases(
+        value: object, active: set[int], completed: set[int], config_path: str,
+    ) -> None:
         if not isinstance(value, (dict, list)):
             return
         identity = id(value)
         if identity in active:
             raise ValueError(f"{config_path}: recursive YAML aliases are unsupported")
+        if identity in completed:
+            return
         active.add(identity)
         try:
             children = value.values() if isinstance(value, dict) else value
             for child in children:
-                reject_recursive_aliases(child, active, config_path)
+                reject_recursive_aliases(child, active, completed, config_path)
         finally:
             active.remove(identity)
+        completed.add(identity)
 
     resource_root = f"services/{project}/src/main/resources"
     # Properties and imported files can override the packaged YAML. This static
@@ -464,8 +469,17 @@ def recovery_flyway_config(
         "spring.datasource.jndiname", "spring.datasource.hikari.datasourcejndi",
         "spring.datasource.hikari.datasourceclassname",
     }
+    hikari_properties = "spring.datasource.hikari.datasourceproperties"
     init_sqls = "spring.flyway.initsqls"
     pool_init_sql = "spring.datasource.hikari.connectioninitsql"
+    pool_test_query = "spring.datasource.hikari.connectiontestquery"
+    datasource_type = "spring.datasource.type"
+    credential_paths = {
+        "spring.datasource.username": "${FIREMUD_RECOVERY_CONTROL_DB_USER}",
+        "spring.datasource.password": "${FIREMUD_RECOVERY_CONTROL_DB_PASSWORD}",
+        "spring.datasource.hikari.username": "${FIREMUD_RECOVERY_CONTROL_DB_USER}",
+        "spring.datasource.hikari.password": "${FIREMUD_RECOVERY_CONTROL_DB_PASSWORD}",
+    }
     callback_locations = "spring.flyway.callbacklocations"
     placeholder_replacement = "spring.flyway.placeholderreplacement"
     effective_exclusions: list[str] | None = None
@@ -480,12 +494,17 @@ def recovery_flyway_config(
                 continue
             if not isinstance(document, dict):
                 return None
-            reject_recursive_aliases(document, set(), config_path)
+            reject_recursive_aliases(document, set(), set(), config_path)
             properties: dict[str, object] = {}
             ambiguous: set[str] = set()
             flatten_properties(document, (), properties, ambiguous)
             if any(path == override or path.startswith((override + ".", override + "["))
                    for path in properties for override in datasource_overrides):
+                return None
+            if (hikari_properties in ambiguous
+                    or properties.get(hikari_properties) not in (None, "", {})
+                    or any(path.startswith((hikari_properties + ".", hikari_properties + "["))
+                           for path in properties)):
                 return None
             if init_sqls in ambiguous or callback_locations in ambiguous or placeholder_replacement in ambiguous:
                 return None
@@ -559,7 +578,9 @@ def recovery_flyway_config(
                 for path in indexed_location_paths:
                     properties.pop(path)
                     ambiguous.discard(path)
-            exact_guard_paths = {auto_configuration_switch, pool_init_sql,
+            exact_guard_paths = {auto_configuration_switch, pool_init_sql, pool_test_query,
+                                 datasource_type, *credential_paths,
+                                 "spring.flyway.validateonmigrate",
                                  "spring.datasource.url", "spring.datasource.hikari.jdbcurl",
                                  "spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
                                  "spring.flyway.table", "spring.flyway.schemas", "spring.flyway.defaultschema",
@@ -601,22 +622,26 @@ def recovery_flyway_config(
                 return None
 
             for path in guard_paths:
-                value = properties[path]
-                # Boot's collection binder skips the empty scalar produced by
-                # YAML null/[] for init-sqls, leaving a lower-priority list bound.
-                if path == init_sqls and value in (None, "", []) and path in effective_settings:
-                    continue
-                effective_settings[path] = value
+                effective_settings[path] = properties[path]
 
     effective_datasource_url = effective_settings.get("spring.datasource.url")
     effective_hikari_jdbc_url = effective_settings.get("spring.datasource.hikari.jdbcurl")
-    if ("spring.datasource.url" in effective_settings and effective_datasource_url != RECOVERY_DATASOURCE_URL
-            or "spring.datasource.hikari.jdbcurl" in effective_settings
+    if ((require_current_configuration or "spring.datasource.url" in effective_settings)
+            and effective_datasource_url != RECOVERY_DATASOURCE_URL):
+        return None
+    if ("spring.datasource.hikari.jdbcurl" in effective_settings
             and not isinstance(effective_hikari_jdbc_url, str)):
         return None
     if effective_hikari_jdbc_url is not None and (
             effective_datasource_url != RECOVERY_DATASOURCE_URL
             or effective_hikari_jdbc_url != effective_datasource_url):
+        return None
+
+    if (datasource_type in effective_settings
+            and effective_settings[datasource_type] != "com.zaxxer.hikari.HikariDataSource"):
+        return None
+    if any(effective_settings[path] != reference for path, reference in credential_paths.items()
+           if path in effective_settings):
         return None
 
     auto_configuration_enabled = effective_settings.pop(auto_configuration_switch, True)
@@ -634,10 +659,15 @@ def recovery_flyway_config(
     enabled = flyway.get("enabled", True)
     if enabled is not True and not (isinstance(enabled, str) and enabled == "true"):
         return None
-    pool_initialization = effective_settings.get(pool_init_sql)
-    if pool_initialization is not None and (
-            not isinstance(pool_initialization, str) or pool_initialization.strip()):
+    checksum_validation = flyway.get("validateonmigrate", True)
+    if checksum_validation is not True and not (
+            isinstance(checksum_validation, str)
+            and checksum_validation.strip().lower() in {"true", "on", "yes", "1"}):
         return None
+    for sql_property in (pool_init_sql, pool_test_query):
+        pool_sql = effective_settings.get(sql_property)
+        if pool_sql is not None and (not isinstance(pool_sql, str) or pool_sql.strip()):
+            return None
     mixed = flyway.get("mixed", False)
     if isinstance(mixed, bool):
         mixed_enabled = mixed
@@ -678,7 +708,7 @@ def recovery_flyway_config(
             replacement = True
         elif replacement in {"false", "off", "no", "0"}:
             replacement = False
-    if not isinstance(replacement, bool) or require_placeholder_replacement_disabled and replacement:
+    if not isinstance(replacement, bool) or require_current_configuration and replacement:
         return None
     placeholder_delimiters = None
     if replacement:
@@ -770,7 +800,7 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
             and RECOVERY_PROJECT in saga_runtime_projects(parent)
         )
         parent_config = recovery_flyway_config(
-            parent, RECOVERY_PROJECT, require_placeholder_replacement_disabled=False,
+            parent, RECOVERY_PROJECT, require_current_configuration=False,
         ) if recovery_parent_migrations or has_inherited_saga else None
         parent_locations = parent_config.locations if parent_config else set()
         if (recovery_parent_migrations or has_inherited_saga) and (
@@ -786,7 +816,7 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
                           "and effective versioned migration history")
         parent_grouped = effective_sets(
             parent, parent_migrations, parent_locations,
-            require_placeholder_replacement_disabled=False,
+            require_current_configuration=False,
         )
         if recovery_config and parent_config and parent_config.placeholder_delimiters:
             prefix, suffix = parent_config.placeholder_delimiters
@@ -933,7 +963,12 @@ def run_self_test() -> None:
         b"    placeholder-replacement: false\n"
         b"    table: flyway_schema_history_recovery_control\n"
     )
-    recovery_settings = b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
+    datasource_url = RECOVERY_DATASOURCE_URL.encode()
+    datasource_setting = b"spring.datasource.url: " + datasource_url + b"\n"
+    recovery_settings = (
+        datasource_setting + b"spring:\n  flyway:\n    locations: classpath:db/recovery-control-migration\n"
+        + recovery_table_setting
+    )
     recovery_history = {recovery + "V1__journal.sql": b"-- journal", recovery_config: recovery_settings}
     check("unchanged isolated recovery history", recovery_history, recovery_history, None)
     check("comma-delimited Flyway scalar trims its location entry", {
@@ -943,10 +978,26 @@ def run_self_test() -> None:
             b"locations: ' classpath:db/recovery-control-migration '",
         ),
     }, recovery_history, None)
-    datasource_url = RECOVERY_DATASOURCE_URL.encode()
-    check("normal URL datasource remains eligible for recovery history", {
+    check("current recovery must carry its dedicated datasource URL", {
         **recovery_history,
-        recovery_config: recovery_settings + b"spring.datasource.url: " + datasource_url + b"\n",
+        recovery_config: recovery_settings.removeprefix(datasource_setting),
+    }, recovery_history, "historical effective migration no longer applied")
+    check("legacy recovery source remains an eligible historical baseline", recovery_history, {
+        **recovery_history,
+        recovery_config: recovery_settings.removeprefix(datasource_setting),
+    }, None)
+    for hikari_override in (
+        b"spring.datasource.hikari.data-source-properties.applicationName: override\n",
+        b"spring:\n  datasource:\n    hikari:\n      data-source-properties:\n        applicationName: override\n",
+    ):
+        check("nonempty Hikari datasource properties cannot qualify recovery history", {
+            **recovery_history,
+            recovery_config.replace("/application.yml", "/config/application.yml"): hikari_override,
+        }, recovery_history, "historical effective migration no longer applied")
+    check("empty Hikari datasource properties leave recovery URL authoritative", {
+        **recovery_history,
+        recovery_config.replace("/application.yml", "/config/application.yml"):
+            b"spring.datasource.hikari.data-source-properties: {}\n",
     }, recovery_history, None)
     for invalid_url in (
         b"jdbc:postgresql://localhost/firemud_recovery_control",
@@ -955,25 +1006,25 @@ def run_self_test() -> None:
     ):
         check("noncanonical packaged URL cannot qualify recovery history", {
             **recovery_history,
-            recovery_config: recovery_settings + b"spring.datasource.url: " + datasource_url + b"\n",
+            recovery_config: recovery_settings,
             recovery_config.replace("/application.yml", "/config/application.yml"):
                 b"spring.datasource.url: " + invalid_url + b"\n",
         }, recovery_history, "historical effective migration no longer applied")
     check("higher-priority Hikari datasource class override cannot qualify recovery history", {
         **recovery_history,
-        recovery_config: recovery_settings + b"spring.datasource.url: " + datasource_url + b"\n",
+        recovery_config: recovery_settings,
         recovery_config.replace("/application.yml", "/config/application.yml"):
             b"spring.datasource.hikari.data-source-class-name: org.postgresql.ds.PGSimpleDataSource\n",
     }, recovery_history, "historical effective migration no longer applied")
     check("matching Hikari JDBC URL override remains eligible", {
         **recovery_history,
-        recovery_config: recovery_settings + b"spring.datasource.url: " + datasource_url + b"\n",
+        recovery_config: recovery_settings,
         recovery_config.replace("/application.yml", "/config/application.yml"):
             b"spring.datasource.hikari.jdbc-url: " + datasource_url + b"\n",
     }, recovery_history, None)
     check("divergent Hikari JDBC URL override is rejected", {
         **recovery_history,
-        recovery_config: recovery_settings + b"spring.datasource.url: " + datasource_url + b"\n",
+        recovery_config: recovery_settings,
         recovery_config.replace("/application.yml", "/config/application.yml"):
             b"spring.datasource.hikari.jdbc-url: jdbc:postgresql://other/firemud_recovery_control\n",
     }, recovery_history, "historical effective migration no longer applied")
@@ -1103,7 +1154,7 @@ def run_self_test() -> None:
         parent_with_owned_migration,
         discover_migration_files(parent_with_owned_migration),
         {"classpath:db/migration/saga"},
-        require_placeholder_replacement_disabled=False,
+        require_current_configuration=False,
     )
     if [item.path for item in effective_parent[RECOVERY_PROJECT]] != [owned_migration_path]:
         raise AssertionError("legacy Saga-only location must load only the owned migration beneath it")
@@ -1130,18 +1181,37 @@ def run_self_test() -> None:
             **recovery_history,
             recovery_config: recovery_settings + f"    {setting}: [unsafe]\n".encode(),
             recovery_config_override: f"spring.flyway.{setting}: []\n".encode(),
-        }, recovery_history,
-            "non-empty connection init SQL" if setting == "init-sqls" else "callback locations")
+        }, recovery_history, None if setting == "init-sqls" else "callback locations")
         check(f"effective non-empty Flyway {setting} remains unsupported", {
             **recovery_history,
             recovery_config: recovery_settings + f"    {setting}: []\n".encode(),
             recovery_config_override: f"spring.flyway.{setting}: [unsafe]\n".encode(),
         }, recovery_history, "non-empty connection init SQL" if setting == "init-sqls" else "callback locations")
-    check("higher-priority null Flyway init SQL retains a non-empty root list", {
+    check("higher-priority null Flyway init SQL clears a non-empty root list", {
         **recovery_history,
         recovery_config: recovery_settings + b"    init-sqls: [SET application_name = fixture]\n",
         recovery_config_override: b"spring.flyway.init-sqls:\n",
-    }, recovery_history, "non-empty connection init SQL")
+    }, recovery_history, None)
+    for property_name, value, result in (
+        ("spring.datasource.type", "com.zaxxer.hikari.HikariDataSource", None),
+        ("spring.datasource.type", "org.springframework.jdbc.datasource.DriverManagerDataSource",
+         "historical effective migration no longer applied"),
+        ("spring.datasource.username", "${FIREMUD_RECOVERY_CONTROL_DB_USER}", None),
+        ("spring.datasource.password", "${FIREMUD_RECOVERY_CONTROL_DB_PASSWORD}", None),
+        ("spring.datasource.hikari.username", "${FIREMUD_RECOVERY_CONTROL_DB_USER}", None),
+        ("spring.datasource.hikari.password", "${FIREMUD_RECOVERY_CONTROL_DB_PASSWORD}", None),
+        ("spring.datasource.username", "literal-test-user", "historical effective migration no longer applied"),
+        ("spring.datasource.password", "${OTHER_FIXTURE_PASSWORD}", "historical effective migration no longer applied"),
+        ("spring.datasource.hikari.username", "${OTHER_FIXTURE_USER}", "historical effective migration no longer applied"),
+        ("spring.datasource.hikari.password", "literal-test-value", "historical effective migration no longer applied"),
+        ("spring.flyway.validate-on-migrate", "false", "historical effective migration no longer applied"),
+        ("spring.datasource.hikari.connection-test-query", "SELECT 1",
+         "historical effective migration no longer applied"),
+    ):
+        check(f"effective Recovery guard {property_name}", {
+            **recovery_history,
+            recovery_config_override: f"{property_name}: {value}\n".encode(),
+        }, recovery_history, result)
     check("explicitly empty Flyway callback list is unsupported", {
         **recovery_history,
         recovery_config: recovery_settings + b"    callback-locations: []\n",
@@ -1265,7 +1335,7 @@ def run_self_test() -> None:
         **renamed_recovery_config, recovery_config: b"spring:\n  flyway:\n    enabled: false\n",
     }, recovery_history, "historical effective migration no longer applied")
     recovery_list_settings = (
-        b"spring:\n  flyway:\n    enabled: true\n    locations:\n"
+        datasource_setting + b"spring:\n  flyway:\n    enabled: true\n    locations:\n"
         b"      - classpath:db/recovery-control-migration\n" + recovery_table_setting
     )
     yml_locations_override = b"spring:\n  flyway:\n    locations:\n      - classpath:db/migration\n"
@@ -1335,7 +1405,7 @@ def run_self_test() -> None:
         ),
     }, recovery_history, "packaged Spring configuration must enable Flyway")
     redis_exclusion_settings = (
-        b"spring:\n  autoconfigure:\n    exclude:\n"
+        datasource_setting + b"spring:\n  autoconfigure:\n    exclude:\n"
         b"      - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration\n"
         b"  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
     )
@@ -1345,7 +1415,7 @@ def run_self_test() -> None:
     check("higher-priority Redis-only exclusion replaces root Flyway exclusion", {
         **recovery_history,
         recovery_config: (
-            b"spring:\n  autoconfigure:\n    exclude:\n"
+            datasource_setting + b"spring:\n  autoconfigure:\n    exclude:\n"
             b"      - org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration\n"
             b"  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
         ),
@@ -1382,7 +1452,7 @@ def run_self_test() -> None:
             + recovery_settings
         )),
         ("nested Redis-only", (
-            b"spring:\n  autoconfigure:\n    exclude:\n"
+            datasource_setting + b"spring:\n  autoconfigure:\n    exclude:\n"
             b"      0: org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration\n"
             b"  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
         )),
@@ -1393,7 +1463,7 @@ def run_self_test() -> None:
     check("excluding Flyway autoconfiguration cannot qualify recovery history", {
         **recovery_history,
         recovery_config: (
-            b"spring:\n  autoconfigure:\n    exclude:\n"
+            datasource_setting + b"spring:\n  autoconfigure:\n    exclude:\n"
             b"      - org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration\n"
             b"  flyway:\n    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting
         ),
@@ -1526,7 +1596,7 @@ def run_self_test() -> None:
           "Recovery migration sidecars are unsupported")
     ordinary_without_locations = {
         **recovery_history,
-        recovery_config: b"spring:\n  flyway:\n    enabled: true\n    placeholder-replacement: false\n",
+        recovery_config: datasource_setting + b"spring:\n  flyway:\n    enabled: true\n    placeholder-replacement: false\n",
         "services/recovery-controller-service/src/main/resources/db/migration/V1__first.sql": b"-- first",
         "services/recovery-controller-service/src/main/resources/db/migration/V1__duplicate.sql": b"-- duplicate",
     }
@@ -1546,7 +1616,7 @@ def run_self_test() -> None:
     check("removing ordinary Flyway location removes that effective history",
           recovery_only, combined_parent, "historical effective migration no longer applied")
     dotted_recovery_settings = (
-        b"spring.flyway.enabled: true\n"
+        datasource_setting + b"spring.flyway.enabled: true\n"
         b"spring.flyway.locations: classpath:db/recovery-control-migration\n"
         b"spring.flyway.schemas: [recovery_control]\n"
         b"spring.flyway.default-schema: recovery_control\n"
@@ -1644,7 +1714,7 @@ def run_self_test() -> None:
     }, complete_recovery_history, None)
     check("reused merged mapping preserves its authored override", {
         **complete_recovery_history, recovery_config: (
-            b"defaults: &fallback {enabled: false}\n"
+            datasource_setting + b"defaults: &fallback {enabled: false}\n"
             b"qualified: &qualified {<<: *fallback, enabled: true}\n"
             b"spring:\n  flyway:\n    <<: *qualified\n"
             b"    locations: classpath:db/recovery-control-migration\n" + recovery_table_setting

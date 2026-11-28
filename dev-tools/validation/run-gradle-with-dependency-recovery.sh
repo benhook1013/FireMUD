@@ -908,6 +908,12 @@ if [[ "$RESOLUTION_BOUNDARY" == before-compile-cached* ]]; then
   # Preserve usable cached metadata when the failing reads are precisely known.
   retry_refresh=false
   retry_description="with cached dependency metadata"
+  for gradle_argument in "${GRADLE_ARGS[@]}"; do
+    if [[ "$gradle_argument" == --refresh-dependencies || "$gradle_argument" == -U ]]; then
+      retry_description="with the caller-requested dependency metadata refresh"
+      break
+    fi
+  done
 fi
 echo "Recognized Gradle dependency-resolution failure at the bounded pre-substantive boundary; retrying the complete Gradle command once $retry_description after ${RETRY_DELAY}s."
 sleep "$RETRY_DELAY"

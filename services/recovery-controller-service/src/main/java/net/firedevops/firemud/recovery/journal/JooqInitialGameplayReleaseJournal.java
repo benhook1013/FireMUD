@@ -43,6 +43,24 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * PostgreSQL compare-and-set journal and transactional outbox for initial gameplay release only.
  */
 public final class JooqInitialGameplayReleaseJournal implements InitialGameplayReleaseJournal {
+  public static final String DURABLE_JOURNAL_RELATIONS =
+      """
+        NOT EXISTS (
+          SELECT 1
+          FROM (VALUES
+            ('recovery_control.initial_gameplay_release_operation'::regclass),
+            ('recovery_control.initial_gameplay_release_transition'::regclass),
+            ('recovery_control.initial_gameplay_release_outbox'::regclass),
+            ('recovery_control.initial_gameplay_release_attempt_closure'::regclass),
+            ('recovery_control.initial_gameplay_release_attempt_rejection'::regclass),
+            ('recovery_control.initial_gameplay_release_attempt_local_no_send'::regclass),
+            ('recovery_control.initial_gameplay_release_preparation_receipt'::regclass)
+          ) AS journal_relation(relation)
+          LEFT JOIN pg_catalog.pg_class table_state ON table_state.oid = relation
+          WHERE table_state.relpersistence IS DISTINCT FROM 'p'
+             OR pg_catalog.row_security_active(relation))
+      """;
+
   private static final String TRANSITION_TABLE =
       "recovery_control.initial_gameplay_release_transition";
   private static final String OUTBOX_TABLE = "recovery_control.initial_gameplay_release_outbox";
@@ -128,8 +146,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                AND current_setting('log_parameter_max_length') = '0' AS redacted,
               current_setting('fsync') = 'on'
                AND current_setting('synchronous_commit') IN ('on', 'local', 'remote_write', 'remote_apply')
-                  AS durable
-            """);
+               AND current_setting('server_encoding') = 'UTF8'
+               AND
+            """
+                + DURABLE_JOURNAL_RELATIONS
+                + " AS durable");
     if (settings == null || !Boolean.TRUE.equals(settings.get("redacted", Boolean.class))) {
       throw new IllegalStateException("Recovery journal requires redacted PostgreSQL logs");
     }
@@ -244,18 +265,22 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             throw conflict("public transition expected phase is stale");
           }
           requireQualifiedWriteSession(tx);
-          tx.execute(
-              """
-              INSERT INTO recovery_control.initial_gameplay_release_transition (
-                  operation_id, verb, tuple_digest, tuple_payload, expected_phase, result_phase
-              ) VALUES (?, ?, ?, CAST(? AS jsonb), ?, ?)
-              """,
-              tuple.operationId(),
-              tuple.verb().wireValue(),
-              tupleDigest,
-              tuplePayload,
-              tuple.expectedPhase().databaseValue(),
-              tuple.verb().resultPhase().databaseValue());
+          int inserted =
+              tx.execute(
+                  """
+                  INSERT INTO recovery_control.initial_gameplay_release_transition (
+                      operation_id, verb, tuple_digest, tuple_payload, expected_phase, result_phase
+                  ) VALUES (?, ?, ?, CAST(? AS jsonb), ?, ?)
+                  """,
+                  tuple.operationId(),
+                  tuple.verb().wireValue(),
+                  tupleDigest,
+                  tuplePayload,
+                  tuple.expectedPhase().databaseValue(),
+                  tuple.verb().resultPhase().databaseValue());
+          if (inserted != 1) {
+            throw conflict("public transition receipt was not inserted");
+          }
           int changed =
               tx.execute(
                   """
@@ -365,58 +390,60 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       UUID operationId, UUID effectId, UUID attemptId, Supplier<Instant> claimTime) {
     Objects.requireNonNull(attemptId, "attemptId must not be null");
     Objects.requireNonNull(claimTime, "claimTime must not be null");
-    requireIndependentTransaction("effect dispatch claim");
-    return dsl.transactionResult(configuration -> {
-      DSLContext tx = DSL.using(configuration);
-      Operation operation = selectOperation(tx, operationId, true);
-      OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
-      tupleCodec.requireEffectMatchesOperation(current.effect(), operation);
-      if (hasRetainedClosure(tx, current, attemptId, null)
-          || hasRetainedOwnerRejection(tx, current, attemptId, null)) {
-        throw conflict("a retry must use a new effect attempt identity");
-      }
-      if (current.state() == EffectOutboxState.DISPATCHED
-          && attemptId.equals(current.lastAttemptId())) {
-        throw conflict("effect attempt is already claimed; read back the existing dispatch");
-      }
-      if (current.state() == EffectOutboxState.DISPATCHED
-          || current.state() == EffectOutboxState.AMBIGUOUS
-          || current.state() == EffectOutboxState.ACKNOWLEDGED) {
-        return current;
-      }
-      if (current.state() == EffectOutboxState.RETRYABLE) {
-        requireExactClosureBeforeRetry(tx, current);
-      }
-      requirePhaseForEffect(operation.phase(), current.effect().kind());
-      Instant now =
-          current.effect().kind() == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF
-              ? requireAcknowledgedEffect(
-                  tx, operation, EffectKind.PREPARE_PLAYABLE_STATE_FENCED, claimTime, true)
-              : claimTime.get();
-      requireQualifiedWriteSession(tx);
-      int changed =
-          tx.execute(
-              """
-              UPDATE recovery_control.initial_gameplay_release_outbox
-              SET state = 'dispatched', attempt_count = attempt_count + 1,
-                  last_attempt_id = ?, last_dispatched_at = CAST(? AS timestamptz), last_outcome_code = NULL,
-                  readback_identity = NULL, readback_payload = NULL, readback_digest = NULL,
-                  retry_provenance = NULL, send_outcome_uncertain = false,
-                  updated_at = CAST(? AS timestamptz)
-              WHERE operation_id = ? AND effect_id = ? AND state IN ('pending', 'retryable')
-              """,
-              attemptId,
-              // PostgreSQL stores microseconds; truncate explicitly rather than rounding
-              // the dispatch floor upward beyond an observation of this same instant.
-              toOffsetDateTime(now.truncatedTo(java.time.temporal.ChronoUnit.MICROS)),
-              toOffsetDateTime(now),
-              operationId,
-              effectId);
-      if (changed != 1) {
-        return selectOutbox(tx, operationId, effectId, false);
-      }
-      return selectOutbox(tx, operationId, effectId, false);
-    });
+    return independentTransaction(
+        "effect dispatch claim",
+        "Unable to record recovery journal effect dispatch claim",
+        configuration -> {
+          DSLContext tx = DSL.using(configuration);
+          Operation operation = selectOperation(tx, operationId, true);
+          OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
+          tupleCodec.requireEffectMatchesOperation(current.effect(), operation);
+          if (hasRetainedClosure(tx, current, attemptId, null)
+              || hasRetainedOwnerRejection(tx, current, attemptId, null)) {
+            throw conflict("a retry must use a new effect attempt identity");
+          }
+          if (current.state() == EffectOutboxState.DISPATCHED
+              && attemptId.equals(current.lastAttemptId())) {
+            throw conflict("effect attempt is already claimed; read back the existing dispatch");
+          }
+          if (current.state() == EffectOutboxState.DISPATCHED
+              || current.state() == EffectOutboxState.AMBIGUOUS
+              || current.state() == EffectOutboxState.ACKNOWLEDGED) {
+            return current;
+          }
+          if (current.state() == EffectOutboxState.RETRYABLE) {
+            requireExactClosureBeforeRetry(tx, current);
+          }
+          requirePhaseForEffect(operation.phase(), current.effect().kind());
+          Instant now =
+              current.effect().kind() == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF
+                  ? requireAcknowledgedEffect(
+                      tx, operation, EffectKind.PREPARE_PLAYABLE_STATE_FENCED, claimTime, true)
+                  : claimTime.get();
+          requireQualifiedWriteSession(tx);
+          int changed =
+              tx.execute(
+                  """
+                  UPDATE recovery_control.initial_gameplay_release_outbox
+                  SET state = 'dispatched', attempt_count = attempt_count + 1,
+                      last_attempt_id = ?, last_dispatched_at = CAST(? AS timestamptz), last_outcome_code = NULL,
+                      readback_identity = NULL, readback_payload = NULL, readback_digest = NULL,
+                      retry_provenance = NULL, send_outcome_uncertain = false,
+                      updated_at = CAST(? AS timestamptz)
+                  WHERE operation_id = ? AND effect_id = ? AND state IN ('pending', 'retryable')
+                  """,
+                  attemptId,
+                  // PostgreSQL stores microseconds; truncate explicitly rather than rounding
+                  // the dispatch floor upward beyond an observation of this same instant.
+                  toOffsetDateTime(now.truncatedTo(java.time.temporal.ChronoUnit.MICROS)),
+                  toOffsetDateTime(now),
+                  operationId,
+                  effectId);
+          if (changed != 1) {
+            return selectOutbox(tx, operationId, effectId, false);
+          }
+          return selectOutbox(tx, operationId, effectId, false);
+        });
   }
 
   @Override
@@ -576,16 +603,22 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         }
       }
       if (retrySource == RetrySource.OWNER_REJECTED) {
-        tx.execute(
-            """
-            INSERT INTO recovery_control.initial_gameplay_release_attempt_rejection
-                (outbox_id, attempt_id, attempt_ordinal)
-            VALUES (?, ?, ?)
-            ON CONFLICT (outbox_id, attempt_id) DO NOTHING
-            """,
-            current.outboxId(),
-            attemptId,
-            dispatch.attemptCount());
+        int retained =
+            tx.execute(
+                """
+                INSERT INTO recovery_control.initial_gameplay_release_attempt_rejection
+                    (outbox_id, attempt_id, attempt_ordinal)
+                VALUES (?, ?, ?)
+                ON CONFLICT (outbox_id, attempt_id) DO NOTHING
+                """,
+                current.outboxId(),
+                attemptId,
+                dispatch.attemptCount());
+        if (retained != 1
+            && (retained != 0
+                || !hasRetainedOwnerRejection(tx, current, attemptId, dispatch.attemptCount()))) {
+          throw conflict("owner rejection receipt does not match the exact dispatch");
+        }
       }
       int changed =
           tx.execute(
@@ -759,18 +792,22 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                 requireQualifiedWriteSession(tx);
                 // Keep the observation floor without changing the original retry provenance or
                 // hold.
-                tx.execute(
-                    """
-                    UPDATE recovery_control.initial_gameplay_release_outbox
-                    SET readback_identity = ?, readback_payload = CAST(? AS jsonb),
-                        readback_digest = ?, updated_at = GREATEST(updated_at, CAST(? AS timestamptz))
-                    WHERE outbox_id = ?
-                    """,
-                    readback.readbackIdentity(),
-                    JSONB.valueOf(tupleCodec.toJson(readback)),
-                    readbackDigest,
-                    toOffsetDateTime(now),
-                    current.outboxId());
+                int changed =
+                    tx.execute(
+                        """
+                        UPDATE recovery_control.initial_gameplay_release_outbox
+                        SET readback_identity = ?, readback_payload = CAST(? AS jsonb),
+                            readback_digest = ?, updated_at = GREATEST(updated_at, CAST(? AS timestamptz))
+                        WHERE outbox_id = ?
+                        """,
+                        readback.readbackIdentity(),
+                        JSONB.valueOf(tupleCodec.toJson(readback)),
+                        readbackDigest,
+                        toOffsetDateTime(now),
+                        current.outboxId());
+                if (changed != 1) {
+                  throw conflict("partial effect readback was not retained");
+                }
               }
               return operation;
             }
@@ -847,19 +884,23 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             if (hasRetainedClosure(tx, current, readback.attemptId(), null)) {
               throw conflict("effect attempt closure already exists outside exact replay");
             }
-            tx.execute(
-                """
-                INSERT INTO recovery_control.initial_gameplay_release_attempt_closure
-                    (outbox_id, attempt_id, attempt_ordinal, readback_payload, readback_digest, dispatched_at, recorded_at)
-                VALUES (?, ?, ?, CAST(? AS jsonb), ?, CAST(? AS timestamptz), CAST(? AS timestamptz))
-                """,
-                current.outboxId(),
-                readback.attemptId(),
-                current.attemptCount(),
-                JSONB.valueOf(tupleCodec.toJson(readback)),
-                readbackDigest,
-                dispatchTime,
-                toOffsetDateTime(now));
+            int inserted =
+                tx.execute(
+                    """
+                    INSERT INTO recovery_control.initial_gameplay_release_attempt_closure
+                        (outbox_id, attempt_id, attempt_ordinal, readback_payload, readback_digest, dispatched_at, recorded_at)
+                    VALUES (?, ?, ?, CAST(? AS jsonb), ?, CAST(? AS timestamptz), CAST(? AS timestamptz))
+                    """,
+                    current.outboxId(),
+                    readback.attemptId(),
+                    current.attemptCount(),
+                    JSONB.valueOf(tupleCodec.toJson(readback)),
+                    readbackDigest,
+                    dispatchTime,
+                    toOffsetDateTime(now));
+            if (inserted != 1) {
+              throw conflict("effect attempt closure was not inserted");
+            }
             setReadbackState(
                 tx, current, readback, readbackDigest, EffectOutboxState.RETRYABLE, now);
             return operation;
@@ -1088,22 +1129,26 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   private void enqueueEffect(DSLContext tx, TypedEffect effect, Instant now) {
     String payload = tupleCodec.toJson(effect);
     String payloadDigest = tupleCodec.digest(effect);
-    tx.execute(
-        """
-        INSERT INTO recovery_control.initial_gameplay_release_outbox (
-            outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest,
-            payload_digest, payload, state, attempt_count, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, CAST(? AS jsonb), 'pending', 0, CAST(? AS timestamptz), CAST(? AS timestamptz))
-        """,
-        UUID.randomUUID(),
-        effect.operationId(),
-        effect.effectId(),
-        effect.kind().databaseValue(),
-        effect.operationTupleDigest(),
-        payloadDigest,
-        JSONB.valueOf(payload),
-        toOffsetDateTime(now),
-        toOffsetDateTime(now));
+    int inserted =
+        tx.execute(
+            """
+            INSERT INTO recovery_control.initial_gameplay_release_outbox (
+                outbox_id, operation_id, effect_id, effect_kind, operation_tuple_digest,
+                payload_digest, payload, state, attempt_count, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, CAST(? AS jsonb), 'pending', 0, CAST(? AS timestamptz), CAST(? AS timestamptz))
+            """,
+            UUID.randomUUID(),
+            effect.operationId(),
+            effect.effectId(),
+            effect.kind().databaseValue(),
+            effect.operationTupleDigest(),
+            payloadDigest,
+            JSONB.valueOf(payload),
+            toOffsetDateTime(now),
+            toOffsetDateTime(now));
+    if (inserted != 1) {
+      throw conflict("next effect was not enqueued");
+    }
   }
 
   private TypedEffect prepareEffect(Operation operation) {
