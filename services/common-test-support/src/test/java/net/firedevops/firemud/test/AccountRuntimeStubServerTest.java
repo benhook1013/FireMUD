@@ -141,15 +141,34 @@ class AccountRuntimeStubServerTest {
                 AccountProfileJson.parse(profile.getProfileJson(), "PRIVATE")
                     .presenceVisibilityPolicy())
             .isEqualTo("FRIENDS_ONLY");
-        assertThat(
-                stub.updateProfile(
-                        UpdateProfileRequest.newBuilder()
-                            .setTenantId("1")
-                            .setAccountId(accountUuid)
-                            .setProfileJson("{\"presenceVisibilityPolicy\":\"PRIVATE\"}")
-                            .build())
-                    .getSuccess())
-            .isTrue();
+        var update =
+            UpdateProfileRequest.newBuilder()
+                .setTenantId("1")
+                .setAccountId(accountUuid)
+                .setProfileJson("{\"presenceVisibilityPolicy\":\"PRIVATE\"}")
+                .build();
+        var result = stub.updateProfile(update);
+        assertThat(result.getSuccess()).isTrue();
+        assertThat(result.hasError()).isFalse();
+        assertThat(result.getAccountId()).isEqualTo(accountUuid);
+        assertThat(result.getTenantId()).isEqualTo("1");
+
+        var noncanonical =
+            stub.updateProfile(
+                update.toBuilder()
+                    .setTenantId("01")
+                    .setProfileJson("{\"presenceVisibilityPolicy\":\"PUBLIC\"}")
+                    .build());
+        assertThat(noncanonical.getSuccess()).isFalse();
+        assertThat(noncanonical.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+        assertThat(noncanonical.getAccountId()).isEmpty();
+        assertThat(noncanonical.getTenantId()).isEmpty();
+        var retained =
+            stub.getProfile(
+                GetProfileRequest.newBuilder().setTenantId("1").setAccountId(accountUuid).build());
+        assertThat(AccountProfileJson.parse(retained.getProfileJson(), "FRIENDS_ONLY")
+                .presenceVisibilityPolicy())
+            .isEqualTo("PRIVATE");
       } finally {
         channel.shutdownNow();
       }
