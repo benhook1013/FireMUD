@@ -5,8 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.parallel.ResourceLock;
-import org.junit.jupiter.api.parallel.Resources;
+import org.junit.jupiter.api.parallel.Isolated;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -20,6 +19,7 @@ import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 import org.springframework.mock.env.MockEnvironment;
 
+@Isolated("Tests the native Hikari configuration JVM property")
 class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   private static final String REDIS_AUTO_CONFIGURATION =
       "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration";
@@ -610,7 +610,6 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
 
   @ParameterizedTest
   @ValueSource(strings = {"fixture-pool.properties", ""})
-  @ResourceLock(Resources.SYSTEM_PROPERTIES)
   void refusesNativeHikariConfigFileBeforePoolSetup(String configuredFile) {
     String property = "hikaricp.configurationFile";
     String previous = System.getProperty(property);
@@ -816,6 +815,15 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         + ":"
         + port
         + "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended";
+  }
+
+  @Test
+  void enabledFlywayRefusesUnmanagedHistoryTablespace() {
+    var environment = fixtureEnvironment().withProperty("spring.flyway.tablespace", "fixture");
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .hasMessage("spring.flyway.tablespace is unsupported for the recovery migration history")
+        .hasNoCause();
   }
 
   @Test

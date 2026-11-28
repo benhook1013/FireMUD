@@ -38,9 +38,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       """
           + JooqInitialGameplayReleaseJournal.DURABLE_JOURNAL_RELATIONS
           + """
-            AND (SELECT count(DISTINCT version) = 9
-             FROM recovery_control.flyway_schema_history_recovery_control
-             WHERE success AND (
+            AND (SELECT count(*) = 9 AND count(DISTINCT version) FILTER (WHERE success AND (
                (version = '1' AND script = 'V1__initial_gameplay_release_journal.sql')
                OR (version = '2' AND script = 'V2__retain_initial_gameplay_release_attempt_closure.sql')
                OR (version = '3'
@@ -56,7 +54,9 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                OR (version = '8'
                    AND script = 'V8__require_pending_effect_without_dispatch_timestamp.sql')
                OR (version = '9'
-                   AND script = 'V9__require_pristine_pending_attempt.sql')))
+                   AND script = 'V9__require_pristine_pending_attempt.sql'))) = 9
+             FROM recovery_control.flyway_schema_history_recovery_control
+             WHERE version IS NOT NULL OR type <> 'SCHEMA')
             AND has_table_privilege(
               'recovery_control.initial_gameplay_release_attempt_local_no_send', 'INSERT')
             AND has_table_privilege(
@@ -226,7 +226,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                 AND a.attnum = i.indkey[0] AND NOT a.attisdropped
               WHERE i.indrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND i.indisunique AND i.indisready AND i.indislive AND i.indnkeyatts = 1
-                AND a.attname = 'operation_id')
+                AND a.attname IN ('operation_id', 'effect_kind'))
             AND NOT EXISTS (
               SELECT 1
               FROM pg_catalog.pg_index i
@@ -352,10 +352,10 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND attname = 'readback_payload' AND NOT attisdropped AND NOT attnotnull
                 AND atttypid = 'pg_catalog.jsonb'::regtype)
-            AND EXISTS (
-              SELECT 1 FROM pg_catalog.pg_attribute
+            AND (SELECT count(*) = 2
+              FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_attempt_local_no_send'::regclass
-                AND attname = 'dispatched_at' AND NOT attisdropped AND attnotnull
+                AND attname IN ('dispatched_at', 'recorded_at') AND NOT attisdropped AND attnotnull
                 AND atttypid = 'pg_catalog.timestamptz'::regtype AND atttypmod IN (-1, 6))
             AND (SELECT count(*) = 2
               FROM pg_catalog.pg_attribute

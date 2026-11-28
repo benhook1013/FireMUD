@@ -241,6 +241,10 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
       throw new SafeOverrideException(
           "spring.flyway.table must name the dedicated recovery migration history");
     }
+    if (binder.bind("spring.flyway.tablespace", String.class).isBound()) {
+      throw new SafeOverrideException(
+          "spring.flyway.tablespace is unsupported for the recovery migration history");
+    }
     String defaultSchema = binder.bind("spring.flyway.default-schema", String.class).orElse(null);
     if (!"recovery_control".equals(defaultSchema)) {
       throw new SafeOverrideException("spring.flyway.default-schema must be recovery_control");

@@ -41,6 +41,8 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.CommitO
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectKind;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadbackAuthority;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadbackState;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.InitialGameplayReleaseEvidence;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry;
@@ -349,37 +351,53 @@ class InitialGameplayReleaseControllerTest {
     var codec = mock(InitialGameplayReleaseTupleCodec.class);
     var port = mock(InitialGameplayReleaseEffectPort.class);
     var scope = mock(Scope.class);
-    var releasing = mock(Operation.class);
-    var latest = mock(Operation.class);
-    var effect = mock(PreparePlayableStateFencedEffect.class);
     var operationId = UUID.randomUUID();
+    var effectId = UUID.randomUUID();
     var attempt = UUID.randomUUID();
     var now = Instant.parse("2026-09-01T00:00:00Z");
+    when(scope.operationId()).thenReturn(operationId);
+    var latest =
+        new Operation(
+            scope,
+            UUID.randomUUID(),
+            Phase.FINALIZED,
+            2,
+            mock(InitialGameplayReleaseEvidence.class),
+            now,
+            now,
+            now);
+    var effect =
+        new PreparePlayableStateFencedEffect(
+            operationId, effectId, latest.maintenanceLockIdentity(), scope, DIGEST, "proof");
     var preparation =
         new OutboxEntry(
             UUID.randomUUID(), effect, DIGEST, EffectOutboxState.AMBIGUOUS, 2, attempt, null, null);
-    var readback = mock(EffectReadback.class);
-    when(readback.observedAt()).thenReturn(now);
+    var readback =
+        new EffectReadback(
+            operationId,
+            effectId,
+            attempt,
+            exactReadback ? 2 : 1,
+            EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+            DIGEST,
+            DIGEST,
+            EffectReadbackState.PREPARED_FENCED,
+            EffectReadbackAuthority.GAME_SESSION_DURABLE_CURRENT_STATE,
+            "preparation-refresh",
+            now);
     var observation = EffectReadbackResolution.available(readback);
-    when(releasing.scope()).thenReturn(scope);
-    when(scope.operationId()).thenReturn(operationId);
-    org.mockito.Mockito.lenient().when(latest.phase()).thenReturn(Phase.FINALIZED);
-    when(effect.kind()).thenReturn(EffectKind.PREPARE_PLAYABLE_STATE_FENCED);
-    when(journal.find(operationId)).thenReturn(Optional.of(releasing), Optional.of(latest));
+    when(journal.find(operationId)).thenReturn(Optional.of(latest));
     when(journal.findNextEffect(operationId)).thenReturn(Optional.of(preparation));
     when(port.readback(effect, attempt, 2)).thenReturn(observation);
     var conflict =
         new InitialGameplayReleaseConflictException("readback dispatch generation changed");
-    if (exactReadback) {
-      when(journal.recordEffectReadback(preparation, readback, now)).thenReturn(latest);
-    } else {
-      when(readback.attemptOrdinal()).thenReturn(1);
-      when(journal.recordEffectReadback(preparation, readback, now))
-          .thenAnswer(invocation -> {
-            assertThat(readback.attemptOrdinal()).isNotEqualTo(preparation.attemptCount());
+    when(journal.recordEffectReadback(preparation, readback, now))
+        .thenAnswer(invocation -> {
+          if (readback.attemptOrdinal() != preparation.attemptCount()) {
             throw conflict;
-          });
-    }
+          }
+          return latest;
+        });
     var controller =
         new InitialGameplayReleaseController(
             journal,
@@ -393,7 +411,13 @@ class InitialGameplayReleaseControllerTest {
     } else {
       assertThatThrownBy(() -> controller.reconcileNextEffect(operationId)).isSameAs(conflict);
     }
-    verify(port, org.mockito.Mockito.only()).readback(effect, attempt, 2);
+    var order = inOrder(journal, codec, port);
+    order.verify(journal).findNextEffect(operationId);
+    order.verify(journal).find(operationId);
+    order.verify(codec).requireEffectMatchesOperation(effect, latest);
+    order.verify(port).readback(effect, attempt, 2);
+    order.verify(journal).recordEffectReadback(preparation, readback, now);
+    verifyNoMoreInteractions(journal, port);
   }
 
   @ParameterizedTest(name = "preparation conflicts while releasing: {0}")
