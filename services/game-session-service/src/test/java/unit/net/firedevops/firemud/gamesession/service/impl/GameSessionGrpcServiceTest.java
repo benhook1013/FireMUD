@@ -380,6 +380,36 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void queryAccountPresenceRejectsAnotherValidViewerWithoutTenantAccess() {
+    AccountPresenceQueryService presence = Mockito.mock(AccountPresenceQueryService.class);
+    SessionContext.setContext(VIEWER_ACCOUNT_ID, List.of(), Map.of());
+    var service =
+        newService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(GameInstanceService.class),
+            Mockito.mock(FeatureFlagService.class),
+            Mockito.mock(TextCommandInterpreter.class),
+            Mockito.mock(GameInstanceRepository.class),
+            presence,
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry(),
+            Mockito.mock(IpConnectionLimiter.class));
+
+    var response =
+        captureAccountPresenceResponse(
+            service,
+            QueryAccountPresenceRequest.newBuilder()
+                .setTenantId("1")
+                .setViewerAccountId(TARGET_ACCOUNT_ID)
+                .addAccountIds(TARGET_ACCOUNT_ID)
+                .build());
+
+    assertEquals("PERMISSION_DENIED", response.getError().getCode());
+    assertEquals(0, response.getPresencesCount());
+    Mockito.verifyNoInteractions(presence);
+  }
+
+  @Test
   void queryAccountPresenceRejectsMalformedAndLegacyAccountIdsBeforeCallingPresenceService() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);

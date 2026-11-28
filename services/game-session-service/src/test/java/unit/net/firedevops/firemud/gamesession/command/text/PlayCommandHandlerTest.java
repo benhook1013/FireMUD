@@ -2816,6 +2816,31 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void corruptFirstPartyPlayDeniesWithoutRetainedOrLegacyFallback() {
+    var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
+    var retained =
+        new SessionContext(1L, 22L, null, 0L, 0L, (String) null)
+            .withFirstPartyConnectContext(fixture.context());
+    when(sessionContextService.findBySessionId(1L)).thenReturn(Optional.of(retained));
+    when(firstPartyConnectContextRegistry.find(1L)).thenThrow(new IllegalStateException("corrupt"));
+
+    var result =
+        handler.handle(
+            "1", new TextCommand(TextCommandType.PLAY, List.of("demo", "hero"), "PLAY demo hero"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_CONTEXT_INVALID");
+    Mockito.verify(firstPartyConnectContextRegistry, never()).requireRetained(Mockito.any());
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        sessionAuthenticationService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
+  }
+
+  @Test
   void changedFirstPartyOwnerDeniesPlayBeforeLegacyAdmissionEffects() {
     var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
     FirstPartyConnectContext context = fixture.context();
