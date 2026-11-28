@@ -26,6 +26,81 @@ class Rfc8785CanonicalJsonTest {
   }
 
   @Test
+  void strictCanonicalizationPreservesNullAndCanonicalBytesAcrossObjectScopes() throws Exception {
+    String input = "{\"z\":{\"same\":1E30},\"same\":null,\"a\":[{\"same\":4.50}]}";
+    String expected = "{\"a\":[{\"same\":4.5}],\"same\":null,\"z\":{\"same\":1e+30}}";
+
+    assertThat(Rfc8785CanonicalJson.canonicalizeStrictUtf8(input))
+        .isEqualTo(expected.getBytes(StandardCharsets.UTF_8));
+  }
+
+  @Test
+  void strictCanonicalizationRejectsUnpairedSurrogatesWithoutReplacingValidUnicode()
+      throws Exception {
+    String prefix = "{\"value\":\"";
+    String suffix = "\"}";
+    String malformed = prefix + Character.MIN_HIGH_SURROGATE + suffix;
+    String supplementary = prefix + Character.toString(0x1f680) + suffix;
+
+    assertThatThrownBy(() -> Rfc8785CanonicalJson.canonicalizeStrictUtf8(malformed))
+        .isInstanceOf(java.io.IOException.class);
+    assertThat(Rfc8785CanonicalJson.canonicalizeStrictUtf8(supplementary))
+        .isEqualTo(supplementary.getBytes(StandardCharsets.UTF_8));
+  }
+
+  @Test
+  void strictCanonicalizationRejectsLiteralAndEscapedNoncharactersInNamesAndValues() {
+    for (String encoded :
+        java.util.List.of(
+            Character.toString(0xfdd0), "\\uFDD0", Character.toString(0x1ffff), "\\uD83F\\uDFFF")) {
+      for (String json :
+          java.util.List.of("{\"" + encoded + "\":1}", "{\"value\":\"" + encoded + "\"}")) {
+        assertThatThrownBy(() -> Rfc8785CanonicalJson.canonicalizeStrictUtf8(json))
+            .isInstanceOf(java.io.IOException.class)
+            .hasMessageContaining("Unicode noncharacters");
+      }
+    }
+  }
+
+  @Test
+  void strictCanonicalizationRequiresUniqueNamesWithinEachObject() {
+    String malformedRecord = "{\"label\":\"example\",\"label\":\"other\",\"note\":null}";
+
+    assertThatThrownBy(() -> Rfc8785CanonicalJson.canonicalizeStrictUtf8(malformedRecord))
+        .isInstanceOf(java.io.IOException.class)
+        .hasMessageContaining("Duplicate field 'label'");
+  }
+
+  @Test
+  void strictCanonicalizationRejectsNumbersBeyondItsDocumentedInputLimit() throws Exception {
+    String atLimit = "{\"value\":1." + "0".repeat(998) + "}";
+    String oversizedNumber = "{\"value\":1." + "0".repeat(999) + "}";
+
+    assertThat(Rfc8785CanonicalJson.canonicalizeStrictUtf8(atLimit))
+        .isEqualTo("{\"value\":1}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    assertThatThrownBy(() -> Rfc8785CanonicalJson.canonicalizeStrictUtf8(oversizedNumber))
+        .isInstanceOf(com.fasterxml.jackson.core.exc.StreamConstraintsException.class)
+        .hasMessageContaining("Number value length (1001)");
+  }
+
+  @Test
+  void strictCanonicalizationRejectsOversizedStringValuesBeforeCanonicalizing() {
+    String oversizedString = "{\"value\":\"" + "a".repeat(20_000_001) + "\"}";
+
+    assertThatThrownBy(() -> Rfc8785CanonicalJson.canonicalizeStrictUtf8(oversizedString))
+        .isInstanceOf(com.fasterxml.jackson.core.exc.StreamConstraintsException.class)
+        .hasMessageContaining("String value length");
+  }
+
+  @Test
+  void strictCanonicalizationRejectsDuplicateNamesAfterNullValues() {
+    String duplicateAfterNull = "{\"label\":null,\"label\":\"other\"}";
+
+    assertThatThrownBy(() -> Rfc8785CanonicalJson.canonicalizeStrictUtf8(duplicateAfterNull))
+        .isInstanceOf(java.io.IOException.class);
+  }
+
+  @Test
   void sortsUnicodeObjectKeysByRawUtf16CodeUnits() throws Exception {
     String input =
         """

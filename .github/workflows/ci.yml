@@ -28,7 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read # Classify the complete pull-request file list.
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
     outputs:
       run_all: ${{ steps.compute.outputs.run_all }}
@@ -69,6 +68,7 @@ jobs:
             const completeModules = [
               "common-data-runtime",
               "common-platform-core",
+              "common-redis-contracts",
               "common-saga",
               "common-temporal",
               "common-security",
@@ -85,6 +85,7 @@ jobs:
               "spring-cloud-gateway",
               "tcp-proxy-service",
               "world-management-service",
+              "recovery-controller-service",
               "hosted-environment-identity-controller",
               "load-testing",
             ];
@@ -100,30 +101,104 @@ jobs:
               "spring-cloud-gateway",
               "tcp-proxy-service",
               "world-management-service",
+              "recovery-controller-service",
               "hosted-environment-identity-controller",
             ];
+            // Bind the changed paths to the event commits. The PR-number file list
+            // follows the live comparison, even when its file count stays the same.
+            const readEventFiles = async () => {
+              const eventPr = context.payload?.pull_request;
+              const base = eventPr?.base?.sha;
+              const head = eventPr?.head?.sha;
+              const validSha = sha => typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha) &&
+                sha !== "0".repeat(40);
+              if (!validSha(base) || !validSha(head) || base === head ||
+                  !Number.isInteger(eventPr.changed_files) || eventPr.changed_files <= 0 ||
+                  eventPr.changed_files >= 300) {
+                return null;
+              }
+              try {
+                const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+                  ...context.repo,
+                  basehead: base + "..." + head,
+                  per_page: 100,
+                });
+                const mergeBase = comparison?.merge_base_commit?.sha;
+                const entries = comparison?.files;
+                const validPath = path => typeof path === "string" && path.length > 0;
+                if (comparison?.base_commit?.sha !== base || !validSha(mergeBase) || mergeBase === head ||
+                    !((comparison.status === "ahead" && mergeBase === base) ||
+                      (comparison.status === "diverged" && mergeBase !== base)) ||
+                    !Array.isArray(entries) || entries.length !== eventPr.changed_files ||
+                    !entries.every(entry => entry && validPath(entry.filename) &&
+                      ["added", "removed", "modified", "renamed"].includes(entry.status) &&
+                      (entry.status !== "renamed" || validPath(entry.previous_filename)) &&
+                      (entry.previous_filename === undefined || validPath(entry.previous_filename))) ||
+                    new Set(entries.map(entry => entry.filename)).size !== entries.length) {
+                  return null;
+                }
+                return entries.flatMap(entry => entry.previous_filename === undefined
+                  ? [entry.filename] : [entry.filename, entry.previous_filename]);
+              } catch {
+                return null;
+              }
+            };
             let outputs;
             if (fs.existsSync(classifierPath)) {
-              const { classifyGithubChangeScope } = require(classifierPath);
-              const scope = await classifyGithubChangeScope(github, context);
-              const moduleScopeAvailable =
-                Array.isArray(scope.affectedModules) && Array.isArray(scope.bootableModules);
-              outputs = {
-                run_all: scope.runAll || !moduleScopeAvailable,
-                affected_services: scope.affectedServices,
-                affected_modules: moduleScopeAvailable ? scope.affectedModules : completeModules,
-                bootable_modules: moduleScopeAvailable ? scope.bootableModules : completeBootableModules,
-                docs_changed: scope.docsChanged,
-                frontend_changed: scope.frontendChanged,
-                python_changed: scope.pythonChanged,
-                design_docs_changed: scope.designDocsChanged,
-                validation_python_changed: scope.validationPythonChanged,
-                postgres_runtime_proof_changed:
-                  scope.postgresRuntimeProofChanged === undefined ? true : scope.postgresRuntimeProofChanged,
-                lightweight_only: scope.lightweightOnly,
-              };
-            } else {
-              core.warning("Base revision predates the change classifier; using complete validation scope.");
+              const { classifyChangeScope, classifyGithubChangeScope, ALL_MODULES } = require(classifierPath);
+              const isPullRequest = context.eventName === "pull_request";
+              const eventFiles = isPullRequest ? await readEventFiles() : null;
+              const scope = isPullRequest
+                ? (eventFiles && typeof classifyChangeScope === "function" ? classifyChangeScope(eventFiles) : null)
+                : await classifyGithubChangeScope(github, context);
+              if (scope) {
+                const moduleScopeAvailable =
+                  Array.isArray(scope.affectedModules) && Array.isArray(scope.bootableModules) &&
+                  Array.isArray(ALL_MODULES) && completeModules.every(module => ALL_MODULES.includes(module));
+                // Older classifiers can retain their lightweight decision only for
+                // verified paths this workflow recognizes as lightweight.
+                const knownDoc = path => path === "mkdocs.yml" ||
+                  /^[A-Za-z0-9_][A-Za-z0-9_.-]*\.md$/.test(path) ||
+                  path === "dev-tools/README.md" ||
+                  (/^(?:design\/|docs\/)[A-Za-z0-9_./-]+\.md$/.test(path) && !path.split("/").includes("..")) ||
+                  (/^services\/([a-z0-9-]+)\/README\.md$/.test(path) &&
+                    Array.isArray(ALL_MODULES) && ALL_MODULES.includes(path.split("/")[1]));
+                const knownValidationPython = path =>
+                  /^dev-tools\/validation\/[A-Za-z0-9_./-]+\.py$/.test(path) &&
+                  !path.split("/").includes("..") &&
+                  path !== "dev-tools/validation/gradle-run-supervisor.py";
+                const lightweightFallback = !moduleScopeAvailable && scope.lightweightOnly === true &&
+                  scope.runAll !== true && eventFiles !== null &&
+                  eventFiles.every(path => knownDoc(path) || knownValidationPython(path));
+                if (moduleScopeAvailable || lightweightFallback) {
+                  const fallbackPython = lightweightFallback && eventFiles.some(knownValidationPython);
+                  const fallbackDesignDocs = lightweightFallback &&
+                    eventFiles.some(path => knownDoc(path) && path.startsWith("design/"));
+                  // This is the only PostgreSQL proof path in the legacy lightweight allowlist.
+                  const postgresRuntimeProof = lightweightFallback
+                    ? eventFiles.includes("dev-tools/validation/test_validate_preview_artifact.py")
+                    : (scope.postgresRuntimeProofChanged ?? true);
+                  const affectedModules = lightweightFallback ? [] : scope.affectedModules;
+                  const bootableModules = lightweightFallback ? [] : scope.bootableModules;
+                  outputs = {
+                    run_all: scope.runAll === true,
+                    affected_services: scope.affectedServices,
+                    affected_modules: affectedModules,
+                    bootable_modules: bootableModules,
+                    docs_changed: scope.docsChanged,
+                    frontend_changed: scope.frontendChanged,
+                    python_changed: scope.pythonChanged || fallbackPython,
+                    design_docs_changed: scope.designDocsChanged || fallbackDesignDocs,
+                    validation_python_changed: scope.validationPythonChanged || fallbackPython,
+                    postgres_runtime_proof_changed: postgresRuntimeProof,
+                    lightweight_only: scope.lightweightOnly === true && !scope.runAll &&
+                      affectedModules.length === 0 && bootableModules.length === 0,
+                  };
+                }
+              }
+            }
+            if (!outputs) {
+              core.warning("Exact change scope is unavailable; using complete validation scope.");
               outputs = {
                 run_all: true,
                 affected_services: [
@@ -360,6 +435,10 @@ jobs:
           fi
           python3 -m py_compile "${python_files[@]}"
           ruff check --force-exclude "${python_files[@]}"
+
+      - name: 🧪 Exercise Flyway checker fixtures
+        if: ${{ needs.changes.outputs.validation_python_changed == 'true' }}
+        run: python3 dev-tools/validation/check-flyway-versions.py --self-test
 
   dev-tool-contract-checks:
     name: Dev Tool Contract Checks
@@ -728,10 +807,10 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
-      - name: Set up Python for Gradle recovery
+      - name: Set up Python for Flyway validation and Gradle recovery
         uses: ./.github/actions/setup-python
         with:
-          requirements: none
+          requirements: yaml
 
       - name: 🧪 Check Flyway Migration Versions
         env:

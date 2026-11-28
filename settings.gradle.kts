@@ -49,6 +49,9 @@ project(":game-session-service").projectDir = File("services/game-session-servic
 include("logging-admin-service")
 project(":logging-admin-service").projectDir = File("services/logging-admin-service")
 
+include("recovery-controller-service")
+project(":recovery-controller-service").projectDir = File("services/recovery-controller-service")
+
 include("social-groups-service")
 project(":social-groups-service").projectDir = File("services/social-groups-service")
 

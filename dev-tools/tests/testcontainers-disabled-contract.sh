@@ -6,7 +6,10 @@ SAGA_TEST="$ROOT_DIR/services/common-saga/src/test/java/integration/net/firedevo
 IN_PROCESS_TEST="services/tcp-proxy-service/src/test/java/crossservice/net/firedevops/firemud/tcpproxy/TelnetGatewayGameSessionCrossServiceIntegrationTest.java"
 POSTGRES_MTLS_TEST="services/entity-management-service/src/test/java/integration/net/firedevops/firemud/entitymanagement/bootstrap/AccountBootstrapRosterPostgresMtlsIntegrationTest.java"
 
+RECOVERY_TEST="$ROOT_DIR/services/recovery-controller-service/src/test/java/integration/net/firedevops/firemud/recovery/InitialGameplayReleaseJournalPostgresIntegrationTest.java"
+
 grep -Eq '^@Testcontainers\(disabledWithoutDocker = true\)$' "$SAGA_TEST"
+grep -Eq '^@Testcontainers\(disabledWithoutDocker = false\)$' "$RECOVERY_TEST"
 if grep -Eq 'POSTGRES\.(start|stop)\(' "$SAGA_TEST"; then
   echo "common-saga repository integration test must use the Testcontainers lifecycle extension" >&2
   exit 1
@@ -17,7 +20,13 @@ while IFS= read -r -d '' java_file; do
   if grep -Eq '^[[:space:]]*@Testcontainers[[:space:]]*$' "$java_file"; then
     bare_annotations+=("${java_file#"$ROOT_DIR/"}")
   fi
-done < <(find "$ROOT_DIR/services" -type f -name '*.java' -print0)
+done < <(
+  for source_dir in "$ROOT_DIR"/services/*/src; do
+    if [[ -d "$source_dir" ]]; then
+      find "$source_dir" -type f -name '*.java' -print0
+    fi
+  done
+)
 expected_bare_annotations=("$IN_PROCESS_TEST" "$POSTGRES_MTLS_TEST")
 if ! diff -u \
   <(printf '%s\n' "${expected_bare_annotations[@]}" | LC_ALL=C sort) \

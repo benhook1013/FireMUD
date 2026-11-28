@@ -1,0 +1,1292 @@
+package net.firedevops.firemud.recovery.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
+import javax.sql.DataSource;
+import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest;
+import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.AuditReason;
+import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.AuditReasonCode;
+import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.LaunchAssociation;
+import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.MaintenanceLockPresence;
+import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.Mutation;
+import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.Target;
+import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseConflictException;
+import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal;
+import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal.RetrySource;
+import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseTupleCodec;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.ContinueRecovery;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.Resume;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.CommitOwnerAuthorizedHandoffEffect;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectKind;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadbackAuthority;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadbackState;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.InitialGameplayReleaseEvidence;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OwnerInitializationProof;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OwnerService;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PeerStorageBinding;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Phase;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PreparePlayableStateFencedEffect;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicTransitionResult;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PublicTransitionTuple;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.TransitionVerb;
+import net.firedevops.firemud.recovery.model.MaintenanceLockCredential;
+import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEffectPort.EffectApplyResult;
+import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEffectPort.EffectReadbackResolution;
+import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider.EvidenceResolution;
+import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider.ResolutionStatus;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+class InitialGameplayReleaseControllerTest {
+  private static final String DIGEST = "c".repeat(64);
+
+  @Test
+  void readinessTransitionsAndReconciliationRefuseCallerTransactionBeforeOwnerInteraction()
+      throws SQLException {
+    DataSource dataSource = mock(DataSource.class);
+    Connection connection = mock(Connection.class);
+    when(dataSource.getConnection()).thenReturn(connection);
+    when(connection.getAutoCommit()).thenReturn(true);
+    var caller = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var evidence = mock(InitialGameplayReleaseEvidenceProvider.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var controller =
+        new InitialGameplayReleaseController(
+            journal, new InitialGameplayReleaseTupleCodec(), evidence, port);
+    var operationId = UUID.randomUUID();
+    var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
+
+    caller.executeWithoutResult(status -> {
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+      assertThatThrownBy(() -> controller.refreshReadiness(operationId, lock))
+          .isInstanceOf(OwnerBoundaryUnavailableException.class)
+          .hasMessage("INITIAL_GAMEPLAY_RELEASE_READINESS_REQUIRES_NO_CALLER_TRANSACTION");
+      assertThatThrownBy(() -> controller.reconcileNextEffect(operationId))
+          .isInstanceOf(OwnerBoundaryUnavailableException.class)
+          .hasMessage("INITIAL_GAMEPLAY_RELEASE_RECONCILIATION_REQUIRES_NO_CALLER_TRANSACTION");
+      assertThatThrownBy(() ->
+              controller.continueRecovery(
+                  new ContinueRecovery(operationId, Phase.READY_TO_REOPEN, lock, "evidence")))
+          .isInstanceOf(OwnerBoundaryUnavailableException.class)
+          .hasMessage("INITIAL_GAMEPLAY_RELEASE_TRANSITION_REQUIRES_NO_CALLER_TRANSACTION");
+      assertThatThrownBy(() ->
+              controller.resume(new Resume(operationId, Phase.AWAITING_RESUME, lock, "evidence")))
+          .isInstanceOf(OwnerBoundaryUnavailableException.class)
+          .hasMessage("INITIAL_GAMEPLAY_RELEASE_TRANSITION_REQUIRES_NO_CALLER_TRANSACTION");
+      status.setRollbackOnly();
+    });
+    verify(connection).rollback();
+    verifyNoInteractions(journal, evidence, port);
+  }
+
+  @Test
+  void readinessBindsValidatedOwnerEvidenceOutsideCallerTransaction() {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var codec = mock(InitialGameplayReleaseTupleCodec.class);
+    var provider = mock(InitialGameplayReleaseEvidenceProvider.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var scope = mock(Scope.class);
+    var operation = mock(Operation.class);
+    var evidence = mock(InitialGameplayReleaseEvidence.class);
+    var ready = mock(Operation.class);
+    var operationId = UUID.randomUUID();
+    var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
+    var now = Instant.parse("2026-11-18T12:00:00Z");
+    var evidenceDigest = "d".repeat(64);
+    when(journal.find(operationId)).thenReturn(Optional.of(operation));
+    when(operation.scope()).thenReturn(scope);
+    when(operation.maintenanceLockIdentity()).thenReturn(lock.identity());
+    when(provider.read(scope)).thenReturn(EvidenceResolution.available(evidence));
+    when(codec.digest(scope)).thenReturn(DIGEST);
+    when(codec.digest(evidence)).thenReturn(evidenceDigest);
+    when(journal.bindVerifiedEvidence(scope, DIGEST, evidence, evidenceDigest, now))
+        .thenReturn(ready);
+    var controller =
+        new InitialGameplayReleaseController(
+            journal, codec, provider, port, Clock.fixed(now, ZoneOffset.UTC));
+
+    assertThat(controller.refreshReadiness(operationId, lock)).isSameAs(ready);
+    var order = inOrder(journal, provider, evidence, codec);
+    order.verify(journal).find(operationId);
+    order.verify(provider).read(scope);
+    order.verify(evidence).validateFor(scope);
+    order.verify(codec).requireBoundedEvidence(evidence);
+    order.verify(codec).digest(evidence);
+    order.verify(journal).bindVerifiedEvidence(scope, DIGEST, evidence, evidenceDigest, now);
+    verifyNoInteractions(port);
+  }
+
+  @Test
+  void ownerResultsRejectMissingStatus() {
+    assertThatThrownBy(
+            () -> new InitialGameplayReleaseEvidenceProvider.EvidenceResolution(null, null))
+        .isInstanceOf(NullPointerException.class);
+    assertThatThrownBy(() -> new InitialGameplayReleaseEffectPort.EffectApplyResult(null, null))
+        .isInstanceOf(NullPointerException.class);
+    assertThatThrownBy(
+            () -> new InitialGameplayReleaseEffectPort.EffectReadbackResolution(null, null, null))
+        .isInstanceOf(NullPointerException.class);
+    assertThat(InitialGameplayReleaseEvidenceProvider.EvidenceResolution.unavailable().status())
+        .isEqualTo(ResolutionStatus.UNAVAILABLE);
+    assertThat(InitialGameplayReleaseEffectPort.EffectApplyResult.applied().status())
+        .isEqualTo(InitialGameplayReleaseEffectPort.ApplyStatus.APPLIED);
+  }
+
+  @Test
+  void validTypedRecoverDeniesBeforeAnyJournalEvidenceOrEffectInteraction() {
+    InitialGameplayReleaseJournal journal = mock(InitialGameplayReleaseJournal.class);
+    InitialGameplayReleaseEvidenceProvider evidenceProvider =
+        mock(InitialGameplayReleaseEvidenceProvider.class);
+    InitialGameplayReleaseEffectPort effectPort = mock(InitialGameplayReleaseEffectPort.class);
+    InitialGameplayReleaseController controller =
+        new InitialGameplayReleaseController(
+            journal, new InitialGameplayReleaseTupleCodec(), evidenceProvider, effectPort);
+    // Valid selectors are deliberately insufficient to prove authority or acquire a lock.
+    InitialGameplayRecoverRequest request =
+        new InitialGameplayRecoverRequest(
+            UUID.randomUUID(),
+            new InitialGameplayRecoverRequest.Scope(
+                UUID.randomUUID(), "release-target", UUID.randomUUID()),
+            new Target(
+                new LaunchAssociation(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "world",
+                    UUID.randomUUID(),
+                    "launch-1",
+                    "sha256:" + DIGEST,
+                    "sha256:" + DIGEST,
+                    "sha256:" + DIGEST),
+                new InitialGameplayRecoverRequest.PeerStorageBinding(
+                    "release-target",
+                    "cluster-1",
+                    "spiffe://firemud/ns/release-target/sa/game-session-service",
+                    "storage-1",
+                    "revision-1",
+                    "sha256:" + DIGEST),
+                "initial-release-evidence-1",
+                "sha256:" + DIGEST),
+            new Mutation(UUID.randomUUID(), MaintenanceLockPresence.RESULT_ONLY),
+            new AuditReason(AuditReasonCode.INITIAL_GAMEPLAY_RELEASE, "Initial release request"));
+
+    assertThatThrownBy(() -> controller.recover(request))
+        .isInstanceOf(OwnerBoundaryUnavailableException.class)
+        .hasMessage("INITIAL_GAMEPLAY_RECOVER_AUTHORIZATION_AND_EXCLUSIVE_FENCE_UNAVAILABLE");
+    verifyNoInteractions(journal, evidenceProvider, effectPort);
+  }
+
+  @Test
+  void unconfiguredEvidenceProviderDeniesReadinessInsteadOfFabricatingProof() {
+    DeniedInitialGameplayReleaseEvidenceProvider provider =
+        new DeniedInitialGameplayReleaseEvidenceProvider();
+    Scope scope =
+        new Scope(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "release-target",
+            UUID.randomUUID(),
+            new PeerStorageBinding(
+                "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
+            "initial-release-evidence-1");
+
+    assertThat(provider.read(scope).status()).isEqualTo(ResolutionStatus.UNAVAILABLE);
+    assertThat(provider.read(scope).evidence()).isNull();
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var operation =
+        mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
+    var lock =
+        net.firedevops.firemud.recovery.model.MaintenanceLockCredential.issue(UUID.randomUUID());
+    when(operation.scope()).thenReturn(scope);
+    when(operation.maintenanceLockIdentity()).thenReturn(lock.identity());
+    when(journal.find(scope.operationId())).thenReturn(java.util.Optional.of(operation));
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            new InitialGameplayReleaseTupleCodec(),
+            provider,
+            new DeniedInitialGameplayReleaseEffectPort());
+    assertThatThrownBy(() -> controller.refreshReadiness(scope.operationId(), lock))
+        .isInstanceOf(OwnerBoundaryUnavailableException.class)
+        .hasMessage("INITIAL_GAMEPLAY_RELEASE_EVIDENCE_UNAVAILABLE");
+    verify(journal, never()).bindVerifiedEvidence(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void unconfiguredGameSessionEffectPortDoesNotDispatch() {
+    DeniedInitialGameplayReleaseEffectPort port = new DeniedInitialGameplayReleaseEffectPort();
+    Scope scope =
+        new Scope(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "release-target",
+            UUID.randomUUID(),
+            new PeerStorageBinding(
+                "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
+            "initial-release-evidence-1");
+    PreparePlayableStateFencedEffect effect =
+        new PreparePlayableStateFencedEffect(
+            scope.operationId(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            scope,
+            DIGEST,
+            "proof-identity-1");
+
+    var result = port.apply(effect, UUID.randomUUID(), 1);
+    assertThat(result.status())
+        .isEqualTo(InitialGameplayReleaseEffectPort.ApplyStatus.NOT_DISPATCHED);
+    assertThat(result.outcomeCode()).isEqualTo("GAME_SESSION_EFFECT_OWNER_UNAVAILABLE");
+    assertThat(port.readback(effect, UUID.randomUUID(), 1).status())
+        .isEqualTo(InitialGameplayReleaseEffectPort.ReadbackStatus.UNAVAILABLE);
+  }
+
+  @Test
+  void appliedEffectReadsAndRecordsTheExactClaimBeforeReturning() {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var codec = mock(InitialGameplayReleaseTupleCodec.class);
+    var operation = mock(Operation.class);
+    var after = mock(Operation.class);
+    var scope = mock(Scope.class);
+    var effect = mock(PreparePlayableStateFencedEffect.class);
+    var pending = mock(OutboxEntry.class);
+    var dispatched = mock(OutboxEntry.class);
+    var operationId = UUID.randomUUID();
+    var effectId = UUID.randomUUID();
+    var now = Instant.parse("2026-11-18T12:00:00Z");
+    var clock = new MutableClock(now.minusSeconds(1));
+    var readback =
+        mock(
+            net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback.class);
+    when(readback.observedAt()).thenReturn(now);
+    when(operation.scope()).thenReturn(scope);
+    when(scope.operationId()).thenReturn(operationId);
+    when(pending.state()).thenReturn(EffectOutboxState.PENDING);
+    when(pending.effect()).thenReturn(effect);
+    when(effect.effectId()).thenReturn(effectId);
+    when(dispatched.state()).thenReturn(EffectOutboxState.DISPATCHED);
+    when(dispatched.effect()).thenReturn(effect);
+    when(dispatched.attemptCount()).thenReturn(1);
+    when(journal.findNextEffect(operationId)).thenReturn(java.util.Optional.of(pending));
+    when(journal.find(operationId)).thenReturn(java.util.Optional.of(operation));
+    var attempt = new AtomicReference<UUID>();
+    when(journal.claimEffect(
+            org.mockito.ArgumentMatchers.eq(operationId),
+            org.mockito.ArgumentMatchers.eq(effectId),
+            any(),
+            org.mockito.ArgumentMatchers.<Supplier<Instant>>any()))
+        .thenAnswer(invocation -> {
+          Supplier<Instant> claimTime = invocation.getArgument(3);
+          clock.setInstant(now);
+          assertThat(claimTime.get()).isEqualTo(now);
+          UUID claim = invocation.getArgument(2);
+          attempt.set(claim);
+          when(dispatched.lastAttemptId()).thenReturn(claim);
+          return dispatched;
+        });
+    when(port.apply(
+            org.mockito.ArgumentMatchers.eq(effect), any(), org.mockito.ArgumentMatchers.eq(1)))
+        .thenReturn(EffectApplyResult.applied());
+    var available = InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(readback);
+    when(port.readback(
+            org.mockito.ArgumentMatchers.eq(effect), any(), org.mockito.ArgumentMatchers.eq(1)))
+        .thenReturn(available);
+    when(journal.recordEffectReadback(dispatched, readback, now)).thenReturn(after);
+    var controller =
+        new InitialGameplayReleaseController(
+            journal, codec, mock(InitialGameplayReleaseEvidenceProvider.class), port, clock);
+
+    assertThat(controller.reconcileNextEffect(operationId)).isSameAs(after);
+    assertThat(attempt.get()).isNotNull();
+    var order = org.mockito.Mockito.inOrder(journal, port);
+    order
+        .verify(journal)
+        .claimEffect(
+            org.mockito.ArgumentMatchers.eq(operationId),
+            org.mockito.ArgumentMatchers.eq(effectId),
+            org.mockito.ArgumentMatchers.eq(attempt.get()),
+            org.mockito.ArgumentMatchers.<Supplier<Instant>>any());
+    order.verify(port).apply(effect, attempt.get(), 1);
+    order.verify(port).readback(effect, attempt.get(), 1);
+    order.verify(journal).recordEffectReadback(dispatched, readback, now);
+    org.mockito.Mockito.verifyNoMoreInteractions(port);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void directlySelectedPreparationRespectsTheJournalEvenAfterFinalization(boolean exactReadback) {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var codec = mock(InitialGameplayReleaseTupleCodec.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var scope = mock(Scope.class);
+    var operationId = UUID.randomUUID();
+    var effectId = UUID.randomUUID();
+    var attempt = UUID.randomUUID();
+    var now = Instant.parse("2026-09-01T00:00:00Z");
+    when(scope.operationId()).thenReturn(operationId);
+    var latest =
+        new Operation(
+            scope,
+            UUID.randomUUID(),
+            Phase.FINALIZED,
+            2,
+            mock(InitialGameplayReleaseEvidence.class),
+            now,
+            now,
+            now);
+    var effect =
+        new PreparePlayableStateFencedEffect(
+            operationId, effectId, latest.maintenanceLockIdentity(), scope, DIGEST, "proof");
+    var preparation =
+        new OutboxEntry(
+            UUID.randomUUID(), effect, DIGEST, EffectOutboxState.AMBIGUOUS, 2, attempt, null, null);
+    var readback =
+        new EffectReadback(
+            operationId,
+            effectId,
+            attempt,
+            exactReadback ? 2 : 1,
+            EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+            DIGEST,
+            DIGEST,
+            EffectReadbackState.PREPARED_FENCED,
+            EffectReadbackAuthority.GAME_SESSION_DURABLE_CURRENT_STATE,
+            "preparation-refresh",
+            now);
+    var observation = EffectReadbackResolution.available(readback);
+    when(journal.find(operationId)).thenReturn(Optional.of(latest));
+    when(journal.findNextEffect(operationId)).thenReturn(Optional.of(preparation));
+    when(port.readback(effect, attempt, 2)).thenReturn(observation);
+    var conflict =
+        new InitialGameplayReleaseConflictException("readback dispatch generation changed");
+    when(journal.recordEffectReadback(preparation, readback, now))
+        .thenAnswer(invocation -> {
+          if (readback.attemptOrdinal() != preparation.attemptCount()) {
+            throw conflict;
+          }
+          return latest;
+        });
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            codec,
+            mock(InitialGameplayReleaseEvidenceProvider.class),
+            port,
+            Clock.fixed(now, ZoneOffset.UTC));
+
+    if (exactReadback) {
+      assertThat(controller.reconcileNextEffect(operationId)).isSameAs(latest);
+    } else {
+      assertThatThrownBy(() -> controller.reconcileNextEffect(operationId)).isSameAs(conflict);
+    }
+    var order = inOrder(journal, codec, port);
+    order.verify(journal).findNextEffect(operationId);
+    order.verify(journal).find(operationId);
+    order.verify(codec).requireEffectMatchesOperation(effect, latest);
+    order.verify(port).readback(effect, attempt, 2);
+    order.verify(journal).recordEffectReadback(preparation, readback, now);
+    verifyNoMoreInteractions(journal, port);
+  }
+
+  @ParameterizedTest(name = "preparation conflicts while releasing: {0}")
+  @ValueSource(booleans = {false, true})
+  void newlyDispatchedHandoffRefreshesHeldPreparationAfterUnavailableReadback(
+      boolean preparationConflicts) {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var codec = mock(InitialGameplayReleaseTupleCodec.class);
+    var operation = mock(Operation.class);
+    var scope = mock(Scope.class);
+    var handoffEffect = mock(CommitOwnerAuthorizedHandoffEffect.class);
+    var preparationEffect = mock(PreparePlayableStateFencedEffect.class);
+    var pending = mock(OutboxEntry.class);
+    var preparation = mock(OutboxEntry.class);
+    var refreshed = mock(Operation.class);
+    var readback = mock(EffectReadback.class);
+    var operationId = UUID.randomUUID();
+    var handoffId = UUID.randomUUID();
+    var preparationAttempt = UUID.randomUUID();
+    var handoffAttempt = new AtomicReference<UUID>();
+    var now = Instant.parse("2026-09-01T00:00:00Z");
+    when(operation.scope()).thenReturn(scope);
+    when(scope.operationId()).thenReturn(operationId);
+    when(operation.phase()).thenReturn(Phase.RELEASING);
+    when(handoffEffect.effectId()).thenReturn(handoffId);
+    when(handoffEffect.kind()).thenReturn(EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF);
+    when(pending.effect()).thenReturn(handoffEffect);
+    when(pending.state()).thenReturn(EffectOutboxState.PENDING);
+    when(preparation.effect()).thenReturn(preparationEffect);
+    when(preparation.lastAttemptId()).thenReturn(preparationAttempt);
+    when(preparation.attemptCount()).thenReturn(1);
+    when(readback.observedAt()).thenReturn(now);
+    when(journal.find(operationId)).thenReturn(Optional.of(operation));
+    when(journal.findNextEffect(operationId)).thenReturn(Optional.of(pending));
+    when(journal.claimEffect(
+            eq(operationId),
+            eq(handoffId),
+            any(),
+            org.mockito.ArgumentMatchers.<Supplier<Instant>>any()))
+        .thenAnswer(invocation -> {
+          UUID attempt = invocation.getArgument(2);
+          handoffAttempt.set(attempt);
+          return new OutboxEntry(
+              UUID.randomUUID(),
+              handoffEffect,
+              DIGEST,
+              EffectOutboxState.DISPATCHED,
+              1,
+              attempt,
+              null,
+              null);
+        });
+    when(port.apply(eq(handoffEffect), any(), eq(1))).thenReturn(EffectApplyResult.applied());
+    when(port.readback(eq(handoffEffect), any(), eq(1)))
+        .thenReturn(EffectReadbackResolution.unavailable());
+    when(journal.findHeldPreparationForRefresh(operationId)).thenReturn(Optional.of(preparation));
+    var observedPreparation = EffectReadbackResolution.available(readback);
+    when(port.readback(preparationEffect, preparationAttempt, 1)).thenReturn(observedPreparation);
+    var conflict = new InitialGameplayReleaseConflictException("preparation readback conflict");
+    if (preparationConflicts) {
+      when(journal.recordEffectReadback(preparation, readback, now)).thenThrow(conflict);
+    } else {
+      when(journal.recordEffectReadback(preparation, readback, now)).thenReturn(refreshed);
+    }
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            codec,
+            mock(InitialGameplayReleaseEvidenceProvider.class),
+            port,
+            Clock.fixed(now, ZoneOffset.UTC));
+
+    if (preparationConflicts) {
+      assertThatThrownBy(() -> controller.reconcileNextEffect(operationId)).isSameAs(conflict);
+    } else {
+      assertThat(controller.reconcileNextEffect(operationId)).isSameAs(refreshed);
+    }
+
+    var order = inOrder(journal, port);
+    order
+        .verify(journal)
+        .claimEffect(
+            eq(operationId),
+            eq(handoffId),
+            eq(handoffAttempt.get()),
+            org.mockito.ArgumentMatchers.<Supplier<Instant>>any());
+    order.verify(port).apply(handoffEffect, handoffAttempt.get(), 1);
+    order.verify(port).readback(handoffEffect, handoffAttempt.get(), 1);
+    order.verify(journal).findHeldPreparationForRefresh(operationId);
+    order.verify(port).readback(preparationEffect, preparationAttempt, 1);
+    order.verify(journal).recordEffectReadback(preparation, readback, now);
+    verifyNoMoreInteractions(port);
+  }
+
+  @Test
+  void pendingEffectClaimedByAnotherAttemptDoesNotDispatch() {
+    assertPendingClaimHandling(false, null, null);
+  }
+
+  @Test
+  void pendingEffectApplyExceptionRecordsAmbiguousNotRetryable() {
+    assertPendingClaimHandling(true, null, null);
+  }
+
+  @Test
+  void pendingEffectAmbiguousResultUsesClaimedDispatch() {
+    assertPendingClaimHandling(true, EffectApplyResult.ambiguous("OWNER_PENDING"), null);
+  }
+
+  @Test
+  void pendingEffectNotDispatchedRecordsLocalRetryProvenance() {
+    assertPendingClaimHandling(
+        true, EffectApplyResult.notDispatched("TRANSPORT_REFUSED"), RetrySource.NOT_DISPATCHED);
+  }
+
+  @Test
+  void pendingEffectDefinitiveOwnerRejectionRecordsOwnerRetryProvenance() {
+    assertPendingClaimHandling(
+        true, EffectApplyResult.retryableNoEffect("OWNER_REJECTED"), RetrySource.OWNER_REJECTED);
+  }
+
+  private enum FailedOutcomeWrite {
+    LOCAL_NO_SEND_RECORDED_ON_RETRY,
+    LOCAL_NO_SEND_ALREADY_RECORDED,
+    LOCAL_NO_SEND_CONFLICTS_ON_RETRY,
+    LOCAL_NO_SEND_STILL_UNAVAILABLE,
+    UNKNOWN_OWNER_OUTCOME
+  }
+
+  @ParameterizedTest
+  @EnumSource(FailedOutcomeWrite.class)
+  void retriesOnlyTheExactLocalNoSendJournalWrite(FailedOutcomeWrite scenario) {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var clock = mock(Clock.class);
+    var operation = mock(Operation.class);
+    var scope = mock(Scope.class);
+    var effect = mock(PreparePlayableStateFencedEffect.class);
+    var pending = mock(OutboxEntry.class);
+    var dispatched = mock(OutboxEntry.class);
+    UUID operationId = UUID.randomUUID();
+    UUID effectId = UUID.randomUUID();
+    int ordinal = 1;
+    Instant observedAt = Instant.parse("2026-09-01T00:00:00Z");
+    when(clock.instant()).thenReturn(observedAt, observedAt.plusSeconds(1));
+    when(operation.scope()).thenReturn(scope);
+    when(scope.operationId()).thenReturn(operationId);
+    when(effect.effectId()).thenReturn(effectId);
+    when(pending.state()).thenReturn(EffectOutboxState.PENDING);
+    when(pending.effect()).thenReturn(effect);
+    when(dispatched.state()).thenReturn(EffectOutboxState.DISPATCHED);
+    when(dispatched.effect()).thenReturn(effect);
+    when(dispatched.attemptCount()).thenReturn(ordinal);
+    when(journal.find(operationId)).thenReturn(Optional.of(operation));
+    when(journal.findNextEffect(operationId)).thenReturn(Optional.of(pending));
+    var attempt = new AtomicReference<UUID>();
+    when(journal.claimEffect(eq(operationId), eq(effectId), any(), any()))
+        .thenAnswer(invocation -> {
+          UUID claimedAttempt = invocation.getArgument(2);
+          attempt.set(claimedAttempt);
+          when(dispatched.lastAttemptId()).thenReturn(claimedAttempt);
+          return dispatched;
+        });
+    var unavailable = new IllegalStateException("Unable to record recovery journal effect outcome");
+    var conflict =
+        new InitialGameplayReleaseConflictException("effect dispatch generation changed");
+    var retained = new java.util.concurrent.atomic.AtomicBoolean();
+    if (scenario == FailedOutcomeWrite.UNKNOWN_OWNER_OUTCOME) {
+      when(port.apply(eq(effect), any(), eq(ordinal)))
+          .thenThrow(new IllegalStateException("response lost after possible owner send"));
+      when(journal.recordAmbiguousEffectForDispatch(
+              dispatched, "EFFECT_CALL_OUTCOME_UNKNOWN", observedAt))
+          .thenThrow(unavailable);
+    } else {
+      when(port.apply(eq(effect), any(), eq(ordinal)))
+          .thenReturn(EffectApplyResult.notDispatched("TRANSPORT_REFUSED"));
+      when(journal.recordRetryableEffectForDispatch(
+              dispatched, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", observedAt))
+          .thenAnswer(invocation -> {
+            if (scenario == FailedOutcomeWrite.LOCAL_NO_SEND_ALREADY_RECORDED) {
+              retained.set(true);
+            }
+            throw unavailable;
+          })
+          .thenAnswer(invocation -> {
+            if (scenario == FailedOutcomeWrite.LOCAL_NO_SEND_CONFLICTS_ON_RETRY) throw conflict;
+            if (scenario == FailedOutcomeWrite.LOCAL_NO_SEND_STILL_UNAVAILABLE) throw unavailable;
+            if (scenario == FailedOutcomeWrite.LOCAL_NO_SEND_RECORDED_ON_RETRY) {
+              assertThat(retained.get()).isFalse();
+              retained.set(true);
+            }
+            assertThat(retained.get()).isTrue();
+            return true;
+          });
+    }
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            new InitialGameplayReleaseTupleCodec(),
+            mock(InitialGameplayReleaseEvidenceProvider.class),
+            port,
+            clock);
+    switch (scenario) {
+      case LOCAL_NO_SEND_RECORDED_ON_RETRY, LOCAL_NO_SEND_ALREADY_RECORDED ->
+          assertThat(controller.reconcileNextEffect(operationId)).isSameAs(operation);
+      case LOCAL_NO_SEND_CONFLICTS_ON_RETRY ->
+          assertThatThrownBy(() -> controller.reconcileNextEffect(operationId)).isSameAs(conflict);
+      case LOCAL_NO_SEND_STILL_UNAVAILABLE, UNKNOWN_OWNER_OUTCOME ->
+          assertThatThrownBy(() -> controller.reconcileNextEffect(operationId))
+              .isSameAs(unavailable);
+    }
+    assertThat(attempt.get()).isNotNull();
+    verify(port, org.mockito.Mockito.only()).apply(effect, attempt.get(), ordinal);
+    verify(clock).instant();
+    if (scenario == FailedOutcomeWrite.UNKNOWN_OWNER_OUTCOME) {
+      verify(journal)
+          .recordAmbiguousEffectForDispatch(dispatched, "EFFECT_CALL_OUTCOME_UNKNOWN", observedAt);
+      verify(journal, never()).recordRetryableEffectForDispatch(any(), any(), any(), any());
+    } else {
+      verify(journal, times(2))
+          .recordRetryableEffectForDispatch(
+              dispatched, RetrySource.NOT_DISPATCHED, "TRANSPORT_REFUSED", observedAt);
+      verify(journal, never()).recordAmbiguousEffectForDispatch(any(), any(), any());
+    }
+  }
+
+  private void assertPendingClaimHandling(
+      boolean ownsClaim, EffectApplyResult applyResult, RetrySource expectedRetrySource) {
+    assertClaimHandling(
+        EffectOutboxState.PENDING, ownsClaim, applyResult, expectedRetrySource, true);
+  }
+
+  @Test
+  void retryableEffectAppliesWithTheNewAttemptAndNextOrdinal() {
+    assertClaimHandling(
+        EffectOutboxState.RETRYABLE,
+        true,
+        EffectApplyResult.ambiguous("OWNER_PENDING"),
+        null,
+        true);
+  }
+
+  @Test
+  void supersededAmbiguousDispatchReturnsCurrentOperationWithoutFurtherOwnerCalls() {
+    assertClaimHandling(
+        EffectOutboxState.PENDING, true, EffectApplyResult.ambiguous("OWNER_PENDING"), null, false);
+  }
+
+  private void assertClaimHandling(
+      EffectOutboxState priorState,
+      boolean ownsClaim,
+      EffectApplyResult applyResult,
+      RetrySource expectedRetrySource,
+      boolean outcomeRecorded) {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var operation = mock(Operation.class);
+    var after = mock(Operation.class);
+    var scope = mock(Scope.class);
+    var operationId = UUID.randomUUID();
+    var effect = mock(PreparePlayableStateFencedEffect.class);
+    var effectId = UUID.randomUUID();
+    when(scope.operationId()).thenReturn(operationId);
+    when(operation.scope()).thenReturn(scope);
+    when(effect.effectId()).thenReturn(effectId);
+    var selected = mock(OutboxEntry.class);
+    when(selected.effect()).thenReturn(effect);
+    when(selected.state()).thenReturn(priorState);
+    boolean pending = priorState == EffectOutboxState.PENDING;
+    int claimedOrdinal = pending ? 1 : 2;
+    UUID previousAttempt = pending ? null : UUID.randomUUID();
+    when(selected.attemptCount()).thenReturn(pending ? 0 : 1);
+    when(selected.lastAttemptId()).thenReturn(previousAttempt);
+    var snapshot = new AtomicReference<>(operation);
+    when(journal.find(operationId)).thenAnswer(invocation -> java.util.Optional.of(snapshot.get()));
+    when(journal.findNextEffect(operationId)).thenReturn(java.util.Optional.of(selected));
+    var claimedAttempt = new AtomicReference<UUID>();
+    var claimed =
+        mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry.class);
+    when(journal.claimEffect(
+            org.mockito.ArgumentMatchers.eq(operationId),
+            org.mockito.ArgumentMatchers.eq(effectId),
+            any(),
+            org.mockito.ArgumentMatchers.<Supplier<Instant>>any()))
+        .thenAnswer(invocation -> {
+          UUID requested = invocation.getArgument(2);
+          claimedAttempt.set(requested);
+          when(claimed.state())
+              .thenReturn(
+                  net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel
+                      .EffectOutboxState.DISPATCHED);
+          when(claimed.lastAttemptId())
+              .thenReturn(
+                  ownsClaim
+                      ? requested
+                      : new UUID(
+                          ~requested.getMostSignificantBits(),
+                          requested.getLeastSignificantBits()));
+          when(claimed.effect()).thenReturn(effect);
+          when(claimed.attemptCount()).thenReturn(claimedOrdinal);
+          if (!ownsClaim) {
+            snapshot.set(after);
+          }
+          return claimed;
+        });
+    if (ownsClaim && applyResult == null) {
+      when(port.apply(org.mockito.ArgumentMatchers.eq(effect), any(), anyInt()))
+          .thenThrow(new IllegalStateException("response lost after possible owner send"));
+    } else if (ownsClaim) {
+      when(port.apply(org.mockito.ArgumentMatchers.eq(effect), any(), anyInt()))
+          .thenReturn(applyResult);
+    }
+    if (ownsClaim && expectedRetrySource == null) {
+      when(journal.recordAmbiguousEffectForDispatch(
+              org.mockito.ArgumentMatchers.same(claimed),
+              org.mockito.ArgumentMatchers.eq(
+                  applyResult == null ? "EFFECT_CALL_OUTCOME_UNKNOWN" : applyResult.outcomeCode()),
+              any()))
+          .thenAnswer(invocation -> {
+            snapshot.set(after);
+            return outcomeRecorded;
+          });
+    } else if (ownsClaim) {
+      when(journal.recordRetryableEffectForDispatch(
+              org.mockito.ArgumentMatchers.same(claimed),
+              org.mockito.ArgumentMatchers.eq(expectedRetrySource),
+              org.mockito.ArgumentMatchers.eq(applyResult.outcomeCode()),
+              any()))
+          .thenAnswer(invocation -> {
+            snapshot.set(after);
+            return true;
+          });
+    }
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            new InitialGameplayReleaseTupleCodec(),
+            mock(InitialGameplayReleaseEvidenceProvider.class),
+            port);
+    assertThat(controller.reconcileNextEffect(operationId)).isSameAs(after);
+    assertThat(claimedAttempt.get()).isNotNull();
+    assertThat(claimedAttempt.get()).isNotEqualTo(previousAttempt);
+    if (expectedRetrySource == null) {
+      verify(journal, never()).recordRetryableEffectForDispatch(any(), any(), any(), any());
+    } else {
+      verify(journal)
+          .recordRetryableEffectForDispatch(
+              org.mockito.ArgumentMatchers.same(claimed),
+              org.mockito.ArgumentMatchers.eq(expectedRetrySource),
+              org.mockito.ArgumentMatchers.eq(applyResult.outcomeCode()),
+              any());
+    }
+    verify(journal, never()).recordEffectReadback(any(), any(), any());
+    if (!ownsClaim) {
+      verifyNoInteractions(port);
+    } else {
+      verify(port, org.mockito.Mockito.only()).apply(effect, claimedAttempt.get(), claimedOrdinal);
+    }
+    if (ownsClaim && expectedRetrySource == null) {
+      verify(journal)
+          .recordAmbiguousEffectForDispatch(
+              org.mockito.ArgumentMatchers.same(claimed),
+              org.mockito.ArgumentMatchers.eq(
+                  applyResult == null ? "EFFECT_CALL_OUTCOME_UNKNOWN" : applyResult.outcomeCode()),
+              any());
+    } else {
+      verify(journal, never()).recordAmbiguousEffectForDispatch(any(), any(), any());
+    }
+  }
+
+  @Test
+  void applyOutcomeCodesUseJournalContract() {
+    for (String invalid :
+        java.util.List.of("owner_busy", "owner-unavailable", "X".repeat(65), "")) {
+      assertThatThrownBy(
+              () -> InitialGameplayReleaseEffectPort.EffectApplyResult.retryableNoEffect(invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () -> InitialGameplayReleaseEffectPort.EffectApplyResult.notDispatched(invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () -> InitialGameplayReleaseEffectPort.EffectApplyResult.ambiguous(invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    assertThat(
+            InitialGameplayReleaseEffectPort.EffectApplyResult.retryableNoEffect("OWNER_BUSY")
+                .outcomeCode())
+        .isEqualTo("OWNER_BUSY");
+  }
+
+  @Test
+  void resumeRecordsTransitionAfterExactFreshOwnerEvidence() {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var codec = mock(InitialGameplayReleaseTupleCodec.class);
+    var provider = mock(InitialGameplayReleaseEvidenceProvider.class);
+    var effectPort = mock(InitialGameplayReleaseEffectPort.class);
+    var scope =
+        new Scope(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "release-target",
+            UUID.randomUUID(),
+            new PeerStorageBinding(
+                "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
+            "evidence");
+    var operation = mock(Operation.class);
+    var retainedEvidence = mock(InitialGameplayReleaseEvidence.class);
+    var ownerEvidence = mock(InitialGameplayReleaseEvidence.class);
+    String evidenceDigest = "a".repeat(64);
+    var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
+    Instant now = Instant.parse("2026-09-01T00:00:00Z");
+    when(operation.scope()).thenReturn(scope);
+    when(operation.maintenanceLockIdentity()).thenReturn(lock.identity());
+    when(operation.evidence()).thenReturn(retainedEvidence);
+    when(retainedEvidence.evidenceIdentity()).thenReturn("proof");
+    when(ownerEvidence.evidenceIdentity()).thenReturn("proof");
+    when(codec.digest(scope)).thenReturn(DIGEST);
+    when(codec.digest(retainedEvidence)).thenReturn(evidenceDigest);
+    when(codec.digest(ownerEvidence)).thenReturn(evidenceDigest);
+    when(journal.find(scope.operationId())).thenReturn(Optional.of(operation));
+
+    var tuple =
+        new PublicTransitionTuple(
+            scope.operationId(),
+            DIGEST,
+            TransitionVerb.RESUME,
+            Phase.AWAITING_RESUME,
+            lock.identity(),
+            scope.evidenceRef(),
+            "proof",
+            evidenceDigest);
+    var authorized = new PublicTransitionResult(scope.operationId(), Phase.RESUME_AUTHORIZED);
+    when(journal.findTransition(tuple)).thenReturn(Optional.empty());
+    when(provider.read(scope))
+        .thenReturn(new EvidenceResolution(ResolutionStatus.AVAILABLE, ownerEvidence));
+    when(journal.transition(tuple, now)).thenReturn(authorized);
+    var controller =
+        new InitialGameplayReleaseController(
+            journal, codec, provider, effectPort, Clock.fixed(now, ZoneOffset.UTC));
+
+    assertThat(
+            controller.resume(
+                new Resume(scope.operationId(), Phase.AWAITING_RESUME, lock, scope.evidenceRef())))
+        .isSameAs(authorized);
+    var order = inOrder(journal, provider, ownerEvidence, codec);
+    order.verify(journal).findTransition(tuple);
+    order.verify(provider).read(scope);
+    order.verify(ownerEvidence).validateFor(scope);
+    order.verify(codec).requireBoundedEvidence(ownerEvidence);
+    order.verify(codec).digest(ownerEvidence);
+    order.verify(journal).transition(tuple, now);
+    verifyNoInteractions(effectPort);
+  }
+
+  @ParameterizedTest
+  @EnumSource(ResolutionStatus.class)
+  void ownerEvidenceFailureReturnsConcurrentExactCommittedTransition(ResolutionStatus status) {
+    assertEvidenceFailureTransition(status, true);
+  }
+
+  @ParameterizedTest
+  @EnumSource(ResolutionStatus.class)
+  void ownerEvidenceFailureWithoutCommittedTransitionStillFailsClosed(ResolutionStatus status) {
+    assertEvidenceFailureTransition(status, false);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void missingOwnerDispositionOnlyReplaysAnExactCommittedTransition(boolean committed) {
+    assertEvidenceFailureTransition(null, committed);
+  }
+
+  private void assertEvidenceFailureTransition(ResolutionStatus status, boolean committed) {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var codec = mock(InitialGameplayReleaseTupleCodec.class);
+    var provider = mock(InitialGameplayReleaseEvidenceProvider.class);
+    var scope =
+        new Scope(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "release-target",
+            UUID.randomUUID(),
+            new PeerStorageBinding(
+                "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
+            "evidence");
+    var before = mock(Operation.class);
+    var after = new PublicTransitionResult(scope.operationId(), Phase.RESUME_AUTHORIZED);
+    var evidence = mock(InitialGameplayReleaseEvidence.class);
+    String evidenceDigest = "a".repeat(64);
+    var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
+    when(before.scope()).thenReturn(scope);
+    when(before.maintenanceLockIdentity()).thenReturn(lock.identity());
+    when(before.evidence()).thenReturn(evidence);
+    when(evidence.evidenceIdentity()).thenReturn("proof");
+    when(codec.digest(scope)).thenReturn(DIGEST);
+    when(codec.digest(evidence)).thenReturn(evidenceDigest);
+    when(journal.find(scope.operationId())).thenReturn(java.util.Optional.of(before));
+    var tuple =
+        new PublicTransitionTuple(
+            scope.operationId(),
+            DIGEST,
+            TransitionVerb.RESUME,
+            Phase.AWAITING_RESUME,
+            lock.identity(),
+            scope.evidenceRef(),
+            "proof",
+            evidenceDigest);
+    var retainedTransition =
+        new AtomicReference<>(java.util.Optional.<PublicTransitionResult>empty());
+    when(journal.findTransition(tuple)).thenAnswer(invocation -> retainedTransition.get());
+    InitialGameplayReleaseEvidence changedEvidence = null;
+    if (status == ResolutionStatus.AVAILABLE) {
+      changedEvidence = mock(InitialGameplayReleaseEvidence.class);
+      when(changedEvidence.evidenceIdentity()).thenReturn("proof");
+      when(codec.digest(changedEvidence)).thenReturn("d".repeat(64));
+    }
+    var resolution = status == null ? null : new EvidenceResolution(status, changedEvidence);
+    when(provider.read(scope))
+        .thenAnswer(invocation -> {
+          if (committed) {
+            retainedTransition.set(java.util.Optional.of(after));
+          }
+          if (status == null) {
+            new OwnerInitializationProof(
+                OwnerService.WORLD_MANAGEMENT,
+                UUID.randomUUID(),
+                scope.playableStateNamespaceId(),
+                null,
+                "owner",
+                DIGEST);
+          }
+          return resolution;
+        });
+    var controller =
+        new InitialGameplayReleaseController(
+            journal, codec, provider, mock(InitialGameplayReleaseEffectPort.class));
+    var command = new Resume(scope.operationId(), Phase.AWAITING_RESUME, lock, scope.evidenceRef());
+
+    if (committed) {
+      assertThat(controller.resume(command)).isSameAs(after);
+    } else if (status == null) {
+      assertThatThrownBy(() -> controller.resume(command))
+          .isInstanceOf(NullPointerException.class)
+          .hasMessage("disposition must not be null");
+    } else if (status == ResolutionStatus.AVAILABLE) {
+      assertThatThrownBy(() -> controller.resume(command))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("owner evidence changed after readiness was recorded");
+    } else {
+      assertThatThrownBy(() -> controller.resume(command))
+          .isInstanceOf(OwnerBoundaryUnavailableException.class)
+          .hasMessage("INITIAL_GAMEPLAY_RELEASE_EVIDENCE_" + status.name());
+    }
+    verify(journal, org.mockito.Mockito.times(2)).findTransition(tuple);
+    verify(journal, never()).transition(any(), any());
+  }
+
+  @Test
+  void emptyOutboxReloadsLatestOperation() {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var operationId = UUID.randomUUID();
+    var before =
+        mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
+    var after =
+        mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
+    var snapshot = new AtomicReference<Operation>(before);
+    when(journal.find(operationId)).thenAnswer(invocation -> java.util.Optional.of(snapshot.get()));
+    when(journal.findNextEffect(operationId))
+        .thenAnswer(invocation -> {
+          snapshot.set(after);
+          return java.util.Optional.empty();
+        });
+    var controller =
+        new InitialGameplayReleaseController(
+            journal,
+            new InitialGameplayReleaseTupleCodec(),
+            mock(InitialGameplayReleaseEvidenceProvider.class),
+            mock(InitialGameplayReleaseEffectPort.class));
+    assertThat(controller.reconcileNextEffect(operationId)).isSameAs(after);
+  }
+
+  @Test
+  void unavailableReadbackReloadsLatestOperation() {
+    assertReadbackFailureReloadsLatestOperation(ReadbackFailure.UNAVAILABLE);
+  }
+
+  @Test
+  void failedReadbackReloadsLatestOperation() {
+    assertReadbackFailureReloadsLatestOperation(ReadbackFailure.THROWN);
+  }
+
+  @Test
+  void missingReadbackReloadsLatestOperation() {
+    assertReadbackFailureReloadsLatestOperation(ReadbackFailure.MISSING);
+  }
+
+  private enum ReadbackFailure {
+    UNAVAILABLE,
+    THROWN,
+    MISSING
+  }
+
+  private void assertReadbackFailureReloadsLatestOperation(ReadbackFailure failure) {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var effectPort = mock(InitialGameplayReleaseEffectPort.class);
+    var scope =
+        new Scope(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "release-target",
+            UUID.randomUUID(),
+            new PeerStorageBinding(
+                "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
+            "evidence");
+    var before = operationForReadback(scope);
+    var after =
+        mock(net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Operation.class);
+    var codec = new InitialGameplayReleaseTupleCodec();
+    var effect =
+        new PreparePlayableStateFencedEffect(
+            scope.operationId(),
+            UUID.randomUUID(),
+            before.maintenanceLockIdentity(),
+            scope,
+            codec.operationTupleDigest(before),
+            before.evidence().evidenceIdentity());
+    var attempt = UUID.randomUUID();
+    var outbox =
+        new net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry(
+            UUID.randomUUID(),
+            effect,
+            codec.digest(effect),
+            net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState
+                .DISPATCHED,
+            1,
+            attempt,
+            null,
+            null);
+    var snapshot = new AtomicReference<>(before);
+    when(journal.find(scope.operationId()))
+        .thenAnswer(invocation -> java.util.Optional.of(snapshot.get()));
+    when(journal.findNextEffect(scope.operationId())).thenReturn(java.util.Optional.of(outbox));
+    switch (failure) {
+      case THROWN ->
+          when(effectPort.readback(effect, attempt, outbox.attemptCount()))
+              .thenAnswer(invocation -> {
+                snapshot.set(after);
+                throw new IllegalStateException("owner readback failed");
+              });
+      case UNAVAILABLE ->
+          when(effectPort.readback(effect, attempt, outbox.attemptCount()))
+              .thenAnswer(invocation -> {
+                snapshot.set(after);
+                return InitialGameplayReleaseEffectPort.EffectReadbackResolution.unavailable();
+              });
+      case MISSING ->
+          when(effectPort.readback(effect, attempt, outbox.attemptCount()))
+              .thenAnswer(invocation -> {
+                snapshot.set(after);
+                return null;
+              });
+    }
+    var controller =
+        new InitialGameplayReleaseController(
+            journal, codec, mock(InitialGameplayReleaseEvidenceProvider.class), effectPort);
+
+    assertThat(controller.reconcileNextEffect(scope.operationId())).isSameAs(after);
+    verify(effectPort).readback(effect, attempt, outbox.attemptCount());
+    verify(journal).findNextEffect(scope.operationId());
+    verify(journal, times(2)).find(scope.operationId());
+    verifyNoMoreInteractions(effectPort, journal);
+  }
+
+  @Test
+  void retainedEffectForDifferentPlayableNamespaceDoesNotReachOwnerReadback() {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var port = mock(InitialGameplayReleaseEffectPort.class);
+    var scope =
+        new Scope(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "release-target",
+            UUID.randomUUID(),
+            new PeerStorageBinding(
+                "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
+            "evidence");
+    var operation = operationForReadback(scope);
+    var otherNamespace =
+        new Scope(
+            scope.operationId(),
+            scope.canonicalTenantId(),
+            scope.targetNamespace(),
+            UUID.randomUUID(),
+            scope.peerStorageBinding(),
+            scope.evidenceRef());
+    var codec = new InitialGameplayReleaseTupleCodec();
+    var effect =
+        new PreparePlayableStateFencedEffect(
+            scope.operationId(),
+            UUID.randomUUID(),
+            operation.maintenanceLockIdentity(),
+            otherNamespace,
+            codec.operationTupleDigest(operation),
+            operation.evidence().evidenceIdentity());
+    var outbox =
+        new OutboxEntry(
+            UUID.randomUUID(),
+            effect,
+            codec.digest(effect),
+            EffectOutboxState.DISPATCHED,
+            1,
+            UUID.randomUUID(),
+            null,
+            null);
+    when(journal.find(scope.operationId())).thenReturn(java.util.Optional.of(operation));
+    when(journal.findNextEffect(scope.operationId())).thenReturn(java.util.Optional.of(outbox));
+    var controller =
+        new InitialGameplayReleaseController(
+            journal, codec, mock(InitialGameplayReleaseEvidenceProvider.class), port);
+
+    assertThatThrownBy(() -> controller.reconcileNextEffect(scope.operationId()))
+        .isInstanceOf(InitialGameplayReleaseConflictException.class)
+        .hasMessageContaining("operation-owned tuple");
+    verifyNoInteractions(port);
+  }
+
+  private static Operation operationForReadback(Scope scope) {
+    var operation = mock(Operation.class);
+    var evidence = mock(InitialGameplayReleaseEvidence.class);
+    when(evidence.evidenceIdentity()).thenReturn("proof");
+    when(operation.scope()).thenReturn(scope);
+    when(operation.maintenanceLockIdentity()).thenReturn(UUID.randomUUID());
+    when(operation.evidence()).thenReturn(evidence);
+    return operation;
+  }
+
+  @Test
+  void availableReadbackRequiresReceiptObservationTime() {
+    var readback =
+        mock(
+            net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback.class);
+    var observedAt = java.time.Instant.parse("2026-11-18T12:00:00Z");
+    when(readback.observedAt()).thenReturn(observedAt);
+    var status = InitialGameplayReleaseEffectPort.ReadbackStatus.AVAILABLE;
+    assertThat(
+            new InitialGameplayReleaseEffectPort.EffectReadbackResolution(
+                status, readback, observedAt))
+        .isEqualTo(InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(readback));
+    assertThatThrownBy(() ->
+            new InitialGameplayReleaseEffectPort.EffectReadbackResolution(
+                status, readback, observedAt.plusSeconds(1)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("must match receipt");
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void currentOperationSnapshotAcceptsExactOwnerReadbackOnlyWhenNotFutureDated(boolean future) {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var effectPort = mock(InitialGameplayReleaseEffectPort.class);
+    var scope =
+        new Scope(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "release-target",
+            UUID.randomUUID(),
+            new PeerStorageBinding(
+                "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
+            "evidence");
+    var operation = operationForReadback(scope);
+    var codec = new InitialGameplayReleaseTupleCodec();
+    var effect =
+        new PreparePlayableStateFencedEffect(
+            scope.operationId(),
+            UUID.randomUUID(),
+            operation.maintenanceLockIdentity(),
+            scope,
+            codec.operationTupleDigest(operation),
+            operation.evidence().evidenceIdentity());
+    var attempt = UUID.randomUUID();
+    var outbox =
+        new net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OutboxEntry(
+            UUID.randomUUID(),
+            effect,
+            codec.digest(effect),
+            net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState
+                .DISPATCHED,
+            1,
+            attempt,
+            null,
+            null);
+    var t0 = java.time.Instant.parse("2026-11-18T12:00:00Z");
+    var t1 = t0.plusSeconds(1);
+    var t2 = t0.plusSeconds(2);
+    var t3 = t0.plusSeconds(3);
+    var clock = new MutableClock(t0);
+    var readback =
+        new net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback(
+            scope.operationId(),
+            effect.effectId(),
+            attempt,
+            outbox.attemptCount(),
+            effect.kind(),
+            effect.operationTupleDigest(),
+            outbox.payloadDigest(),
+            net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadbackState
+                .PREPARED_FENCED,
+            net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel
+                .EffectReadbackAuthority.GAME_SESSION_DURABLE_CURRENT_STATE,
+            "readback",
+            future ? t3 : t1);
+    var before = mock(Operation.class);
+    when(before.scope()).thenReturn(scope);
+    var snapshot = new AtomicReference<>(before);
+    when(journal.find(scope.operationId()))
+        .thenAnswer(invocation -> java.util.Optional.of(snapshot.get()));
+    when(journal.findNextEffect(scope.operationId()))
+        .thenAnswer(invocation -> {
+          snapshot.set(operation);
+          return java.util.Optional.of(outbox);
+        });
+    when(effectPort.readback(effect, attempt, outbox.attemptCount()))
+        .thenAnswer(invocation -> {
+          clock.setInstant(t2);
+          return InitialGameplayReleaseEffectPort.EffectReadbackResolution.available(readback);
+        });
+    var controller =
+        new InitialGameplayReleaseController(
+            journal, codec, mock(InitialGameplayReleaseEvidenceProvider.class), effectPort, clock);
+    if (future) {
+      assertThatThrownBy(() -> controller.reconcileNextEffect(scope.operationId()))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("observation time changed");
+      verify(journal, never()).recordEffectReadback(any(), any(), any());
+    } else {
+      when(journal.recordEffectReadback(outbox, readback, t2)).thenReturn(operation);
+      assertThat(controller.reconcileNextEffect(scope.operationId())).isSameAs(operation);
+      verify(journal).recordEffectReadback(outbox, readback, t2);
+    }
+  }
+
+  private static final class MutableClock extends java.time.Clock {
+    private final AtomicReference<java.time.Instant> instant;
+
+    private MutableClock(java.time.Instant instant) {
+      this.instant = new AtomicReference<>(instant);
+    }
+
+    private void setInstant(java.time.Instant value) {
+      instant.set(value);
+    }
+
+    @Override
+    public java.time.ZoneId getZone() {
+      return java.time.ZoneOffset.UTC;
+    }
+
+    @Override
+    public java.time.Clock withZone(java.time.ZoneId zone) {
+      if (!java.time.ZoneOffset.UTC.equals(zone)) {
+        throw new UnsupportedOperationException("UTC only");
+      }
+      return this;
+    }
+
+    @Override
+    public java.time.Instant instant() {
+      return instant.get();
+    }
+  }
+}

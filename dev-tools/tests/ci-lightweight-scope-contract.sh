@@ -11,6 +11,188 @@ MODULE_CHECK_WRAPPER="$ROOT_DIR/.github/scripts/run-gradle-module-checks.sh"
 
 node --test "$ROOT_DIR/.github/scripts/classify-change-scope.test.cjs"
 
+GITHUB_WORKSPACE="$ROOT_DIR" node - "$CI_WORKFLOW" "$CLASSIFIER" <<'JS_SCOPE'
+const assert = require("node:assert/strict");
+const {execFileSync} = require("node:child_process");
+const workflow = JSON.parse(execFileSync("python3", ["-c",
+  "import json,sys,yaml; print(json.dumps(yaml.safe_load(open(sys.argv[1]))))",
+  process.argv[2]], {encoding: "utf8"}));
+const compute = workflow.jobs.changes.steps.find(step => step.id === "compute").with.script;
+const classifier = require(process.argv[3]);
+const {ALL_MODULES, BOOTABLE_MODULES, classifyChangeScope} = classifier;
+const expectedClassifierPath = `${process.env.GITHUB_WORKSPACE}/.github/scripts/classify-change-scope.cjs`;
+assert.equal(process.argv[3], expectedClassifierPath, "test classifier must be the exact required workflow import");
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const execute = new AsyncFunction("require", "github", "context", "core", compute);
+(async () => {
+  for (const [available, modules, compatible, classifierRunsAll = false] of [
+    [false, undefined, false],
+    [true, undefined, false],
+    [true, ALL_MODULES.filter(module => module !== "recovery-controller-service"), false],
+    [true, ALL_MODULES.filter(module => module !== "common-redis-contracts"), false],
+    [true, ALL_MODULES, true],
+    [true, ALL_MODULES, true, true],
+  ]) {
+    const outputs = {};
+    const githubClient = {};
+    const eventContext = {};
+    await execute(name => {
+      if (name === "node:fs") return {existsSync: () => available};
+      assert.equal(name, expectedClassifierPath, "workflow must not import an unexpected module");
+      return {
+        ALL_MODULES: modules,
+        classifyGithubChangeScope: async (githubArgument, contextArgument) => {
+          assert.equal(githubArgument, githubClient);
+          assert.equal(contextArgument, eventContext);
+          return {
+            runAll: classifierRunsAll,
+            affectedModules: classifierRunsAll ? ALL_MODULES : [],
+            bootableModules: classifierRunsAll ? [...BOOTABLE_MODULES] : [],
+            affectedServices: [], lightweightOnly: true,
+          };
+        },
+      };
+    }, githubClient, eventContext, {setOutput: (name, value) => outputs[name] = value, warning() {}});
+    const fullValidation = !compatible || classifierRunsAll;
+    assert.equal(outputs.run_all, String(fullValidation));
+    assert.equal(outputs.lightweight_only, String(!fullValidation));
+    assert.deepEqual(JSON.parse(outputs.affected_modules), fullValidation ? ALL_MODULES : []);
+    assert.deepEqual(JSON.parse(outputs.bootable_modules),
+      fullValidation ? [...BOOTABLE_MODULES] : []);
+    if (fullValidation) {
+      const otherModuleRows = JSON.parse(outputs.other_module_check_matrix);
+      for (const module of ["recovery-controller-service", "common-redis-contracts"]) {
+        assert.equal(otherModuleRows.filter(row => row.module === module && row.partition === "full").length, 1,
+          `fallback matrix must schedule exactly one full check for ${module}`);
+      }
+    }
+  }
+  const repo = {owner: "example", repo: "FireMUD"};
+  const base = "b".repeat(40);
+  const head = "a".repeat(40);
+  const otherCommit = "c".repeat(40);
+  async function runPullRequest({entries, scopeClassifier = classifier, count = entries.length,
+    response = {}, eventHead = head, eventBase = base, compareError = false, expectCompare = true}) {
+    const outputs = {};
+    const calls = [];
+    const githubClient = {
+      rest: {repos: {
+        async compareCommitsWithBasehead(options) {
+          calls.push(options);
+          if (compareError) throw new Error("immutable comparison temporarily unavailable");
+          return {data: {
+            status: "ahead", base_commit: {sha: base}, merge_base_commit: {sha: base},
+            files: entries.map(entry => ({status: "modified", ...entry})),
+            ...response,
+          }};
+        },
+      }},
+    };
+    const eventContext = {eventName: "pull_request", repo,
+      payload: {pull_request: {number: 42, changed_files: count,
+        head: {sha: eventHead}, base: {sha: eventBase}}}};
+    await execute(name => {
+      if (name === "node:fs") return {existsSync: () => true};
+      assert.equal(name, expectedClassifierPath);
+      return scopeClassifier;
+    }, githubClient, eventContext,
+    {setOutput: (name, value) => outputs[name] = value, warning() {}});
+    assert.deepEqual(calls, expectCompare ? [{...repo, basehead: base + "..." + head, per_page: 100}] : [],
+      "classification must use only the immutable event comparison");
+    return outputs;
+  }
+  function assertModuleScope(outputs, runAll, lightweightOnly, modules, bootableModules) {
+    assert.equal(outputs.run_all, String(runAll));
+    assert.equal(outputs.lightweight_only, String(lightweightOnly));
+    assert.deepEqual(JSON.parse(outputs.affected_modules), modules);
+    assert.deepEqual(JSON.parse(outputs.bootable_modules), bootableModules);
+  }
+  for (const [filename, runAll, lightweightOnly, expectedModules, expectedBootableModules] of [
+    ["services/account-service/README.md", false, true, [], []],
+    ["services/account-service/src/main/java/Example.java", false, false, ["account-service"], ["account-service"]],
+    ["services/new-service/README.md", true, false, ALL_MODULES, [...BOOTABLE_MODULES]],
+  ]) {
+    const outputs = await runPullRequest({entries: [{filename}]});
+    assertModuleScope(outputs, runAll, lightweightOnly, expectedModules, expectedBootableModules);
+  }
+  const legacyClassifier = {
+    ALL_MODULES: ALL_MODULES.filter(module => module !== "recovery-controller-service"),
+    classifyChangeScope() {
+      return {runAll: false, affectedServices: [], lightweightOnly: true,
+        docsChanged: true, frontendChanged: false, pythonChanged: false,
+        validationPythonChanged: false, designDocsChanged: false, postgresRuntimeProofChanged: false};
+    },
+  };
+  for (const [entries, qualified, expectsPython = false, expectsDesignDocs = false,
+    expectsPostgresProof = !qualified] of [
+    [[{filename: "design/README.md"}], true, false, true],
+    [[{filename: "README.md"}], true],
+    [[{filename: "services/account-service/README.md"}], true],
+    [[{filename: "AGENTS.md"}], true],
+    [[{filename: "DEVELOPER_SETUP.md"}], true],
+    [[{filename: "NOTICE.template.md"}], true],
+    [[{filename: "services/account-service/src/main/resources/runtime.md"}], false],
+    [[{filename: "DEVELOPER_SETUP.md", status: "renamed",
+      previous_filename: "services/account-service/src/main/resources/guide.md"}], false],
+    [[{filename: "README.md", status: "renamed", previous_filename: "design/guide.md"}], true, false, true],
+    [[{filename: "dev-tools/validation/check-flyway-versions.py"}], true, true],
+    [[{filename: "dev-tools/validation/test_validate_preview_artifact.py"}], true, true, false, true],
+    [[{filename: "dev-tools/validation/another_test.py", status: "renamed",
+      previous_filename: "dev-tools/validation/test_validate_preview_artifact.py"}], true, true, false, true],
+    [[{filename: "dev-tools/validation/gradle-run-supervisor.py"}], false],
+    [[{filename: "services/recovery-controller-service/src/main/java/Example.java"}], false],
+    [[{filename: "README.md", status: "renamed", previous_filename: "services/new-service/Main.java"}], false],
+    [[{filename: "services/new-service/README.md"}], false],
+    [[{filename: "design/README.md", previous_filename: "services/new-service/Main.java"}], false],
+    [[{filename: "design/../services/Main.md"}], false],
+    [[{filename: "design/README.md", previous_filename: "docs/old.md"}], true, false, true],
+  ]) {
+    const outputs = await runPullRequest({entries, scopeClassifier: legacyClassifier});
+    assertModuleScope(outputs, !qualified, qualified, qualified ? [] : ALL_MODULES,
+      qualified ? [] : [...BOOTABLE_MODULES]);
+    assert.equal(outputs.validation_python_changed, String(!qualified || expectsPython));
+    assert.equal(outputs.python_changed, String(!qualified || expectsPython));
+    assert.equal(outputs.design_docs_changed, String(!qualified || expectsDesignDocs));
+    assert.equal(outputs.postgres_runtime_proof_changed, String(expectsPostgresProof),
+      "PostgreSQL proof must follow the exact path set and default to on without verified scope");
+  }
+  const legacyMarkdown = await runPullRequest({entries: [{filename: "README.md"}], scopeClassifier: legacyClassifier});
+  assert.equal(legacyMarkdown.docs_changed, "true",
+    "legacy lightweight Markdown classification must preserve docs_changed");
+  for (const scopeClassifier of [classifier, legacyClassifier]) {
+    const docs = [{filename: "design/README.md"}];
+    const diverged = await runPullRequest({entries: docs, scopeClassifier,
+      response: {status: "diverged", merge_base_commit: {sha: otherCommit}}});
+    assertModuleScope(diverged, false, true, [], []);
+    assert.equal(diverged.postgres_runtime_proof_changed, "false");
+    for (const changes of [
+      {compareError: true},
+      {eventHead: null, eventBase: base, expectCompare: false},
+      {eventHead: undefined, eventBase: "invalid", expectCompare: false},
+      {count: 300, expectCompare: false},
+      {count: 2},
+      {entries: [...docs, ...docs]},
+      {entries: [{...docs[0], status: "renamed"}]},
+      {response: {status: "behind"}},
+      {response: {base_commit: {sha: otherCommit}}},
+      {response: {merge_base_commit: {sha: otherCommit}}},
+      {response: {status: "diverged", merge_base_commit: {sha: head}}},
+      {response: {merge_base_commit: null}},
+    ]) {
+      const outputs = await runPullRequest({entries: docs, scopeClassifier, ...changes});
+      assertModuleScope(outputs, true, false, ALL_MODULES, [...BOOTABLE_MODULES]);
+      for (const gate of ["docs_changed", "frontend_changed", "python_changed", "design_docs_changed",
+        "validation_python_changed", "postgres_runtime_proof_changed"]) {
+        assert.equal(outputs[gate], "true", gate + " must run without verified scope");
+      }
+    }
+  }
+  const shared = classifyChangeScope(["services/common-redis-contracts/src/main/java/Example.java"]);
+  assert.deepEqual(shared.affectedModules, ALL_MODULES);
+  assert.ok(!shared.bootableModules.includes("common-redis-contracts"));
+})().catch(error => { console.error(error); process.exitCode = 1; });
+JS_SCOPE
+
 require_contains() {
   local path="$1"
   local expected="$2"
@@ -1465,8 +1647,8 @@ if "showStandardStreams = true" in test_logging_settings:
 
 require_equal(
     ci,
-    ("jobs", "changes", "permissions", "pull-requests"),
-    "read",
+    ("jobs", "changes", "permissions"),
+    {"contents": "read"},
     "ci workflow",
 )
 ci_classifier_checkout = find_step(
@@ -1479,24 +1661,6 @@ require_equal(
     "ci workflow",
 )
 ci_compute_step = find_step(ci, "changes", "Compute affected jobs", "ci workflow")
-require_contains(
-    ci_compute_step,
-    ("with", "script"),
-    "const { classifyGithubChangeScope } = require(classifierPath)",
-    "ci workflow",
-)
-require_contains(
-    ci_compute_step,
-    ("with", "script"),
-    "await classifyGithubChangeScope(github, context)",
-    "ci workflow",
-)
-require_contains(
-    ci_compute_step,
-    ("with", "script"),
-    "Base revision predates the change classifier; using complete validation scope.",
-    "ci workflow",
-)
 classifier_inventories = load_classifier_module_inventories(sys.argv[5])
 for output_key, constant_name, inventory_key in (
     ("affected_modules", "completeModules", "allModules"),

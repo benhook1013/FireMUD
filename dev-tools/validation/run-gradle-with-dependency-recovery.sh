@@ -25,12 +25,12 @@ if ! TEMP_DIR="$(mktemp -d "${TEMP_ROOT%/}/firemud-gradle-check.XXXXXX")"; then
 fi
 readonly TEMP_DIR
 readonly NORMAL_LOG="$TEMP_DIR/normal.log"
-readonly REFRESH_LOG="$TEMP_DIR/refresh.log"
+readonly RETRY_LOG="$TEMP_DIR/retry.log"
 
 # Invoked indirectly by the EXIT trap below.
 # shellcheck disable=SC2329
 cleanup() {
-  rm -f -- "$NORMAL_LOG" "$REFRESH_LOG"
+  rm -f -- "$NORMAL_LOG" "$RETRY_LOG"
   rmdir -- "$TEMP_DIR"
 }
 trap cleanup EXIT
@@ -62,10 +62,11 @@ run_gradle_check() {
 
 has_substantive_failure() {
   local log_path="$1"
+  local resolution_boundary="$2"
 
   grep -Eq '(^|[[:space:]])(Compilation failed|Compilation error|error:|e: file:|There were failing tests)' "$log_path" && return 0
 
-  awk '
+  awk -v resolution_boundary="$resolution_boundary" '
     /^> Task / {
       task = $3
       outcome = $4
@@ -78,11 +79,15 @@ has_substantive_failure() {
       # module sources whose successful execution must remain unretried.
       is_build_logic = task ~ /^:buildSrc(:|$)/
       is_compile = !is_build_logic && is_compile
+      cached_or_skipped = outcome == "FROM-CACHE" || outcome == "UP-TO-DATE" || outcome == "NO-SOURCE" || outcome == "SKIPPED"
+      # These configuration-cache writes occur before the application tasks run.
+      if (resolution_boundary == "before-compile-cached-configuration-only" && !is_build_logic && !cached_or_skipped) {
+        found = 1
+      }
       if (!is_test && !is_compile) {
         next
       }
 
-      cached_or_skipped = outcome == "FROM-CACHE" || outcome == "UP-TO-DATE" || outcome == "NO-SOURCE" || outcome == "SKIPPED"
       if (is_test && !cached_or_skipped) {
         found = 1
       } else if (is_compile && outcome != "FAILED" && !cached_or_skipped) {
@@ -145,22 +150,47 @@ classify_failure_body() {
       sub(/[[:space:]]+$/, "", s)
       return s
     }
+    function is_disabled_processor_pom_429(   processor_module, version, pom_url) {
+      if (invalid || jar_download_step || jar_downloads || cache_summary > 1 ||
+          wrapped_resolution_causes != 1 || !wrapped_cache_cause || cache_cause != 1 ||
+          resolver_roots != 1 || resolved_configuration != expected_wrapped_configuration ||
+          mavenrepo_disabled != 1 || other_cause_lines != 11) {
+        return 0
+      }
+      processor_module = resolved_configuration
+      sub(/:annotationProcessor$/, "", processor_module)
+      if (cause_lines[2] != "> Could not resolve all files for configuration " quote resolved_configuration quote "." ||
+          cause_lines[3] !~ /^> Could not resolve org\.projectlombok:lombok:[0-9]+(\.[0-9]+)+\.$/ ||
+          cause_lines[4] != "Required by:" || cause_lines[5] != "project " quote processor_module quote ||
+          cause_lines[6] != "> Repository MavenRepo is disabled due to earlier error below:" ||
+          cause_lines[7] !~ /^> Could not resolve org\.springframework\.boot:spring-boot-starter-validation:[0-9]+(\.[0-9]+)+\.$/) {
+        return 0
+      }
+      version = cause_lines[7]
+      sub(/^.*:/, "", version)
+      sub(/\.$/, "", version)
+      pom_url = "https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-starter-validation/" version "/spring-boot-starter-validation-" version ".pom"
+      return cause_lines[8] == "> Could not get resource " quote pom_url quote "." &&
+        cause_lines[9] == "> Could not GET " quote pom_url quote "." &&
+        cause_lines[10] == "> Received status code 429 from server: Too Many Requests" &&
+        cause_lines[11] == "> There is 1 more failure with an identical cause."
+    }
     {
       line = trim($0)
       if (line == "" || line == "* What went wrong:") {
         next
       }
 
-      # Require each pre-compile Maven Central JAR download to report the
-      # complete matching 429 chain, not just a coordinate or status line.
+      # Require the complete matching coordinate, repository path and 429 chain.
       if (jar_download_step) {
-        if (jar_download_step == 1 && line == "> Could not get resource " quote jar_url quote ".") {
+        if (jar_download_step == 1 && line == "> Could not get resource " quote jar_resource_url quote ".") {
           jar_download_step = 2
         } else if (jar_download_step == 2 && line == "> Could not GET " quote jar_url quote ".") {
           jar_download_step = 3
         } else if (jar_download_step == 3 && line == "> Received status code 429 from server: Too Many Requests") {
           jar_download_step = 0
           jar_downloads++
+          if (buildsrc_jar) buildsrc_jar_downloads++
           coordinates++
           repository_requests += 2
           transient++
@@ -169,7 +199,8 @@ classify_failure_body() {
         }
         next
       }
-      if ((fixtures_resolver || (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration)) &&
+      if ((buildsrc_jar_resolver || cache_jar_resolver || fixtures_resolver ||
+           (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration)) &&
           line ~ /^> Could not download [[:alnum:]_.-]+\.jar \([[:alnum:]_-]+(\.[[:alnum:]_-]+)*:[[:alnum:]_.-]+:[0-9][[:alnum:]_.-]*\)$/) {
         artifact_coordinate = line
         sub(/^.*\(/, "", artifact_coordinate)
@@ -181,22 +212,35 @@ classify_failure_body() {
         jar_version = jar_coordinate[3]
         # Gradle may report the requested Guava Android coordinate while
         # the JVM variant resolves its matching JRE artifact and URL.
-        if (fixtures_resolver && jar_coordinate[1] == "com.google.guava" &&
+        if ((fixtures_resolver || (cache_jar_resolver && !checkstyle_configuration)) &&
+            jar_coordinate[1] == "com.google.guava" &&
             jar_coordinate[2] == "guava" && jar_version ~ /-android$/) {
           jre_version = jar_version
           sub(/-android$/, "-jre", jre_version)
           if (jar_name == "guava-" jre_version ".jar") jar_version = jre_version
         }
         jar_stem = jar_coordinate[2] "-" jar_version
+        buildsrc_jar = buildsrc_jar_resolver
+        # The Plugin Portal may select a Kotlin variant for the running Gradle.
+        gradle_variant_jar = buildsrc_jar && jar_coordinate[1] == "org.jetbrains.kotlin" &&
+          index(jar_name, jar_stem "-") == 1 &&
+          substr(jar_name, length(jar_stem) + 2) ~ /^gradle[0-9]+\.jar$/
+        # Checkstyle resolves the matching data JAR alongside xmlresolver.
+        checkstyle_data_jar = cache_jar_resolver && checkstyle_configuration &&
+          jar_coordinate[1] == "org.xmlresolver" && jar_coordinate[2] == "xmlresolver" &&
+          jar_name == jar_stem "-data.jar"
         # Fixture classpaths can resolve platform-specific classifier JARs.
         classified_fixture_jar = fixtures_resolver && index(jar_name, jar_stem "-") == 1 &&
           substr(jar_name, length(jar_stem) + 2) ~ /^[[:alnum:]][[:alnum:]_.-]*\.jar$/
-        if ((jar_name != jar_stem ".jar" && !classified_fixture_jar) ||
-            (fixtures_resolver && (jar_coordinate[2] == "." || jar_coordinate[2] == ".."))) {
+        if ((jar_name != jar_stem ".jar" && !classified_fixture_jar && !gradle_variant_jar && !checkstyle_data_jar) ||
+            ((fixtures_resolver || cache_jar_resolver || buildsrc_jar) &&
+             (jar_coordinate[2] == "." || jar_coordinate[2] == ".."))) {
           invalid++
         }
         gsub(/\./, "/", jar_coordinate[1])
-        jar_url = "https://repo.maven.apache.org/maven2/" jar_coordinate[1] "/" jar_coordinate[2] "/" jar_version "/" jar_name
+        jar_path = jar_coordinate[1] "/" jar_coordinate[2] "/" jar_version "/" jar_name
+        jar_url = "https://repo.maven.apache.org/maven2/" jar_path
+        jar_resource_url = buildsrc_jar ? "https://plugins.gradle.org/m2/" jar_path : jar_url
         jar_download_step = 1
         next
       }
@@ -217,9 +261,9 @@ classify_failure_body() {
           line ~ /^Retry-After: .+$/) {
         next
       }
-      # A fixture JAR failure may have only two other cause lines: its typed
-      # cache wrapper and the matching resolver root. Keep legacy parsing below.
+      # A JAR-only failure may have only its owning wrapper and resolver root.
       other_cause_lines++
+      if (other_cause_lines <= 11) cause_lines[other_cause_lines] = line
 
       # buildSrc plugin resolution may wrap a pinned dependency HTTP 429 in
       # configuration, repository-disablement and parent-POM context. These
@@ -247,6 +291,10 @@ classify_failure_body() {
       }
       if (line == "> Repository MavenRepo is disabled due to earlier error below:") {
         mavenrepo_disabled++
+        next
+      }
+      if (wrapped_cache_cause && mavenrepo_disabled == 1 &&
+          line == "> There is 1 more failure with an identical cause.") {
         next
       }
       if (line ~ /^> Connect to repo\.maven\.apache\.org:443 \[repo\.maven\.apache\.org\/[0-9a-fA-F:.]+\] failed: Connect timed out$/) {
@@ -303,6 +351,24 @@ classify_failure_body() {
         jooq_execution_causes++
         next
       }
+      # The root Buf verification task can fail while storing its classpath
+      # in the configuration cache, before the generated sources are compiled.
+      if (line == "Configuration cache state could not be cached: field `classpath` of task `:compileBufGeneratedJava` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type " quote "org.gradle.api.internal.artifacts.configurations.DefaultLegacyConfiguration" quote) {
+        expected_cache_jar_configuration = ":bufGeneratedJavaClasspath"
+        cache_jar_cause++
+        cache_cause++
+        next
+      }
+      if (line ~ /^Configuration cache state could not be cached: field `checkstyleClasspath` of task `:[[:alnum:]-]+:checkstyle(Main|Test|TestFixtures|IntegrationTest|CrossServiceTest)` of type `org\.gradle\.api\.plugins\.quality\.Checkstyle`: error writing value of type \047org\.gradle\.api\.internal\.artifacts\.configurations\.DefaultLegacyConfiguration\047$/) {
+        module = line
+        sub(/^.* of task `/, "", module)
+        sub(/:checkstyle(Main|Test|TestFixtures|IntegrationTest|CrossServiceTest)`.*$/, "", module)
+        expected_cache_jar_configuration = module ":checkstyle"
+        checkstyle_configuration = 1
+        cache_jar_cause++
+        cache_cause++
+        next
+      }
       # Gradle 9.9 can resolve annotation processors while serializing the
       # compiler-fork predicate, before it starts the Java compile task.
       if (line ~ /^Configuration cache state could not be cached: field `annotationProcessorPath` of `org\.gradle\.api\.tasks\.compile\.CompileOptions_Decorated` bean found in captured state from method `org\.gradle\.api\.internal\.tasks\.compile\.CompilerForkUtils\.doNotCacheIfForkingViaExecutable\$[[:xdigit:]]+` of lambda of type `org\.gradle\.api\.internal\.lambdas\.SerializableLambdas\$SerializableSpec` returning `boolean` found in field `spec` of `org\.gradle\.api\.internal\.tasks\.execution\.SelfDescribingSpec` bean found in doNotCacheIf specs of task `:[[:alnum:]-]+:compileJava` of type `org\.gradle\.api\.tasks\.compile\.JavaCompile`: error writing value of type \047org\.gradle\.api\.internal\.artifacts\.configurations\.DefaultLegacyConfiguration\047$/) {
@@ -348,6 +414,12 @@ classify_failure_body() {
       }
       if (line ~ /^> Could not resolve all (artifacts|files) for configuration .+\.$/) {
         resolver_roots++
+        if (buildsrc_configuration == 1 && line == "> Could not resolve all artifacts for configuration " quote "classpath" quote ".") {
+          buildsrc_jar_resolver = 1
+        }
+        if (cache_jar_cause == 1 && line == "> Could not resolve all files for configuration " quote expected_cache_jar_configuration quote ".") {
+          cache_jar_resolver = 1
+        }
         if (fixtures_configuration != "" && line == "> Could not resolve all files for configuration " quote fixtures_configuration quote ".") {
           fixtures_resolver = 1
         }
@@ -433,11 +505,21 @@ classify_failure_body() {
       invalid++
     }
     END {
+      if (is_disabled_processor_pom_429()) {
+        print "before-compile-cached-configuration-only"
+        exit 0
+      }
       if (invalid || jar_download_step || resolver_roots == 0 || coordinates == 0 ||
           (jar_downloads &&
             (coordinates != jar_downloads || transient != jar_downloads ||
              repository_requests != 2 * jar_downloads || searched || repository_urls ||
              (fixtures_resolver && other_cause_lines != 2))) ||
+          (buildsrc_jar_downloads &&
+            (buildsrc_configuration != 1 || resolver_roots != 1 ||
+             buildsrc_jar_downloads != jar_downloads || other_cause_lines != 2 || cache_summary)) ||
+          (cache_jar_cause &&
+            (cache_jar_cause != 1 || !cache_jar_resolver || resolver_roots != 1 ||
+             !jar_downloads || other_cause_lines != 2)) ||
           ((mavenrepo_disabled || protoc_connect_timeout) &&
             (mavenrepo_disabled != 1 || protoc_connect_timeout != 1 ||
              protoc_coordinates != 1 || protoc_pom_resource != 1 || protoc_pom_get != 1 ||
@@ -448,7 +530,8 @@ classify_failure_body() {
              jooq_jar_resource != 1 || jooq_jar_get != 1 ||
              coordinates != 1 || repository_requests != 2 || searched ||
              jooq_wrapper_causes != 1)) ||
-          ((buildsrc_configuration || buildsrc_context || buildsrc_repository || buildsrc_pom || buildsrc_http_429) &&
+          (!buildsrc_jar_downloads &&
+            (buildsrc_configuration || buildsrc_context || buildsrc_repository || buildsrc_pom || buildsrc_http_429) &&
             (buildsrc_configuration != 1 || buildsrc_context == 0 ||
              resolver_roots != 1 || buildsrc_classpath != 1 || buildsrc_http_429 == 0 ||
              cache_cause || compile_task_failure || searched)) ||
@@ -469,7 +552,9 @@ classify_failure_body() {
           !((transient && repository_requests) || (searched && repository_urls))) {
         exit 1
       }
-      if (wrapped_resolution_causes || (fixtures_resolver && jar_downloads)) print "before-compile"
+      if (checkstyle_configuration) print "before-compile-cached-configuration-only"
+      else if (buildsrc_jar_downloads || cache_jar_resolver) print "before-compile-cached"
+      else if (wrapped_resolution_causes || (fixtures_resolver && jar_downloads)) print "before-compile"
       exit 0
     }
   ' "$log_path"
@@ -549,12 +634,12 @@ is_dependency_resolution_failure() {
     return 1
   fi
 
-  has_substantive_failure "$log_path" || substantive_status=$?
+  has_substantive_failure "$log_path" "$resolution_boundary" || substantive_status=$?
   rm -f -- "$body_path"
   case "$substantive_status" in
     0) return 1 ;;
-    1) return 0 ;;
-    2) [[ "$resolution_boundary" != before-compile ]] ;;
+    1) printf '%s\n' "$resolution_boundary" ;;
+    2) [[ "$resolution_boundary" != before-compile* ]] ;;
     *) return 1 ;;
   esac
 }
@@ -741,11 +826,11 @@ fi
 
 if recover_wrapper_distribution; then
   echo "Recovered the pinned wrapper distribution before task execution; retrying the original Gradle command once."
-  run_gradle_check false "$REFRESH_LOG"
+  run_gradle_check false "$RETRY_LOG"
   exit "$GRADLE_EXIT"
 fi
 
-if ! is_dependency_resolution_failure "$NORMAL_LOG"; then
+if ! RESOLUTION_BOUNDARY="$(is_dependency_resolution_failure "$NORMAL_LOG")"; then
   exit "$GRADLE_EXIT"
 fi
 
@@ -753,7 +838,20 @@ if ! RETRY_DELAY="$(retry_delay_seconds "$NORMAL_LOG")"; then
   exit "$GRADLE_EXIT"
 fi
 
-echo "Recognized Gradle dependency-resolution failure at the bounded pre-substantive boundary; retrying the complete Gradle command once with dependency metadata refresh after ${RETRY_DELAY}s."
+retry_refresh=true
+retry_description="with dependency metadata refresh"
+if [[ "$RESOLUTION_BOUNDARY" == before-compile-cached* ]]; then
+  # Avoid revalidating the entire cache after these all-JAR throttling failures.
+  retry_refresh=false
+  retry_description="with cached dependency metadata"
+  for gradle_argument in "${GRADLE_ARGS[@]}"; do
+    if [[ "$gradle_argument" == --refresh-dependencies || "$gradle_argument" == -U ]]; then
+      retry_description="with the caller-requested dependency metadata refresh"
+      break
+    fi
+  done
+fi
+echo "Recognized Gradle dependency-resolution failure at the bounded pre-substantive boundary; retrying the complete Gradle command once $retry_description after ${RETRY_DELAY}s."
 sleep "$RETRY_DELAY"
-run_gradle_check true "$REFRESH_LOG"
+run_gradle_check "$retry_refresh" "$RETRY_LOG"
 exit "$GRADLE_EXIT"

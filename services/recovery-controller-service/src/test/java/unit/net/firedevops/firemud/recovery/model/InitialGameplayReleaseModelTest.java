@@ -1,0 +1,947 @@
+package net.firedevops.firemud.recovery.model;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseTupleCodec;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.InitialGameplayReleaseEvidence;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.IssuerLayoutProof;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.LayoutDescriptor;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.MigrationProof;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OwnerInitializationProof;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.OwnerService;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PartitionAcknowledgement;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.PeerStorageBinding;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Phase;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.ProofDisposition;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.RegionLeaseProof;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterDisposition;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterFenceAcknowledgement;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterFenceProof;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.WriterInventory;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.jackson.autoconfigure.JacksonAutoConfiguration;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
+
+class InitialGameplayReleaseModelTest {
+  private static final String DIGEST = "a".repeat(64);
+  private static final UUID NIL_UUID = new UUID(0L, 0L);
+
+  @Test
+  void writerInventoryKeepsValidOwnerIdentitiesInCanonicalOrder() {
+    var inventory =
+        new WriterInventory("revision-1", DIGEST, "legacy", List.of("writer-b", "writer-a"));
+
+    assertThat(inventory.applicableWriterIdentities()).containsExactly("writer-a", "writer-b");
+    assertThat(inventory.legacyWriterIdentity()).isEqualTo("legacy");
+  }
+
+  @Test
+  void validatesDecodedOwnerTextWithoutRepairOrNormalization() {
+    String valid = "owner-é-😀-e\u0301";
+    assertThat(InitialGameplayReleaseModel.requiredText(valid, "owner")).isEqualTo(valid);
+    for (char unit : new char[] {Character.MIN_HIGH_SURROGATE, Character.MIN_LOW_SURROGATE}) {
+      assertThatThrownBy(() -> InitialGameplayReleaseModel.requiredText("owner-" + unit, "owner"))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("well-formed UTF-16");
+    }
+    assertThatThrownBy(() -> InitialGameplayReleaseModel.requiredText(null, "owner"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("owner must not be null");
+  }
+
+  @Test
+  void ownerInitializationIdentityFitsTheStrictTupleStringLimit() {
+    String identity = "😀".repeat(10_000_000);
+    UUID operationId = UUID.randomUUID();
+    UUID namespaceId = UUID.randomUUID();
+    var proof =
+        new OwnerInitializationProof(
+            OwnerService.WORLD_MANAGEMENT,
+            operationId,
+            namespaceId,
+            ProofDisposition.VERIFIED,
+            identity,
+            DIGEST);
+    assertThat(proof.sourceIdentity()).isSameAs(identity);
+    assertThatThrownBy(() ->
+            new OwnerInitializationProof(
+                OwnerService.WORLD_MANAGEMENT,
+                operationId,
+                namespaceId,
+                ProofDisposition.VERIFIED,
+                identity + "x",
+                DIGEST))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("sourceIdentity must not exceed 20,000,000 UTF-16 code units");
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"\u00a0", "\u2007\u202f", " \t\u0085\u3000"})
+  void regionLeaseRejectsUnicodeBlankIdentityAndPreservesNonblankIdentity(String whitespace) {
+    assertThatThrownBy(() -> new RegionLeaseProof("region", whitespace, 1))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("leaseIdentity must not be blank");
+    String exactIdentity = whitespace + "lease" + whitespace;
+    assertThat(new RegionLeaseProof("region", exactIdentity, 1).leaseIdentity())
+        .isEqualTo(exactIdentity);
+  }
+
+  @Test
+  void journalBoundScopeAndOwnerProofRejectNoncharactersAtConstruction() {
+    Scope valid = scope(UUID.randomUUID());
+    String invalid = "owner-" + Character.toString(0xfdd0);
+    assertThatThrownBy(() ->
+            new Scope(
+                valid.operationId(),
+                valid.canonicalTenantId(),
+                valid.targetNamespace(),
+                valid.playableStateNamespaceId(),
+                valid.peerStorageBinding(),
+                invalid))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("evidenceRef must not contain Unicode noncharacters");
+    assertThatThrownBy(() ->
+            new OwnerInitializationProof(
+                OwnerService.WORLD_MANAGEMENT,
+                UUID.randomUUID(),
+                valid.playableStateNamespaceId(),
+                ProofDisposition.VERIFIED,
+                invalid,
+                DIGEST))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("sourceIdentity must not contain Unicode noncharacters");
+  }
+
+  @Test
+  void pendingOutboxEntryCannotRetainPriorDispatchIdentityOrCount() {
+    Scope scope = scope(UUID.randomUUID());
+    var effect =
+        new InitialGameplayReleaseModel.PreparePlayableStateFencedEffect(
+            scope.operationId(), UUID.randomUUID(), UUID.randomUUID(), scope, DIGEST, "evidence");
+    UUID attemptId = UUID.randomUUID();
+
+    assertThat(
+            new InitialGameplayReleaseModel.OutboxEntry(
+                UUID.randomUUID(),
+                effect,
+                DIGEST,
+                InitialGameplayReleaseModel.EffectOutboxState.PENDING,
+                0,
+                null,
+                null,
+                null))
+        .isNotNull();
+    assertThatThrownBy(() ->
+            new InitialGameplayReleaseModel.OutboxEntry(
+                UUID.randomUUID(),
+                effect,
+                DIGEST,
+                InitialGameplayReleaseModel.EffectOutboxState.PENDING,
+                0,
+                attemptId,
+                null,
+                null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("pending outbox states must not retain a dispatch attempt");
+    assertThatThrownBy(() ->
+            new InitialGameplayReleaseModel.OutboxEntry(
+                UUID.randomUUID(),
+                effect,
+                DIGEST,
+                InitialGameplayReleaseModel.EffectOutboxState.PENDING,
+                1,
+                null,
+                null,
+                null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("pending outbox states must not retain a dispatch attempt");
+  }
+
+  @Test
+  void nullProofEntriesFailValidationBeforeOrdering() {
+    assertThatThrownBy(() -> new LayoutDescriptor("layout", "r1", DIGEST, Arrays.asList(0, null)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("invalid id");
+    var valid = evidence(scope(UUID.randomUUID()));
+    var layout = valid.issuerLayout();
+    assertThatThrownBy(() ->
+            new IssuerLayoutProof(
+                layout.layoutOperationId(),
+                layout.descriptor(),
+                layout.accountIssuerSourceIdentity(),
+                layout.operationFence(),
+                layout.coverageFence(),
+                layout.inventoryRevision(),
+                layout.inventoryDigest(),
+                Arrays.asList(layout.acknowledgements().getFirst(), null),
+                layout.capacityVector()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("null elements");
+    var writers = valid.writerFencing();
+    assertThatThrownBy(() ->
+            new WriterFenceProof(
+                writers.inventory(),
+                writers.legacyWriterDisposition(),
+                Arrays.asList(writers.writerAcknowledgements().getFirst(), null)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("null elements");
+  }
+
+  @Test
+  void scopeKeepsKubernetesTargetSeparateFromPlayableStateNamespace() {
+    UUID playableNamespace = UUID.randomUUID();
+    Scope scope = scope(playableNamespace);
+
+    assertThat(scope.targetNamespace()).isEqualTo("release-target");
+    assertThat(scope.playableStateNamespaceId()).isEqualTo(playableNamespace);
+    assertThatThrownBy(() ->
+            new Scope(
+                scope.operationId(),
+                scope.canonicalTenantId(),
+                "another-target",
+                playableNamespace,
+                scope.peerStorageBinding(),
+                scope.evidenceRef()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("targetNamespace");
+  }
+
+  @Test
+  void scopeAndPeerBindingRequireExactKubernetesNamespaceSyntax() {
+    Scope validScope = scope(UUID.randomUUID());
+    for (String invalidNamespace : List.of("Release-target", "release target", "a".repeat(64))) {
+      assertThatThrownBy(() ->
+              new PeerStorageBinding(
+                  invalidNamespace,
+                  "cluster-peer",
+                  "peer-workload",
+                  "storage-uid",
+                  "storage-r7",
+                  DIGEST))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("valid Kubernetes namespace");
+      assertThatThrownBy(() ->
+              new Scope(
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  invalidNamespace,
+                  UUID.randomUUID(),
+                  validScope.peerStorageBinding(),
+                  validScope.evidenceRef()))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("valid Kubernetes namespace");
+    }
+  }
+
+  @Test
+  void operationProofAndLockIdentitiesRejectNilUuid() {
+    Scope validScope = scope(UUID.randomUUID());
+    InitialGameplayReleaseEvidence validEvidence = evidence(validScope);
+
+    assertThatThrownBy(() ->
+            new Scope(
+                NIL_UUID,
+                validScope.canonicalTenantId(),
+                validScope.targetNamespace(),
+                validScope.playableStateNamespaceId(),
+                validScope.peerStorageBinding(),
+                validScope.evidenceRef()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("nil UUID");
+    assertThatThrownBy(() ->
+            new Scope(
+                UUID.randomUUID(),
+                NIL_UUID,
+                validScope.targetNamespace(),
+                validScope.playableStateNamespaceId(),
+                validScope.peerStorageBinding(),
+                validScope.evidenceRef()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("nil UUID");
+    assertThatThrownBy(() ->
+            new Scope(
+                UUID.randomUUID(),
+                validScope.canonicalTenantId(),
+                validScope.targetNamespace(),
+                NIL_UUID,
+                validScope.peerStorageBinding(),
+                validScope.evidenceRef()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("nil UUID");
+    assertThatThrownBy(() ->
+            new InitialGameplayReleaseModel.Operation(
+                validScope,
+                NIL_UUID,
+                Phase.COLLECTING,
+                1,
+                null,
+                java.time.Instant.EPOCH,
+                java.time.Instant.EPOCH,
+                null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("nil UUID");
+    assertThatThrownBy(() ->
+            new MigrationProof(
+                NIL_UUID,
+                ProofDisposition.VERIFIED,
+                validScope.peerStorageBinding().storageIdentity(),
+                "inventory-r3",
+                DIGEST))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("nil UUID");
+    assertThatThrownBy(() -> MaintenanceLockCredential.issue(NIL_UUID))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("nil UUID");
+    assertThatThrownBy(() -> MaintenanceLockCredential.fromProtectedTransport(NIL_UUID.toString()))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    assertThatThrownBy(() ->
+            new IssuerLayoutProof(
+                NIL_UUID,
+                validEvidence.issuerLayout().descriptor(),
+                validEvidence.issuerLayout().accountIssuerSourceIdentity(),
+                validEvidence.issuerLayout().operationFence(),
+                UUID.randomUUID(),
+                validEvidence.issuerLayout().inventoryRevision(),
+                validEvidence.issuerLayout().inventoryDigest(),
+                validEvidence.issuerLayout().acknowledgements(),
+                validEvidence.issuerLayout().capacityVector()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("nil UUID");
+    assertThatThrownBy(() ->
+            new IssuerLayoutProof(
+                UUID.randomUUID(),
+                validEvidence.issuerLayout().descriptor(),
+                validEvidence.issuerLayout().accountIssuerSourceIdentity(),
+                validEvidence.issuerLayout().operationFence(),
+                NIL_UUID,
+                validEvidence.issuerLayout().inventoryRevision(),
+                validEvidence.issuerLayout().inventoryDigest(),
+                validEvidence.issuerLayout().acknowledgements(),
+                validEvidence.issuerLayout().capacityVector()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("nil UUID");
+    assertThatThrownBy(() ->
+            new OwnerInitializationProof(
+                OwnerService.WORLD_MANAGEMENT,
+                NIL_UUID,
+                validScope.playableStateNamespaceId(),
+                ProofDisposition.VERIFIED,
+                "world-source",
+                DIGEST))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("nil UUID");
+    assertThatThrownBy(() ->
+            new OwnerInitializationProof(
+                OwnerService.WORLD_MANAGEMENT,
+                UUID.randomUUID(),
+                NIL_UUID,
+                ProofDisposition.VERIFIED,
+                "world-source",
+                DIGEST))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("nil UUID");
+  }
+
+  @Test
+  void exactOwnerEvidenceRequiresCompleteLayoutWriterAndIndependentOwnerProofs() {
+    Scope scope = scope(UUID.randomUUID());
+    InitialGameplayReleaseEvidence evidence = evidence(scope);
+
+    evidence.validateFor(scope);
+    assertThat(evidence.issuerLayout().operationFence()).isPositive();
+    assertThat(evidence.issuerLayout().coverageFence()).isNotNull();
+    assertThat(evidence.worldInitialization().ownerService())
+        .isEqualTo(OwnerService.WORLD_MANAGEMENT);
+    assertThat(evidence.entityInitialization().ownerService())
+        .isEqualTo(OwnerService.ENTITY_MANAGEMENT);
+  }
+
+  @Test
+  void proofCollectionAccessorsCannotExposeMutableInternalState() {
+    InitialGameplayReleaseEvidence evidence = evidence(scope(UUID.randomUUID()));
+
+    assertThatThrownBy(() -> evidence.issuerLayout().descriptor().partitionIds().add(2))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(() -> evidence.issuerLayout().acknowledgements().clear())
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(() -> evidence.issuerLayout().capacityVector().put(2, 14))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(
+            () -> evidence.writerFencing().inventory().applicableWriterIdentities().clear())
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(() -> evidence.writerFencing().writerAcknowledgements().clear())
+        .isInstanceOf(UnsupportedOperationException.class);
+  }
+
+  @Test
+  void issuerProofSnapshotsCallerOwnedCollectionsAndKeepsItsDigest() {
+    Scope scope = scope(UUID.randomUUID());
+    InitialGameplayReleaseEvidence original = evidence(scope);
+    IssuerLayoutProof layout = original.issuerLayout();
+    var acknowledgements = new ArrayList<>(layout.acknowledgements());
+    var capacities = new HashMap<>(layout.capacityVector());
+    var proof =
+        new IssuerLayoutProof(
+            layout.layoutOperationId(),
+            layout.descriptor(),
+            layout.accountIssuerSourceIdentity(),
+            layout.operationFence(),
+            layout.coverageFence(),
+            layout.inventoryRevision(),
+            layout.inventoryDigest(),
+            acknowledgements,
+            capacities);
+    InitialGameplayReleaseEvidence retained = withLayout(original, proof);
+    var codec = new InitialGameplayReleaseTupleCodec();
+    var digest = codec.digest(retained);
+
+    acknowledgements.clear();
+    capacities.clear();
+
+    assertThat(proof.acknowledgements()).isEqualTo(layout.acknowledgements());
+    assertThat(proof.capacityVector()).isEqualTo(layout.capacityVector());
+    assertThat(codec.digest(retained)).isEqualTo(digest);
+    retained.validateFor(scope);
+  }
+
+  @Test
+  void evidenceCannotUseWorldInitializationAsEntityInitializationProof() {
+    Scope scope = scope(UUID.randomUUID());
+    InitialGameplayReleaseEvidence valid = evidence(scope);
+    InitialGameplayReleaseEvidence copiedWorldProof =
+        new InitialGameplayReleaseEvidence(
+            valid.evidenceRef(),
+            valid.evidenceIdentity(),
+            valid.migration(),
+            valid.issuerLayout(),
+            valid.writerFencing(),
+            valid.worldInitialization(),
+            valid.worldInitialization(),
+            valid.regionLease());
+
+    assertThatThrownBy(() -> copiedWorldProof.validateFor(scope))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("wrong owner");
+  }
+
+  @Test
+  void readinessRejectsMissingPartitionAcknowledgementAndWriterFence() {
+    Scope scope = scope(UUID.randomUUID());
+    InitialGameplayReleaseEvidence valid = evidence(scope);
+    IssuerLayoutProof incompleteLayout =
+        new IssuerLayoutProof(
+            valid.issuerLayout().layoutOperationId(),
+            valid.issuerLayout().descriptor(),
+            valid.issuerLayout().accountIssuerSourceIdentity(),
+            valid.issuerLayout().operationFence(),
+            valid.issuerLayout().coverageFence(),
+            valid.issuerLayout().inventoryRevision(),
+            valid.issuerLayout().inventoryDigest(),
+            List.of(valid.issuerLayout().acknowledgements().getFirst()),
+            Map.of(0, 10, 1, 12));
+    InitialGameplayReleaseEvidence missingWriterFence =
+        new InitialGameplayReleaseEvidence(
+            valid.evidenceRef(),
+            valid.evidenceIdentity(),
+            valid.migration(),
+            valid.issuerLayout(),
+            new WriterFenceProof(
+                valid.writerFencing().inventory(),
+                WriterDisposition.STOPPED,
+                List.of(valid.writerFencing().writerAcknowledgements().getFirst())),
+            valid.worldInitialization(),
+            valid.entityInitialization(),
+            valid.regionLease());
+
+    assertThatThrownBy(() -> withLayout(valid, incompleteLayout).validateFor(scope))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("partition acknowledgement");
+    assertThatThrownBy(() -> missingWriterFence.validateFor(scope))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("cover the inventory");
+  }
+
+  @Test
+  void tenantAndUuidCoverageFenceSurviveCodecAndBindTheScopeDigest() {
+    JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
+    Scope original = scope(UUID.randomUUID());
+    Scope otherTenant =
+        new Scope(
+            original.operationId(),
+            UUID.randomUUID(),
+            original.targetNamespace(),
+            original.playableStateNamespaceId(),
+            original.peerStorageBinding(),
+            original.evidenceRef());
+    InitialGameplayReleaseEvidence proof = evidence(original);
+
+    assertThat(codec.readScope(codec.toJson(original))).isEqualTo(original);
+    assertThat(codec.digest(original)).isNotEqualTo(codec.digest(otherTenant));
+    assertThat(codec.readEvidence(codec.toJson(proof)).issuerLayout().coverageFence())
+        .isEqualTo(proof.issuerLayout().coverageFence());
+
+    ObjectNode legacyScope = (ObjectNode) mapper.readTree(codec.toJson(original));
+    legacyScope.remove("canonicalTenantId");
+    String legacyScopeJson = mapper.writeValueAsString(legacyScope);
+    assertThatThrownBy(() -> codec.readScope(legacyScopeJson)).isInstanceOf(RuntimeException.class);
+    legacyScope.put("canonicalTenantId", NIL_UUID.toString());
+    String nilTenantScopeJson = mapper.writeValueAsString(legacyScope);
+    assertThatThrownBy(() -> codec.readScope(nilTenantScopeJson))
+        .isInstanceOf(RuntimeException.class);
+
+    ObjectNode legacyEvidence = (ObjectNode) mapper.readTree(codec.toJson(proof));
+    ((ObjectNode) legacyEvidence.get("issuerLayout")).put("coverageFence", 34);
+    String legacyNumericFenceJson = mapper.writeValueAsString(legacyEvidence);
+    assertThatThrownBy(() -> codec.readEvidence(legacyNumericFenceJson))
+        .isInstanceOf(RuntimeException.class);
+  }
+
+  @Test
+  void readinessAndDigestIgnoreCapacityMapIterationOrder() {
+    Scope scope = scope(UUID.randomUUID());
+    InitialGameplayReleaseEvidence original = evidence(scope);
+    IssuerLayoutProof layout = original.issuerLayout();
+    Map<Integer, Integer> forward = new java.util.LinkedHashMap<>();
+    forward.put(0, 10);
+    forward.put(1, 12);
+    original =
+        withLayout(
+            original,
+            new IssuerLayoutProof(
+                layout.layoutOperationId(),
+                layout.descriptor(),
+                layout.accountIssuerSourceIdentity(),
+                layout.operationFence(),
+                layout.coverageFence(),
+                layout.inventoryRevision(),
+                layout.inventoryDigest(),
+                layout.acknowledgements(),
+                forward));
+    Map<Integer, Integer> reversed = new java.util.LinkedHashMap<>();
+    reversed.put(1, 12);
+    reversed.put(0, 10);
+    InitialGameplayReleaseEvidence reordered =
+        withLayout(
+            original,
+            new IssuerLayoutProof(
+                layout.layoutOperationId(),
+                layout.descriptor(),
+                layout.accountIssuerSourceIdentity(),
+                layout.operationFence(),
+                layout.coverageFence(),
+                layout.inventoryRevision(),
+                layout.inventoryDigest(),
+                layout.acknowledgements(),
+                reversed));
+    original.validateFor(scope);
+    reordered.validateFor(scope);
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
+    assertThat(codec.digest(reordered)).isEqualTo(codec.digest(original));
+    assertThat(codec.digest(reversed)).isEqualTo(codec.digest(forward));
+    assertThatThrownBy(() -> reordered.issuerLayout().capacityVector().put(2, 1))
+        .isInstanceOf(UnsupportedOperationException.class);
+  }
+
+  @Test
+  void continuationAndResumePhasesAreNotInterchangeable() {
+    assertThatThrownBy(() ->
+            new net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands
+                .ContinueRecovery(
+                UUID.randomUUID(),
+                Phase.AWAITING_RESUME,
+                MaintenanceLockCredential.issue(UUID.randomUUID()),
+                "evidence-ref"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("ready_to_reopen");
+    assertThatThrownBy(() ->
+            new net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.Resume(
+                UUID.randomUUID(),
+                Phase.READY_TO_REOPEN,
+                MaintenanceLockCredential.issue(UUID.randomUUID()),
+                "evidence-ref"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("awaiting_resume");
+  }
+
+  @Test
+  void maintenanceLockCredentialRedactsItsWireValueFromDefaultRendering() {
+    UUID lockIdentity = UUID.randomUUID();
+    MaintenanceLockCredential credential = MaintenanceLockCredential.issue(lockIdentity);
+    Scope scope = scope(UUID.randomUUID());
+    InitialGameplayReleaseModel.Operation operation =
+        new InitialGameplayReleaseModel.Operation(
+            scope,
+            lockIdentity,
+            Phase.COLLECTING,
+            1,
+            null,
+            java.time.Instant.EPOCH,
+            java.time.Instant.EPOCH,
+            null);
+    InitialGameplayReleaseModel.PreparePlayableStateFencedEffect effect =
+        new InitialGameplayReleaseModel.PreparePlayableStateFencedEffect(
+            scope.operationId(), UUID.randomUUID(), lockIdentity, scope, DIGEST, "proof-identity");
+
+    assertThat(credential.toString()).doesNotContain(lockIdentity.toString());
+    assertThat(operation.toString()).doesNotContain(lockIdentity.toString());
+    assertThat(effect.toString()).doesNotContain(lockIdentity.toString());
+    assertThat(credential.protectedTransportValue()).isEqualTo(lockIdentity.toString());
+  }
+
+  @Test
+  void invalidMaintenanceCredentialDoesNotLeakThroughExceptionCause() {
+    assertThatThrownBy(
+            () -> MaintenanceLockCredential.fromProtectedTransport("secret-invalid-credential"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("maintenance-lock credential is invalid")
+        .hasNoCause();
+  }
+
+  @Test
+  void tupleDigestPreservesFullWidthExecutorGeneration() {
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
+    RegionLeaseProof first = new RegionLeaseProof("region", "lease", 9007199254740992L);
+    RegionLeaseProof next = new RegionLeaseProof("region", "lease", 9007199254740993L);
+    assertThat(codec.digest(first)).isNotEqualTo(codec.digest(next));
+    assertThat(codec.toJson(next)).contains("9007199254740993");
+  }
+
+  @Test
+  void noEffectReadbackRequiresClosedAttemptRatherThanObservedAbsence() {
+    assertThatThrownBy(() ->
+            new InitialGameplayReleaseModel.EffectReadback(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                1,
+                InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+                DIGEST,
+                DIGEST,
+                InitialGameplayReleaseModel.EffectReadbackState.PROVEN_NO_EFFECT,
+                InitialGameplayReleaseModel.EffectReadbackAuthority
+                    .GAME_SESSION_DURABLE_CURRENT_STATE,
+                "absence-only",
+                java.time.Instant.EPOCH))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() ->
+            new InitialGameplayReleaseModel.EffectReadback(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                0,
+                InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+                DIGEST,
+                DIGEST,
+                InitialGameplayReleaseModel.EffectReadbackState.PREPARED_FENCED,
+                InitialGameplayReleaseModel.EffectReadbackAuthority
+                    .GAME_SESSION_DURABLE_CURRENT_STATE,
+                "invalid-generation",
+                java.time.Instant.EPOCH))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("attemptOrdinal must be positive");
+    var closed =
+        new InitialGameplayReleaseModel.EffectReadback(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1,
+            InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+            DIGEST,
+            DIGEST,
+            InitialGameplayReleaseModel.EffectReadbackState.PROVEN_NO_EFFECT,
+            InitialGameplayReleaseModel.EffectReadbackAuthority.GAME_SESSION_DURABLE_CLOSED_ATTEMPT,
+            "terminal-attempt-proof",
+            java.time.Instant.EPOCH);
+    assertThat(closed.state())
+        .isEqualTo(InitialGameplayReleaseModel.EffectReadbackState.PROVEN_NO_EFFECT);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"\u20ac", "\\"})
+  void evidenceSizeGuardCountsUtf8AndJsonEscapes(String repeated) {
+    var scope = scope(UUID.randomUUID());
+    var original = evidence(scope);
+    var codec = new InitialGameplayReleaseTupleCodec();
+    var originalDigest = codec.digest(original);
+    codec.requireBoundedEvidence(original);
+    assertThat(codec.digest(original)).isEqualTo(originalDigest);
+
+    var oversized = withEvidenceIdentity(original, repeated.repeat(2_097_153));
+    oversized.validateFor(scope);
+    assertThatThrownBy(() -> codec.requireBoundedEvidence(oversized))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Initial gameplay release evidence exceeds 4 MiB of JSON");
+  }
+
+  @Test
+  void acceptsExactlyFourMebibytesOfJsonAndRejectsOneMoreByte() {
+    int limit = 4 * 1024 * 1024;
+    var scope = scope(UUID.randomUUID());
+    var original = evidence(scope);
+    var codec = new InitialGameplayReleaseTupleCodec();
+    int identityOverhead =
+        codec.toJson(withEvidenceIdentity(original, "x")).getBytes(StandardCharsets.UTF_8).length
+            - 1;
+    String boundaryIdentity = "x".repeat(limit - identityOverhead);
+    var boundary = withEvidenceIdentity(original, boundaryIdentity);
+    boundary.validateFor(scope);
+    assertThat(codec.toJson(boundary).getBytes(StandardCharsets.UTF_8)).hasSize(limit);
+    codec.requireBoundedEvidence(boundary);
+
+    var oversized = withEvidenceIdentity(original, boundaryIdentity + "x");
+    assertThatThrownBy(() -> codec.requireBoundedEvidence(oversized))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Initial gameplay release evidence exceeds 4 MiB of JSON");
+  }
+
+  private static InitialGameplayReleaseEvidence withEvidenceIdentity(
+      InitialGameplayReleaseEvidence original, String evidenceIdentity) {
+    return new InitialGameplayReleaseEvidence(
+        original.evidenceRef(),
+        evidenceIdentity,
+        original.migration(),
+        original.issuerLayout(),
+        original.writerFencing(),
+        original.worldInitialization(),
+        original.entityInitialization(),
+        original.regionLease());
+  }
+
+  @Test
+  void journalEvidenceKeepsDefaultBytesWithSnakeCaseApplicationMapper() {
+    var original = evidence(scope(UUID.randomUUID()));
+    var runner =
+        new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(JacksonAutoConfiguration.class))
+            .withUserConfiguration(InitialGameplayReleaseTupleCodec.class);
+    runner.run(defaults -> {
+      String defaultJson =
+          defaults.getBean(InitialGameplayReleaseTupleCodec.class).toJson(original);
+      String defaultDigest =
+          defaults.getBean(InitialGameplayReleaseTupleCodec.class).digest(original);
+      runner
+          .withPropertyValues("spring.jackson.property-naming-strategy=SNAKE_CASE")
+          .run(context -> {
+            var appJson = context.getBean(JsonMapper.class).writeValueAsString(original);
+            assertThat(appJson).contains("\"issuer_layout\"", "\"capacity_vector\"");
+
+            var journalCodec = context.getBean(InitialGameplayReleaseTupleCodec.class);
+            var journalJson = journalCodec.toJson(original);
+            assertThat(journalJson)
+                .contains("\"issuerLayout\"", "\"capacityVector\"")
+                .isEqualTo(defaultJson);
+            assertThat(journalCodec.readEvidence(journalJson)).isEqualTo(original);
+            assertThat(journalCodec.digest(original)).isEqualTo(defaultDigest);
+          });
+    });
+  }
+
+  @Test
+  void persistedPartitionAcknowledgementRequiresExplicitNonNullPartitionId() {
+    JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
+    var original = evidence(scope(UUID.randomUUID()));
+    String json = codec.toJson(original);
+    assertThat(codec.readEvidence(json)).isEqualTo(original);
+    ObjectNode missing = (ObjectNode) mapper.readTree(json);
+    ObjectNode explicitNull = missing.deepCopy();
+    ((ObjectNode) missing.at("/issuerLayout/acknowledgements/0")).remove("partitionId");
+    ((ObjectNode) explicitNull.at("/issuerLayout/acknowledgements/0")).putNull("partitionId");
+    String missingJson = mapper.writeValueAsString(missing);
+    String nullJson = mapper.writeValueAsString(explicitNull);
+
+    assertThatThrownBy(() -> codec.readEvidence(missingJson))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> codec.readEvidence(nullJson))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void persistedEvidenceRequiresAnIntegerOperationFence() {
+    JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
+    var original = evidence(scope(UUID.randomUUID()));
+    String json = codec.toJson(original);
+    assertThat(codec.readEvidence(json)).isEqualTo(original);
+    ObjectNode altered = (ObjectNode) mapper.readTree(json);
+    ((ObjectNode) altered.get("issuerLayout")).put("operationFence", 21.9);
+    String fractionalJson = mapper.writeValueAsString(altered);
+    ((ObjectNode) altered.get("issuerLayout")).put("operationFence", "21");
+    String stringJson = mapper.writeValueAsString(altered);
+
+    assertThatThrownBy(() -> codec.readEvidence(fractionalJson))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> codec.readEvidence(stringJson))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"0", "0.0", "\"0\"", "true"})
+  void persistedEvidenceEnumsRequireNamesRatherThanOrdinals(String replacement) {
+    JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
+    var original = evidence(scope(UUID.randomUUID()));
+    String json = codec.toJson(original);
+    assertThat(codec.readEvidence(json)).isEqualTo(original);
+    for (String pointer :
+        List.of(
+            "/migration/disposition",
+            "/writerFencing/legacyWriterDisposition",
+            "/writerFencing/writerAcknowledgements/0/disposition",
+            "/worldInitialization/ownerService",
+            "/worldInitialization/disposition",
+            "/entityInitialization/ownerService",
+            "/entityInitialization/disposition")) {
+      ObjectNode altered = (ObjectNode) mapper.readTree(json);
+      int fieldStart = pointer.lastIndexOf('/');
+      ((ObjectNode) altered.at(pointer.substring(0, fieldStart)))
+          .set(pointer.substring(fieldStart + 1), mapper.readTree(replacement));
+      String alteredJson = mapper.writeValueAsString(altered);
+      assertThatThrownBy(() -> codec.readEvidence(alteredJson))
+          .as(pointer + " must retain its textual enum name")
+          .isInstanceOf(IllegalStateException.class);
+    }
+  }
+
+  @Test
+  void persistedEvidenceRejectsNoncanonicalAndDuplicateNormalizedCapacityKeys() {
+    JsonMapper mapper = JsonMapper.builder().findAndAddModules().build();
+    InitialGameplayReleaseTupleCodec codec = new InitialGameplayReleaseTupleCodec();
+    String json = codec.toJson(evidence(scope(UUID.randomUUID())));
+    ObjectNode noncanonical = (ObjectNode) mapper.readTree(json);
+    ObjectNode noncanonicalCapacity = (ObjectNode) noncanonical.at("/issuerLayout/capacityVector");
+    var oneCapacity = noncanonicalCapacity.remove("1");
+    noncanonicalCapacity.set("01", oneCapacity);
+    String noncanonicalJson = mapper.writeValueAsString(noncanonical);
+
+    ObjectNode duplicateNormalized = (ObjectNode) mapper.readTree(json);
+    ObjectNode duplicateCapacity =
+        (ObjectNode) duplicateNormalized.at("/issuerLayout/capacityVector");
+    duplicateCapacity.set("01", duplicateCapacity.get("1").deepCopy());
+    String duplicateNormalizedJson = mapper.writeValueAsString(duplicateNormalized);
+
+    assertThatThrownBy(() -> codec.readEvidence(noncanonicalJson))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("noncanonical shape");
+    assertThatThrownBy(() -> codec.readEvidence(duplicateNormalizedJson))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("noncanonical shape");
+  }
+
+  @Test
+  void journalReadbackRejectsNulInIdentityBeforePersistence() {
+    assertThatThrownBy(() ->
+            new InitialGameplayReleaseModel.EffectReadback(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                1,
+                InitialGameplayReleaseModel.EffectKind.PREPARE_PLAYABLE_STATE_FENCED,
+                DIGEST,
+                DIGEST,
+                InitialGameplayReleaseModel.EffectReadbackState.PREPARED_FENCED,
+                InitialGameplayReleaseModel.EffectReadbackAuthority
+                    .GAME_SESSION_DURABLE_CURRENT_STATE,
+                "readback" + Character.toString(0) + "identity",
+                java.time.Instant.EPOCH))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("readbackIdentity")
+        .hasMessageContaining("NUL");
+  }
+
+  private static Scope scope(UUID playableNamespace) {
+    return new Scope(
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "release-target",
+        playableNamespace,
+        new PeerStorageBinding(
+            "release-target", "cluster-peer", "peer-workload", "storage-uid", "storage-r7", DIGEST),
+        "initial-layout-evidence-17");
+  }
+
+  static InitialGameplayReleaseEvidence evidence(Scope scope) {
+    LayoutDescriptor descriptor =
+        new LayoutDescriptor("initial-layout-v1", "layout-r1", DIGEST, List.of(0, 1));
+    IssuerLayoutProof layout =
+        new IssuerLayoutProof(
+            UUID.randomUUID(),
+            descriptor,
+            "account-issuer-source-29",
+            21,
+            UUID.randomUUID(),
+            "inventory-r3",
+            DIGEST,
+            List.of(
+                new PartitionAcknowledgement(0, "ack-0", DIGEST, DIGEST, 10),
+                new PartitionAcknowledgement(1, "ack-1", DIGEST, DIGEST, 12)),
+            Map.of(0, 10, 1, 12));
+    WriterInventory inventory =
+        new WriterInventory(
+            "inventory-r3", DIGEST, "legacy-writer", List.of("writer-a", "writer-b"));
+    WriterFenceProof writerFencing =
+        new WriterFenceProof(
+            inventory,
+            WriterDisposition.STOPPED,
+            List.of(
+                new WriterFenceAcknowledgement(
+                    "writer-a", WriterDisposition.FENCED, "fence-a", DIGEST),
+                new WriterFenceAcknowledgement(
+                    "writer-b", WriterDisposition.FENCED, "fence-b", DIGEST)));
+    return new InitialGameplayReleaseEvidence(
+        scope.evidenceRef(),
+        "initial-release-proof-17",
+        new MigrationProof(
+            UUID.randomUUID(),
+            ProofDisposition.VERIFIED,
+            scope.peerStorageBinding().storageIdentity(),
+            "inventory-r3",
+            DIGEST),
+        layout,
+        writerFencing,
+        new OwnerInitializationProof(
+            OwnerService.WORLD_MANAGEMENT,
+            UUID.randomUUID(),
+            scope.playableStateNamespaceId(),
+            ProofDisposition.VERIFIED,
+            "world-source-4",
+            DIGEST),
+        new OwnerInitializationProof(
+            OwnerService.ENTITY_MANAGEMENT,
+            UUID.randomUUID(),
+            scope.playableStateNamespaceId(),
+            ProofDisposition.VERIFIED,
+            "entity-source-8",
+            DIGEST),
+        new RegionLeaseProof("region-west-1", "lease-59", 11));
+  }
+
+  private static InitialGameplayReleaseEvidence withLayout(
+      InitialGameplayReleaseEvidence source, IssuerLayoutProof layout) {
+    return new InitialGameplayReleaseEvidence(
+        source.evidenceRef(),
+        source.evidenceIdentity(),
+        source.migration(),
+        layout,
+        source.writerFencing(),
+        source.worldInitialization(),
+        source.entityInitialization(),
+        source.regionLease());
+  }
+}

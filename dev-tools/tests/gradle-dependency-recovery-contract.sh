@@ -65,6 +65,11 @@ EOF_WRAPPER
 run_case() {
   local module="$1"
   local expected_status="$2"
+  shift 2
+  local -a command=(bash ./.github/scripts/run-gradle-module-checks.sh "$module")
+  if [[ "$module" == :compileBufGeneratedJava ]]; then
+    command=(bash ./dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- compileBufGeneratedJava "$@")
+  fi
   local actual_status=0
   if (
     cd "$CASE_DIR"
@@ -74,7 +79,7 @@ run_case() {
     export FAKE_LOCK_CALL_LOG="$CASE_DIR/locked-calls"
     export FAKE_SLEEP_LOG="$CASE_DIR/sleeps"
     export PATH="$CASE_DIR/bin:$PATH"
-    bash ./.github/scripts/run-gradle-module-checks.sh "$module" > "$CASE_DIR/output" 2>&1
+    "${command[@]}" > "$CASE_DIR/output" 2>&1
   ); then
     actual_status=0
   else
@@ -453,6 +458,58 @@ for mutation in auth wrong-origin wrong-artifact truncated-chain extra-coordinat
   # shellcheck disable=SC2016
   write_wrapper 'cat "$CASE_DIR/cause.log"; exit 1'
   run_case common-platform-core 1
+  assert_no_retry
+done
+
+# The processor failure can surface an earlier Spring Boot metadata 429
+# while Gradle reports Maven Central as disabled for the Lombok lookup.
+write_disabled_processor_pom_429_cause() {
+  sed '/^> Could not resolve all files/q' "$TEMP_DIR/annotation-processor-path-resolution/cause.log" > "$CASE_DIR/cause.log"
+  cat >> "$CASE_DIR/cause.log" <<'LOG'
+   > Could not resolve org.projectlombok:lombok:1.18.48.
+     Required by:
+         project ':common-platform-core'
+      > Repository MavenRepo is disabled due to earlier error below:
+         > Could not resolve org.springframework.boot:spring-boot-starter-validation:4.2.0.
+            > Could not get resource 'https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-starter-validation/4.2.0/spring-boot-starter-validation-4.2.0.pom'.
+               > Could not GET 'https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-starter-validation/4.2.0/spring-boot-starter-validation-4.2.0.pom'.
+                  > Received status code 429 from server: Too Many Requests
+> There is 1 more failure with an identical cause.
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+}
+
+new_case annotation-processor-disabled-repository-429
+write_disabled_processor_pom_429_cause
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; exit 0'
+run_case common-saga 0
+assert_call_count 2
+for attempt in 1 2; do
+  assert_call "$attempt" "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-saga:check -PfullCheck --profile --info --console=plain"
+done
+assert_rate_limit_delay
+assert_output_contains "with cached dependency metadata"
+
+for mutation in wrong-resolver wrong-project other-coordinate wrong-origin wrong-pom incomplete-chain auth wrong-summary mixed-cause task-started; do
+  new_case "annotation-processor-disabled-repository-429-$mutation"
+  write_disabled_processor_pom_429_cause
+  case "$mutation" in
+    wrong-resolver) sed -i 's/:common-platform-core:annotationProcessor/:common-saga:annotationProcessor/' "$CASE_DIR/cause.log" ;;
+    wrong-project) sed -i "/project '/s/:common-platform-core/:common-saga/" "$CASE_DIR/cause.log" ;;
+    other-coordinate) sed -i 's/spring-boot-starter-validation/spring-boot-starter-web/g' "$CASE_DIR/cause.log" ;;
+    wrong-origin) sed -i 's/repo.maven.apache.org/repository.invalid/g' "$CASE_DIR/cause.log" ;;
+    wrong-pom) sed -i '/Could not GET/s/-4\.2\.0\.pom/-4.2.1.pom/' "$CASE_DIR/cause.log" ;;
+    incomplete-chain) sed -i '/Could not GET/d' "$CASE_DIR/cause.log" ;;
+    auth) sed -i 's/429 from server: Too Many Requests/403 from server: Forbidden/' "$CASE_DIR/cause.log" ;;
+    wrong-summary) sed -i 's/There is 1 more failure with an identical cause/There are 2 more failures with identical causes/' "$CASE_DIR/cause.log" ;;
+    mixed-cause) sed -i '/^[*] Try:/i > Could not resolve com.example:other-processor:1.0.' "$CASE_DIR/cause.log" ;;
+    task-started) sed -i '1i > Task :common-platform-core:generateJooq' "$CASE_DIR/cause.log" ;;
+  esac
+  # shellcheck disable=SC2016
+  write_wrapper 'cat "$CASE_DIR/cause.log"; exit 1'
+  run_case common-saga 1
   assert_no_retry
 done
 
@@ -956,6 +1013,143 @@ assert_call_count 2
 assert_rate_limit_delay
 assert_output_contains "Received status code 429"
 assert_output_contains "buildsrc-refresh-result"
+
+# All JARs must report matching coordinate and official resource/GET paths.
+# These exact pre-execution failures retry with the original cache policy.
+write_cold_jar_429_cause() {
+  if [[ "$1" == buildsrc ]]; then
+    cat > "$CASE_DIR/cause.log" <<'LOG'
+FAILURE: Build failed with an exception.
+* What went wrong:
+A problem occurred configuring project ':buildSrc'.
+> Could not resolve all artifacts for configuration 'classpath'.
+   > Could not download kotlin-stdlib-2.4.21.jar (org.jetbrains.kotlin:kotlin-stdlib:2.4.21)
+      > Could not get resource 'https://plugins.gradle.org/m2/org/jetbrains/kotlin/kotlin-stdlib/2.4.21/kotlin-stdlib-2.4.21.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.4.21/kotlin-stdlib-2.4.21.jar'.
+            > Received status code 429 from server: Too Many Requests
+   > Could not download kotlin-gradle-plugin-api-2.4.21-gradle96.jar (org.jetbrains.kotlin:kotlin-gradle-plugin-api:2.4.21)
+      > Could not get resource 'https://plugins.gradle.org/m2/org/jetbrains/kotlin/kotlin-gradle-plugin-api/2.4.21/kotlin-gradle-plugin-api-2.4.21-gradle96.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugin-api/2.4.21/kotlin-gradle-plugin-api-2.4.21-gradle96.jar'.
+            > Received status code 429 from server: Too Many Requests
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+  elif [[ "$1" == buf ]]; then
+    cat > "$CASE_DIR/cause.log" <<'LOG'
+> Task :buildSrc:compileKotlin FROM-CACHE
+> Task :buildSrc:jar
+1 problem was found storing the configuration cache.
+- Task `:compileBufGeneratedJava` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type 'org.gradle.api.internal.artifacts.configurations.DefaultLegacyConfiguration'
+FAILURE: Build failed with an exception.
+* What went wrong:
+Configuration cache state could not be cached: field `classpath` of task `:compileBufGeneratedJava` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type 'org.gradle.api.internal.artifacts.configurations.DefaultLegacyConfiguration'
+> Could not resolve all files for configuration ':bufGeneratedJavaClasspath'.
+   > Could not download grpc-protobuf-1.85.1.jar (io.grpc:grpc-protobuf:1.85.1)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/io/grpc/grpc-protobuf/1.85.1/grpc-protobuf-1.85.1.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/io/grpc/grpc-protobuf/1.85.1/grpc-protobuf-1.85.1.jar'.
+            > Received status code 429 from server: Too Many Requests
+   > Could not download guava-33.6.0-jre.jar (com.google.guava:guava:33.6.0-android)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/com/google/guava/guava/33.6.0-jre/guava-33.6.0-jre.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/com/google/guava/guava/33.6.0-jre/guava-33.6.0-jre.jar'.
+            > Received status code 429 from server: Too Many Requests
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+  else
+    cat > "$CASE_DIR/cause.log" <<'LOG'
+> Task :buildSrc:compileKotlin FROM-CACHE
+> Task :buildSrc:jar
+1 problem was found storing the configuration cache.
+- Task `:recovery-controller-service:checkstyleIntegrationTest` of type `org.gradle.api.plugins.quality.Checkstyle`: error writing value of type 'org.gradle.api.internal.artifacts.configurations.DefaultLegacyConfiguration'
+FAILURE: Build failed with an exception.
+* What went wrong:
+Configuration cache state could not be cached: field `checkstyleClasspath` of task `:recovery-controller-service:checkstyleIntegrationTest` of type `org.gradle.api.plugins.quality.Checkstyle`: error writing value of type 'org.gradle.api.internal.artifacts.configurations.DefaultLegacyConfiguration'
+> Could not resolve all files for configuration ':recovery-controller-service:checkstyle'.
+   > Could not download checkstyle-14.4.0.jar (com.puppycrawl.tools:checkstyle:14.4.0)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/com/puppycrawl/tools/checkstyle/14.4.0/checkstyle-14.4.0.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/com/puppycrawl/tools/checkstyle/14.4.0/checkstyle-14.4.0.jar'.
+            > Received status code 429 from server: Too Many Requests
+   > Could not download xmlresolver-6.1.0-data.jar (org.xmlresolver:xmlresolver:6.1.0)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/org/xmlresolver/xmlresolver/6.1.0/xmlresolver-6.1.0-data.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/xmlresolver/xmlresolver/6.1.0/xmlresolver-6.1.0-data.jar'.
+            > Received status code 429 from server: Too Many Requests
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+  fi
+}
+
+for scope in buildsrc buf checkstyle; do
+  module=logging-admin-service
+  checkstyle_scenarios=()
+  if [[ "$scope" == checkstyle ]]; then
+    module=recovery-controller-service
+    checkstyle_scenarios=(recovered-test-fixtures wrong-field wrong-type wrong-classifier wrong-classifier-coordinate checkstyle-started jooq-jvm-crash)
+  fi
+  original_command="--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :$module:check -PfullCheck --profile --info --console=plain"
+  if [[ "$scope" == buf ]]; then
+    module=:compileBufGeneratedJava
+    original_command=compileBufGeneratedJava
+  fi
+
+  for scenario in recovered repeated invalid-owner invalid-configuration extra-configuration wrong-resource wrong-get wrong-jar incomplete-chain mixed-status mixed-cause compile-started test-started "${checkstyle_scenarios[@]}"; do
+    new_case "cold-jars-$scope-$scenario"
+    write_cold_jar_429_cause "$scope"
+    expected_status=1
+    case "$scenario" in
+      recovered) expected_status=0 ;;
+      recovered-test-fixtures)
+        sed -i 's/:checkstyleIntegrationTest/:checkstyleTestFixtures/g' "$CASE_DIR/cause.log"
+        expected_status=0
+        ;;
+      repeated) ;;
+      invalid-owner)
+        sed -i 's/project '\'':buildSrc'\''/project '\'':otherProject'\''/; s/:compileBufGeneratedJava/:other:compileBufGeneratedJava/g; s/:recovery-controller-service:checkstyleIntegrationTest/:other:checkstyleIntegrationTest/g' "$CASE_DIR/cause.log"
+        ;;
+      invalid-configuration) sed -i "s/configuration 'classpath'/configuration 'runtimeClasspath'/; s/:bufGeneratedJavaClasspath/:compileClasspath/; s/:recovery-controller-service:checkstyle'/:recovery-controller-service:compileClasspath'/" "$CASE_DIR/cause.log" ;;
+      extra-configuration) sed -i "/^[*] Try:/i > Could not resolve all files for configuration ':unrelated'." "$CASE_DIR/cause.log" ;;
+      wrong-resource) sed -i '/Could not get resource/s,https://[^/]*/,https://repository.invalid/,' "$CASE_DIR/cause.log" ;;
+      wrong-get) sed -i '/Could not GET/s/repo.maven.apache.org/plugins.gradle.org/' "$CASE_DIR/cause.log" ;;
+      wrong-jar) sed -i '/Could not GET/s/\.jar/\.sources.jar/' "$CASE_DIR/cause.log" ;;
+      incomplete-chain) sed -i '/Could not GET/d' "$CASE_DIR/cause.log" ;;
+      mixed-status) sed -i '0,/429 from server: Too Many Requests/s//403 from server: Forbidden/' "$CASE_DIR/cause.log" ;;
+      mixed-cause) sed -i '/^[*] Try:/i > Dependency verification failed' "$CASE_DIR/cause.log" ;;
+      compile-started) sed -i '1i > Task :compileBufGeneratedJava FAILED' "$CASE_DIR/cause.log" ;;
+      test-started) sed -i '1i > Task :logging-admin-service:test' "$CASE_DIR/cause.log" ;;
+      wrong-field) sed -i 's/checkstyleClasspath/source/' "$CASE_DIR/cause.log" ;;
+      wrong-type) sed -i 's/org\.gradle\.api\.plugins\.quality\.Checkstyle/example.Checkstyle/' "$CASE_DIR/cause.log" ;;
+      wrong-classifier) sed -i 's/xmlresolver-6\.1\.0-data\.jar/xmlresolver-6.1.0-sources.jar/g' "$CASE_DIR/cause.log" ;;
+      wrong-classifier-coordinate) sed -i 's/org\.xmlresolver:/example:/g; s,/org/xmlresolver/xmlresolver/,/example/xmlresolver/,g' "$CASE_DIR/cause.log" ;;
+      checkstyle-started) sed -i '1i > Task :recovery-controller-service:checkstyleMain FAILED' "$CASE_DIR/cause.log" ;;
+      jooq-jvm-crash) sed -i '1i > Task :recovery-controller-service:generateJooq\n# A fatal error has been detected by the Java Runtime Environment:\n# SIGSEGV (0xb)' "$CASE_DIR/cause.log" ;;
+    esac
+    # shellcheck disable=SC2016
+    write_wrapper 'if [[ "$call_count" -eq 1 || "$FIXTURE_RETRY_EXIT" -ne 0 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; exit 0'
+    FIXTURE_RETRY_EXIT="$expected_status" run_case "$module" "$expected_status"
+    if [[ "$scenario" == recovered || "$scenario" == recovered-test-fixtures || "$scenario" == repeated ]]; then
+      assert_call_count 2
+      assert_call 1 "$original_command"
+      assert_call 2 "$original_command"
+      assert_rate_limit_delay
+      assert_output_contains "with cached dependency metadata"
+    else
+      assert_no_retry
+    fi
+  done
+done
+
+# An explicit caller refresh flag remains effective on both attempts.
+for refresh_flag in --refresh-dependencies -U; do
+  new_case "explicit-buf-refresh-${refresh_flag#-}"
+  write_cold_jar_429_cause buf
+  # shellcheck disable=SC2016
+  write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi'
+  run_case :compileBufGeneratedJava 0 "$refresh_flag"
+  assert_call_count 2
+  assert_call 1 "compileBufGeneratedJava $refresh_flag"
+  assert_call 2 "compileBufGeneratedJava $refresh_flag"
+  assert_output_contains "with the caller-requested dependency metadata refresh"
+done
 
 # A Retry-After beyond the short retry budget fails closed without waiting.
 new_case long-retry-after

@@ -10,6 +10,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.tasks.JavaExec
@@ -105,14 +106,28 @@ class FiremudJooqConventionsPlugin : Plugin<Project> {
                     .filter { it.isNotBlank() }
                     .joinToString(separator = "")
 
+            val recoveryService = project.name == "recovery-controller-service"
+            val recoveryMigrationGlob = "src/main/resources/db/recovery-control-migration/*.sql"
+            val defaultMigrationGlob =
+                if (recoveryService) recoveryMigrationGlob else "src/main/resources/db/migration/*.sql"
+
             val extension =
                 extensions.create<FiremudJooqExtension>("firemudJooq", project).apply {
                     packageName.convention("net.firedevops.firemud.$defaultPackage.jooq")
                     inputSchema.convention("public")
                     includes.convention(".*")
-                    migrationGlob.convention("src/main/resources/db/migration/*.sql")
+                    migrationGlob.convention(defaultMigrationGlob)
                     outputDirectory.convention(generatedDir)
                 }
+
+            val qualifiedMigrationGlob =
+                extension.migrationGlob.map { glob ->
+                    require(!recoveryService || glob == recoveryMigrationGlob) {
+                        "Recovery jOOQ must generate from the packaged recovery-control migrations"
+                    }
+                    glob
+                }
+            val projectDirectory = layout.projectDirectory.asFile
 
             val jooqCodegen = configurations.create("jooqCodegen")
             dependencies {
@@ -133,8 +148,8 @@ class FiremudJooqConventionsPlugin : Plugin<Project> {
                     packageName.set(extension.packageName)
                     inputSchema.set(extension.inputSchema)
                     includes.set(extension.includes)
-                    migrationGlob.set(extension.migrationGlob)
-                    scriptsPath.set(layout.projectDirectory.asFile.absolutePath + "/" + extension.migrationGlob.get())
+                    migrationGlob.set(qualifiedMigrationGlob)
+                    scriptsPath.set(qualifiedMigrationGlob.map { glob -> projectDirectory.absolutePath + "/" + glob })
                     outputDirectory.set(extension.outputDirectory)
                     configFile.set(layout.buildDirectory.file("tmp/jooq/config.xml"))
                 }
@@ -145,7 +160,14 @@ class FiremudJooqConventionsPlugin : Plugin<Project> {
                 dependsOn(writeConfig)
                 classpath = jooqCodegen
                 mainClass.set("org.jooq.codegen.GenerationTool")
-                inputs.files(fileTree(layout.projectDirectory.dir("src/main/resources/db/migration")))
+                inputs.files(
+                    qualifiedMigrationGlob.map { glob ->
+                        fileTree(projectDirectory).include(glob)
+                    },
+                ).withPathSensitivity(PathSensitivity.RELATIVE)
+                inputs.file(writeConfig.flatMap { it.configFile })
+                    .withPropertyName("jooqConfiguration")
+                    .withPathSensitivity(PathSensitivity.RELATIVE)
                 outputs.dir(extension.outputDirectory)
                 val configPath = writeConfig.flatMap { it.configFile }.map { it.asFile.absolutePath }
                 doFirst {

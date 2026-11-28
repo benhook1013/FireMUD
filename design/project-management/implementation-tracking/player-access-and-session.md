@@ -1,5 +1,11 @@
 # Player Access and Session
 
+## Initial Gameplay Recovery Foundation Status
+
+The [PlatformOperations PO-3.4 tracker](platform-operations-and-delivery.md#packet-6-p0-status-and-proof-gaps) records the source-only journal and typed request foundation. Player Access owner-integration proof remains open, including the peer/storage adapter binding round trip, exact-attempt owner closure, and maintenance-fence custody through restart. The [canonical recovery contract](../../architecture/system-architecture-backup-recovery.md#source-only-initial-gameplay-release-foundation) owns the activation criteria. The current recover entry refuses live recovery.
+
+Focused executable coverage is in [model tests](../../../services/recovery-controller-service/src/test/java/unit/net/firedevops/firemud/recovery/model/InitialGameplayReleaseModelTest.java), [tuple codec tests](../../../services/recovery-controller-service/src/test/java/unit/net/firedevops/firemud/recovery/journal/InitialGameplayReleaseTupleCodecTest.java), [controller refusal tests](../../../services/recovery-controller-service/src/test/java/unit/net/firedevops/firemud/recovery/service/InitialGameplayReleaseControllerTest.java), and [physical PostgreSQL journal tests](../../../services/recovery-controller-service/src/test/java/integration/net/firedevops/firemud/recovery/InitialGameplayReleaseJournalPostgresIntegrationTest.java).
+
 ## Target-State Authority
 
 This is a non-normative implementation tracker for player access and session. Canonical target-state authentication, admission, session, and reconnection contracts remain authoritative in [design/architecture](../../architecture/README.md) and the linked design sources below; this tracker owns current implementation status, proof evidence, gaps, and handoffs, and does not redefine those contracts.
