@@ -33,7 +33,8 @@ class TextPlayerOutputRendererTest {
                     "R-1021",
                     "Candle-lit Antechamber",
                     "You stand in a basalt chamber warmed by the brazier near the western wall.",
-                    "Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels.",
+                    "Stalactites drip along the northern wall while a faint draft carries the smell"
+                        + " of damp earth from the lower tunnels.",
                     true,
                     List.of(new LookViewExit("NORTH", "arched passage")),
                     List.of())));
@@ -132,7 +133,8 @@ class TextPlayerOutputRendererTest {
                     "R-1021",
                     "Candle-lit Antechamber",
                     "You stand in a basalt chamber warmed by the brazier near the western wall.",
-                    "Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels.",
+                    "Stalactites drip along the northern wall while a faint draft carries the smell"
+                        + " of damp earth from the lower tunnels.",
                     true,
                     List.of(new LookViewExit("NORTH", "arched passage")),
                     List.of())));
@@ -506,7 +508,8 @@ class TextPlayerOutputRendererTest {
                     "R-305",
                     "Grounded Hall",
                     "A torchlit hall with a loose key on the floor.",
-                    "A torchlit hall with a loose key on the floor and dust shifting in the corners.",
+                    "A torchlit hall with a loose key on the floor and dust shifting in the"
+                        + " corners.",
                     true,
                     List.of(),
                     List.of(
@@ -840,7 +843,8 @@ class TextPlayerOutputRendererTest {
 
     assertThat(rendered)
         .isEqualTo(
-            "Si ce compte est autorise a se connecter, un code a ete envoye. Utilisez LOGIN <email> <code>.");
+            "Si ce compte est autorise a se connecter, un code a ete envoye. Utilisez LOGIN <email>"
+                + " <code>.");
   }
 
   @Test
@@ -1066,8 +1070,8 @@ class TextPlayerOutputRendererTest {
                 PlayerOutput.view(
                     new WorldsViewOutput(
                         List.of(
-                            new WorldsViewOutput.WorldEntry("demo", "Demo World", 1L, false),
-                            new WorldsViewOutput.WorldEntry("123", "Numeric World", 2L, true))))));
+                            new WorldsViewOutput.WorldEntry("demo", "Demo World", false),
+                            new WorldsViewOutput.WorldEntry("123", "Numeric World", true))))));
 
     assertThat(rendered).isEqualTo("OK WORLDS\nDemo World (demo)\nNumeric World (123)\n\n");
   }
@@ -1092,9 +1096,9 @@ class TextPlayerOutputRendererTest {
                         "demo",
                         List.of(
                             new RealmBrowseViewOutput.RealmEntry(
-                                "123", "Numeric Realm", 1L, false, "SHARED", "ALLOW_NEW"),
+                                "123", "Numeric Realm", false, "SHARED", "ALLOW_NEW"),
                             new RealmBrowseViewOutput.RealmEntry(
-                                "production", "Live Realm", 2L, true, "ISOLATED", "PRESEEDED"))))));
+                                "production", "Live Realm", true, "ISOLATED", "PRESEEDED"))))));
 
     assertThat(rendered)
         .isEqualTo(

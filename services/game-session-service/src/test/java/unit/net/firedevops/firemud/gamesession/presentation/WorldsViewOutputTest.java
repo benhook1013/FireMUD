@@ -12,7 +12,7 @@ class WorldsViewOutputTest {
   void worldsAreCopiedDefensively() {
     List<WorldsViewOutput.WorldEntry> worlds =
         new java.util.ArrayList<>(
-            List.of(new WorldsViewOutput.WorldEntry("123", "Demo World", 1L, false)));
+            List.of(new WorldsViewOutput.WorldEntry("123", "Demo World", false)));
 
     WorldsViewOutput output = new WorldsViewOutput(worlds);
     worlds.clear();
@@ -27,6 +27,6 @@ class WorldsViewOutputTest {
             Arrays.stream(WorldsViewOutput.WorldEntry.class.getRecordComponents())
                 .map(RecordComponent::getName)
                 .toList())
-        .containsExactly("slug", "displayName", "gameInstanceId", "requiresCharacterSelection");
+        .containsExactly("slug", "displayName", "requiresCharacterSelection");
   }
 }

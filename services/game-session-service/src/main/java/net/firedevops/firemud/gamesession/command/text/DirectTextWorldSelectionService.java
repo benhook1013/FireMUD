@@ -126,7 +126,8 @@ public final class DirectTextWorldSelectionService {
    * @throws UnknownWorldSelectorException when a nonblank selector does not uniquely match a choice
    *     in a live menu owned by this service
    * @throws ExpiredWorldSelectionException when this service's exact menu has expired before the
-   *     resolution begins
+   *     resolution completes
+   * @throws StaleWorldSelectionException when valid current source evidence differs from the menu
    */
   public Optional<CanonicalPlayableTarget> resolve(SelectionSnapshot retained, String selector) {
     if (retained == null || retained.owner != this || selector == null || selector.isBlank()) {
@@ -151,10 +152,21 @@ public final class DirectTextWorldSelectionService {
     } catch (InvalidAuthorityException exception) {
       return Optional.empty();
     }
-    if (!expected.equals(current)
-        || !snapshot.fingerprint().equals(catalog.discoverySnapshot().fingerprint())
-        || !isLive(snapshot)) {
+    if (current == null) {
       return Optional.empty();
+    }
+    boolean changed =
+        !expected.equals(current)
+            || !snapshot.fingerprint().equals(catalog.discoverySnapshot().fingerprint());
+    Instant finishedAt = clock.instant();
+    if (finishedAt.isBefore(now)) {
+      return Optional.empty();
+    }
+    if (!finishedAt.isBefore(snapshot.expiresAt())) {
+      throw new ExpiredWorldSelectionException();
+    }
+    if (changed) {
+      throw new StaleWorldSelectionException();
     }
     return Optional.of(expected);
   }
@@ -298,12 +310,21 @@ public final class DirectTextWorldSelectionService {
     }
   }
 
-  /** The exact selection owner's retained menu expired before resolution began. */
+  /** The exact selection owner's retained menu expired before resolution completed. */
   public static final class ExpiredWorldSelectionException extends RuntimeException {
     private static final long serialVersionUID = 1L;
 
     public ExpiredWorldSelectionException() {
       super("World selection menu expired");
+    }
+  }
+
+  /** Valid current source evidence differs from the retained selection. */
+  public static final class StaleWorldSelectionException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    public StaleWorldSelectionException() {
+      super("World selection menu changed");
     }
   }
 
