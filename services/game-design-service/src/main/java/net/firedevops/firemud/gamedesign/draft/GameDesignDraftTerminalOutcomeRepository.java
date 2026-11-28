@@ -46,7 +46,9 @@ public final class GameDesignDraftTerminalOutcomeRepository {
 
     Record byOperation = findOperation(operation.accountBinding().operationId(), true);
     if (byOperation != null) {
-      return toOperation(byOperation);
+      GameDesignDraftTerminalOperation persisted = toOperation(byOperation);
+      requireExactOperation(operation, persisted);
+      return persisted;
     }
     if (dsl.fetchOne(
             "SELECT 1 FROM "
