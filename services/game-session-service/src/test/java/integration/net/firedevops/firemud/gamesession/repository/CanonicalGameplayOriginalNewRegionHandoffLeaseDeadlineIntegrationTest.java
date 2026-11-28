@@ -1097,6 +1097,15 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> replaceRegionOwner("successor-before-closure"))
         .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> observeGuardedReplacementRefusal("sql-custody-before-closure"))
+        .rootCause()
+        .isInstanceOfSatisfying(
+            org.postgresql.util.PSQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23514");
+              assertThat(failure.getMessage())
+                  .contains("Region owner replacement lacks exact transfer custody");
+            });
     // The positive continuation cannot turn an unexecuted/missing final result into proof.
     assertThatThrownBy(() ->
             capacityOwner()
@@ -1107,6 +1116,11 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
     assertThat(physicalImage()).isEqualTo(physical);
     capacityOwner()
         .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
+    var original = regionBinding.installation();
+    observeGuardedReplacementRefusal("sql-custody-after-closure");
+    assertThat(
+            new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
+        .contains(original.status);
     var successor = replaceRegionOwner("successor-after-closure");
     assertThat(successor.executorFence().longValueExact())
         .isGreaterThan(controlledCapacity.selectedOwnerFence());

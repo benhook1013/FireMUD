@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayOriginalNewFinalAdmissionReadGrpcCodec.Selector;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
@@ -299,6 +300,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
     volatile WorldRead withholdWorldRead = WorldRead.NONE;
     final CanonicalInitialPlayerLocationRequest request;
     private final Map<String, Placement> placements = new ConcurrentHashMap<>();
+    private final AtomicLong nextAdditionalRuntimeEntityId = new AtomicLong(7302L);
     private final Placement originalPlacement;
     final net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver
         resolver;
@@ -683,7 +685,9 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
               original.graphSha256(),
               original.preparationInputDigest(),
               original.operationalRegionAssignments());
-      return registerPlacement(secondRequest, lifecycleEvidence, 7302L).request();
+      return registerPlacement(
+              secondRequest, lifecycleEvidence, nextAdditionalRuntimeEntityId.getAndIncrement())
+          .request();
     }
 
     private Placement registerPlacement(

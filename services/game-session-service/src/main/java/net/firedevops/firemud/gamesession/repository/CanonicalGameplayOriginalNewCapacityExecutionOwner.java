@@ -233,8 +233,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
 
   record CommittedCapacitySource(CommittedCapacityRequest selector, String executionDigest) {}
 
-  /** Returns a retained terminal denial on exact replay, otherwise reserves execution evidence. */
-  Refusal precharge(
+  /** Returns the retained charge on exact replay, or null for a newly committed charge. */
+  CanonicalGameplayCapacityEvidenceBudget.RetainedCharge precharge(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       Request request,
       CurrentOwner selected,
@@ -253,6 +253,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     return sql()
         .transactionResult(configuration -> {
           var tx = DSL.using(configuration);
+          tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
           requireSelectedOwner(tx, candidate, selected);
           return CanonicalGameplayCapacityEvidenceBudget.precharge(
               tx,
@@ -287,7 +288,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         });
   }
 
-  CanonicalGameplayCapacityEvidenceBudget.RetainedCharge requireExistingCharge(
+  CanonicalGameplayCapacityEvidenceBudget.RetainedCharge findExistingCharge(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       Request request,
       CurrentOwner selected,
@@ -303,7 +304,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
               .transactionResult(configuration -> {
                 var tx = DSL.using(configuration);
                 requireSelectedOwner(tx, candidate, selected);
-                return CanonicalGameplayCapacityEvidenceBudget.requireExistingCharge(
+                return CanonicalGameplayCapacityEvidenceBudget.findExistingCharge(
                     tx,
                     request,
                     source.candidateDigest(),
@@ -329,6 +330,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
               .sql()
               .transaction(configuration -> {
                 var tx = DSL.using(configuration);
+                tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
                 requireSelectedOwner(tx, candidate, selected);
                 CanonicalGameplayCapacityEvidenceBudget.settleDenied(
                     tx,
@@ -375,93 +377,96 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     budget.check();
     CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.requireExecutionBinding(source, execution);
     var assignment = scopedTags().assignmentForTransition(execution.transitionId());
+    CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.PreparedCapacityInstall install = null;
     Record retained = find(sql(), execution);
     if (retained != null) {
       // Preserve exact retry/recovery behavior: an existing dispatch never needs fresh inputs.
       exact(retained, execution);
     } else {
       try {
-        scopedFinalOwner()
-            .validateInstallInputs(source, template, accountOpen, issuerOpen, execution, deadline);
-      } catch (RuntimeException invalidInputs) {
-        // A concurrent exact dispatcher may have committed while local validation ran. Only
-        // that retained row can turn this into the existing read-only recovery path.
+        install =
+            scopedFinalOwner()
+                .prepareCapacityInstall(
+                    source,
+                    template,
+                    accountOpen,
+                    issuerOpen,
+                    execution,
+                    Math.min(deadline, budget.absoluteDeadlineMillis()));
+      } catch (RuntimeException preparationFailure) {
+        // Only an exact concurrent dispatcher can turn a preflight failure into read-only recovery.
         Record concurrentlyRetained = find(sql(), execution);
-        if (concurrentlyRetained == null) throw invalidInputs;
+        if (concurrentlyRetained == null) throw preparationFailure;
         exact(concurrentlyRetained, execution);
       }
     }
-    boolean dispatch =
-        sql()
-            .transactionResult(configuration -> {
-              var tx = DSL.using(configuration);
-              // Serialize original effect custody with every durable region-owner replacement.
-              // This lock is released before any Redis command is submitted.
-              requireSelectedOwner(
-                  tx,
-                  source.candidate(),
-                  new CurrentOwner(execution.selectedOwnerId(), execution.selectedOwnerFence()));
-              Record row = find(tx, execution);
-              if (row != null) {
-                exact(row, execution);
-                if (!"COMMITTED".equals(row.get("status", String.class))) {
-                  CanonicalGameplayCapacityEvidenceBudget.requireCharge(
-                      tx, execution, assignment.tenantGameplayTag());
+    try (var prepared = install) {
+      boolean dispatch =
+          sql()
+              .transactionResult(configuration -> {
+                var tx = DSL.using(configuration);
+                tx.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+                // Serialize original effect custody with every durable region-owner replacement.
+                // This lock is released before any Redis command is submitted.
+                requireSelectedOwner(
+                    tx,
+                    source.candidate(),
+                    new CurrentOwner(execution.selectedOwnerId(), execution.selectedOwnerFence()));
+                Record row = find(tx, execution);
+                if (row != null) {
+                  exact(row, execution);
+                  if (!"COMMITTED".equals(row.get("status", String.class))) {
+                    CanonicalGameplayCapacityEvidenceBudget.requireCharge(
+                        tx, execution, assignment.tenantGameplayTag());
+                  }
+                  return false;
                 }
-                return false;
-              }
-              if (execution.reservation().state() != State.RESERVED
-                  || !clock.instant().isBefore(execution.reservation().expiresAt()))
-                throw unavailable();
-              // Lock the original transition to exclude preparing an unrelated successor
-              // binding.
-              Record transition =
-                  tx.fetchOne(
-                      "SELECT * FROM game_session_canonical_binding_transition WHERE transition_id = ? FOR UPDATE",
-                      execution.transitionId());
-              if (transition == null
-                  || !"PROVISIONAL".equals(transition.get("status", String.class))
-                  || !Arrays.equals(
-                      source.candidate().canonicalBytes(),
-                      transition.get("original_new_candidate_bytes", byte[].class)))
-                throw unavailable();
-              int inserted =
-                  tx.execute(
-                      "INSERT INTO "
-                          + TABLE
-                          + " (tenant_id, request_id, admission_id, admission_attempt_id, transition_id, capacity_rearm_fence, reservation_id, reservation_fence, mutation_digest, execution_digest, canonical_execution, selected_owner_id, selected_owner_fence, tenant_gameplay_tag, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INSTALL_DISPATCHED')",
-                      execution.request().identity().tenantId(),
-                      execution.request().identity().requestId(),
-                      execution.request().identity().admissionId(),
-                      execution.request().admissionAttemptId(),
-                      execution.transitionId(),
-                      execution.request().capacityRearmFence(),
-                      execution.reservation().reservationId(),
-                      execution.reservation().reservationFence(),
-                      execution.request().mutationDigest(),
-                      execution.digest(),
-                      execution.canonicalBytes(),
-                      execution.selectedOwnerId(),
-                      execution.selectedOwnerFence(),
-                      assignment.tenantGameplayTag());
-              if (inserted != 1) throw unavailable();
-              return true;
-            });
-    // A lost SQL commit reply intentionally loses dispatch permission; retries only inspect.
-    if (dispatch) {
-      long result =
-          scopedFinalOwner()
-              .dispatchCapacityAction(
-                  source,
-                  template,
-                  accountOpen,
-                  issuerOpen,
-                  execution,
-                  "INSTALL",
-                  budget.absoluteDeadlineMillis());
-      if (result != CAPACITY_EXECUTION_AUTHORIZED
-          && result != CAPACITY_EXECUTION_AUTHORIZED_OBSERVED
-          && result != CAPACITY_EXECUTION_COMMITTED_OBSERVED) throw unavailable();
+                if (prepared == null
+                    || execution.reservation().state() != State.RESERVED
+                    || !clock.instant().isBefore(execution.reservation().expiresAt()))
+                  throw unavailable();
+                // Lock the original transition to exclude preparing an unrelated successor
+                // binding.
+                Record transition =
+                    tx.fetchOne(
+                        "SELECT * FROM game_session_canonical_binding_transition WHERE transition_id = ? FOR UPDATE",
+                        execution.transitionId());
+                if (transition == null
+                    || !"PROVISIONAL".equals(transition.get("status", String.class))
+                    || !Arrays.equals(
+                        source.candidate().canonicalBytes(),
+                        transition.get("original_new_candidate_bytes", byte[].class)))
+                  throw unavailable();
+                prepared.requireReady();
+                int inserted =
+                    tx.execute(
+                        "INSERT INTO "
+                            + TABLE
+                            + " (tenant_id, request_id, admission_id, admission_attempt_id, transition_id, capacity_rearm_fence, reservation_id, reservation_fence, mutation_digest, execution_digest, canonical_execution, selected_owner_id, selected_owner_fence, tenant_gameplay_tag, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INSTALL_DISPATCHED')",
+                        execution.request().identity().tenantId(),
+                        execution.request().identity().requestId(),
+                        execution.request().identity().admissionId(),
+                        execution.request().admissionAttemptId(),
+                        execution.transitionId(),
+                        execution.request().capacityRearmFence(),
+                        execution.reservation().reservationId(),
+                        execution.reservation().reservationFence(),
+                        execution.request().mutationDigest(),
+                        execution.digest(),
+                        execution.canonicalBytes(),
+                        execution.selectedOwnerId(),
+                        execution.selectedOwnerFence(),
+                        assignment.tenantGameplayTag());
+                if (inserted != 1) throw unavailable();
+                return true;
+              });
+      // A lost SQL commit reply intentionally loses dispatch permission; retries only inspect.
+      if (dispatch) {
+        long result = prepared.dispatch();
+        if (result != CAPACITY_EXECUTION_AUTHORIZED
+            && result != CAPACITY_EXECUTION_AUTHORIZED_OBSERVED
+            && result != CAPACITY_EXECUTION_COMMITTED_OBSERVED) throw unavailable();
+      }
     }
     Map<String, byte[]> physical = readExecution(execution, assignment.tenantGameplayTag());
     String state = text(physical.get("state"));
@@ -1388,8 +1393,11 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       if (lateConnection == null) return;
       var close =
           CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(lateConnection);
-      budget.retainUntilAsyncClose(close);
-      close.handle((ignored, failure) -> null).join();
+      try {
+        budget.awaitAsyncClose(close);
+      } catch (CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable ignored) {
+        // The budget retains disposal custody. Preserve the original connect failure.
+      }
     }
   }
 

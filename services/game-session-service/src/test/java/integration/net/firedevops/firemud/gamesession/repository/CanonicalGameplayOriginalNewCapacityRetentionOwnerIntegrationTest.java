@@ -371,6 +371,33 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
     var original = regionBinding.installation();
     var pinned = source;
     admin.pexpire(ascii(original.grant.key()), 0);
+    byte[] servingSessionKey = ascii(installation.sessionKey());
+    byte[] servingSession = admin.get(servingSessionKey);
+    assertThat(servingSession).containsExactly(committed);
+    admin.del(servingSessionKey);
+    try {
+      assertThatThrownBy(this::actualTransferHandoff)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Original NEW final admission Redis readback is unavailable");
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_canonical_binding_transition WHERE"
+                          + " transition_id=?",
+                      fixture.transitionId())
+                  .get(0, String.class))
+          .isEqualTo("PROVISIONAL");
+      assertThat(
+              new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl())
+                  .find(original.source)
+                  .orElseThrow())
+          .isEqualTo(original.status);
+    } finally {
+      admin.set(servingSessionKey, servingSession);
+    }
+    // The refused contender acquired this lease before it attempted SQL retention.
+    assertThat(admin.pexpire(ascii(original.grant.key()), 0)).isTrue();
     var successor = actualTransferHandoff();
     assertThat(successor.status.executorFence()).isGreaterThan(original.status.executorFence());
     assertThat(
@@ -810,5 +837,57 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
                   .get(0, String.class))
           .isEqualTo("AUTHORIZED");
     }
+  }
+
+  @Test
+  void missingCommittedServingEvidenceCannotReleaseOriginalOwnerCustody() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var actual =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      commitHistoricalSplitReceipt(actual);
+    }
+    assertThat(admin.del(ascii(installation.sessionKey()))).isEqualTo(1L);
+    String rows = sqlImage();
+    var physical = physicalImage();
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .closeOriginalAttempt(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .retainCommittedBeforeCleanup(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> replaceRegionOwner("successor-with-missing-committed-evidence"))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () -> observeGuardedReplacementRefusal("successor-with-missing-committed-evidence"))
+        .rootCause()
+        .isInstanceOfSatisfying(
+            org.postgresql.util.PSQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23514");
+              assertThat(failure.getMessage())
+                  .contains("Region owner replacement lacks exact transfer custody");
+            });
+    assertThatThrownBy(() ->
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(sqlImage()).isEqualTo(rows);
+    assertThat(physicalImage()).isEqualTo(physical);
   }
 }

@@ -538,15 +538,12 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
     try (var proof = new TransferSqlProof()) {
       var execution = proof.execution;
       UUID attemptId = execution.request().admissionAttemptId();
+      String chargeIdentityQuery =
+          "SELECT (to_jsonb(c) - 'account_send_state' - 'account_unsent_released_at'"
+              + " - 'account_denial_id' - 'account_denial_kind')::text"
+              + " FROM game_session_capacity_evidence_charge c WHERE admission_attempt_id=?";
       String retainedIdentity =
-          proof
-              .sql
-              .fetchSingle(
-                  "SELECT (to_jsonb(c) - 'account_send_state' - 'account_unsent_released_at'"
-                      + " - 'account_denial_id')::text FROM game_session_capacity_evidence_charge c"
-                      + " WHERE admission_attempt_id=?",
-                  attemptId)
-              .get(0, String.class);
+          proof.sql.fetchSingle(chargeIdentityQuery, attemptId).get(0, String.class);
       assertThat(
               proof
                   .sql
@@ -576,15 +573,7 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                   .intoMap())
           .containsEntry("account_send_state", "RELEASED_UNSENT")
           .satisfies(row -> assertThat(row.get("account_unsent_released_at")).isNotNull());
-      assertThat(
-              proof
-                  .sql
-                  .fetchSingle(
-                      "SELECT (to_jsonb(c) - 'account_send_state' - 'account_unsent_released_at'"
-                          + " - 'account_denial_id')::text FROM game_session_capacity_evidence_charge c"
-                          + " WHERE admission_attempt_id=?",
-                      attemptId)
-                  .get(0, String.class))
+      assertThat(proof.sql.fetchSingle(chargeIdentityQuery, attemptId).get(0, String.class))
           .isEqualTo(retainedIdentity);
       assertThat(proof.physicalExecutionExists(execution)).isFalse();
 
@@ -623,26 +612,19 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
                 assertThat(failure.getMessage())
                     .contains("Invalid capacity evidence send transition");
               });
-      assertThat(
-              proof
-                  .sql
-                  .fetchSingle(
-                      "SELECT (to_jsonb(c) - 'account_send_state' - 'account_unsent_released_at'"
-                          + " - 'account_denial_id')::text FROM game_session_capacity_evidence_charge c"
-                          + " WHERE admission_attempt_id=?",
-                      attemptId)
-                  .get(0, String.class))
+      assertThat(proof.sql.fetchSingle(chargeIdentityQuery, attemptId).get(0, String.class))
           .isEqualTo(retainedIdentity);
       assertThat(
               proof
                   .sql
                   .fetchSingle(
-                      "SELECT account_send_state,account_denial_id"
+                      "SELECT account_send_state,account_denial_id,account_denial_kind"
                           + " FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
                       attemptId)
                   .intoMap())
           .containsEntry("account_send_state", "MAY_HAVE_SENT")
-          .containsEntry("account_denial_id", null);
+          .containsEntry("account_denial_id", null)
+          .containsEntry("account_denial_kind", null);
 
       UUID exactDenial = UUID.randomUUID();
       proof.settle(execution, exactDenial);
@@ -650,22 +632,15 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
               proof
                   .sql
                   .fetchSingle(
-                      "SELECT account_send_state,account_denial_id"
+                      "SELECT account_send_state,account_denial_id,account_denial_kind"
                           + " FROM game_session_capacity_evidence_charge"
                           + " WHERE admission_attempt_id=?",
                       attemptId)
                   .intoMap())
           .containsEntry("account_send_state", "MAY_HAVE_SENT")
-          .containsEntry("account_denial_id", exactDenial);
-      assertThat(
-              proof
-                  .sql
-                  .fetchSingle(
-                      "SELECT (to_jsonb(c) - 'account_send_state' - 'account_unsent_released_at'"
-                          + " - 'account_denial_id')::text FROM game_session_capacity_evidence_charge c"
-                          + " WHERE admission_attempt_id=?",
-                      attemptId)
-                  .get(0, String.class))
+          .containsEntry("account_denial_id", exactDenial)
+          .containsEntry("account_denial_kind", "CAPACITY_QUOTA_EXCEEDED");
+      assertThat(proof.sql.fetchSingle(chargeIdentityQuery, attemptId).get(0, String.class))
           .isEqualTo(retainedIdentity);
     }
   }
@@ -679,7 +654,26 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
               + " - clock_timestamp()))) FROM game_session_capacity_evidence_charge"
               + " WHERE admission_attempt_id=?",
           expiredAttempt);
+      var mismatched = proof.newMismatchedRequestExecution();
+      assertThatThrownBy(() -> proof.precharge(mismatched))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Original NEW capacity evidence budget is unavailable");
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle(
+                      "SELECT account_send_state,account_unsent_released_at"
+                          + " FROM game_session_capacity_evidence_charge WHERE admission_attempt_id=?",
+                      expiredAttempt)
+                  .intoMap())
+          .containsEntry("account_send_state", "UNCLAIMED")
+          .containsEntry("account_unsent_released_at", null);
       var fresh = proof.newIndependentControlledOriginExecution();
+      assertThat(fresh.request().identity().requestId())
+          .isNotEqualTo(proof.execution.request().identity().requestId());
+      assertThat(fresh.transitionId()).isNotEqualTo(proof.execution.transitionId());
+      assertThat(fresh.request().identity().tenantId())
+          .isEqualTo(proof.execution.request().identity().tenantId());
       proof.precharge(fresh);
       assertThat(
               proof
@@ -893,8 +887,8 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
   void boundedCensusAndVerificationResumeBeyondThirtyTwoWithoutLosingAnyOriginal()
       throws Exception {
     try (var proof = new TransferSqlProof()) {
-      // Controlled reservation envelopes seed SQL custody, not Account-authorized multiattempt
-      // behavior. Every candidate, bridge, mapping and owner source is retained by its real owner.
+      // Controlled reservation envelopes seed SQL custody. Each original has its own retained
+      // provisional transition, candidate, bridge and request.
       List<OriginalNewCapacityExecution> originals = new ArrayList<>();
       for (int index = 0; index < 65; index++) {
         var original = proof.newIndependentControlledOriginExecution();
@@ -905,13 +899,15 @@ class CanonicalGameplayRegionTransferCapacityCustodyIntegrationTest
       var first = proof.captureAndFence(id);
       assertThat(first).hasSize(32);
       assertThat(first)
-          .allMatch(item -> item.execution().transitionId().equals(proof.execution.transitionId()));
-      assertThatThrownBy(() ->
-              proof.transfers.within(
-                  transferDeadline(),
-                  ignored -> proof.transfers.frozenOriginal(proof.execution.transitionId())))
-          .isInstanceOf(IllegalStateException.class)
-          .hasMessage("Normal region owner transfer is held");
+          .extracting(item -> item.execution().transitionId())
+          .doesNotHaveDuplicates()
+          .doesNotContain(proof.execution.transitionId());
+      var firstExecution = first.getFirst().execution();
+      var frozen =
+          proof.transfers.within(
+              transferDeadline(),
+              ignored -> proof.transfers.frozenOriginal(firstExecution.transitionId()));
+      assertThat(frozen.executionDigest()).isEqualTo(firstExecution.digest());
       assertThatThrownBy(() ->
               proof.transfers.within(
                   transferDeadline(), ignored -> proof.transfers.verificationCursor(id)))

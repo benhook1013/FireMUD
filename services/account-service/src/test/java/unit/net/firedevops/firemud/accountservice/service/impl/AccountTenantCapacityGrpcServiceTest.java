@@ -295,7 +295,7 @@ class AccountTenantCapacityGrpcServiceTest {
     StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
     try (var guards = retainedAdmissionReader(CapacityAdmissionTestFixture.PEER)) {
       new AccountTenantCapacityGrpcService(owner, "prod")
-          .readTenantCapacityAdmissionDenial(
+          .readTenantCapacityAdmissionOutcome(
               TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
     } finally {
       TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
@@ -319,6 +319,17 @@ class AccountTenantCapacityGrpcServiceTest {
       verify(dsl, never()).fetchOne(sql, key);
     } else {
       verify(dsl).fetchOne(sql, key);
+      if (evidence == RetainedEvidence.EXACT_QUOTA_DENIAL
+          || evidence == RetainedEvidence.EXACT_EXPIRY_DENIAL
+          || evidence == RetainedEvidence.GENERIC_NO_ACCEPT
+          || evidence == RetainedEvidence.ACCEPTED) {
+        verify(dsl)
+            .fetchOne(
+                "SELECT * FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                request.identity().tenantId(),
+                request.identity().requestId(),
+                request.identity().admissionId());
+      }
     }
     verifyNoMoreInteractions(dsl);
     verifyNoInteractions(accounts, memberships, issuances, scopes, clock);
@@ -333,13 +344,13 @@ class AccountTenantCapacityGrpcServiceTest {
         retainedAdmissionReader("spiffe://firemud/ns/prod/sa/world-management-service")) {
       StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
       new AccountTenantCapacityGrpcService(owner, "prod")
-          .readTenantCapacityAdmissionDenial(wire, observer);
+          .readTenantCapacityAdmissionOutcome(wire, observer);
       assertFailure(observer, Failure.PERMISSION_DENIED);
     }
     try (var guards = retainedAdmissionReader(CapacityAdmissionTestFixture.PEER)) {
       StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
       new AccountTenantCapacityGrpcService(owner, "prod")
-          .readTenantCapacityAdmissionDenial(
+          .readTenantCapacityAdmissionOutcome(
               wire.toBuilder().setCapacityDelta(0).build(), observer);
       assertFailure(observer, Failure.INVALID_ARGUMENT);
     }
@@ -531,7 +542,7 @@ class AccountTenantCapacityGrpcServiceTest {
     return mockConstruction(
         AccountTenantCapacityWorkloadGuard.class,
         (guard, context) -> {
-          when(guard.requireAdmissionDenialReader()).thenReturn(peer);
+          when(guard.requireAdmissionOutcomeReader()).thenReturn(peer);
           when(guard.requireAdmissionReservationReader()).thenReturn(peer);
         });
   }

@@ -240,6 +240,17 @@ public final class AccountGameplayAdmissionLeaseClient
    */
   public OriginalNewCredential issueOriginalNewBoundGameplayCredential(
       String presentedInitialGsACompactJwt, byte[] originalLeaseEvidenceUtf8) {
+    return issueOriginalNewBoundGameplayCredential(
+        presentedInitialGsACompactJwt, originalLeaseEvidenceUtf8, null);
+  }
+
+  /**
+   * Requests the first bound credential within both the supplied operation bound and client cap.
+   */
+  public OriginalNewCredential issueOriginalNewBoundGameplayCredential(
+      String presentedInitialGsACompactJwt,
+      byte[] originalLeaseEvidenceUtf8,
+      Deadline operationDeadline) {
     requireNoAmbientSql("Original-new credential issuance requires no ambient SQL");
     var wireRequest =
         AccountGameplayAdmissionLeaseGrpcCodec.toIssueOriginalNewCredentialRequest(
@@ -251,9 +262,17 @@ public final class AccountGameplayAdmissionLeaseClient
       OriginalNewCredential credential =
           AccountGameplayAdmissionLeaseGrpcCodec.parseIssueOriginalNewCredentialResponse(
               expected,
-              requireInitializedStub("Account lease service is not initialized")
-                  .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-                  .issueOriginalNewGameplayCredential(wireRequest));
+              withPublishedInitializedStub(
+                  "Account lease service is not initialized",
+                  stub -> {
+                    var bounded =
+                        operationDeadline == null
+                            ? stub.withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                            : stub.withDeadline(
+                                operationDeadline.minimum(
+                                    Deadline.after(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)));
+                    return bounded.issueOriginalNewGameplayCredential(wireRequest);
+                  }));
       if (!credential
               .originalLeaseId()
               .equals(

@@ -6,9 +6,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.jooq.ExecuteContext;
+import org.jooq.exception.DataAccessException;
+import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListener;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -716,8 +723,10 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
         .containsExactly(terminal.canonicalReadback());
   }
 
-  @Test
-  void frozenTransferResumesExactTerminalOriginalThatCommittedBeforeCapture() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void frozenTransferResumesExactTerminalOriginalThatCommittedBeforeCapture(
+      boolean commitAfterCensusSelection) throws Exception {
     repairAccountMember();
     bridge();
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
@@ -730,6 +739,7 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
         new CanonicalGameplayRegionOwnerTransferCoordinator(
             fixture.dsl(), CLOCK, repository, capacityOwner(), receiver);
     UUID transferId;
+    String finalSessionSha256;
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var template = credential.template();
@@ -746,13 +756,65 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
           repository.within(
               deadline(), ignored -> repository.begin(original.source, original.status));
       assertThat(transferId).isNotNull();
-      inventory.commitOriginalNewFinalAdmission(readback);
+      finalSessionSha256 = readback.finalSessionSha256();
+      if (commitAfterCensusSelection) {
+        var inserted = new AtomicBoolean();
+        var beforeInsert =
+            new DefaultExecuteListener() {
+              @Override
+              public void executeStart(ExecuteContext context) {
+                if (context.sql() != null
+                    && context
+                        .sql()
+                        .startsWith("INSERT INTO game_session_region_owner_transfer_item ")
+                    && inserted.compareAndSet(false, true)) {
+                  // Census selection has finished; the insert has not locked the execution yet.
+                  fixture
+                      .dsl()
+                      .transaction(configuration -> {
+                        var finalSql = DSL.using(configuration);
+                        // Fail promptly if the two transactions ever start sharing a lock.
+                        finalSql.execute("SET LOCAL lock_timeout = '1s'");
+                        new CanonicalGameplayBindingInventoryRepository(finalSql)
+                            .commitOriginalNewFinalAdmission(readback);
+                      });
+                }
+              }
+            };
+        var captureSql = DSL.using(fixture.dsl().configuration().deriveAppending(beforeInsert));
+        var captureRepository =
+            new CanonicalGameplayRegionOwnerTransferRepository(captureSql, CLOCK, tags);
+        assertThatThrownBy(() ->
+                captureRepository.within(
+                    deadline(), ignored -> captureRepository.capture(transferId)))
+            .isInstanceOfSatisfying(
+                DataAccessException.class,
+                failure -> {
+                  assertThat(failure.sqlState()).isEqualTo("23514");
+                  assertThat(failure)
+                      .hasMessageContaining(
+                          "Transfer item differs from unresolved original region execution");
+                });
+        assertThat(inserted).isTrue();
+        assertThat(
+                fixture
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT state FROM game_session_region_owner_transfer WHERE transfer_id=?",
+                        transferId)
+                    .get(0, String.class))
+            .isEqualTo("FROZEN");
+      } else {
+        inventory.commitOriginalNewFinalAdmission(readback);
+      }
     }
     var captured = repository.within(deadline(), ignored -> repository.capture(transferId));
     assertThat(captured).isEmpty();
     var retained = inventory.readRegionTransferOriginalSource(fixture.transitionId(), source);
     byte[] committed = admin.get(ascii(installation.sessionKey()));
-    assertThat(retained.finalReceipt()).isPresent();
+    assertThat(retained.finalReceipt())
+        .hasValueSatisfying(
+            receipt -> assertThat(receipt.finalSessionSha256()).isEqualTo(finalSessionSha256));
     assertThat(
             new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
         .contains(original.status);
@@ -772,10 +834,7 @@ class CanonicalGameplayOriginalNewRegionHandoffIntegrationTest
     var completed = fixture.dsl().fetchSingle("SELECT * FROM game_session_region_owner_transfer");
     assertThat(completed.get("transfer_id", UUID.class)).isEqualTo(transferId);
     assertThat(completed.get("state", String.class)).isEqualTo("COMPLETED");
-    assertThat(
-            fixture
-                .dsl()
-                .fetchCount(org.jooq.impl.DSL.table("game_session_region_owner_transfer_item")))
+    assertThat(fixture.dsl().fetchCount(DSL.table("game_session_region_owner_transfer_item")))
         .isZero();
     assertThat(
             inventory

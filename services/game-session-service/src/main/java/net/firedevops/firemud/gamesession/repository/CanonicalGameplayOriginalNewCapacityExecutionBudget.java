@@ -86,6 +86,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private boolean redisCloseFailureRecorded;
   private final AtomicInteger outstandingConnections = new AtomicInteger();
   private final AtomicLong jdbcCommitInvocations = new AtomicLong();
+  private final AtomicLong jdbcConfirmedRollbacks = new AtomicLong();
   private final Context caller;
   private final Clock clock;
   private final Deadline deadline;
@@ -459,6 +460,10 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     return jdbcCommitInvocations.get();
   }
 
+  long jdbcConfirmedRollbacks() {
+    return jdbcConfirmedRollbacks.get();
+  }
+
   /** Releases the resource permit only after the registered Redis disposal succeeds. */
   void retainUntilAsyncClose(CompletableFuture<Void> closeAttempt) {
     Objects.requireNonNull(closeAttempt);
@@ -694,36 +699,58 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     void retire(Connection connection) throws SQLException;
   }
 
-  private static void retireConfiguredConnection(ConnectionProvider provider, Connection raw)
-      throws SQLException {
-    if (provider instanceof ConnectionRetirer testRetirer) {
-      testRetirer.retire(raw);
-      return;
+  private static ConnectionRetirer captureConnectionRetirer(
+      ConnectionProvider provider, Connection raw) {
+    if (provider instanceof ConnectionRetirer testRetirer) return testRetirer;
+    try {
+      return capturePooledConnection(provider, raw);
+    } catch (SQLException | RuntimeException | Error unproved) {
+      // Preserve acquisition and release semantics for providers without a qualified retirement
+      // path. Whenever retirement is required, this connection retains its admission permit.
+      return ignored -> {
+        throw unproved;
+      };
     }
+  }
+
+  private static ConnectionRetirer capturePooledConnection(
+      ConnectionProvider provider, Connection raw) throws SQLException {
     if (!(provider instanceof DataSourceConnectionProvider dataSourceProvider)) {
       throw new SQLException("Unsupported capacity SQL connection provider");
     }
     HikariDataSource pool = requireHikariDataSource(dataSourceProvider.dataSource());
-    Connection pooled = raw;
-    if (raw instanceof ConnectionProxy springProxy) {
-      pooled = springProxy.getTargetConnection();
-    }
+    Connection pooled =
+        raw instanceof ConnectionProxy springProxy ? springProxy.getTargetConnection() : raw;
     if (!(pooled instanceof ProxyConnection)
-        || !pooled
-            .getClass()
-            .getName()
-            .startsWith("com.zaxxer.hikari.pool.HikariProxyConnection")) {
+        || !pooled.getClass().getName().equals("com.zaxxer.hikari.pool.HikariProxyConnection")) {
       throw new SQLException("Unsupported capacity SQL pooled connection");
     }
-    PgConnection driver = pooled.unwrap(PgConnection.class);
-    driver.abort(Runnable::run);
-    if (!driver.isClosed()) {
-      throw new SQLException("PostgreSQL connection remained open after abort");
+    PgConnection driver = Objects.requireNonNull(pooled.unwrap(PgConnection.class));
+    // Hikari can swap its delegate for a closed sentinel during JDBC work. Capture the actual
+    // driver before handing the proxy to the borrower, while both still identify this loan.
+    return ignored -> {
+      if (!driver.isClosed()) {
+        driver.abort(Runnable::run);
+        if (!driver.isClosed()) {
+          throw new SQLException("PostgreSQL connection remained open after abort");
+        }
+      }
+      pool.evictConnection(pooled);
+    };
+  }
+
+  static void requireRetireableSql(DSLContext sql) {
+    if (!(sql.configuration().connectionProvider()
+        instanceof DataSourceConnectionProvider provider)) {
+      throw new IllegalArgumentException(
+          "region lease SQL requires a retireable Hikari data source");
     }
-    // Hikari's proxy abort delegates to PostgreSQL but does not evict its PoolEntry. Evict only
-    // after the driver confirms its executor/socket is closed, and before this connection can be
-    // released to the pool or a delayed statement invocation can resume.
-    pool.evictConnection(pooled);
+    try {
+      requireHikariDataSource(provider.dataSource());
+    } catch (SQLException unsupported) {
+      throw new IllegalArgumentException(
+          "region lease SQL requires a retireable Hikari data source", unsupported);
+    }
   }
 
   private static HikariDataSource requireHikariDataSource(DataSource source) throws SQLException {
@@ -742,14 +769,17 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     private final ConnectionProvider provider;
     private final Connection raw;
     private final Connection proxy;
+    private final ConnectionRetirer retirer;
     private boolean returned;
     private boolean releaseAttempted;
     private boolean retired;
     private boolean retirementFailed;
+    private boolean rollbackFailed;
 
     OwnedConnection(ConnectionProvider provider, Connection raw) {
       this.provider = provider;
       this.raw = raw;
+      retirer = captureConnectionRetirer(provider, raw);
       proxy =
           (Connection)
               Proxy.newProxyInstance(
@@ -763,18 +793,21 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
                     if (method.getName().equals("unwrap")
                         && ((Class<?>) args[0]).isInstance(OwnedConnection.this.proxy))
                       return OwnedConnection.this.proxy;
-                    boolean cleanup =
-                        method.getName().equals("rollback")
-                            || method.getName().equals("isClosed")
-                            || (method.getName().equals("setAutoCommit")
-                                && Boolean.TRUE.equals(args[0]));
-                    if (cleanup) {
+                    if (method.getName().equals("rollback")) return rollback(method, args);
+                    boolean isClosed = method.getName().equals("isClosed");
+                    boolean resetAutoCommit =
+                        method.getName().equals("setAutoCommit") && Boolean.TRUE.equals(args[0]);
+                    if (isClosed || resetAutoCommit) {
                       synchronized (resources) {
-                        // Even a throwing release may already have transferred ownership.
-                        // jOOQ must never roll back or reset a possibly reborrowed connection.
-                        if (releaseAttempted) {
-                          if (method.getName().equals("isClosed")) return true;
-                          throw new java.sql.SQLException("Connection is no longer owned");
+                        if (rollbackFailed && resetAutoCommit) {
+                          // Enabling auto-commit can commit pending writes on a live connection.
+                          // Release must retire this connection instead of resetting it.
+                          return null;
+                        }
+                        // A throwing release may already have transferred ownership.
+                        if (releaseAttempted || retired || retirementFailed) {
+                          if (isClosed) return true;
+                          throw new SQLException("Connection is no longer owned");
                         }
                         return invoke(raw, method, args);
                       }
@@ -800,6 +833,27 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
                     }
                     return value;
                   });
+    }
+
+    private Object rollback(Method method, Object[] args) throws Throwable {
+      synchronized (resources) {
+        if (releaseAttempted || retired || retirementFailed || rollbackFailed) {
+          throw new SQLException("Connection is no longer available for rollback");
+        }
+      }
+      // The resource worker still owns pool return. Cancellation can abort this exact connection
+      // while the driver is waiting for rollback to finish.
+      try {
+        Object result = invoke(raw, method, args);
+        // A savepoint rollback does not settle the enclosing transaction.
+        if (method.getParameterCount() == 0) jdbcConfirmedRollbacks.incrementAndGet();
+        return result;
+      } catch (Throwable failure) {
+        synchronized (resources) {
+          rollbackFailed = true;
+        }
+        throw failure;
+      }
     }
 
     private Object statement(Statement rawStatement) {
@@ -843,13 +897,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       // Detach cancellation before pool return, serialized against a cancellation already running.
       synchronized (resources) {
         if (returned || releaseAttempted) return;
-        if (cancelled.get() && !retired) {
-          try {
-            retire();
-          } catch (RuntimeException unproved) {
-            throw unproved;
-          }
-        }
+        if ((cancelled.get() || rollbackFailed) && !retired) retire();
         releaseAttempted = true;
         if (activeConnection == this) {
           active = null;
@@ -882,7 +930,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
           throw unavailable();
         }
         try {
-          retireConfiguredConnection(provider, raw);
+          retirer.retire(raw);
           retired = true;
         } catch (SQLException | RuntimeException | Error unproved) {
           retirementFailed = true;

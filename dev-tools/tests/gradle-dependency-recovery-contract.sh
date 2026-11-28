@@ -209,6 +209,17 @@ assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2
 assert_output_contains "Connection reset"
 assert_output_contains "refresh-complete"
 
+# A second cache diagnostic is valid when it names the same exact compile
+# task, and must be rejected when it names another task.
+cp "$CASE_DIR/gradlew" "$TEMP_DIR/netty-reset-wrapper"
+new_case netty-reset-different-cache-task
+cp "$TEMP_DIR/netty-reset-wrapper" "$CASE_DIR/gradlew"
+# The backticks are literal Gradle task delimiters in the generated log.
+# shellcheck disable=SC2016
+sed -i 's/- Task `:load-testing:compileJava`/- Task `:common-platform-core:compileJava`/' "$CASE_DIR/gradlew"
+run_case load-testing 1
+assert_no_retry
+
 # Preserve the c515-style pinned missing-artifact recovery path without
 # claiming the miss is stale: a passing refreshed full check is still required.
 new_case absent-pinned-artifact
@@ -389,6 +400,8 @@ LOG
 
 new_case captured-jooq-codegen-maven-429
 write_jooq_throttled_cause
+# Gradle can leave whitespace after an otherwise exact HTTP result.
+sed -i '/Received status code 429/s/$/ /' "$CASE_DIR/jooq-cause.log"
 write_jooq_wrapper ''
 run_case game-logic-service 0
 assert_call_count 2
@@ -472,6 +485,7 @@ LOG
 
 new_case annotation-processor-maven-429
 write_annotation_processor_429_cause
+sed -i '/Received status code 429/s/$/ /' "$CASE_DIR/cause.log"
 # shellcheck disable=SC2016
 write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-annotation-processors; exit 0'
 run_case common-platform-core 0
@@ -528,13 +542,34 @@ assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UT
 assert_rate_limit_delay
 assert_output_contains "refreshed-compile-classpath"
 
-for mutation in auth wrong-module compile-started; do
+new_case compile-classpath-429-alternate-reason
+write_compile_classpath_429_cause
+sed -i 's/429 from server: Too Many Requests/429 from server: Rate limit exceeded/g' "$CASE_DIR/cause.log"
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-compile-classpath'
+run_case account-service 0
+assert_call_count 2
+assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck --profile --info --console=plain"
+assert_rate_limit_delay
+assert_output_contains "Rate limit exceeded"
+
+new_case compile-classpath-429-without-reason
+write_compile_classpath_429_cause
+sed -i 's/429 from server: Too Many Requests/429 from server:/g' "$CASE_DIR/cause.log"
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-compile-classpath'
+run_case account-service 0
+assert_call_count 2
+assert_rate_limit_delay
+
+for mutation in auth wrong-module compile-started malformed-host; do
   new_case "compile-classpath-429-$mutation"
   write_compile_classpath_429_cause
   case "$mutation" in
     auth) sed -i '0,/429 from server: Too Many Requests/s//403 from server: Forbidden/' "$CASE_DIR/cause.log" ;;
     wrong-module) sed -i 's/:account-service:compileClasspath/:common-platform-core:compileClasspath/' "$CASE_DIR/cause.log" ;;
     compile-started) sed -i '1i > Task :account-service:compileJava FAILED' "$CASE_DIR/cause.log" ;;
+    malformed-host) sed -i 's/429 from server: Too Many Requests/429 from other-server: Rate limit exceeded/g' "$CASE_DIR/cause.log" ;;
   esac
   # shellcheck disable=SC2016
   write_wrapper 'cat "$CASE_DIR/cause.log"; exit 1'
@@ -972,6 +1007,18 @@ run_case common-web-support 0
 assert_call_count 2
 assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-web-support:check -PfullCheck --profile --info --console=plain"
 [[ "$(cat "$CASE_DIR/sleeps")" == 5 ]] || fail "HTTP 429 did not observe Retry-After"
+
+# The same accepted 429 prefix controls cached-metadata retry mode even when
+# the server uses a different reason phrase.
+cp "$CASE_DIR/gradlew" "$TEMP_DIR/http-429-wrapper"
+new_case http-429-rate-limit-reason
+cp "$TEMP_DIR/http-429-wrapper" "$CASE_DIR/gradlew"
+sed -i 's/Too Many Requests/Rate limit exceeded/' "$CASE_DIR/gradlew"
+run_case common-web-support 0
+assert_call_count 2
+assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-web-support:check -PfullCheck --profile --info --console=plain"
+[[ "$(cat "$CASE_DIR/sleeps")" == 5 ]] || fail "alternate HTTP 429 reason did not observe Retry-After"
+assert_output_contains "Rate limit exceeded"
 
 # Retain the PR 3220 buildSrc configuration failure, including the plugin
 # repository disabling itself and a parent POM failing after a redirect.

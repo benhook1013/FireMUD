@@ -135,13 +135,20 @@ failure_body() {
   ' "$log_path"
 }
 
+contains_http_429() {
+  # Read the complete stream so failure_body can still validate its framing.
+  # Match the same status prefix used by retry_delay_seconds; the server's
+  # human-readable reason is not stable across repositories.
+  grep -E '^[[:space:]]*(> )?Received status code 429 from server([[:space:]]|:)' "$@" >/dev/null
+}
+
 classify_failure_body() {
   local log_path="$1"
   local jooq_throttled=0
 
   # Select the strict download-chain parser for cache-wrapped jOOQ throttling.
   # The parser still requires every artifact, repository URL and HTTP result to match.
-  if grep -Eq '^[[:space:]]*> Received status code 429 from server: Too Many Requests$' "$log_path"; then
+  if contains_http_429 "$log_path"; then
     jooq_throttled=1
   fi
 
@@ -169,7 +176,7 @@ classify_failure_body() {
           jar_download_step = 2
         } else if (jar_download_step == 2 && line == "> Could not GET " quote jar_url quote ".") {
           jar_download_step = 3
-        } else if (jar_download_step == 3 && line == "> Received status code 429 from server: Too Many Requests") {
+        } else if (jar_download_step == 3 && line ~ /^> Received status code 429 from server(:.*)?$/) {
           jar_download_step = 0
           jar_downloads++
           if (buildsrc_jar) buildsrc_jar_downloads++
@@ -317,10 +324,14 @@ classify_failure_body() {
       # Gradle 9.9 can resolve main or cross-service classpaths while
       # serializing JavaCompile.classpath. Match the exact task and source set.
       if (line ~ /^Configuration cache state could not be cached: field `classpath` of task `:[[:alnum:]-]+:compile(Java|CrossServiceTestJava)` of type `org\.gradle\.api\.tasks\.compile\.JavaCompile`: error writing value of type \047org\.gradle\.api\.internal\.artifacts\.configurations\.DefaultResolvableConfiguration\047$/) {
-        module = line
-        sub(/^.* of task `/, "", module)
-        cross_service = module ~ /:compileCrossServiceTestJava`/
-        sub(/:compile(Java|CrossServiceTestJava)`.*$/, "", module)
+        task_reference = line
+        sub(/^.* of task `/, "", task_reference)
+        sub(/`.*$/, "", task_reference)
+        if (cache_task != "" && cache_task != task_reference) invalid++
+        cache_task = task_reference
+        module = task_reference
+        cross_service = module ~ /:compileCrossServiceTestJava$/
+        sub(/:compile(Java|CrossServiceTestJava)$/, "", module)
         if (compile_classpath_module != "" && compile_classpath_module != module) invalid++
         compile_classpath_module = module
         expected_compile_configuration = module (cross_service ? ":crossServiceTestCompileClasspath" : ":compileClasspath")
@@ -372,6 +383,8 @@ classify_failure_body() {
           line ~ /^- Task `:[^`]+:compile[A-Za-z0-9]+` of type .*JavaCompile.*: error writing value of type .*DefaultResolvableConfiguration/) {
         if (match(line, /`:[^`]+:compile[A-Za-z0-9]+`/)) {
           task_reference = substr(line, RSTART, RLENGTH)
+          sub(/^`/, "", task_reference)
+          sub(/`$/, "", task_reference)
           if (cache_task != "" && cache_task != task_reference) {
             invalid++
           }
@@ -818,7 +831,7 @@ fi
 # affected repository and unrelated repositories needed during configuration.
 retry_refresh=true
 retry_description="with dependency metadata refresh"
-if failure_body "$NORMAL_LOG" | grep -E '^[[:space:]]*(> )?Received status code 429 from server: Too Many Requests$' >/dev/null; then
+if failure_body "$NORMAL_LOG" | contains_http_429; then
   retry_refresh=false
   retry_description="with cached dependency metadata"
 fi

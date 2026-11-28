@@ -120,6 +120,12 @@ public final class AccountTenantCapacityRepository {
     return dsl.fetchOne(query, id.tenantId(), id.requestId(), id.admissionId());
   }
 
+  /** Reconciles the exact original binding without taking a mutation lock. */
+  public Result readExactReservation(Request request) {
+    Record row = findForReplayReadOnly(request.identity());
+    return row == null ? null : exactReadOnly(request, row);
+  }
+
   public Record usage(Request request) {
     transaction();
     Record usage =

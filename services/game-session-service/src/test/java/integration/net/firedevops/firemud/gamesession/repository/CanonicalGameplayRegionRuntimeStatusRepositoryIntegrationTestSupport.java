@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -31,6 +32,7 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecis
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.jooq.DSLContext;
@@ -306,6 +308,9 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
     final CanonicalGameplayRegionRuntimeStatusRepository.Source scope;
     final CanonicalGameplayRegionRuntimeStatus prior;
     final OriginalNewCapacityExecution execution;
+    private final Map<
+            UUID, CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource>
+        independentAdmissions = new HashMap<>();
     final CanonicalGameplayRegionOwnerCompositionFixture.ExistingBinding region;
     CanonicalGameplayRegionOwnerTransferRepository transfers;
     CanonicalGameplayProtectedIncarnationReceiver receiver;
@@ -435,7 +440,7 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
                 BigInteger.ONE,
                 BigInteger.ONE,
                 BigInteger.ONE,
-                BigInteger.valueOf(64));
+                BigInteger.valueOf(128));
         fixture =
             new CanonicalGameplayAdmissionAbortCompositionFixture(dataSource, candidate, redis);
         acquiredFixture = fixture;
@@ -538,11 +543,56 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
       return withSelectedOwner(controlled);
     }
 
-    /** A separate controlled Account origin in the same real tenant/region budget. */
+    /** Prepares a separate durable provisional origin in the same tenant and region. */
     OriginalNewCapacityExecution newIndependentControlledOriginExecution() {
+      String seed = "capacity-origin-" + UUID.randomUUID();
+      // Account lease evidence requires a version-4 request UUID.
+      fixture.prepareOtherControllerNew(seed, UUID.randomUUID(), UUID.randomUUID());
+      var operation = fixture.otherOperation(seed);
+      var request = operation.request();
+      var candidate = request.candidate();
+      var generation = operation.preparedTransition().bindingGeneration();
+      var target = admission.candidate().targetEvidence();
+      var lease =
+          CanonicalGameplayAdmissionAbortCompositionFixture.controlledLeaseEvidence(
+              candidate, generation, target, request.requestId());
+      var decision =
+          new CanonicalGameplayAdmissionDecision(
+              request.transitionId(), lease, candidate, generation, null, target);
+      var inventory = new CanonicalGameplayBindingInventoryRepository(sql);
+      fixture.projectOtherControllerNew(seed);
+      CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(redis, scripts, inventory, tags)
+          .installOnce(decision);
+      new CanonicalGameplayAccountMemberRepairOwner(sql, redis, scripts)
+          .repair(request.transitionId());
+      var issuerReadback = fixture.projectOtherControllerNew(seed);
+      new CanonicalGameplayIssuerBindingLocalAcknowledgementRepository(
+              sql, fixture.currentIssuerSource())
+          .acknowledge(issuerReadback);
+      var installation =
+          region
+              .owner()
+              .installForTransition(
+                  region.installation(),
+                  request.transitionId(),
+                  upstream.registerSecondPlacement(candidate.characterId()));
+      region.owner().bridge(installation);
+      var prepared = inventory.readOriginalNewFinalAdmissionSource(decision);
+      independentAdmissions.put(request.transitionId(), prepared);
+      return withSelectedOwner(
+          CanonicalGameplayOriginalNewFinalAdmissionTestFixture.controlledCapacity(
+              prepared, clock));
+    }
+
+    OriginalNewCapacityExecution newMismatchedRequestExecution() {
       return withSelectedOwner(
           CanonicalGameplayOriginalNewFinalAdmissionTestFixture.controlledCapacityForOrigin(
               admission, clock, UUID.randomUUID()));
+    }
+
+    private CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource sourceFor(
+        OriginalNewCapacityExecution original) {
+      return independentAdmissions.getOrDefault(original.transitionId(), admission);
     }
 
     private OriginalNewCapacityExecution withSelectedOwner(
@@ -592,7 +642,7 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
       var disposition =
           capacity(sql)
               .authorizeAccountSend(
-                  admission,
+                  sourceFor(original),
                   original.request(),
                   new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
                       original.selectedOwnerId(), original.selectedOwnerFence()),
@@ -634,7 +684,7 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
           != null) return;
       capacity(sql)
           .precharge(
-              admission,
+              sourceFor(original),
               original.request(),
               new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
                   original.selectedOwnerId(), original.selectedOwnerFence()),

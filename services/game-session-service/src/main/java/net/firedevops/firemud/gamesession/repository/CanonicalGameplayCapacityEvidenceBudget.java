@@ -17,7 +17,7 @@ import org.jooq.exception.DataAccessException;
 final class CanonicalGameplayCapacityEvidenceBudget {
   private CanonicalGameplayCapacityEvidenceBudget() {}
 
-  static Refusal precharge(
+  static RetainedCharge precharge(
       DSLContext tx,
       Request request,
       String candidateDigest,
@@ -27,7 +27,7 @@ final class CanonicalGameplayCapacityEvidenceBudget {
     var identity = request.identity();
     lockBudget(tx, request, tag);
     var prior = exactCharge(tx, request, candidateDigest, selected, tag);
-    if (prior != null) return retainedDenial(prior);
+    if (prior != null) return retainedCharge(tx, request, prior);
     // The tenant budget lock serializes precharges. Retained and active charges both bind
     // the original Account origin and rearm fence; a new attempt cannot reserve that slot.
     if (tx.fetchOne(
@@ -127,14 +127,17 @@ final class CanonicalGameplayCapacityEvidenceBudget {
     }
   }
 
-  static RetainedCharge requireExistingCharge(
+  static RetainedCharge findExistingCharge(
       DSLContext tx,
       Request request,
       String candidateDigest,
       CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selected,
       String tag) {
     var charge = exactCharge(tx, request, candidateDigest, selected, tag);
-    if (charge == null) throw unavailable();
+    return charge == null ? null : retainedCharge(tx, request, charge);
+  }
+
+  private static RetainedCharge retainedCharge(DSLContext tx, Request request, Record charge) {
     Refusal denial = retainedDenial(charge);
     String state = charge.get("account_send_state", String.class);
     boolean possibleSend =

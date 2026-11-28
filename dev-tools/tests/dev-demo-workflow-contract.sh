@@ -1291,8 +1291,6 @@ expected_deploy_kubeconfigs = {
     "Ensure dev-demo gRPC TLS secret exists": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Validate dev-demo chart render": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Quiesce Account, Game Session, and Automation migration writers": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
-    "Check Account V1040.4 probe access before writer quiescence": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
-    "Verify Account V1040.4 retained history before Helm": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Deploy dev-demo release": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
     "Record exact deployed dev-demo head": "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig",
     "Show deployed dev-demo services": "${{ runner.temp }}/dev-demo-runtime.kubeconfig",
@@ -1305,71 +1303,40 @@ expected_deploy_kubeconfigs = {
 quiesce = deploy_by_name["Quiesce Account, Game Session, and Automation migration writers"]
 if quiesce.get("run") != 'bash ./dev-tools/deploy/quiesce-v2-schema-migrations.sh "$RUNTIME_NAMESPACE"':
     raise SystemExit("dev-demo must run the trusted V2 writer quiesce before Helm activation")
-if "steps.v2-migration-mode.outputs.activation != 'true'" not in deploy_by_name[
-    "Reset dev-demo namespace for clean deploy"
-].get("if", ""):
-    raise SystemExit("dev-demo must retain clean namespace reset for non-migration deploys")
-if "steps.v2-migration-mode.outputs.activation == 'true'" not in quiesce.get("if", ""):
-    raise SystemExit("dev-demo must quiesce only the trusted retained-database migration path")
-classifier = deploy_by_name["Classify trusted V2 migration activation"]
+classified_deployment = (
+    "${{ steps.cluster-access.outputs.available == 'true' && "
+    "steps.v2-migration-mode.outcome == 'success'"
+)
+classifier_name = "Classify trusted V2 migration activation"
+classifier = deploy_by_name[classifier_name]
 if classifier.get("run", "").count("detect-hosted-v2-migration-activation.sh") != 1:
     raise SystemExit("dev-demo must derive migration activation from the trusted event range")
-if deploy_names.index("Classify trusted V2 migration activation") > deploy_names.index(
-    "Reset dev-demo namespace for clean deploy"
-):
-    raise SystemExit("migration status must be proven before any namespace mutation")
-if positions[ordered.index("Quiesce Account, Game Session, and Automation migration writers")] > positions[ordered.index("Deploy dev-demo release")]:
-    raise SystemExit("dev-demo migration writers must be quiesced before Helm activation")
-origin_probe_name = "Verify Account V1040.4 retained history before Helm"
-origin_probe = deploy_by_name[origin_probe_name]
-if not (deploy_names.index(quiesce["name"]) < deploy_names.index(origin_probe_name) < deploy_position):
-    raise SystemExit("the Account V1040.4 probe must run between writer quiescence and Helm")
-if origin_probe.get("continue-on-error") or origin_probe.get("if") != (
-    "${{ steps.quiesce-writers.outcome == 'success' && "
-    "steps.v2-migration-mode.outputs.account_origin_probe == 'true' }}"
-):
-    raise SystemExit("the exact Account V1040.4 probe must be fail-closed and limited to affected deployments")
-if origin_probe.get("env", {}).get("DEV_NAMESPACE_MANAGER_KUBECONFIG") != (
-    "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig"
-):
-    raise SystemExit("the Account probe must use the existing namespace-manager kubeconfig for readback")
-origin_probe_bindings = {
-    "RUNTIME_NAMESPACE": "${{ needs.dev-demo-plan.outputs.namespace }}",
-    "NAMESPACE_UID": "${{ steps.v2-migration-mode.outputs.account_origin_namespace_uid }}",
-    "DEPLOYED_SHA": "${{ steps.v2-migration-mode.outputs.account_origin_base_sha }}",
-    "HEAD_SHA": "${{ needs.dev-demo-plan.outputs.head_sha }}",
-    "ORIGIN_PREFIX": "${{ steps.v2-migration-mode.outputs.account_origin_prefix }}",
+expected_classified_paths = {
+    "Reset dev-demo namespace for clean deploy":
+        " && steps.v2-migration-mode.outputs.activation != 'true'",
+    "Ensure dev-demo namespace exists": "",
+    "Record exact dev-demo runtime target": "",
+    "Bind scoped runtime and certificate roles": "",
+    quiesce["name"]: " && steps.v2-migration-mode.outputs.activation == 'true'",
+    "Deploy dev-demo release":
+        " && (steps.v2-migration-mode.outputs.activation != 'true' || "
+        "steps.quiesce-writers.outcome == 'success')",
 }
-if any(origin_probe.get("env", {}).get(key) != value for key, value in origin_probe_bindings.items()):
-    raise SystemExit("the V1040.4 gate must bind exact classifier comparison outputs")
-origin_probe_command = [
-    "bash ./dev-tools/deploy/run-dev-account-v1040-4-probe.sh " + chr(92),
-    '"$RUNTIME_NAMESPACE" "$NAMESPACE_UID" "$DEPLOYED_SHA" "$HEAD_SHA" "$ORIGIN_PREFIX"',
-]
-if [line.strip() for line in origin_probe.get("run", "").splitlines()[-2:]] != origin_probe_command:
-    raise SystemExit("the V1040.4 gate must call the probe with the exact ordered comparison")
-origin_access_name = "Check Account V1040.4 probe access before writer quiescence"
-origin_access = deploy_by_name[origin_access_name]
-if deploy_names.index(origin_access_name) >= deploy_names.index(quiesce["name"]):
-    raise SystemExit("the V1040.4 credential and admission check must precede quiescence")
-if origin_access.get("env") != origin_probe.get("env") or origin_access.get("continue-on-error"):
-    raise SystemExit("the credential check must use the exact probe context and fail closed")
-if [line.strip() for line in origin_access.get("run", "").splitlines()[-2:]] != [
-    origin_probe_command[0].replace(".sh ", ".sh --check-permissions "),
-    origin_probe_command[1],
-]:
-    raise SystemExit("the V1040.4 credential check must dry-run the exact probe manifest")
-if "steps.account-probe-access.outcome == 'success'" not in quiesce.get("if", ""):
-    raise SystemExit("the V1040.4 credential and admission check must gate quiescence")
-deploy_condition = deploy_by_name["Deploy dev-demo release"].get("if", "")
-expected_deploy_condition = (
-    "${{ steps.cluster-access.outputs.available == 'true' && "
-    "steps.v2-migration-mode.outcome == 'success' && "
-    "(steps.v2-migration-mode.outputs.activation != 'true' || steps.quiesce-writers.outcome == 'success') && "
-    "(steps.v2-migration-mode.outputs.account_origin_probe != 'true' || steps.account-v1040-4-preflight.outcome == 'success') }}"
-)
-if deploy_condition != expected_deploy_condition:
-    raise SystemExit("Helm must require cluster access, successful classification, and all applicable migration preflights")
+for step_name, condition in expected_classified_paths.items():
+    if deploy_names.index(classifier_name) >= deploy_names.index(step_name):
+        raise SystemExit(f"migration classification must precede {step_name}")
+    if deploy_by_name[step_name].get("if") != classified_deployment + condition + " }}":
+        raise SystemExit(f"{step_name} must require successful migration classification and its activation guard")
+if deploy_names.index(quiesce["name"]) >= deploy_names.index("Deploy dev-demo release"):
+    raise SystemExit("dev-demo migration writers must be quiesced before Helm activation")
+for obsolete in (
+    "dev-account-v1040-4-probe.sh",
+    "account_origin_",
+    "account-probe-access",
+    "account-v1040-4-preflight",
+):
+    if obsolete in str(deploy_steps):
+        raise SystemExit("automatic dev-demo deployment must leave the held Account V1040.4 probe inactive")
 for step_name, expected_kubeconfig in expected_deploy_kubeconfigs.items():
     actual_env = deploy_by_name[step_name].get("env", {})
     if actual_env.get("KUBECONFIG") != expected_kubeconfig:
@@ -1623,7 +1590,7 @@ with tempfile.TemporaryDirectory() as directory:
     summary = Path(directory) / "summary.md"
     for deployed, recorded, bootstrap, retention, stage, expected in (
         ("failure", "skipped", "skipped", "skipped", "deploy", None),
-        ("skipped", "skipped", "skipped", "skipped", "account-v1040-4-preflight", None),
+        ("skipped", "skipped", "skipped", "skipped", "unknown", None),
         ("success", "failure", "skipped", "skipped", "deploy", None),
         ("success", "skipped", "skipped", "skipped", "deploy", None),
         ("success", "success", "failure", "skipped", "bootstrap-smoke", "refer bootstrap recovery to the affected owners"),
@@ -1764,12 +1731,11 @@ quiesce_writers = deploy_by_name[
 if quiesce_writers.get("id") != "quiesce-writers":
     raise SystemExit("dev-demo migration writer quiesce must expose its outcome")
 quiesced_writer_warning = deploy_by_name[
-    "Warn about migration writer recovery after quiesce, preflight or deploy failure"
+    "Warn about migration writer recovery after quiesce or deploy failure"
 ]
 expected_quiesced_writer_warning_condition = (
     "${{ always() && steps.v2-migration-mode.outputs.activation == 'true' && "
     "(steps.quiesce-writers.outcome == 'failure' || "
-    "steps.account-v1040-4-preflight.outcome == 'failure' || "
     "steps.deploy-release.outcome == 'failure') }}"
 )
 if quiesced_writer_warning.get("if") != expected_quiesced_writer_warning_condition:

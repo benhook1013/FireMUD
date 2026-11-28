@@ -103,7 +103,11 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
       String url = postgresContainer().getJdbcUrl();
       String schema = proof.sql.fetchSingle("SELECT current_schema()").get(0, String.class);
       repeatableReadSource.setUrl(
-          url + (url.contains("?") ? "&" : "?") + "currentSchema=" + schema);
+          url
+              + (url.contains("?") ? "&" : "?")
+              + "currentSchema="
+              + schema
+              + "&connectTimeout=3&socketTimeout=5");
       repeatableReadSource.setUsername(postgresContainer().getUsername());
       repeatableReadSource.setPassword(postgresContainer().getPassword());
       AtomicInteger installIsolation = new AtomicInteger(-1);
@@ -261,7 +265,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
         var restarted = proof.capacity(proof.sql);
         assertThat(
                 restarted
-                    .requireExistingCharge(
+                    .findExistingCharge(
                         proof.admission, original.request(), selected, transferDeadline())
                     .accountDenial())
             .isEqualTo(denial);
@@ -299,13 +303,14 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
           execution ->
               proof.sql.transactionResult(configuration ->
                   CanonicalGameplayCapacityEvidenceBudget.precharge(
-                      DSL.using(configuration),
-                      execution.request(),
-                      execution.candidateDigest(),
-                      selected,
-                      tag,
-                      Clock.fixed(
-                          execution.request().evidence().expiresAt(), java.time.ZoneOffset.UTC)));
+                          DSL.using(configuration),
+                          execution.request(),
+                          execution.candidateDigest(),
+                          selected,
+                          tag,
+                          Clock.fixed(
+                              execution.request().evidence().expiresAt(), java.time.ZoneOffset.UTC))
+                      .accountDenial());
       assertThatThrownBy(() -> precharge.apply(fresh))
           .isExactlyInstanceOf(IllegalStateException.class)
           .hasMessage("Original NEW capacity evidence budget is unavailable");

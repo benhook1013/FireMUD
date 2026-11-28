@@ -116,22 +116,54 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       requireOriginalSource(source, originalDecision);
       var selectedOwner =
           capacityExecution.requireRequestBinding(source, capacityRequest, absoluteDeadlineMillis);
-      var accountOpen = readAccountOpen(source);
-      if (clock.millis() >= accountOpen.expiresAtEpochMillis()
-          && source.transitionStatus()
-              == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+      CanonicalGameplayCapacityEvidenceBudget.RetainedCharge priorCharge = null;
+      TenantCapacityAdmission.Result retainedReservation = null;
+      if (source.transitionStatus() == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
           && capacityRequest.evidence().permitsCreation()) {
-        throw reconcileAdmissionDenial(
-            source,
-            privateRegionInstallation,
-            capacityRequest,
-            selectedOwner,
-            absoluteDeadlineMillis);
+        priorCharge =
+            capacityExecution.findExistingCharge(
+                source, capacityRequest, selectedOwner, absoluteDeadlineMillis);
+        if (priorCharge != null) {
+          requireDenialScope(source, privateRegionInstallation, selectedOwner);
+          requireDeadline(absoluteDeadlineMillis);
+          if (priorCharge.accountDenial() != null) {
+            throw CapacityRefusedException.retainedAdmissionDenial(priorCharge.accountDenial());
+          }
+        }
       }
+      boolean mayHaveSent = priorCharge != null && priorCharge.possibleSend();
+      CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen = null;
+      try {
+        accountOpen = readAccountOpen(source);
+      } catch (IllegalStateException openUnavailable) {
+        if (!mayHaveSent) throw openUnavailable;
+      }
+      if (mayHaveSent) {
+        try {
+          if (accountOpen == null || clock.millis() >= accountOpen.expiresAtEpochMillis()) {
+            // Without eligible OPEN, only an exact durable denial can settle the prior charge.
+            throw CapacityRefusedException.retainedAdmissionDenial(
+                capacityClient.readRetainedAdmissionDenial(
+                    capacityRequest, absoluteDeadlineMillis));
+          }
+          retainedReservation =
+              capacityClient.readRetainedReservationOrDenial(
+                  capacityRequest, absoluteDeadlineMillis);
+        } catch (CapacityRefusedException refusal) {
+          requireDeadline(absoluteDeadlineMillis);
+          settleAuthenticatedDenial(
+              source,
+              capacityRequest,
+              selectedOwner,
+              new Refusal(refusal.code(), refusal.durableDenialId()),
+              absoluteDeadlineMillis);
+          throw refusal;
+        }
+        requireDeadline(absoluteDeadlineMillis);
+      }
+      if (accountOpen == null) throw unavailable();
       Currentness beforeEffects = currentness(source, privateRegionInstallation, accountOpen);
-      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource currentSource =
-          readSameSource(source, originalDecision, false);
-      source = currentSource;
+      source = readSameSource(source, originalDecision, false);
 
       CanonicalGameplayOriginalNewCapacityExecutionOwner.CommittedCapacitySource committedCapacity =
           null;
@@ -148,7 +180,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
             accountClient.confirmOriginalNewGameplayAdmission(
                 originalLoginJwt,
                 originalLeaseBytes,
-                confirmationDeadline(absoluteDeadlineMillis),
+                operationDeadline(absoluteDeadlineMillis),
                 committedCapacity.selector());
         requireDeadline(absoluteDeadlineMillis);
         requireConfirmation(source, recoveredConfirmation, null, originalDecision);
@@ -160,7 +192,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
 
       try (OriginalNewCredential credential =
           accountClient.issueOriginalNewBoundGameplayCredential(
-              originalLoginJwt, originalLeaseBytes)) {
+              originalLoginJwt, originalLeaseBytes, operationDeadline(absoluteDeadlineMillis))) {
+        requireDeadline(absoluteDeadlineMillis);
         requireCredentialLease(source, originalDecision, credential);
         try (CanonicalGameplayOriginalNewAuthenticatedSession.Template template =
             CanonicalGameplayOriginalNewAuthenticatedSession.template(
@@ -184,17 +217,20 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
               capacityRequest.evidence().permitsCreation()
                   && source.transitionStatus()
                       != CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED;
-          if (precharge) {
-            var retainedDenial =
-                capacityExecution.precharge(
-                    source, capacityRequest, selectedOwner, absoluteDeadlineMillis);
-            if (retainedDenial != null)
-              throw CapacityRefusedException.retainedAdmissionDenial(retainedDenial);
-          }
+          var retainedCharge =
+              precharge
+                  ? capacityExecution.precharge(
+                      source, capacityRequest, selectedOwner, absoluteDeadlineMillis)
+                  : null;
+          if (retainedCharge != null && retainedCharge.accountDenial() != null)
+            throw CapacityRefusedException.retainedAdmissionDenial(retainedCharge.accountDenial());
           final TenantCapacityAdmission.Result reservation;
           try {
             if (recoveredConfirmation != null) {
               reservation = recoveredConfirmation.committedCapacityResult();
+            } else if (retainedReservation != null) {
+              if (retainedCharge == null) throw unavailable();
+              reservation = retainedReservation;
             } else if (precharge) {
               var sendSource = source;
               reservation =
@@ -211,19 +247,12 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
             if (precharge
                 && refusal.code().supportsDurableDenial()
                 && refusal.durableDenialId() != null) {
-              try {
-                capacityExecution.settleDeniedCharge(
-                    source,
-                    capacityRequest,
-                    selectedOwner,
-                    new Refusal(refusal.code(), refusal.durableDenialId()),
-                    absoluteDeadlineMillis);
-              } catch (RuntimeException settlementFailure) {
-                // This remains local and indeterminate; the authenticated Account denial has
-                // already completed, and settlement failure must not rewrite that outcome.
-                LOG.warn(
-                    "Original NEW Account denial received; local evidence settlement unconfirmed");
-              }
+              settleAuthenticatedDenial(
+                  source,
+                  capacityRequest,
+                  selectedOwner,
+                  new Refusal(refusal.code(), refusal.durableDenialId()),
+                  absoluteDeadlineMillis);
             }
             throw refusal;
           }
@@ -293,7 +322,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
                   accountClient.confirmOriginalNewGameplayAdmission(
                       originalLoginJwt,
                       originalLeaseBytes,
-                      confirmationDeadline(absoluteDeadlineMillis),
+                      operationDeadline(absoluteDeadlineMillis),
                       committedCapacity == null ? null : committedCapacity.selector());
               requireDeadline(absoluteDeadlineMillis);
               requireConfirmation(source, confirmation, credential, originalDecision);
@@ -336,12 +365,10 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
     }
   }
 
-  private CapacityRefusedException reconcileAdmissionDenial(
+  private static void requireDenialScope(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       CanonicalGameplayRegionLeaseOwner.Installation installation,
-      TenantCapacityAdmission.Request request,
-      CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selectedOwner,
-      long deadline) {
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selectedOwner) {
     var candidate = source.candidate();
     if (!candidate.bindingDecisionId().equals(installation.transitionId)
         || !candidate.matchesProvisionalSources(installation.evidence)
@@ -349,14 +376,20 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
         || selectedOwner.fence() != installation.status.executorFence().longValueExact()) {
       throw unavailable();
     }
-    var charge = capacityExecution.requireExistingCharge(source, request, selectedOwner, deadline);
-    var denial = charge.accountDenial();
-    if (denial == null) {
-      if (!charge.possibleSend()) throw unavailable();
-      denial = capacityClient.readRetainedAdmissionDenial(request, deadline);
+  }
+
+  private void settleAuthenticatedDenial(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      TenantCapacityAdmission.Request request,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selectedOwner,
+      Refusal denial,
+      long deadline) {
+    try {
       capacityExecution.settleDeniedCharge(source, request, selectedOwner, denial, deadline);
+    } catch (RuntimeException settlementFailure) {
+      // Keep the authenticated Account outcome. The exact request can retry local settlement.
+      LOG.warn("Original NEW Account denial received; local evidence settlement unconfirmed");
     }
-    return CapacityRefusedException.retainedAdmissionDenial(denial);
   }
 
   private CanonicalGameplayAccountInitialOpenProof.CurrentOpen readAccountOpen(
@@ -695,10 +728,11 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
     }
   }
 
-  private Deadline confirmationDeadline(long absoluteDeadlineMillis) {
+  private Deadline operationDeadline(long absoluteDeadlineMillis) {
+    Deadline sampledAt = Deadline.after(0, TimeUnit.NANOSECONDS);
     long remainingMillis = Math.subtractExact(absoluteDeadlineMillis, clock.millis());
     if (remainingMillis <= 0L) throw unavailable();
-    return Deadline.after(remainingMillis, TimeUnit.MILLISECONDS);
+    return sampledAt.offset(remainingMillis, TimeUnit.MILLISECONDS);
   }
 
   private void requireDeadline(long absoluteDeadlineMillis) {

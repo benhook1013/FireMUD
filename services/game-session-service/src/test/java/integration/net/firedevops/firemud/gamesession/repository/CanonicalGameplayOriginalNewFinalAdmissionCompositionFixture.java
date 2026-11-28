@@ -1001,10 +1001,24 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     return administration.sync().get(ascii(candidateInstallation.sessionKey()));
   }
 
+  /** Retains the exact precharge for the original Account request. */
+  public void prechargeCapacityForControlledRecovery(
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request,
+      Clock prechargeClock) {
+    prepareCapacityForControlledRecovery(request, prechargeClock, false);
+  }
+
   /** Claims the exact creating send before controlled delay of the original Account request. */
   public void claimCapacitySendForControlledRecovery(
       net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request,
       Clock prechargeClock) {
+    prepareCapacityForControlledRecovery(request, prechargeClock, true);
+  }
+
+  private void prepareCapacityForControlledRecovery(
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request,
+      Clock prechargeClock,
+      boolean claimSend) {
     var source =
         new CanonicalGameplayBindingInventoryRepository(binding.dsl())
             .readOriginalNewFinalAdmissionSource(decision);
@@ -1013,8 +1027,12 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             binding.dsl(), coordination, scripts, prechargeClock, tags);
     long deadline = prechargeClock.millis() + 5_000L;
     var selectedOwner = owner.requireRequestBinding(source, request, deadline);
-    if (owner.precharge(source, request, selectedOwner, deadline) != null
-        || owner.authorizeAccountSend(source, request, selectedOwner, deadline)
+    var retained = owner.precharge(source, request, selectedOwner, deadline);
+    if (retained != null && retained.accountDenial() != null) {
+      throw new IllegalStateException("Exact retained capacity charge is terminally denied");
+    }
+    if (claimSend
+        && owner.authorizeAccountSend(source, request, selectedOwner, deadline)
             != net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.SendDisposition
                 .AUTHORIZE_NEW) {
       throw new IllegalStateException("Expected a newly claimed exact Account send");
@@ -1065,7 +1083,8 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         java.util.List.of(
             "game_session_canonical_binding_transition",
             "game_session_capacity_evidence_charge",
-            "game_session_original_new_capacity_execution")) {
+            "game_session_original_new_capacity_execution",
+            "game_session_region_runtime_status")) {
       String rows =
           binding
               .dsl()

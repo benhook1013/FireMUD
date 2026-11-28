@@ -311,6 +311,28 @@ public final class CanonicalGameplayBindingInventoryRepository {
     });
   }
 
+  void lockInitialTimelineBindingScope(
+      DSLContext transaction, CanonicalGameplayBindingProvisionalCasEvidence expected) {
+    lockInventoryRevision(transaction);
+    lockLeaseBoundRuntimeBeforeTransition(
+        transaction,
+        expected.transition().transitionId(),
+        expected.candidate().bindingRef().bytes(),
+        null);
+  }
+
+  void requireCurrentInitialTimelineBinding(
+      DSLContext transaction, CanonicalGameplayBindingProvisionalCasEvidence expected) {
+    var current =
+        loadProvisionalCasEvidence(transaction, expected.transition().transitionId(), true);
+    if (current.transition().status()
+            != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+        || current.expectedPrior() != null) {
+      throw conflict("Initial timeline claim requires the exact provisional first binding");
+    }
+    requireSameProvisionalSource(expected, current);
+  }
+
   /** Irreversibly selects one still-PREPARED dispatch claim without inferring any Redis outcome. */
   public CanonicalGameplayOriginalNewAbandonmentSource selectOriginalNewAbandonment(
       UUID transitionId) {
@@ -2899,7 +2921,17 @@ public final class CanonicalGameplayBindingInventoryRepository {
     Objects.requireNonNull(actual, "actual");
     var source = actual.source();
     var candidate = source.candidate();
+    var execution = actual.execution();
     if (!candidate.equals(actual.session().originalCandidate())
+        || !candidate.transition().transitionId().equals(execution.transitionId())
+        || !source.candidateDigest().equals(execution.candidateDigest())
+        || !candidate.bindingIdentity().tenantId().equals(execution.request().identity().tenantId())
+        || !execution
+            .request()
+            .identity()
+            .requestId()
+            .toString()
+            .equals(candidate.leaseEvidence().carrier().get("requestId"))
         || source.candidateInstallationProvenance()
             != OriginalNewCandidateInstallationProvenance.HISTORICAL_READBACK_CONFIRMED
         || !source
@@ -2928,7 +2960,7 @@ public final class CanonicalGameplayBindingInventoryRepository {
             actual.admissionAtMillis(),
             actual.continuityExpiresAtMillis(),
             actual.canonicalSessionDurationMillis()),
-        actual.execution());
+        execution);
   }
 
   private CanonicalGameplayBindingTransitionSnapshot commitVerifiedOriginalNewFinalAdmission(

@@ -1,7 +1,7 @@
 {
   "scriptId": "game-session.region-timeline-initialize.v2",
   "resourcePath": "redis/lua/game-session-region-timeline-initialize-v2.lua",
-  "sha256": "78e1b086618521a387581dad9d422258cdc69f3b4e7d5bccbe483aa04dd62e4b",
+  "sha256": "80c09c0b049070ca81433a03f909c9de8a30c7be40536fc1449f6b3e902bc063",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",
@@ -28,7 +28,7 @@
   ],
   "resetSensitivity": "REGION",
   "lossClass": "STAGED_EFFECT_OR_RETRY",
-  "tailLossBehavior": "Only the original durable preparation may establish the complete epoch-1 and tick-minus-one APPLIED baseline. The original single-use SQL creation permission remains required. The deadline-bound PROBE requires the configured principal's TIME permission and exact write permissions before that creation permission is consumed. An INITIALIZE refusal before either write lets the exact owner return the preparation to PREPARED. Redis refuses a delayed INITIALIZE mutation after the frozen operation deadline. An exact retained marker permits same-operation lease recovery; absent, changed, or partial state never triggers a new initialization.",
+  "tailLossBehavior": "Only the original durable preparation may establish the complete epoch-1 and tick-minus-one APPLIED baseline. The original single-use SQL creation permission remains required. The deadline-bound PROBE requires TIME and the exact write permissions before the creation permission is consumed. INITIALIZE checks TIME and any required write permissions before writing either key. Only affirmative local no-dispatch proof or an INITIALIZE result of DEADLINE_EXPIRED (-3) or CREATE_ACL_REFUSED (-4) lets the exact owner return the preparation to PREPARED. Other refusals and ambiguous sends stay held. Redis refuses a delayed INITIALIZE mutation after the frozen operation deadline. Exact retained metadata and the matching live original token permit a read-only replay. Missing or expired leases and absent, changed, or partial state never authorize replacement or new initialization.",
   "compatibilityLevel": "COMPATIBLE",
   "supportedCoexistence": [{"callerVersion": "v2", "payloadVersion": "none"}],
   "legacyPayloadShape": null

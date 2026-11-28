@@ -432,7 +432,8 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
                 .requireActiveReadback(originalNewIdentity(exact));
             return new ConfirmedSource(
                 exact,
-                readCommittedCapacity(dsl, current.operation(), peer, committedCapacityRequest));
+                readCommittedCapacity(
+                    dsl, current.operation(), peer, committedCapacityRequest, false));
           });
       tokenRegistry.requireExactOriginalNewActiveRecord(recovered.genesis());
       if (clock.millis() >= recovered.genesis().confirmedContinuityExpiresAtMillis()
@@ -451,10 +452,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       throw unavailable();
     }
     if (!expected.equals(finalReadback.anchors())) throw unavailable();
-    long nowMillis = clock.millis();
-    if (nowMillis <= 0L
-        || finalReadback.admissionAtMillis() > nowMillis
-        || nowMillis >= finalReadback.continuityExpiresAtMillis()) throw unavailable();
+    requireCurrentFinalReadback(finalReadback);
 
     VerifiedCaller beforeActivationCaller = verifyCaller(presentedInitialGsACompactJwt, peer);
     if (!AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData
@@ -467,13 +465,15 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       inWritableSerializableTransaction(dsl -> {
         SourceRead current = readCurrentOriginalSource(dsl, beforeActivationCaller, requestedLease);
         requireSameOriginalOperation(beforeRead.operation(), current.operation());
-        return readCommittedCapacity(dsl, current.operation(), peer, committedCapacityRequest);
+        return readCommittedCapacity(
+            dsl, current.operation(), peer, committedCapacityRequest, false);
       });
       if (Context.current().isCancelled()) throw unavailable();
     }
 
     // Activation is Account-owned and happens only after the authenticated GS readback exists.
     // If its reply is lost, the Redis CAS accepts only the same immutable active projection.
+    requireCurrentFinalReadback(finalReadback);
     AccountGameplayDelegationRedisClient.OriginalNewActivationReadback activation =
         tokenRegistry.activateOriginalNewCommittedPending(beforeGenesis);
     requireActivationMatches(beforeGenesis, activation);
@@ -508,8 +508,9 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
           requireSameGenesisIdentity(beforeGenesis, exact);
           TokenIdentity tokenIdentity = originalNewIdentity(exact);
           new AccountGameplayTokenIdentityFenceRepository(dsl).requireActiveReadback(tokenIdentity);
+          // Serialize qualification with reservation transitions until confirmation commits.
           var capacity =
-              readCommittedCapacity(dsl, current.operation(), peer, committedCapacityRequest);
+              readCommittedCapacity(dsl, current.operation(), peer, committedCapacityRequest, true);
           return new ConfirmedSource(
               issuance.confirmFinalAdmission(
                   exact,
@@ -527,11 +528,19 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
     return new OriginalAdmissionConfirmation(confirmed);
   }
 
+  private void requireCurrentFinalReadback(AuthenticatedFinalAdmissionReadback finalReadback) {
+    long nowMillis = clock.millis();
+    if (nowMillis <= 0L
+        || finalReadback.admissionAtMillis() > nowMillis
+        || nowMillis >= finalReadback.continuityExpiresAtMillis()) throw unavailable();
+  }
+
   private static TenantCapacityAdmission.Result readCommittedCapacity(
       DSLContext dsl,
       AccountGameplayAdmissionLeaseOperation operation,
       GrpcPeerIdentity peer,
-      CommittedCapacityRequest selector) {
+      CommittedCapacityRequest selector,
+      boolean lockReservation) {
     if (selector == null) return null;
     if (Context.current().isCancelled()) throw unavailable();
     var request = selector.attempt();
@@ -566,7 +575,10 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
       throw unavailable();
     }
     var repository = new AccountTenantCapacityRepository(dsl);
-    var row = repository.findForReplay(request.identity());
+    var row =
+        lockReservation
+            ? repository.find(request.identity())
+            : repository.findForReplay(request.identity());
     if (row == null) throw unavailable();
     var result = repository.exact(request, row);
     try {

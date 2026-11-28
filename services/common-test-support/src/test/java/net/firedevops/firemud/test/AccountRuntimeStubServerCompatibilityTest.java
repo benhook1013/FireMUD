@@ -52,7 +52,7 @@ class AccountRuntimeStubServerCompatibilityTest {
   private static final Set<String> UNIMPLEMENTED_RUNTIME_METHODS =
       Set.of(
           "CommitTenantCapacityAdmission",
-          "ReadTenantCapacityAdmissionDenial",
+          "ReadTenantCapacityAdmissionOutcome",
           "ReadTenantCapacityAdmissionReservation");
 
   @Test
@@ -93,7 +93,7 @@ class AccountRuntimeStubServerCompatibilityTest {
                     assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
         assertThatThrownBy(() ->
                 stub.withDeadlineAfter(2, TimeUnit.SECONDS)
-                    .readTenantCapacityAdmissionDenial(request))
+                    .readTenantCapacityAdmissionOutcome(request))
             .isInstanceOfSatisfying(
                 StatusRuntimeException.class,
                 failure ->

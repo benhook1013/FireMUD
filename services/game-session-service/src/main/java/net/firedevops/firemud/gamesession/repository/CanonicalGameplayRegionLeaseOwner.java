@@ -143,6 +143,44 @@ final class CanonicalGameplayRegionLeaseOwner {
     }
   }
 
+  boolean recoverRetainedNoWriteForPreparation(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation current,
+      CanonicalGameplayRegionRuntimeStatusRepository budgetedStatusRepository) {
+    return recoverRetainedNoWriteForPreparation(
+        current, budgetedStatusRepository, deadlineBoundInstallation);
+  }
+
+  private boolean recoverRetainedNoWriteForPreparation(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation current,
+      CanonicalGameplayRegionRuntimeStatusRepository budgetedStatusRepository,
+      boolean useScopedRepository) {
+    UUID operation = current.operationId();
+    RetainedNoWriteRecovery retained;
+    synchronized (noWriteRecoveries) {
+      retained = noWriteRecoveries.get(operation);
+      if (retained == null || retained.proof == null) return false;
+      if (retained.inUse || retained.retainedWorkers != 0 || retained.cleanupActive)
+        throw unavailable();
+      retained.inUse = true;
+    }
+    try {
+      if (!useScopedRepository) {
+        recoverNoWrite(retained.preparation, retained);
+        return true;
+      }
+      // The current scoped row selects the original operation. The repository still checks
+      // the retained immutable preparation and generation under the region lock.
+      budgetedStatusRepository.releaseInitialTimelineNoWrite(
+          retained.preparation, retained.proof, clock.instant());
+      synchronized (noWriteRecoveries) {
+        retained.proof = null;
+      }
+      return true;
+    } finally {
+      releaseNoWriteRecovery(operation, retained);
+    }
+  }
+
   void recoverNoWrite(
       CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
       RetainedNoWriteRecovery retained) {
@@ -444,11 +482,20 @@ final class CanonicalGameplayRegionLeaseOwner {
       if (existingRegionInstallation != null) throw unavailable();
       preparation =
           withTransferStatusRepository(
-                  statusRepository,
-                  transferOwner,
-                  handoffDeadline,
-                  repository -> repository.findTimelinePreparation(source))
-              .orElse(null);
+              statusRepository,
+              transferOwner,
+              handoffDeadline,
+              repository -> {
+                var current = repository.findTimelinePreparation(source).orElse(null);
+                if (current != null
+                    && recoverRetainedNoWriteForPreparation(
+                        current, repository, deadlineBoundInstallation || transferOwner != null)) {
+                  return repository
+                      .findTimelinePreparation(source)
+                      .orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
+                }
+                return current;
+              });
       if (preparation == null) {
         CanonicalGameplayRegionLeaseRedisOwner.TimelineAbsenceProof absenceProof =
             handoffRedisOwner.requireTimelineAbsent(source, incarnation);
@@ -483,8 +530,9 @@ final class CanonicalGameplayRegionLeaseOwner {
           handoffRedisOwner.prepareTimelineInitialization(preparation, leaseTtl, runtimeIdentity)) {
         var retained = reserveNoWriteRecovery(preparation.operationId());
         try {
-          if (transferOwner == null) recoverNoWrite(preparation, retained);
-          else recoverNoWrite(preparation, retained, clock, handoffDeadline, null);
+          // If another attempt retained proof after the scoped row read, retry cleanup
+          // before opening a prepared Redis session and qualifying the source again.
+          if (retained.proof != null) throw unavailable();
           var initializationPreparation = preparation;
           Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
               permit =
@@ -527,6 +575,8 @@ final class CanonicalGameplayRegionLeaseOwner {
                                 repository.beginInitialTimeline(
                                     initializationPreparation,
                                     clock.instant(),
+                                    bindingInventory,
+                                    beforeClaimEvidence,
                                     proof -> {
                                       retainNoWriteProof(
                                           initializationPreparation, retained, proof);

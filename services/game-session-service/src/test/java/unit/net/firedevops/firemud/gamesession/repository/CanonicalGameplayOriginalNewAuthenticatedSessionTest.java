@@ -615,7 +615,7 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
             "membershipLifecycleState",
             "ACTIVE",
             "membershipVersion",
-            Map.of(TENANT_ID.toString(), "9"),
+            capacityRequest.evidence().fields().get("membershipVersion"),
             "membershipAuthorityGeneration",
             capacityRequest.evidence().fields().get("membershipAuthorityGeneration")));
     value.put("outboxCheckpoints", checkpoints());
@@ -652,7 +652,7 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
               "outboxStreamKey",
               "account:auth-authority:v1:" + suffix,
               "outboxSequence",
-              suffix.startsWith("membership/") ? "9" : suffix.startsWith("tenant/") ? "1" : "0"));
+              suffix.startsWith("membership/") || suffix.startsWith("tenant/") ? "1" : "0"));
     }
     return List.copyOf(result);
   }

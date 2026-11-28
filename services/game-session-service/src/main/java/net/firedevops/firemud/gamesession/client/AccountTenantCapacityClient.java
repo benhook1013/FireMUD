@@ -105,6 +105,14 @@ public final class AccountTenantCapacityClient
         });
   }
 
+  /** Reads eligible retained custody with the original bounded Account call. */
+  public Result readRetainedReservationOrDenial(Request request, long absoluteDeadlineMillis) {
+    return invoke(
+        request,
+        absoluteDeadlineMillis,
+        (stub, wire) -> readRetainedReservationOrDenial(stub, wire, request));
+  }
+
   private static Result readRetainedReservationOrDenial(
       AccountServiceBlockingStub stub, CommitTenantCapacityAdmissionRequest wire, Request request) {
     final CommitTenantCapacityAdmissionResponse reservation;
@@ -115,15 +123,10 @@ public final class AccountTenantCapacityClient
           || stub.getCallOptions().getDeadline().isExpired()) {
         throw unavailable;
       }
-      // The reservation read cannot return a denial. Only the same peer's typed exact read
-      // can supply one, under the same absolute deadline and without another creating send.
-      final Refusal denial;
-      try {
-        denial = requireRetainedDenial(request, stub.readTenantCapacityAdmissionDenial(wire));
-      } catch (StatusRuntimeException unproven) {
-        throw unavailable;
-      }
-      throw CapacityRefusedException.retainedAdmissionDenial(denial);
+      // Reservation eligibility was not proven. Only an exact typed denial can settle
+      // the charge here, and it must use the same peer and deadline.
+      readRetainedOutcome(request, stub.readTenantCapacityAdmissionOutcome(wire));
+      throw unavailable;
     }
     try {
       return TenantCapacityAdmissionGrpcCodec.requireResponse(request, reservation);
@@ -148,27 +151,43 @@ public final class AccountTenantCapacityClient
     }
   }
 
-  /** Recovers an exact immutable denial while the caller owns the original held attempt. */
-  public Refusal readRetainedAdmissionDenial(Request request, long absoluteDeadlineMillis) {
+  /** Reads the exact original outcome without granting a second commit. */
+  public Result readRetainedAdmissionOutcome(Request request, long absoluteDeadlineMillis) {
     var response =
         invoke(
             request,
             absoluteDeadlineMillis,
-            AccountServiceBlockingStub::readTenantCapacityAdmissionDenial);
-    return requireRetainedDenial(request, response);
+            AccountServiceBlockingStub::readTenantCapacityAdmissionOutcome);
+    return readRetainedOutcome(request, response);
   }
 
-  private static Refusal requireRetainedDenial(
+  private static Result readRetainedOutcome(
       Request request, CommitTenantCapacityAdmissionResponse response) {
     try {
-      return TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response)
-          .filter(refusal -> refusal.durableDenialId() != null)
-          .orElseThrow(IllegalArgumentException::new);
+      var refusal = TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response);
+      if (refusal.isPresent()) {
+        var denial = refusal.orElseThrow();
+        if (denial.durableDenialId() == null) throw new IllegalArgumentException();
+        throw CapacityRefusedException.retainedAdmissionDenial(denial);
+      }
+      return TenantCapacityAdmissionGrpcCodec.requireResponse(request, response);
     } catch (IllegalArgumentException inexactResponse) {
       throw Status.UNKNOWN
-          .withDescription("Account retained admission denial was not proven")
+          .withDescription("Account retained admission outcome was not proven")
           .asRuntimeException();
     }
+  }
+
+  /** Grants settlement evidence only for a durable denial. */
+  public Refusal readRetainedAdmissionDenial(Request request, long absoluteDeadlineMillis) {
+    try {
+      readRetainedAdmissionOutcome(request, absoluteDeadlineMillis);
+    } catch (CapacityRefusedException denial) {
+      return new Refusal(denial.code(), denial.durableDenialId());
+    }
+    throw Status.UNKNOWN
+        .withDescription("Account retained admission denial was not proven")
+        .asRuntimeException();
   }
 
   private <T> T invoke(

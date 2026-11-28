@@ -1783,6 +1783,14 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       CanonicalGameplayBindingIdentity candidate,
       BigInteger bindingGeneration,
       CanonicalPlayableTarget target) {
+    return controlledLeaseEvidence(candidate, bindingGeneration, target, UUID.randomUUID());
+  }
+
+  static AccountGameplayAdmissionLeaseEvidence controlledLeaseEvidence(
+      CanonicalGameplayBindingIdentity candidate,
+      BigInteger bindingGeneration,
+      CanonicalPlayableTarget target,
+      UUID requestId) {
     long now = System.currentTimeMillis();
     String nowSeconds = Long.toString(now / 1000L);
     Map<String, Object> carrier = new LinkedHashMap<>();
@@ -1794,7 +1802,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     carrier.put(
         "callerWorkload",
         "spiffe://firemud/ns/" + target.targetNamespace() + "/sa/game-session-service");
-    carrier.put("requestId", UUID.randomUUID().toString());
+    carrier.put("requestId", requestId.toString());
     carrier.put("leaseId", UUID.randomUUID().toString());
     carrier.put("leaseFence", "1");
     Map<String, Object> scope = new LinkedHashMap<>();

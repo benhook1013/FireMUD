@@ -822,7 +822,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     assertThat(admin.hget(ascii(original.keys()[6]), ascii("sessionSha1")))
         .containsExactly(ascii(HexFormatHolder.sha1(actual)));
     byte[][] expiredClose = action(original, "CLOSE").arguments().clone();
-    expiredClose[14] = ascii(Long.toString(System.currentTimeMillis() - 1L));
+    expiredClose[14] = ascii(Long.toString(redisTimeMillis() - 1L));
     assertThat(eval(new ScriptCase(original.keys(), expiredClose))).isEqualTo(9L);
     assertThat(eval(original)).isEqualTo(2L);
     assertThat(admin.get(ascii(original.keys()[0]))).containsExactly(actual);
@@ -840,7 +840,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
         .hgetall(ascii(original.keys()[6]))
         .forEach((field, value) -> execution.put(new String(field, StandardCharsets.UTF_8), value));
     byte[][] expired = action(original, "CLOSE").arguments().clone();
-    expired[14] = ascii(Long.toString(System.currentTimeMillis() - 1L));
+    expired[14] = ascii(Long.toString(redisTimeMillis() - 1L));
     var late = new ScriptCase(original.keys(), expired);
     assertThat(eval(late)).isEqualTo(-1L);
     assertHash(original.keys()[6], execution);
@@ -854,7 +854,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     assertThat(admin.sismember(ascii(original.keys()[3]), ascii(SESSION))).isTrue();
     for (String key : original.keys()) assertThat(admin.pttl(ascii(key))).isEqualTo(-1L);
     byte[][] fresh = action(original, "CLOSE").arguments().clone();
-    fresh[14] = ascii(Long.toString(System.currentTimeMillis() + 5000L));
+    fresh[14] = ascii(Long.toString(redisTimeMillis() + 5000L));
     assertThat(eval(new ScriptCase(original.keys(), fresh))).isEqualTo(4L);
     execution.put("state", ascii("CLOSED"));
     assertHash(original.keys()[6], execution);
