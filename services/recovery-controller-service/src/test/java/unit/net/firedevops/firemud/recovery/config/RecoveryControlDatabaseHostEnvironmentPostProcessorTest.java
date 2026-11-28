@@ -529,6 +529,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   @ParameterizedTest
   @CsvSource({
     "spring.flyway.execute-in-transaction, false",
+    "spring.flyway.group, true",
     "spring.flyway.validate-on-migrate, false",
     "spring.flyway.validate-on-migrate, ''",
     "spring.datasource.hikari.connection-test-query, SELECT 1",
@@ -560,6 +561,7 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
     var environment =
         fixtureEnvironment()
             .withProperty("spring.flyway.execute-in-transaction", "true")
+            .withProperty("spring.flyway.group", "false")
             .withProperty("spring.flyway.validate-on-migrate", "true")
             .withProperty("spring.datasource.hikari.connection-test-query", " \t")
             .withProperty("spring.flyway.skip-default-resolvers", "false")

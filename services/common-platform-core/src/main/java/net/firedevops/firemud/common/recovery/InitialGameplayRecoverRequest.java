@@ -20,6 +20,7 @@ public record InitialGameplayRecoverRequest(
   public static final String ACTION_FAMILY_SCHEMA_VERSION = "1";
   public static final String TARGET_OWNER = "recovery-controller-service";
   public static final int MAX_EVIDENCE_REFERENCE_BYTES = 512;
+  public static final int MAX_STORAGE_IDENTITY_BYTES = 256;
 
   public InitialGameplayRecoverRequest {
     controlPlaneRequestId = uuid(controlPlaneRequestId);
@@ -68,6 +69,9 @@ public record InitialGameplayRecoverRequest(
       gameInstanceUuid = uuid(gameInstanceUuid);
       tenantAssociationOperationId = uuid(tenantAssociationOperationId);
       worldSlug = text(worldSlug, 128);
+      if (worldSlug.codePoints().anyMatch(InitialGameplayRecoverRequest::isNoncharacter)) {
+        throw new IllegalArgumentException("World slug must not contain Unicode noncharacters");
+      }
       launchControlPlaneRequestId = uuid(launchControlPlaneRequestId);
       launchDescriptorId = exactSelector(launchDescriptorId, 256, "Launch descriptor");
       descriptorRequestDigest = digest(descriptorRequestDigest);
@@ -92,7 +96,7 @@ public record InitialGameplayRecoverRequest(
           "spiffe://firemud/ns/" + targetNamespace + "/sa/game-session-service")) {
         throw new IllegalArgumentException("Expected same-namespace Game Session peer selector");
       }
-      storageIdentity = journalSelector(storageIdentity, 256);
+      storageIdentity = journalSelector(storageIdentity, MAX_STORAGE_IDENTITY_BYTES);
       storageRevision = journalSelector(storageRevision, 128);
       bindingDigest = digest(bindingDigest);
     }

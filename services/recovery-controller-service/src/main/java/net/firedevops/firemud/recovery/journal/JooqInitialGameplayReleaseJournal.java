@@ -96,6 +96,10 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     if (!Normalizer.isNormalized(scope.evidenceRef(), Normalizer.Form.NFC)) {
       throw new IllegalArgumentException("Operation evidence reference must be NFC");
     }
+    if (GameTenantCreationDigest.utf8ByteLength(scope.peerStorageBinding().storageIdentity())
+        > InitialGameplayRecoverRequest.MAX_STORAGE_IDENTITY_BYTES) {
+      throw new IllegalArgumentException("Operation storage identity exceeds its UTF-8 limit");
+    }
     String scopeDigest = tupleCodec.digest(scope);
     JSONB scopePayload = JSONB.valueOf(tupleCodec.toJson(scope));
     JSONB bindingPayload = JSONB.valueOf(tupleCodec.toJson(scope.peerStorageBinding()));
@@ -760,12 +764,18 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               }
               if (operation.phase() == Phase.FINALIZED
                   && current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
-                  && stored != null
-                  && readback.equals(
-                      latestPreparationObservation(
-                          tx, stored, current, requireReadbackReceipt(stored, current)))) {
-                requireTerminalReplayWithinAttempt(readback, stored, now);
-                return operation;
+                  && stored != null) {
+                EffectReadback latest =
+                    latestPreparationObservation(
+                        tx, stored, current, requireReadbackReceipt(stored, current));
+                // The exact handoff is already durable. A refresh that would have advanced the
+                // observation floor while releasing has no effect after finalization.
+                if (readback.equals(latest)
+                    || (readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL
+                        && readback.observedAt().isAfter(latest.observedAt()))) {
+                  requireTerminalReplayWithinAttempt(readback, stored, now);
+                  return operation;
+                }
               }
               if (current.effect().kind() == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF
                   && stored != null

@@ -403,13 +403,16 @@ def recovery_input_issues(snapshot: Snapshot) -> list[str]:
     for path in sorted(snapshot):
         if path.startswith(RECOVERY_MAIN_JAVA_ROOT) and path.endswith(".java"):
             source = snapshot[path].decode("utf-8", errors="replace")
-            if re.search(
-                r"(?<![\w$])(?:JavaMigration|BaseJavaMigration)(?![\w$])",
-                java_code_tokens(source),
-            ):
+            tokens = java_code_tokens(source)
+            if re.search(r"(?<![\w$])(?:JavaMigration|BaseJavaMigration)(?![\w$])", tokens):
                 issues.append(
                     f"{path}: Recovery JavaMigration classes and beans are unsupported; "
                     "migration version authority must remain SQL-only"
+                )
+            if re.search(r"(?<![\w$])FlywayMigrationStrategy(?![\w$])", tokens):
+                issues.append(
+                    f"{path}: Recovery FlywayMigrationStrategy beans are unsupported; "
+                    "packaged SQL must use the default Flyway initializer"
                 )
         if snapshot[path] == SYMLINK_SNAPSHOT and (
             path in RECOVERY_MIGRATION_ANCESTORS or path.startswith(RECOVERY_MIGRATION_ROOTS)
@@ -734,23 +737,9 @@ def recovery_flyway_config(
                     return None
                 if exclusion_paths & ambiguous:
                     return None
-                # Boot binds bracketed list indices. YAML integer map keys also
-                # flatten to bracketed indices, unlike string keys such as "0".
-                if exclusion_property in exclusion_paths:
-                    exclusion_value = properties[exclusion_property]
-                    if exclusion_paths != {exclusion_property}:
-                        return None
-                    if isinstance(exclusion_value, dict):
-                        indices = range(len(exclusion_value))
-                        if (not exclusion_value or any(type(key) is not int for key in exclusion_value)
-                                or set(exclusion_value) != set(indices)):
-                            return None
-                        exclusion_value = [exclusion_value[index] for index in indices]
-                else:
-                    indexed_paths = [f"{exclusion_property}[{index}]" for index in range(len(exclusion_paths))]
-                    if exclusion_paths != set(indexed_paths):
-                        return None
-                    exclusion_value = [properties[path] for path in indexed_paths]
+                if not decode_indexed_string_list(properties, ambiguous, exclusion_property):
+                    return None
+                exclusion_value = properties[exclusion_property]
                 if exclusion_value is None:
                     # An explicit null scalar clears a lower-priority exclusion list.
                     exclusion_value = []
@@ -788,7 +777,7 @@ def recovery_flyway_config(
                                  "spring.flyway.sqlmigrationseparator",
                                  "spring.flyway.repeatablesqlmigrationprefix",
                                  "spring.flyway.skipdefaultresolvers", "spring.flyway.executeintransaction",
-                                 "spring.flyway.mixed",
+                                 "spring.flyway.mixed", "spring.flyway.group",
                                  "spring.flyway.skipexecutingmigrations",
                                  "spring.flyway.dryrunoutput",
                                  "spring.flyway.encoding", "spring.flyway.detectencoding",
@@ -883,6 +872,8 @@ def recovery_flyway_config(
                 not isinstance(pool_sql, str) or pool_sql.strip(JAVA_TRIM_CHARACTERS)):
             return None
     if spring_boolean(flyway.get("mixed", False)) is not False:
+        return None
+    if spring_boolean(flyway.get("group", False)) is not False:
         return None
     target = flyway.get("target", "latest")
     if not isinstance(target, str) or target.casefold() != "latest":
@@ -1250,6 +1241,13 @@ def run_self_test() -> None:
             b"@Bean JavaMigration recoveryMigration() { return migration; }\n"
         ),
     }, recovery_history, "JavaMigration classes and beans are unsupported")
+    check("Recovery migration strategy cannot replace the default Flyway initializer", {
+        **recovery_history,
+        recovery_java_migration: (
+            b"import org.springframework.boot.flyway.autoconfigure.FlywayMigrationStrategy;\n"
+            b"@Bean FlywayMigrationStrategy recoveryStrategy() { return migrationStrategy; }\n"
+        ),
+    }, recovery_history, "FlywayMigrationStrategy beans are unsupported")
     check("Recovery Java migration in a sibling package cannot override SQL version authority", {
         **recovery_history,
         recovery_java_migration: (
@@ -1554,6 +1552,8 @@ def run_self_test() -> None:
         ("spring.datasource.hikari.username", "${OTHER_FIXTURE_USER}", "historical effective migration no longer applied"),
         ("spring.datasource.hikari.password", "literal-test-value", "historical effective migration no longer applied"),
         ("spring.flyway.validate-on-migrate", "false", "historical effective migration no longer applied"),
+        ("spring.flyway.group", "true", "historical effective migration no longer applied"),
+        ("spring.flyway.group", "false", None),
         ("spring.datasource.hikari.connection-test-query", "SELECT 1",
          "historical effective migration no longer applied"),
     ):
@@ -1887,6 +1887,7 @@ def run_self_test() -> None:
     redis_auto_configuration = b"org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration"
     for exclusion_key, expected in (
         (b"spring.autoconfigure.exclude[0]: ", None),
+        (b"spring.autoconfigure.exclude:\n  '[0]': ", None),
         (b"spring.autoconfigure.exclude.0: ", "historical effective migration no longer applied"),
         (b"spring.autoconfigure.exclude:\n  '0': ", "historical effective migration no longer applied"),
     ):

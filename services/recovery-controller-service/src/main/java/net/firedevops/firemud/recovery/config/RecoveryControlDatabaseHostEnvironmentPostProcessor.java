@@ -157,6 +157,10 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
       throw new SafeOverrideException(
           "spring.flyway placeholder delimiters must not contain runtime substitutions");
     }
+    if (Boolean.TRUE.equals(binder.bind("spring.flyway.group", Boolean.class).orElse(null))) {
+      throw new SafeOverrideException(
+          "spring.flyway.group must be disabled for the recovery migrations");
+    }
     if (Boolean.TRUE.equals(binder.bind("spring.flyway.mixed", Boolean.class).orElse(null))) {
       throw new SafeOverrideException(
           "spring.flyway.mixed must be disabled for the recovery migrations");

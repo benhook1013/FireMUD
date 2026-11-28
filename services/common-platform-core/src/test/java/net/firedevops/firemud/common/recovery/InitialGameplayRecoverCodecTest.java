@@ -58,6 +58,17 @@ class InitialGameplayRecoverCodecTest {
   }
 
   @Test
+  void worldSlugMustContainUnicodeCharactersBeforeHashing() {
+    for (String noncharacter : List.of("\\uFDD0", "\\uD83F\\uDFFF")) {
+      rejects(WIRE.replace("\"world\"", "\"world-" + noncharacter + "\""));
+    }
+    var valid = decode(WIRE.replace("\"world\"", "\"world-\\uD83D\\uDE80\""));
+    assertThat(valid.target().launchAssociation().worldSlug())
+        .isEqualTo("world-" + Character.toString(0x1f680));
+    assertThat(InitialGameplayRecoverCodec.mutationDigest(valid)).isNotEqualTo(DIGEST);
+  }
+
+  @Test
   void evidenceReferenceUsesTheExactUtf8ByteLimit() {
     String boundary = "é".repeat(256);
     assertThat(decode(WIRE.replace("\"evidence\"", "\"" + boundary + "\"")).target().evidenceRef())
