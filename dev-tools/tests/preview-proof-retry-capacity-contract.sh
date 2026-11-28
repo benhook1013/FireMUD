@@ -43,7 +43,13 @@ snapshot=$(holder 30 | jq -c '.binaryData={one:"YQ==",two:"YWI=",three:"YWJj"}')
 test_snapshot="$snapshot"
 preview_retry_holder_headroom "$test_snapshot" | jq -e '
  . == {usedBytes:67,hardLimitBytes:1048576,remainingBytes:1048509}' >/dev/null
-read_preview_retry_holder() { printf '%s\n' "$test_snapshot"; }
+read_fail=false
+# Used indirectly by report_preview_retry_holder_headroom from the sourced helper.
+# shellcheck disable=SC2329
+read_preview_retry_holder() {
+  [[ "$read_fail" == false ]] || return 1
+  printf '%s\n' "$test_snapshot"
+}
 ordinary_report=$(report_preview_retry_holder_headroom holder)
 grep -F 'uses 67/1048576 stored-value bytes' <<<"$ordinary_report" >/dev/null
 if grep -F 'Warning:' <<<"$ordinary_report" >/dev/null; then exit 1; fi
@@ -58,13 +64,6 @@ test "$before_sha" = "$after_sha"
 
 snapshot=$(holder 30 | jq -c '.binaryData={one:"not-base64"}')
 test_snapshot="$snapshot"
-read_fail=false
-# Used indirectly by report_preview_retry_holder_headroom from the sourced helper.
-# shellcheck disable=SC2329
-read_preview_retry_holder() {
-  [[ "$read_fail" == false ]] || return 1
-  printf '%s\n' "$test_snapshot"
-}
 unknown_report=$(report_preview_retry_holder_headroom holder)
 grep -F 'headroom: unknown' <<<"$unknown_report" >/dev/null
 read_fail=true
