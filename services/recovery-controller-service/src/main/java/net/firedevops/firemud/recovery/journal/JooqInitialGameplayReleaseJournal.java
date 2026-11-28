@@ -757,25 +757,13 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                 requireTerminalReplayWithinAttempt(readback, stored, now);
                 return operation;
               }
-              if (operation.phase() == Phase.RELEASING
-                  && current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED) {
-                retainPreparationObservation(tx, current, stored, readback, readbackDigest, now);
+              if (current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
+                  && stored != null
+                  && (operation.phase() == Phase.RELEASING
+                      || operation.phase() == Phase.FINALIZED)) {
+                reconcilePreparationObservation(
+                    tx, current, stored, readback, readbackDigest, now, operation.phase());
                 return operation;
-              }
-              if (operation.phase() == Phase.FINALIZED
-                  && current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
-                  && stored != null) {
-                EffectReadback latest =
-                    latestPreparationObservation(
-                        tx, stored, current, requireReadbackReceipt(stored, current));
-                // The exact handoff is already durable. A refresh that would have advanced the
-                // observation floor while releasing has no effect after finalization.
-                if (readback.equals(latest)
-                    || (readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL
-                        && readback.observedAt().isAfter(latest.observedAt()))) {
-                  requireTerminalReplayWithinAttempt(readback, stored, now);
-                  return operation;
-                }
               }
               if (current.effect().kind() == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF
                   && stored != null
@@ -1025,13 +1013,14 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   }
 
   // The operation lock serializes the observation floor with new handoff claims.
-  private void retainPreparationObservation(
+  private void reconcilePreparationObservation(
       DSLContext tx,
       OutboxEntry preparation,
       Record stored,
       EffectReadback readback,
       String readbackDigest,
-      Instant now) {
+      Instant now,
+      Phase phase) {
     EffectReadback acknowledgement = requireReadbackReceipt(stored, preparation);
     EffectReadback previous =
         latestPreparationObservation(tx, stored, preparation, acknowledgement);
@@ -1043,18 +1032,29 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       throw conflict(
           "preparation readback must be newer than the retained same-attempt observation");
     }
-    requireQualifiedWriteSession(tx);
-    if (readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
+    boolean definitive = readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL;
+    if (definitive) {
       requireSuccessfulReadbackState(readback, preparation.effect().kind());
-      if (acknowledgement.readbackIdentity().equals(readback.readbackIdentity())
-          || tx.execute(
-                  "INSERT INTO recovery_control.initial_gameplay_release_preparation_receipt"
-                      + " (outbox_id, identity_digest) VALUES (?, ?) ON CONFLICT DO NOTHING",
-                  preparation.outboxId(),
-                  tupleCodec.digest(readback.readbackIdentity()))
-              != 1) {
+      if (acknowledgement.readbackIdentity().equals(readback.readbackIdentity())) {
         throw conflict("preparation readback identity already has an observation");
       }
+    }
+    if (phase == Phase.FINALIZED) {
+      // A valid refresh can finish after the exact handoff is durable. Preserve both receipts.
+      if (definitive && hasRetainedPreparationReceipt(tx, preparation, readback)) {
+        throw conflict("preparation readback identity already has an observation");
+      }
+      return;
+    }
+    requireQualifiedWriteSession(tx);
+    if (definitive
+        && tx.execute(
+                "INSERT INTO recovery_control.initial_gameplay_release_preparation_receipt"
+                    + " (outbox_id, identity_digest) VALUES (?, ?) ON CONFLICT DO NOTHING",
+                preparation.outboxId(),
+                tupleCodec.digest(readback.readbackIdentity()))
+            != 1) {
+      throw conflict("preparation readback identity already has an observation");
     }
     int changed =
         tx.execute(
@@ -1097,18 +1097,23 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     if (observation.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
       requireSuccessfulReadbackState(observation, preparation.effect().kind());
       if (acknowledgement.readbackIdentity().equals(observation.readbackIdentity())
-          || context.fetchOne(
-                  """
-                  SELECT 1 FROM recovery_control.initial_gameplay_release_preparation_receipt
-                  WHERE outbox_id = ? AND identity_digest = ?
-                  """,
-                  preparation.outboxId(),
-                  tupleCodec.digest(observation.readbackIdentity()))
-              == null) {
+          || !hasRetainedPreparationReceipt(context, preparation, observation)) {
         throw conflict("retained preparation readback has no exact historical identity");
       }
     }
     return observation;
+  }
+
+  private boolean hasRetainedPreparationReceipt(
+      DSLContext context, OutboxEntry preparation, EffectReadback readback) {
+    return context.fetchOne(
+            """
+            SELECT 1 FROM recovery_control.initial_gameplay_release_preparation_receipt
+            WHERE outbox_id = ? AND identity_digest = ?
+            """,
+            preparation.outboxId(),
+            tupleCodec.digest(readback.readbackIdentity()))
+        != null;
   }
 
   private <T> T independentTransaction(

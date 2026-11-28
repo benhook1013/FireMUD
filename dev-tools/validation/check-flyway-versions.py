@@ -597,7 +597,10 @@ def recovery_flyway_config(
         for key, child in value.items():
             if not isinstance(key, str):
                 continue
-            parts = tuple(re.sub(r"[-_]", "", part).lower() for part in key.split("."))
+            parts = []
+            for part in key.split("."):
+                name, bracket, index = part.partition("[")
+                parts.append(re.sub(r"[-_]", "", name).lower() + bracket + index)
             child_prefix = (*prefix, *parts)
             if prefix and key.startswith("["):
                 child_prefix = (*prefix[:-1], prefix[-1] + parts[0], *parts[1:])
@@ -702,6 +705,8 @@ def recovery_flyway_config(
             )
             if (("spring.profiles" in properties and not isinstance(properties["spring.profiles"], dict))
                     or "spring.profiles" in ambiguous
+                    or (isinstance(properties.get("spring.profiles"), dict)
+                        and any(type(key) is int for key in properties["spring.profiles"]))
                     or any(obsolete_profile_index.match(path) for path in properties)):
                 return None
             activation = properties.get("spring.config.activate")
@@ -765,6 +770,8 @@ def recovery_flyway_config(
             ignore_patterns_property = "spring.flyway.ignoremigrationpatterns"
             if not decode_indexed_string_list(properties, ambiguous, ignore_patterns_property):
                 return None
+            if not decode_indexed_string_list(properties, ambiguous, init_sqls):
+                return None
             exact_guard_paths = {auto_configuration_switch, pool_init_sql, pool_test_query,
                                  datasource_type, *credential_paths, *driver_paths,
                                  recovery_database_host, RECOVERY_DATABASE_PORT,
@@ -780,6 +787,7 @@ def recovery_flyway_config(
                                  "spring.flyway.mixed", "spring.flyway.group",
                                  "spring.flyway.skipexecutingmigrations",
                                  "spring.flyway.dryrunoutput",
+                                 "spring.flyway.tablespace",
                                  "spring.flyway.encoding", "spring.flyway.detectencoding",
                                  "spring.flyway.ignoremigrationpatterns",
                                  "spring.flyway.callbacklocations", "spring.flyway.initsqls",
@@ -880,6 +888,9 @@ def recovery_flyway_config(
         # Qualify the complete packaged history, not a pinned migration prefix.
         return None
     if "dryrunoutput" in flyway:
+        return None
+    if "tablespace" in flyway:
+        # The checker cannot establish that an explicit history tablespace exists.
         return None
     encoding = flyway.get("encoding", "UTF-8")
     # The pinned Java UTF-8 charset deliberately has a different alias set from Python.
@@ -1539,6 +1550,16 @@ def run_self_test() -> None:
         recovery_config: recovery_settings + b"    init-sqls: [SET application_name = fixture]\n",
         recovery_config_override: b"spring.flyway.init-sqls:\n",
     }, recovery_history, None)
+    check("higher-priority empty Flyway init SQL replaces an indexed root list", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    init-sqls[0]: SET application_name = fixture\n",
+        recovery_config_override: b"spring.flyway.init-sqls: []\n",
+    }, recovery_history, None)
+    check("higher-priority indexed Flyway init SQL remains unsupported", {
+        **recovery_history,
+        recovery_config: recovery_settings + b"    init-sqls: []\n",
+        recovery_config_override: b"spring.flyway.init-sqls[0]: SET application_name = fixture\n",
+    }, recovery_history, "non-empty connection init SQL")
     for property_name, value, result in (
         ("spring.datasource.type", "com.zaxxer.hikari.HikariDataSource", None),
         ("spring.datasource.type", "org.springframework.jdbc.datasource.DriverManagerDataSource",
@@ -1552,6 +1573,7 @@ def run_self_test() -> None:
         ("spring.datasource.hikari.username", "${OTHER_FIXTURE_USER}", "historical effective migration no longer applied"),
         ("spring.datasource.hikari.password", "literal-test-value", "historical effective migration no longer applied"),
         ("spring.flyway.validate-on-migrate", "false", "historical effective migration no longer applied"),
+        ("spring.flyway.tablespace", "recovery_fast", "historical effective migration no longer applied"),
         ("spring.flyway.group", "true", "historical effective migration no longer applied"),
         ("spring.flyway.group", "false", None),
         ("spring.datasource.hikari.connection-test-query", "SELECT 1",
@@ -1573,6 +1595,10 @@ def run_self_test() -> None:
         check("Flyway connection init SQL is unsupported", {
             **recovery_history, recovery_config: recovery_settings + override,
         }, recovery_history, "non-empty connection init SQL")
+    check("bracketed Flyway location index text is preserved", {
+        **recovery_history,
+        recovery_config_override: b"spring.flyway.locations[0_]: classpath:db/recovery-control-migration\n",
+    }, recovery_history, "historical effective migration no longer applied")
     for baseline_disabled in (b"false", b"'FaLsE'"):
         check("explicitly disabled recovery auto-baselining", {
             **recovery_history,
@@ -1973,6 +1999,7 @@ def run_self_test() -> None:
     for obsolete_profiles in (
         b"spring.profiles[0]: dev\n",
         b"spring:\n  profiles:\n    '0': dev\n",
+        b"spring:\n  profiles:\n    0: dev\n",
     ):
         check("obsolete indexed spring.profiles fails before unrelated-document skip", {
             **recovery_history,

@@ -16,6 +16,11 @@ import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.Scope;
 
 /** Durable owner store for the initial-gameplay-release operation and effects. */
 public interface InitialGameplayReleaseJournal {
+  /**
+   * Stores the controller-issued lock identity when creating an operation. An exact scope replay
+   * returns the operation with its originally persisted identity. This internal journal call
+   * presumes creation authority. Subsequent protected operations require the persisted credential.
+   */
   Operation create(Scope scope, UUID controllerIssuedLockIdentity);
 
   Optional<Operation> find(UUID operationId);

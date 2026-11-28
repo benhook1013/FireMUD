@@ -54,7 +54,11 @@ class RecoveryJournalHealthIndicatorTest {
       when(rows.getBoolean(1)).thenReturn(true);
     }
 
-    var indicator = new RecoveryJournalHealthIndicator(source);
+    boolean preserveShorterTimeout = originalTimeout == expectedTimeout;
+    var indicator =
+        preserveShorterTimeout
+            ? new RecoveryJournalHealthIndicator(source, TimeUnit.SECONDS.toNanos(15))
+            : new RecoveryJournalHealthIndicator(source);
     try {
       var health = indicator.health();
 
@@ -62,7 +66,12 @@ class RecoveryJournalHealthIndicatorTest {
       var sequence = inOrder(connection, statement);
       sequence
           .verify(connection)
-          .setNetworkTimeout(any(), intThat(timeout -> timeout > 0 && timeout <= expectedTimeout));
+          .setNetworkTimeout(
+              any(),
+              intThat(timeout ->
+                  preserveShorterTimeout
+                      ? timeout == expectedTimeout
+                      : timeout > 0 && timeout <= expectedTimeout));
       sequence.verify(connection).prepareStatement(anyString());
       sequence.verify(statement).setQueryTimeout(2);
       sequence.verify(statement).executeQuery();
@@ -122,9 +131,7 @@ class RecoveryJournalHealthIndicatorTest {
     when(statement.executeQuery())
         .thenAnswer(ignored -> {
           queryStarted.countDown();
-          if (!releaseQuery.await(5, TimeUnit.SECONDS)) {
-            throw new SQLException("fixture query was not released");
-          }
+          releaseQuery.await();
           return rows;
         });
     when(rows.next()).thenReturn(true);
