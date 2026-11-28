@@ -58,7 +58,7 @@ services:
       <<: *local-java-env
 
   redisinsight:
-    image: redis/redisinsight:3.10@sha256:7aea9c96ee8e34518d7d692c02a081f6e46ff9230e7779212aa10a65c423c18a
+    image: redis/redisinsight:3.10@sha256:2c4684628233e6f3aee1d8279b54cd19f420afb64b8ce6d9cc477919c234373d
     mem_limit: 256m
     ports:
       - "8001:8001"
