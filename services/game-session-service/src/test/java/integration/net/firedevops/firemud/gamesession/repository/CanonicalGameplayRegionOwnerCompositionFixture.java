@@ -32,6 +32,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
@@ -1540,6 +1541,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
             dsl,
             redis.ownerClient(),
+            redis.ownerUri,
             scriptCatalog,
             stableSource,
             worldRegionResolver,
