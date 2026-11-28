@@ -1222,6 +1222,16 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
     long continuityExpiresAt = actualAdmissionAt + 300000L;
     String authenticatedReadback =
         sha256("authenticated-final-readback".getBytes(StandardCharsets.UTF_8));
+    assertThatThrownBy(() ->
+            context
+                .transaction()
+                .execute(status ->
+                    repository.confirmFinalAdmission(
+                        committed, databaseNow - 2L, databaseNow - 1L, authenticatedReadback)))
+        .hasMessageContaining("Original-new bound gameplay issuance is unavailable");
+    var unconfirmed =
+        context.transaction().execute(status -> repository.readByLease(committed.leaseId()));
+    assertThat(unconfirmed.confirmedAdmissionAtMillis()).isNull();
     var confirmed =
         context
             .transaction()

@@ -18,7 +18,7 @@ import net.firedevops.firemud.common.security.SessionContext;
 /** Sole producer of the receiver's private exact-method TLS caller assertion. */
 public final class AccountTenantCapacityWorkloadGuard implements ServerInterceptor {
   private final Context.Key<String> caller = Context.key("tenant-capacity-authenticated-peer");
-  private final Context.Key<String> admissionDenialReader =
+  private final Context.Key<String> admissionOutcomeReader =
       Context.key("tenant-capacity-denial-reader");
   private final String gameSession;
   private final Set<String> allowed;
@@ -40,8 +40,8 @@ public final class AccountTenantCapacityWorkloadGuard implements ServerIntercept
     return value;
   }
 
-  public String requireAdmissionDenialReader() {
-    String value = admissionDenialReader.get();
+  public String requireAdmissionOutcomeReader() {
+    String value = admissionOutcomeReader.get();
     if (!gameSession.equals(value) || ambient()) throw Status.UNAUTHENTICATED.asRuntimeException();
     return value;
   }
@@ -62,12 +62,12 @@ public final class AccountTenantCapacityWorkloadGuard implements ServerIntercept
       return Contexts.interceptCall(
           Context.current().withValue(caller, workload), call, headers, next);
     }
-    if (AccountServiceGrpc.getReadTenantCapacityAdmissionDenialMethod()
+    if (AccountServiceGrpc.getReadTenantCapacityAdmissionOutcomeMethod()
             .getFullMethodName()
             .equals(method)
         && gameSession.equals(workload)) {
       return Contexts.interceptCall(
-          Context.current().withValue(admissionDenialReader, workload), call, headers, next);
+          Context.current().withValue(admissionOutcomeReader, workload), call, headers, next);
     }
     return deny(call, Status.PERMISSION_DENIED);
   }

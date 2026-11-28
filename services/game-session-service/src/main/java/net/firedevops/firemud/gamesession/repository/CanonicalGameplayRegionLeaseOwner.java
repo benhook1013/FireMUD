@@ -157,6 +157,8 @@ final class CanonicalGameplayRegionLeaseOwner {
                   preparation.sourceDigest()),
               clock.instant());
     } else {
+      // This slice can reuse current owner custody but cannot issue a replacement grant.
+      if (existingRegionInstallation == null) throw unavailable();
       preparation =
           statusRepository
               .findTimelinePreparation(source)
@@ -174,28 +176,18 @@ final class CanonicalGameplayRegionLeaseOwner {
                   incarnation)
               : statusRepository.matchesInstalledTimelineInitialization(
                   preparation, source, incarnation);
-      boolean resumablePhase =
-          sameInitializationAttempt
-              ? preparation.phase()
-                      == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
-                          .INSTALLED
-                  || preparation.phase()
-                      == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
-                          .REDIS_INITIALIZED
-              : preparation.phase()
-                  == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
-                      .INSTALLED;
-      if (!matchesInitialization || !resumablePhase) {
+      // An installation handle is issued only after the installed phase is durable.
+      // A partial SQL/Redis initialization remains held for original owner recovery.
+      if (!matchesInitialization
+          || preparation.phase()
+              != CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                  .INSTALLED) {
         throw unavailable();
       }
-      if (existingRegionInstallation == null) {
-        grant = redisOwner.acquire(source, expectedRegionEpoch, leaseTtl, runtimeIdentity);
-      } else {
-        requireReusableRegionGrant(
-            existingRegionInstallation, source, incarnation, prior, expectedRegionEpoch);
-        grant = existingRegionInstallation.grant;
-        reusingRegionGrant = true;
-      }
+      requireReusableRegionGrant(
+          existingRegionInstallation, source, incarnation, prior, expectedRegionEpoch);
+      grant = existingRegionInstallation.grant;
+      reusingRegionGrant = true;
     }
     if (reusingRegionGrant) {
       redisOwner.requireGrantScope(

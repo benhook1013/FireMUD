@@ -52,7 +52,6 @@ import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenc
 import net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClient;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
-import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayAccountMemberRepairRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionBindingBridgeRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
@@ -593,8 +592,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         physical);
   }
 
-  /** Reacquires a real region grant after the bridge ACK and proves that the ACK remains closed. */
-  public static ChangedGrantProof installAndBridgeThenChangedGrantRefuses(
+  /** Proves that refusing an expired grant replacement preserves the acknowledged bridge. */
+  public static ExpiredGrantProof installAndBridgeThenExpiredGrantReplacementRefuses(
       DSLContext dsl,
       String redisHost,
       int redisPort,
@@ -603,7 +602,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient)
       throws Exception {
-    var capture = new AtomicReference<ChangedGrantProof>();
+    var capture = new AtomicReference<ExpiredGrantProof>();
     installAndBridgeInternal(
         dsl,
         redisHost,
@@ -614,7 +613,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         entityReferenceClient,
         null,
         capture);
-    return Objects.requireNonNull(capture.get(), "changed-grant bridge proof");
+    return Objects.requireNonNull(capture.get(), "expired-grant bridge proof");
   }
 
   /**
@@ -951,7 +950,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
       SecondBinding secondBinding,
-      AtomicReference<ChangedGrantProof> changedGrantProofCapture)
+      AtomicReference<ExpiredGrantProof> expiredGrantProofCapture)
       throws Exception {
     return installAndBridgeInternal(
         dsl,
@@ -962,7 +961,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         worldRegionResolver,
         entityReferenceClient,
         secondBinding,
-        changedGrantProofCapture,
+        expiredGrantProofCapture,
         null,
         null,
         null);
@@ -977,7 +976,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
       SecondBinding secondBinding,
-      AtomicReference<ChangedGrantProof> changedGrantProofCapture,
+      AtomicReference<ExpiredGrantProof> expiredGrantProofCapture,
       CanonicalPlayerCreatedRuntimeReferenceClient createdReferenceClient,
       java.util.function.Consumer<ExistingBinding> afterBridge,
       BridgeSqlPhaseRunner phaseRunner)
@@ -986,6 +985,11 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     UUID sessionId = UUID.randomUUID();
     var resolved = worldRegionResolver.resolve(worldRequest);
     requireExactCurrentTarget(worldRequest, currentTarget);
+    var secondResolved =
+        secondBinding == null ? null : worldRegionResolver.resolve(secondBinding.worldRequest());
+    if (secondBinding != null) {
+      requireExactCurrentTarget(secondBinding.worldRequest(), secondBinding.currentTarget());
+    }
     var identity =
         new CanonicalGameplayBindingIdentity(
             UUID.fromString(worldRequest.getCanonicalAccountUuid()),
@@ -1119,9 +1123,9 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         afterBridge.accept(new ExistingBinding(bridgeOwner, installation, firstAcknowledgement));
       }
       if (secondBinding == null) {
-        if (changedGrantProofCapture != null) {
-          changedGrantProofCapture.set(
-              reacquireGrantAfterAcknowledgement(
+        if (expiredGrantProofCapture != null) {
+          expiredGrantProofCapture.set(
+              refuseReplacementAfterAcknowledgement(
                   dsl,
                   redis,
                   scriptCatalog,
@@ -1130,8 +1134,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                   bridgeEntityReferenceClient,
                   worldRequest,
                   firstProof,
-                  installation,
-                  status));
+                  installation));
         }
         return new TwoBindingProof(firstProof, null, null, true, true, true, true, true);
       }
@@ -1159,9 +1162,6 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       byte[] firstMetaDigest =
           redis.admin().hget(ascii(initialMetaKey), ascii("first_timeline_source_digest"));
 
-      var secondResolved =
-          secondBinding.worldRegionResolver().resolve(secondBinding.worldRequest());
-      requireExactCurrentTarget(secondBinding.worldRequest(), secondBinding.currentTarget());
       UUID secondTransitionId = UUID.randomUUID();
       UUID secondSessionId = UUID.randomUUID();
       var secondIdentity =
@@ -1208,32 +1208,11 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               secondPrepared.bindingGeneration(),
               null,
               secondBinding.currentTarget()));
-      CanonicalGameplayRegionLeaseOwner.Installation secondInstallation;
-      CanonicalGameplayRegionBindingBridgeOwner secondBridgeOwner = bridgeOwner;
-      if (secondBinding.freshGrant()) {
-        // The first private handle is deliberately not reused. Expire only this test-owned lease.
-        redis.admin().pexpire(redisKey, 0L);
-        secondBridgeOwner =
-            CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
-                dsl,
-                redis.ownerClient(),
-                scriptCatalog,
-                stableSource,
-                secondBinding.worldRegionResolver(),
-                secondBinding.entityReferenceClient(),
-                runtimeIdentity,
-                Duration.ofSeconds(30),
-                Clock.systemUTC());
-        secondInstallation =
-            secondBridgeOwner.installForTransition(
-                secondTransitionId, secondBinding.worldRequest());
-      } else {
-        secondInstallation =
-            bridgeOwner.installForTransition(
-                installation, secondTransitionId, secondBinding.worldRequest());
-      }
-      var secondAcknowledgement = secondBridgeOwner.bridge(secondInstallation).obligation();
-      var secondLostReplyRetry = secondBridgeOwner.bridge(secondInstallation).obligation();
+      var secondInstallation =
+          bridgeOwner.installForTransition(
+              installation, secondTransitionId, secondBinding.worldRequest());
+      var secondAcknowledgement = bridgeOwner.bridge(secondInstallation).obligation();
+      var secondLostReplyRetry = bridgeOwner.bridge(secondInstallation).obligation();
       requireMaterializedBridgeCaptured(dsl, secondTransitionId);
       if (!secondAcknowledgement.equals(secondLostReplyRetry)
           || secondAcknowledgement.status()
@@ -1317,10 +1296,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               && secondStatus.lastCommittedTickId() == -1L;
       if (!unchangedTimeline
           || !preparationGrantMatchesCurrent
-          || (secondBinding.freshGrant()
-              ? status.leaseTokenCorrelation().equals(secondStatus.leaseTokenCorrelation())
-                  || secondStatus.executorFence().compareTo(status.executorFence()) <= 0
-              : !status.leaseTokenCorrelation().equals(secondStatus.leaseTokenCorrelation()))
+          || !status.leaseTokenCorrelation().equals(secondStatus.leaseTokenCorrelation())
+          || !status.executorFence().equals(secondStatus.executorFence())
           || redis.admin().pttl(redisKey) <= 0L
           || redis.admin().pttl(ascii(initialMetaKey)) != -1L) {
         throw new IllegalStateException(
@@ -1342,7 +1319,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               redis.ownerClient(),
               scriptCatalog,
               stableSource,
-              secondBinding.worldRegionResolver(),
+              worldRegionResolver,
               secondBinding.entityReferenceClient(),
               runtimeIdentity,
               Duration.ofSeconds(30),
@@ -1378,7 +1355,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
           snapshotRegionRedisState(redis, redisKey, initialMetaKey);
       boolean expiredGrantInstallationRejected;
       try {
-        secondBridgeOwner.installForTransition(
+        bridgeOwner.installForTransition(
             secondInstallation, secondTransitionId, secondBinding.worldRequest());
         expiredGrantInstallationRejected = false;
       } catch (IllegalStateException expected) {
@@ -1443,7 +1420,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     };
   }
 
-  private static ChangedGrantProof reacquireGrantAfterAcknowledgement(
+  private static ExpiredGrantProof refuseReplacementAfterAcknowledgement(
       DSLContext dsl,
       RegionRedis redis,
       RedisScriptCatalog scriptCatalog,
@@ -1452,9 +1429,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
       CanonicalInitialPlayerLocationRequest worldRequest,
       Proof acknowledged,
-      CanonicalGameplayRegionLeaseOwner.Installation originalInstallation,
-      CanonicalGameplayRegionRuntimeStatus originalStatus) {
-    String acknowledgedRowBeforeGrant = regionBridgeRowImage(dsl, acknowledged.transitionId());
+      CanonicalGameplayRegionLeaseOwner.Installation originalInstallation) {
     byte[] leaseKey =
         ascii(
             CanonicalGameplayRegionRedisKeys.lease(
@@ -1485,13 +1460,10 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             replacementIdentity,
             Duration.ofSeconds(30),
             Clock.systemUTC());
-    var replacementInstallation =
-        replacementOwner.installForTransition(acknowledged.transitionId(), worldRequest);
-    CanonicalGameplayRegionRuntimeStatus replacementStatus =
-        new CanonicalGameplayRegionRuntimeStatusRepository(dsl)
-            .find(originalInstallation.source)
-            .orElseThrow();
-
+    var source = originalInstallation.source;
+    var sqlBeforeRefusal =
+        snapshotRegionOwnerSqlState(
+            dsl, source.tenantId(), source.gameInstanceId(), source.regionId());
     String acknowledgedRowBeforeRefusal = regionBridgeRowImage(dsl, acknowledged.transitionId());
     Record acknowledgedRow =
         Objects.requireNonNull(
@@ -1499,50 +1471,40 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                 "SELECT * FROM game_session_canonical_binding_region_bridge_obligation"
                     + " WHERE transition_id = ?",
                 acknowledged.transitionId()),
-            "acknowledged bridge row after grant replacement");
-    RegionBridgeRedisState physicalBridgeBeforeRefusal =
+            "acknowledged bridge row before replacement refusal");
+    var physicalBridgeBeforeRefusal =
         snapshotRegionBridgeRedisState(redis, acknowledgedRow, acknowledged.runtimeEntityId());
-    var inventoryBeforeRefusal =
-        new CanonicalGameplayBindingInventoryRepository(dsl).readSnapshot();
+    var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
+    var inventoryBeforeRefusal = inventory.readSnapshot();
+    String metaKey =
+        CanonicalGameplayRegionRedisKeys.meta(
+            source.tenantId(), source.gameInstanceId(), source.regionId());
 
-    boolean bridgeRefused;
+    boolean replacementRefused;
     String refusalMessage;
     try {
-      replacementOwner.bridge(replacementInstallation);
-      bridgeRefused = false;
+      replacementOwner.installForTransition(acknowledged.transitionId(), worldRequest);
+      replacementRefused = false;
       refusalMessage = null;
-    } catch (CanonicalGameplayBindingInventoryConflictException expected) {
-      bridgeRefused = true;
+    } catch (IllegalStateException expected) {
+      replacementRefused = true;
       refusalMessage = expected.getMessage();
     }
 
-    String acknowledgedRowAfterRefusal = regionBridgeRowImage(dsl, acknowledged.transitionId());
-    var acknowledgedRowAfter =
-        Objects.requireNonNull(
-            dsl.fetchOne(
-                "SELECT * FROM game_session_canonical_binding_region_bridge_obligation"
-                    + " WHERE transition_id = ?",
-                acknowledged.transitionId()),
-            "acknowledged bridge row after changed-grant bridge refusal");
-    RegionBridgeRedisState physicalBridgeAfterRefusal =
-        snapshotRegionBridgeRedisState(redis, acknowledgedRowAfter, acknowledged.runtimeEntityId());
-    var inventoryAfterRefusal = new CanonicalGameplayBindingInventoryRepository(dsl).readSnapshot();
-    boolean replacementGrantInstalled =
-        replacementStatus.executorFence().compareTo(acknowledged.executorFence()) > 0
-            && !originalStatus
-                .leaseTokenCorrelation()
-                .equals(replacementStatus.leaseTokenCorrelation())
-            && "region-owner-composition-replacement".equals(replacementStatus.ownerInstanceId());
-    return new ChangedGrantProof(
+    return new ExpiredGrantProof(
         acknowledged,
-        replacementStatus.executorFence(),
-        replacementGrantInstalled,
-        bridgeRefused,
+        replacementRefused,
         refusalMessage,
-        acknowledgedRowBeforeGrant.equals(acknowledgedRowBeforeRefusal)
-            && acknowledgedRowBeforeRefusal.equals(acknowledgedRowAfterRefusal),
-        inventoryBeforeRefusal.equals(inventoryAfterRefusal),
-        physicalBridgeBeforeRefusal.equals(physicalBridgeAfterRefusal));
+        sqlBeforeRefusal.equals(
+            snapshotRegionOwnerSqlState(
+                dsl, source.tenantId(), source.gameInstanceId(), source.regionId())),
+        acknowledgedRowBeforeRefusal.equals(regionBridgeRowImage(dsl, acknowledged.transitionId())),
+        inventoryBeforeRefusal.equals(inventory.readSnapshot()),
+        physicalBridgeBeforeRefusal.equals(
+                snapshotRegionBridgeRedisState(
+                    redis, acknowledgedRow, acknowledged.runtimeEntityId()))
+            && "none".equals(redis.admin().type(leaseKey))
+            && redis.admin().pttl(ascii(metaKey)) == -1L);
   }
 
   private static String regionBridgeRowImage(DSLContext dsl, UUID transitionId) {
@@ -2061,13 +2023,14 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         .admin()
         .hgetall(ascii(metaKey))
         .forEach((field, value) -> metadata.put(asciiString(field), asciiString(value)));
+    byte[] sessionBindingKey =
+        ascii(
+            CanonicalGameplayRegionRedisKeys.sessionBinding(
+                tenantId, gameInstanceId, regionId, runtimeEntityId));
     Map<String, String> sessionBinding = new LinkedHashMap<>();
     redis
         .admin()
-        .hgetall(
-            ascii(
-                CanonicalGameplayRegionRedisKeys.sessionBinding(
-                    tenantId, gameInstanceId, regionId, runtimeEntityId)))
+        .hgetall(sessionBindingKey)
         .forEach((field, value) -> sessionBinding.put(asciiString(field), asciiString(value)));
     return new RegionBridgeRedisState(
         asciiString(
@@ -2078,7 +2041,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
                         CanonicalGameplayRegionRedisKeys.lease(
                             tenantId, gameInstanceId, regionId)))),
         Map.copyOf(metadata),
-        Map.copyOf(sessionBinding));
+        Map.copyOf(sessionBinding),
+        redis.admin().pexpiretime(sessionBindingKey));
   }
 
   private static Set<String> snapshotAccountMembers(RegionRedis redis, UUID accountId) {
@@ -2130,17 +2094,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
   public record SecondBinding(
       CanonicalInitialPlayerLocationRequest worldRequest,
       CanonicalPlayableTarget currentTarget,
-      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
-      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
-      boolean freshGrant) {
-    public SecondBinding(
-        CanonicalInitialPlayerLocationRequest worldRequest,
-        CanonicalPlayableTarget currentTarget,
-        CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
-        CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient) {
-      this(worldRequest, currentTarget, worldRegionResolver, entityReferenceClient, false);
-    }
-  }
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient) {}
 
   public record TwoBindingProof(
       Proof first,
@@ -2156,7 +2110,10 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       String leaseType, String leaseValue, Map<String, String> metadata) {}
 
   private record RegionBridgeRedisState(
-      String leaseValue, Map<String, String> metadata, Map<String, String> sessionBindingValue) {}
+      String leaseValue,
+      Map<String, String> metadata,
+      Map<String, String> sessionBindingValue,
+      long sessionBindingExpiresAt) {}
 
   public record MemberRepairProof(
       Proof regionBridge,
@@ -2170,12 +2127,11 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       boolean accountControlStatePreserved,
       boolean exactMemberRetryPreservedState) {}
 
-  public record ChangedGrantProof(
+  public record ExpiredGrantProof(
       Proof acknowledgedBridge,
-      BigInteger replacementExecutorFence,
-      boolean replacementGrantInstalled,
-      boolean bridgeRefused,
+      boolean replacementRefused,
       String refusalMessage,
+      boolean ownerSqlStatePreserved,
       boolean acknowledgementRowPreserved,
       boolean inventoryStatePreserved,
       boolean physicalBridgeStatePreserved) {}

@@ -55,13 +55,13 @@ public final class AccountCapacityOriginDecisionRepository {
   }
 
   /** Historical recovery SELECT, never part of the mutation transaction. */
-  public Refusal readRetainedAdmissionDenial(Request request) {
+  public Record readExactDecision(Request request) {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()) throw unavailable();
-    return admissionDenial(findExact(request));
+    return findExact(request);
   }
 
-  private static Refusal admissionDenial(Record row) {
+  public static Refusal admissionDenial(Record row) {
     if (row == null) return null;
     if (!"NO_ACCEPT".equals(row.get("decision", String.class))) throw conflict();
     String code = row.get("refusal_code", String.class);

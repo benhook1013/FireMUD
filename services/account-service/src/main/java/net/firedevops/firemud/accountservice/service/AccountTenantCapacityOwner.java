@@ -70,7 +70,7 @@ public final class AccountTenantCapacityOwner {
   private final AccountTenantCapacityRepository capacity;
   private final AccountCapacityOriginDecisionRepository originDecisions;
   private final TransactionTemplate transaction;
-  private final TransactionTemplate denialReadTransaction;
+  private final TransactionTemplate outcomeReadTransaction;
   private final Clock clock;
   private final String namespace;
 
@@ -98,36 +98,47 @@ public final class AccountTenantCapacityOwner {
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     transaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
-    denialReadTransaction = new TransactionTemplate(transactions);
-    denialReadTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-    denialReadTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-    denialReadTransaction.setReadOnly(true);
-    denialReadTransaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
+    outcomeReadTransaction = new TransactionTemplate(transactions);
+    outcomeReadTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    outcomeReadTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    outcomeReadTransaction.setReadOnly(true);
+    outcomeReadTransaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
   }
 
-  /** Reads an exact historical admission refusal without mutating the original attempt. */
-  public Refusal readRetainedAdmissionDenial(Request request, String authenticatedCaller) {
+  /** Reads an exact historical admission outcome without mutating the original attempt. */
+  public AdmissionOutcome readRetainedAdmissionOutcome(
+      Request request, String authenticatedCaller) {
     requireCaller(request, authenticatedCaller);
     if (!TenantCapacityAdmission.expectedWorkload(namespace, Owner.GAME_SESSION)
         .equals(authenticatedCaller)) throw new CapacityException(Failure.PERMISSION_DENIED);
     request.requireStructurallyValid();
     requireSupportedShape(request);
-    if (request.capacityRearmFence() != 1 || !request.evidence().permitsCreation())
-      throw unavailable();
+    if (!request.evidence().permitsCreation()) throw unavailable();
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()
         || Context.current().isCancelled()) throw unavailable();
     try {
-      Refusal denial =
-          denialReadTransaction.execute(status -> {
+      AdmissionOutcome outcome =
+          outcomeReadTransaction.execute(status -> {
             if (Context.current().isCancelled()) throw unavailable();
             dsl.connection(connection -> {
               if (connection.getAutoCommit() || !connection.isReadOnly()) throw unavailable();
             });
-            return originDecisions.readRetainedAdmissionDenial(request);
+            var decision = originDecisions.readExactDecision(request);
+            if (decision == null) throw unavailable();
+            Result reservation = capacity.readExactReservation(request);
+            if ("ACCEPTED".equals(decision.get("decision", String.class))) {
+              if (reservation == null || decision.get("refusal_code", String.class) != null)
+                throw unavailable();
+              reservation.requireBinding(request);
+              return new AdmissionOutcome(reservation, null);
+            }
+            if (reservation != null || request.capacityRearmFence() != 1) throw unavailable();
+            return new AdmissionOutcome(
+                null, AccountCapacityOriginDecisionRepository.admissionDenial(decision));
           });
-      if (denial == null) throw unavailable();
-      return denial;
+      if (outcome == null) throw unavailable();
+      return outcome;
     } catch (CapacityException failure) {
       // A different original or decision is not settlement evidence on this read.
       if (failure.code() == Failure.IDEMPOTENCY_CONFLICT) throw unavailable();
@@ -136,6 +147,8 @@ public final class AccountTenantCapacityOwner {
       throw unavailable();
     }
   }
+
+  public record AdmissionOutcome(Result reservation, Refusal denial) {}
 
   public Result commit(Request request, String authenticatedCaller) {
     requireCaller(request, authenticatedCaller);

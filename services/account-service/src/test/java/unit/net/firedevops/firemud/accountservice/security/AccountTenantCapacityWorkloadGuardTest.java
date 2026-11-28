@@ -91,11 +91,11 @@ class AccountTenantCapacityWorkloadGuardTest {
 
   @Test
   void quotaDenialReadRequiresExactGameSessionTlsWithoutAmbientAuthority() throws Exception {
-    var method = AccountServiceGrpc.getReadTenantCapacityAdmissionDenialMethod();
+    var method = AccountServiceGrpc.getReadTenantCapacityAdmissionOutcomeMethod();
     var gameSession = tls("firemud", "game-session-service");
     assertThat(invoke(method, gameSession, "spiffe://firemud/ns/firemud/sa/game-session-service"))
         .isNull();
-    assertThatThrownBy(guard::requireAdmissionDenialReader)
+    assertThatThrownBy(guard::requireAdmissionOutcomeReader)
         .isInstanceOf(StatusRuntimeException.class);
     assertThat(invoke(method, null).getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
     assertThat(invoke(method, tls("firemud", "world-management-service")).getCode())
@@ -122,15 +122,15 @@ class AccountTenantCapacityWorkloadGuardTest {
     AtomicInteger starts = new AtomicInteger();
     ServerCallHandler next =
         (ignored, headers) -> {
-          if (AccountServiceGrpc.getReadTenantCapacityAdmissionDenialMethod()
+          if (AccountServiceGrpc.getReadTenantCapacityAdmissionOutcomeMethod()
               .getFullMethodName()
               .equals(method.getFullMethodName())) {
-            assertThat(guard.requireAdmissionDenialReader()).isEqualTo(expectedCallerUri);
+            assertThat(guard.requireAdmissionOutcomeReader()).isEqualTo(expectedCallerUri);
             assertThatThrownBy(guard::requireAuthenticatedCaller)
                 .isInstanceOf(StatusRuntimeException.class);
           } else {
             assertThat(guard.requireAuthenticatedCaller()).isEqualTo(expectedCallerUri);
-            assertThatThrownBy(guard::requireAdmissionDenialReader)
+            assertThatThrownBy(guard::requireAdmissionOutcomeReader)
                 .isInstanceOf(StatusRuntimeException.class);
           }
           starts.incrementAndGet();

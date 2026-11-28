@@ -87,22 +87,38 @@ public final class AccountTenantCapacityClient
     }
   }
 
-  /** Recovers an exact immutable denial while the caller owns the original held attempt. */
-  public Refusal readRetainedAdmissionDenial(Request request, long absoluteDeadlineMillis) {
+  /** Reads the exact original outcome without granting a second commit. */
+  public Result readRetainedAdmissionOutcome(Request request, long absoluteDeadlineMillis) {
     var response =
         invoke(
             request,
             absoluteDeadlineMillis,
-            AccountServiceBlockingStub::readTenantCapacityAdmissionDenial);
+            AccountServiceBlockingStub::readTenantCapacityAdmissionOutcome);
     try {
-      return TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response)
-          .filter(refusal -> refusal.durableDenialId() != null)
-          .orElseThrow(IllegalArgumentException::new);
+      var refusal = TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, response);
+      if (refusal.isPresent()) {
+        var denial = refusal.orElseThrow();
+        if (denial.durableDenialId() == null) throw new IllegalArgumentException();
+        throw new CapacityRefusedException(denial);
+      }
+      return TenantCapacityAdmissionGrpcCodec.requireResponse(request, response);
     } catch (IllegalArgumentException inexactResponse) {
       throw Status.UNKNOWN
-          .withDescription("Account retained admission denial was not proven")
+          .withDescription("Account retained admission outcome was not proven")
           .asRuntimeException();
     }
+  }
+
+  /** Grants settlement evidence only for a durable denial. */
+  public Refusal readRetainedAdmissionDenial(Request request, long absoluteDeadlineMillis) {
+    try {
+      readRetainedAdmissionOutcome(request, absoluteDeadlineMillis);
+    } catch (CapacityRefusedException denial) {
+      return new Refusal(denial.code(), denial.durableDenialId());
+    }
+    throw Status.UNKNOWN
+        .withDescription("Account retained admission denial was not proven")
+        .asRuntimeException();
   }
 
   private CommitTenantCapacityAdmissionResponse invoke(

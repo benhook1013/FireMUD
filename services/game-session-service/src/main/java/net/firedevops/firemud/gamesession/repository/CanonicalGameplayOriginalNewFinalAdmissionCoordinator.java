@@ -1,17 +1,26 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import io.grpc.Deadline;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalFinalAdmissionConfirmation;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
+import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegionBridgeObligation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.client.AccountGameplayAdmissionLeaseClient;
+import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient;
+import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.CapacityRefusedException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -22,6 +31,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * creating credentials, leases, barriers, or cleanup receipts of its own.
  */
 final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
+  private static final Logger LOG =
+      LoggerFactory.getLogger(CanonicalGameplayOriginalNewFinalAdmissionCoordinator.class);
   private static final long MAX_SESSION_DURATION_MILLIS =
       CanonicalGameplayOriginalNewAuthenticatedSession.MAX_CANONICAL_SESSION_DURATION_MILLIS;
 
@@ -33,6 +44,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
   private final CanonicalGameplayOriginalNewBoundCredentialVerifier credentialVerifier;
   private final CanonicalGameplayOriginalNewFinalAdmissionRedisOwner finalRedis;
   private final Clock clock;
+  private final AccountTenantCapacityClient capacityClient;
+  private final CanonicalGameplayOriginalNewCapacityExecutionOwner capacityExecution;
 
   CanonicalGameplayOriginalNewFinalAdmissionCoordinator(
       CanonicalGameplayBindingInventoryRepository inventory,
@@ -42,7 +55,13 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       CanonicalGameplayRegionBindingBridgeOwner regionBridge,
       CanonicalGameplayOriginalNewBoundCredentialVerifier credentialVerifier,
       CanonicalGameplayOriginalNewFinalAdmissionRedisOwner finalRedis,
-      Clock clock) {
+      Clock clock,
+      AccountTenantCapacityClient capacityClient,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner capacityExecution) {
+    this.capacityClient =
+        Objects.requireNonNull(capacityClient, "Account capacity client is required");
+    this.capacityExecution =
+        Objects.requireNonNull(capacityExecution, "Capacity execution owner is required");
     this.inventory = Objects.requireNonNull(inventory, "Game Session inventory is required");
     this.accountClient = Objects.requireNonNull(accountClient, "Account lease client is required");
     this.accountBarrier =
@@ -65,8 +84,11 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       String originalLoginJwt,
       CanonicalGameplayRegionLeaseOwner.Installation privateRegionInstallation,
       long canonicalSessionDurationMillis,
-      long absoluteDeadlineMillis) {
+      long absoluteDeadlineMillis,
+      TenantCapacityAdmission.Request capacityRequest) {
     requireNoAmbientSql();
+    if (capacityRequest == null) throw unavailable();
+    capacityRequest.requireStructurallyValid();
     Objects.requireNonNull(originalDecision, "Original Account decision is required");
     Objects.requireNonNull(
         privateRegionInstallation, "This owner's private region grant is required");
@@ -92,19 +114,59 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source =
           inventory.readOriginalNewFinalAdmissionSource(originalDecision);
       requireOriginalSource(source, originalDecision);
-      Currentness beforeEffects = currentness(source, privateRegionInstallation);
-      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource currentSource =
-          readSameSource(source, originalDecision, false);
-      source = currentSource;
+      var selectedOwner =
+          capacityExecution.requireRequestBinding(source, capacityRequest, absoluteDeadlineMillis);
+      TenantCapacityAdmission.Result retainedReservation = null;
+      if (source.transitionStatus() == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+          && capacityRequest.evidence().permitsCreation()) {
+        var priorCharge =
+            capacityExecution.findExistingCharge(
+                source, capacityRequest, selectedOwner, absoluteDeadlineMillis);
+        if (priorCharge != null) {
+          requireDenialScope(source, privateRegionInstallation, selectedOwner);
+          requireDeadline(absoluteDeadlineMillis);
+          if (priorCharge.accountDenial() != null) {
+            throw CapacityRefusedException.retainedAdmissionDenial(priorCharge.accountDenial());
+          }
+          try {
+            retainedReservation =
+                capacityClient.readRetainedAdmissionOutcome(
+                    capacityRequest, absoluteDeadlineMillis);
+          } catch (CapacityRefusedException refusal) {
+            requireDeadline(absoluteDeadlineMillis);
+            settleAuthenticatedDenial(
+                source,
+                capacityRequest,
+                selectedOwner,
+                new Refusal(refusal.code(), refusal.durableDenialId()),
+                absoluteDeadlineMillis);
+            throw refusal;
+          }
+          requireDeadline(absoluteDeadlineMillis);
+        }
+      }
+      var accountOpen = readAccountOpen(source);
+      Currentness beforeEffects = currentness(source, privateRegionInstallation, accountOpen);
+      source = readSameSource(source, originalDecision, false);
 
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.CommittedCapacitySource committedCapacity =
+          null;
       OriginalFinalAdmissionConfirmation recoveredConfirmation = null;
       if (source.transitionStatus()
           == CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED) {
         // Account confirmation must recover a committed-but-unconfirmed result before issue can
         // return the unchanged ACTIVE credential and handle.
         requireDeadline(absoluteDeadlineMillis);
+        committedCapacity =
+            capacityExecution.requireCommittedRequest(
+                source, capacityRequest, absoluteDeadlineMillis);
         recoveredConfirmation =
-            accountClient.confirmOriginalNewGameplayAdmission(originalLoginJwt, originalLeaseBytes);
+            accountClient.confirmOriginalNewGameplayAdmission(
+                originalLoginJwt,
+                originalLeaseBytes,
+                operationDeadline(absoluteDeadlineMillis),
+                committedCapacity.selector());
+        requireDeadline(absoluteDeadlineMillis);
         requireConfirmation(source, recoveredConfirmation, null, originalDecision);
         Currentness afterRecovery = currentness(source, privateRegionInstallation);
         requireSameCurrentness(beforeEffects, afterRecovery);
@@ -114,7 +176,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
 
       try (OriginalNewCredential credential =
           accountClient.issueOriginalNewBoundGameplayCredential(
-              originalLoginJwt, originalLeaseBytes)) {
+              originalLoginJwt, originalLeaseBytes, operationDeadline(absoluteDeadlineMillis))) {
+        requireDeadline(absoluteDeadlineMillis);
         requireCredentialLease(source, originalDecision, credential);
         try (CanonicalGameplayOriginalNewAuthenticatedSession.Template template =
             CanonicalGameplayOriginalNewAuthenticatedSession.template(
@@ -129,66 +192,151 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
           source = afterCredential;
           requireDeadline(absoluteDeadlineMillis);
 
-          try (CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback finalReadback =
-              finalRedis.finalizeOriginalNewOnce(
+          // This is the actual final owner boundary, after all original player evidence and
+          // credential/currentness checks. The Account commitment is never a quota preflight.
+          if (!selectedOwner.equals(
+              capacityExecution.requireRequestBinding(
+                  source, capacityRequest, absoluteDeadlineMillis))) throw unavailable();
+          boolean precharge =
+              capacityRequest.evidence().permitsCreation()
+                  && source.transitionStatus()
+                      != CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED;
+          var retainedCharge =
+              precharge
+                  ? capacityExecution.precharge(
+                      source, capacityRequest, selectedOwner, absoluteDeadlineMillis)
+                  : null;
+          if (retainedCharge != null && retainedCharge.accountDenial() != null)
+            throw CapacityRefusedException.retainedAdmissionDenial(retainedCharge.accountDenial());
+          final TenantCapacityAdmission.Result reservation;
+          try {
+            if (recoveredConfirmation != null) {
+              reservation = recoveredConfirmation.committedCapacityResult();
+            } else if (retainedReservation != null) {
+              if (retainedCharge == null) throw unavailable();
+              reservation = retainedReservation;
+            } else if (retainedCharge != null) {
+              reservation =
+                  capacityClient.readRetainedAdmissionOutcome(
+                      capacityRequest, absoluteDeadlineMillis);
+            } else {
+              reservation = capacityClient.commit(capacityRequest, absoluteDeadlineMillis);
+            }
+          } catch (CapacityRefusedException refusal) {
+            if (precharge
+                && refusal.code().supportsDurableDenial()
+                && refusal.durableDenialId() != null) {
+              settleAuthenticatedDenial(
                   source,
-                  template,
-                  requireAccountOpen(beforeFinalCas.accountOpen, source.candidate()),
-                  beforeFinalCas.issuerOpen,
-                  absoluteDeadlineMillis)) {
-            requireFinalReadback(source, finalReadback, credential, canonicalSessionDurationMillis);
-            Currentness afterFinalCas = currentness(source, privateRegionInstallation);
-            requireSameCurrentness(beforeFinalCas, afterFinalCas);
-
-            boolean committedByThisAttempt =
-                source.transitionStatus()
-                    == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL;
-            if (committedByThisAttempt) {
-              inventory.commitOriginalNewFinalAdmission(finalReadback);
-              CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
-                  committedSource = readSameSource(source, originalDecision, true);
-              if (committedSource.transitionStatus()
-                  != CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED) {
-                throw unavailable();
-              }
-              source = committedSource;
+                  capacityRequest,
+                  selectedOwner,
+                  new Refusal(refusal.code(), refusal.durableDenialId()),
+                  absoluteDeadlineMillis);
             }
-
-            CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionReceipt
-                finalReceipt =
-                    source
-                        .finalReceipt()
-                        .orElseThrow(
-                            CanonicalGameplayOriginalNewFinalAdmissionCoordinator::unavailable);
-            requireReadbackMatchesReceipt(finalReadback, finalReceipt);
-            Currentness beforeConfirmation = currentness(source, privateRegionInstallation);
-            requireSameCurrentness(afterFinalCas, beforeConfirmation, committedByThisAttempt);
-
+            throw refusal;
+          }
+          var execution =
+              capacityExecution.bind(
+                  source, capacityRequest, reservation, absoluteDeadlineMillis, selectedOwner);
+          if (committedCapacity != null
+              && !execution.digest().equals(committedCapacity.executionDigest())) {
+            throw unavailable();
+          }
+          try (var boundTemplate = template.bindCapacityExecution(execution)) {
+            capacityExecution.authorize(
+                source,
+                boundTemplate,
+                beforeFinalCas.accountOpen,
+                beforeFinalCas.issuerOpen,
+                execution,
+                absoluteDeadlineMillis);
+            // Account commitment and capacity installation may outlive the prior grant check.
+            // Revalidate immediately before dispatch; durable execution custody excludes owner
+            // replacement throughout the residual lease-loss race and result reconciliation.
+            Currentness atDispatch = currentness(source, privateRegionInstallation);
+            requireSameCurrentness(beforeFinalCas, atDispatch);
             requireDeadline(absoluteDeadlineMillis);
-            OriginalFinalAdmissionConfirmation confirmation =
-                accountClient.confirmOriginalNewGameplayAdmission(
-                    originalLoginJwt, originalLeaseBytes);
-            requireConfirmation(source, confirmation, credential, originalDecision);
+            try (CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback finalReadback =
+                finalRedis.finalizeOriginalNewOnce(
+                    source,
+                    boundTemplate,
+                    requireAccountOpen(atDispatch.accountOpen, source.candidate()),
+                    atDispatch.issuerOpen,
+                    execution,
+                    absoluteDeadlineMillis)) {
+              requireFinalReadback(
+                  source, finalReadback, credential, canonicalSessionDurationMillis);
+              // The verified positive effect must acquire its durable receipt and retained
+              // evidence before a subsequent liveness/currentness failure withholds success.
+              boolean committedByThisAttempt =
+                  source.transitionStatus()
+                      == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL;
+              if (committedByThisAttempt) {
+                inventory.commitOriginalNewFinalAdmission(
+                    finalReadback, clock, absoluteDeadlineMillis);
+                CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
+                    committedSource = readSameSource(source, originalDecision, true);
+                if (committedSource.transitionStatus()
+                    != CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED) {
+                  throw unavailable();
+                }
+                source = committedSource;
+              }
 
-            CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
-                afterConfirmation = readSameSource(source, originalDecision, false);
-            Currentness afterConfirmationCurrentness =
-                currentness(afterConfirmation, privateRegionInstallation);
-            requireSameCurrentness(beforeConfirmation, afterConfirmationCurrentness);
-            source = afterConfirmation;
-            if (recoveredConfirmation != null
-                && !sameConfirmation(recoveredConfirmation, confirmation)) {
-              throw unavailable();
+              CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionReceipt
+                  finalReceipt =
+                      source
+                          .finalReceipt()
+                          .orElseThrow(
+                              CanonicalGameplayOriginalNewFinalAdmissionCoordinator::unavailable);
+              requireReadbackMatchesReceipt(finalReadback, finalReceipt);
+              if (!committedByThisAttempt) {
+                capacityExecution.retainCommitted(finalReadback, absoluteDeadlineMillis);
+              }
+              Currentness beforeConfirmation = currentness(source, privateRegionInstallation);
+              requireSameCurrentness(atDispatch, beforeConfirmation, committedByThisAttempt);
+
+              requireDeadline(absoluteDeadlineMillis);
+              OriginalFinalAdmissionConfirmation confirmation =
+                  accountClient.confirmOriginalNewGameplayAdmission(
+                      originalLoginJwt,
+                      originalLeaseBytes,
+                      operationDeadline(absoluteDeadlineMillis),
+                      committedCapacity == null ? null : committedCapacity.selector());
+              requireDeadline(absoluteDeadlineMillis);
+              requireConfirmation(source, confirmation, credential, originalDecision);
+
+              CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
+                  afterConfirmation = readSameSource(source, originalDecision, false);
+              Currentness afterConfirmationCurrentness =
+                  currentness(afterConfirmation, privateRegionInstallation);
+              requireSameCurrentness(beforeConfirmation, afterConfirmationCurrentness);
+              source = afterConfirmation;
+              if (recoveredConfirmation != null) {
+                if (!sameConfirmation(recoveredConfirmation, confirmation)) throw unavailable();
+                var finalExecution =
+                    new OriginalNewCapacityExecution(
+                        capacityRequest,
+                        confirmation.committedCapacityResult(),
+                        execution.transitionId(),
+                        execution.candidateDigest(),
+                        execution.selectedOwnerId(),
+                        execution.selectedOwnerFence());
+                if (!execution.digest().equals(finalExecution.digest())) throw unavailable();
+              }
+              requireDeadline(absoluteDeadlineMillis);
+              return new FinalAdmissionResult(
+                  source.candidate().bindingDecisionId(),
+                  finalReadback.admissionAtMillis(),
+                  finalReadback.continuityExpiresAtMillis(),
+                  finalReadback.canonicalSessionDurationMillis(),
+                  finalReadback.finalSessionSha256());
             }
-            return new FinalAdmissionResult(
-                source.candidate().bindingDecisionId(),
-                finalReadback.admissionAtMillis(),
-                finalReadback.continuityExpiresAtMillis(),
-                finalReadback.canonicalSessionDurationMillis(),
-                finalReadback.finalSessionSha256());
           }
         }
       }
+    } catch (AccountTenantCapacityClient.CapacityRefusedException refused) {
+      throw refused;
     } catch (RuntimeException uncertain) {
       throw unavailable(uncertain);
     } finally {
@@ -196,11 +344,37 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
     }
   }
 
-  private Currentness currentness(
+  private static void requireDenialScope(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
-      CanonicalGameplayRegionLeaseOwner.Installation privateRegionInstallation) {
+      CanonicalGameplayRegionLeaseOwner.Installation installation,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selectedOwner) {
+    var candidate = source.candidate();
+    if (!candidate.bindingDecisionId().equals(installation.transitionId)
+        || !candidate.matchesProvisionalSources(installation.evidence)
+        || !selectedOwner.instanceId().equals(installation.status.ownerInstanceId())
+        || selectedOwner.fence() != installation.status.executorFence().longValueExact()) {
+      throw unavailable();
+    }
+  }
+
+  private void settleAuthenticatedDenial(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      TenantCapacityAdmission.Request request,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner selectedOwner,
+      Refusal denial,
+      long deadline) {
+    try {
+      capacityExecution.settleDeniedCharge(source, request, selectedOwner, denial, deadline);
+    } catch (RuntimeException settlementFailure) {
+      // Keep the authenticated Account outcome. The exact request can retry local settlement.
+      LOG.warn("Original NEW Account denial received; local evidence settlement unconfirmed");
+    }
+  }
+
+  private CanonicalGameplayAccountInitialOpenProof.CurrentOpen readAccountOpen(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source) {
     requireNoAmbientSql();
-    CanonicalGameplayOriginalNewCandidate candidate = source.candidate();
+    var candidate = source.candidate();
     CanonicalGameplayBindingIdentity identity = candidate.bindingIdentity();
     CanonicalGameplayAccountInitialOpenProof proof =
         accountBarrier.verifyCurrentOpenForTarget(
@@ -212,7 +386,21 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
         || !"OPEN".equals(accountOpen.exactFields().get("state"))) {
       throw unavailable();
     }
+    return accountOpen;
+  }
+
+  private Currentness currentness(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayRegionLeaseOwner.Installation privateRegionInstallation) {
+    return currentness(source, privateRegionInstallation, readAccountOpen(source));
+  }
+
+  private Currentness currentness(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayRegionLeaseOwner.Installation privateRegionInstallation,
+      CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen) {
     requireCurrentOpenWindow(accountOpen);
+    var identity = source.candidate().bindingIdentity();
 
     CanonicalGameplayIssuerBindingLocalAcknowledgement issuerAcknowledgement =
         source.issuerAcknowledgement();
@@ -519,6 +707,13 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
     }
   }
 
+  private Deadline operationDeadline(long absoluteDeadlineMillis) {
+    Deadline sampledAt = Deadline.after(0, TimeUnit.NANOSECONDS);
+    long remainingMillis = Math.subtractExact(absoluteDeadlineMillis, clock.millis());
+    if (remainingMillis <= 0L) throw unavailable();
+    return sampledAt.offset(remainingMillis, TimeUnit.MILLISECONDS);
+  }
+
   private void requireDeadline(long absoluteDeadlineMillis) {
     if (absoluteDeadlineMillis <= 0 || clock.millis() >= absoluteDeadlineMillis) {
       throw unavailable();
@@ -542,7 +737,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
 
   private static IllegalStateException unavailable(Throwable cause) {
     return new IllegalStateException(
-        "Original NEW final admission could not be safely confirmed; retry the exact original operation",
+        "Original NEW final admission could not be safely confirmed; retry the exact original"
+            + " operation",
         cause);
   }
 

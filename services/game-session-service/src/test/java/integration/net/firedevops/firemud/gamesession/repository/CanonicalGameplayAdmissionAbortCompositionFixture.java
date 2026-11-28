@@ -172,7 +172,8 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         seedBootstrapMemberCount,
         migrationTarget,
         afterBootstrap,
-        false);
+        false,
+        MigrationVersion.LATEST);
   }
 
   /** Genuine original preparation precedes the actual installed bootstrap; no local row is made. */
@@ -188,7 +189,24 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         originalInBootstrap ? 1 : 0,
         null,
         (data, intent) -> {},
-        originalInBootstrap);
+        originalInBootstrap,
+        MigrationVersion.LATEST);
+  }
+
+  static CanonicalGameplayAdmissionAbortCompositionFixture atMigrationFrontier(
+      DriverManagerDataSource accountDataSource,
+      Candidate accountCandidate,
+      RedisClient issuerRedisClient,
+      MigrationVersion migrationTarget) {
+    return new CanonicalGameplayAdmissionAbortCompositionFixture(
+        accountDataSource,
+        accountCandidate,
+        issuerRedisClient,
+        0,
+        Objects.requireNonNull(migrationTarget, "migrationTarget"),
+        (data, intent) -> {},
+        false,
+        null);
   }
 
   private CanonicalGameplayAdmissionAbortCompositionFixture(
@@ -199,7 +217,8 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       MigrationVersion migrationTarget,
       BiConsumer<DriverManagerDataSource, CanonicalGameplayIssuerLayoutBootstrapIntent>
           afterBootstrap,
-      boolean originalInBootstrap) {
+      boolean originalInBootstrap,
+      MigrationVersion targetAfterBootstrap) {
     long phaseStartedAt;
     if (seedBootstrapMemberCount < 0 || seedBootstrapMemberCount > 256) {
       throw new IllegalArgumentException("Bootstrap fixture member count must be within [0, 256]");
@@ -361,8 +380,8 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
               .completeInitialBootstrap(bootstrapIntent.operationId(), bootstrapRequestId);
       Objects.requireNonNull(afterBootstrap, "afterBootstrap")
           .accept(connectionSettings, bootstrapIntent);
-      if (migrationTarget != null) {
-        upgradeWithDefaultGameSessionMigrations(MigrationVersion.LATEST, dataSource);
+      if (migrationTarget != null && targetAfterBootstrap != null) {
+        upgradeWithDefaultGameSessionMigrations(targetAfterBootstrap, dataSource);
       }
       new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
           .installInitialOpen(installedAnchor, issuerSource);
@@ -1156,6 +1175,13 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   }
 
   public UUID prepareOtherControllerNew(String seed) {
+    return prepareOtherControllerNew(
+        seed,
+        UUID.nameUUIDFromBytes((seed + "-request").getBytes(StandardCharsets.UTF_8)),
+        UUID.nameUUIDFromBytes((seed + "-transition").getBytes(StandardCharsets.UTF_8)));
+  }
+
+  UUID prepareOtherControllerNew(String seed, UUID requestId, UUID transitionId) {
     CanonicalGameplayBindingIdentity other;
     do {
       other =
@@ -1183,11 +1209,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
         new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, issuerSource)
             .beginOrResumeOrdinaryNew(
                 new CanonicalGameplayIssuerBindingLocalOperation.Request(
-                    UUID.nameUUIDFromBytes((seed + "-request").getBytes(StandardCharsets.UTF_8)),
-                    UUID.nameUUIDFromBytes((seed + "-transition").getBytes(StandardCharsets.UTF_8)),
-                    other,
-                    null,
-                    null));
+                    requestId, transitionId, other, null, null));
     otherOperations.put(seed, operation);
     return operation.operationId();
   }
