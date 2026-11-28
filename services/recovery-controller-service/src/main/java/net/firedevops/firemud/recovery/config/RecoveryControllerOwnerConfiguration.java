@@ -74,6 +74,9 @@ public class RecoveryControllerOwnerConfiguration {
       throw new FlywayException(
           "Recovery Flyway history table must be flyway_schema_history_recovery_control");
     }
+    if (configuration.getLockRetryCount() < 0) {
+      throw new FlywayException("Recovery Flyway lock retries must be finite");
+    }
     if (configuration.getConnectRetries() < 0) {
       throw new FlywayException("Recovery Flyway connect retries must be non-negative");
     }

@@ -21,6 +21,7 @@ import java.text.Normalizer;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -375,11 +376,16 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                             AND (e.preparation_observation_payload ->> 'state' = 'UNKNOWN_OR_PARTIAL'
                                  OR EXISTS (
                                    SELECT 1 FROM recovery_control.initial_gameplay_release_outbox h
+                                   JOIN recovery_control.initial_gameplay_release_attempt_rejection r
+                                     ON r.outbox_id = h.outbox_id AND r.attempt_id = h.last_attempt_id
+                                     AND r.attempt_ordinal = h.attempt_count
                                    WHERE h.operation_id = e.operation_id
                                      AND h.effect_kind = 'commit_owner_authorized_handoff'
-                                     AND h.state = 'retryable' AND h.retry_provenance = 'owner_rejected'
-                                     AND h.updated_at >= COALESCE(
-                                       (e.preparation_observation_payload ->> 'observedAt')::timestamptz,
+                                     AND h.state = 'retryable'
+                                     AND r.preparation_refresh_after >= COALESCE(
+                                       regexp_replace(
+                                         e.preparation_observation_payload ->> 'observedAt',
+                                         '([.][0-9]{6})[0-9]+Z$', '\\1Z')::timestamptz,
                                        e.acknowledged_at)))
                          THEN 'ambiguous'
                        ELSE e.state
@@ -423,8 +429,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                    ) AS missing_handoff
             FROM operation LEFT JOIN next_effect ON true
             """,
-            operationId,
-            preparationRefreshOnly);
+            operationId, preparationRefreshOnly);
     if (record != null && Boolean.TRUE.equals(record.get("missing_preparation", Boolean.class))) {
       throw conflict("authorized resume has no retained preparation effect");
     }
@@ -452,7 +457,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           Operation operation = selectOperation(tx, operationId, true);
           OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
           tupleCodec.requireEffectMatchesOperation(current.effect(), operation);
-          if (hasRetainedClosure(tx, current, attemptId, null)
+          if (current.state() == EffectOutboxState.PENDING) {
+            requireUnclaimedEffect(tx, current.outboxId());
+          } else if (hasRetainedClosure(tx, current, attemptId, null)
               || hasRetainedOwnerRejection(tx, current, attemptId, null)) {
             throw conflict("a retry must use a new effect attempt identity");
           }
@@ -467,9 +474,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             return current;
           }
           Instant ownerRejectionAt = null;
-          if (current.state() == EffectOutboxState.PENDING) {
-            requireUnclaimedEffect(tx, current.outboxId());
-          } else if (current.state() == EffectOutboxState.RETRYABLE) {
+          if (current.state() == EffectOutboxState.RETRYABLE) {
             ownerRejectionAt = requireExactClosureBeforeRetry(tx, current);
           }
           requirePhaseForEffect(operation.phase(), current.effect().kind());
@@ -679,13 +684,14 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                 tx.execute(
                     """
                     INSERT INTO recovery_control.initial_gameplay_release_attempt_rejection
-                        (outbox_id, attempt_id, attempt_ordinal)
-                    VALUES (?, ?, ?)
+                        (outbox_id, attempt_id, attempt_ordinal, preparation_refresh_after)
+                    VALUES (?, ?, ?, CAST(? AS timestamptz))
                     ON CONFLICT (outbox_id, attempt_id) DO NOTHING
                     """,
                     current.outboxId(),
                     attemptId,
-                    dispatch.attemptCount());
+                    dispatch.attemptCount(),
+                    toOffsetDateTime(now.truncatedTo(ChronoUnit.MICROS)));
             if (retained != 1
                 && (retained != 0
                     || !hasRetainedOwnerRejection(
@@ -1461,7 +1467,10 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             && (observation.state() != EffectReadbackState.PREPARED_FENCED
                 || observation.observedAt().isAfter(upperBound)
                 || ownerRejectionAt != null
-                    && !observation.observedAt().isAfter(ownerRejectionAt)))) {
+                    && !observation
+                        .observedAt()
+                        .truncatedTo(ChronoUnit.MICROS)
+                        .isAfter(ownerRejectionAt)))) {
       throw conflict("retained " + label + " acknowledgement is unavailable");
     }
     return upperBound;
@@ -1599,25 +1608,35 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
 
   private static boolean hasRetainedOwnerRejection(
       DSLContext tx, OutboxEntry current, UUID attemptId, Integer expectedOrdinal) {
+    return retainedRejectionRefreshFloor(tx, current, attemptId, expectedOrdinal) != null;
+  }
+
+  private static Instant retainedRejectionRefreshFloor(
+      DSLContext tx, OutboxEntry current, UUID attemptId, Integer expectedOrdinal) {
     Record row =
         tx.fetchOne(
             """
-            SELECT attempt_ordinal FROM recovery_control.initial_gameplay_release_attempt_rejection
+            SELECT attempt_ordinal, preparation_refresh_after
+            FROM recovery_control.initial_gameplay_release_attempt_rejection
             WHERE outbox_id = ? AND attempt_id = ?
             """,
             current.outboxId(),
             attemptId);
     if (row == null) {
-      return false;
+      return null;
     }
     Integer ordinal = row.get("attempt_ordinal", Integer.class);
+    OffsetDateTime floor = row.get("preparation_refresh_after", OffsetDateTime.class);
     if (ordinal == null
         || ordinal < 1
         || ordinal > current.attemptCount()
         || (expectedOrdinal != null && !expectedOrdinal.equals(ordinal))) {
       throw conflict("retained owner rejection dispatch generation changed");
     }
-    return true;
+    if (floor == null) {
+      throw conflict("retained owner rejection has no preparation refresh floor");
+    }
+    return floor.toInstant();
   }
 
   private static boolean hasRetainedLocalNoSend(
@@ -1647,7 +1666,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Record stored =
         tx.fetchOne(
             "SELECT readback_payload, readback_digest, readback_identity, retry_provenance,"
-                + " last_dispatched_at, send_outcome_uncertain, updated_at FROM "
+                + " last_dispatched_at, send_outcome_uncertain FROM "
                 + OUTBOX_TABLE
                 + " WHERE operation_id = ? AND effect_id = ?",
             current.effect().operationId(),
@@ -1673,12 +1692,15 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       return null;
     }
     if ("owner_rejected".equals(provenance)) {
-      if (!hasRetainedOwnerRejection(tx, current, current.lastAttemptId(), current.attemptCount())
+      Instant refreshFloor =
+          retainedRejectionRefreshFloor(
+              tx, current, current.lastAttemptId(), current.attemptCount());
+      if (refreshFloor == null
           || hasRetainedClosure(tx, current, current.lastAttemptId(), current.attemptCount())
           || (!emptyReadback && !hasValidatedUnknownReadback(stored, digest, current))) {
         throw conflict("retained owner rejection does not match the exact dispatch");
       }
-      return stored.get("updated_at", OffsetDateTime.class).toInstant();
+      return refreshFloor;
     }
     if (!"owner_closure".equals(provenance) || payload == null || digest == null) {
       throw conflict("retained retry has no exact durable provenance");
@@ -1694,7 +1716,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       throw conflict("retained retry provenance does not describe definitive closure");
     }
     requireRetainedClosureMatchesStoredReadback(tx, current, stored, digest);
-    return null;
+    return retainedRejectionRefreshFloor(
+        tx, current, current.lastAttemptId(), current.attemptCount());
   }
 
   private void requireValidExactStoredReadback(

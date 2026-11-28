@@ -1084,7 +1084,7 @@ for scope in buildsrc buf checkstyle; do
   checkstyle_scenarios=()
   if [[ "$scope" == checkstyle ]]; then
     module=recovery-controller-service
-    checkstyle_scenarios=(wrong-field wrong-type wrong-classifier wrong-classifier-coordinate checkstyle-started jooq-jvm-crash)
+    checkstyle_scenarios=(recovered-test-fixtures wrong-field wrong-type wrong-classifier wrong-classifier-coordinate checkstyle-started jooq-jvm-crash)
   fi
   original_command="--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :$module:check -PfullCheck --profile --info --console=plain"
   if [[ "$scope" == buf ]]; then
@@ -1098,6 +1098,10 @@ for scope in buildsrc buf checkstyle; do
     expected_status=1
     case "$scenario" in
       recovered) expected_status=0 ;;
+      recovered-test-fixtures)
+        sed -i 's/:checkstyleIntegrationTest/:checkstyleTestFixtures/g' "$CASE_DIR/cause.log"
+        expected_status=0
+        ;;
       repeated) ;;
       invalid-owner)
         sed -i 's/project '\'':buildSrc'\''/project '\'':otherProject'\''/; s/:compileBufGeneratedJava/:other:compileBufGeneratedJava/g; s/:recovery-controller-service:checkstyleIntegrationTest/:other:checkstyleIntegrationTest/g' "$CASE_DIR/cause.log"
@@ -1122,7 +1126,7 @@ for scope in buildsrc buf checkstyle; do
     # shellcheck disable=SC2016
     write_wrapper 'if [[ "$call_count" -eq 1 || "$FIXTURE_RETRY_EXIT" -ne 0 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; exit 0'
     FIXTURE_RETRY_EXIT="$expected_status" run_case "$module" "$expected_status"
-    if [[ "$scenario" == recovered || "$scenario" == repeated ]]; then
+    if [[ "$scenario" == recovered || "$scenario" == recovered-test-fixtures || "$scenario" == repeated ]]; then
       assert_call_count 2
       assert_call 1 "$original_command"
       assert_call 2 "$original_command"

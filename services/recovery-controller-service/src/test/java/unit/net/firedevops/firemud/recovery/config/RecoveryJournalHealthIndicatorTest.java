@@ -5,7 +5,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.intThat;
-import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -30,6 +29,7 @@ import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.Status;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -99,14 +99,12 @@ class RecoveryJournalHealthIndicatorTest {
           throw new SQLException("fixture database unavailable");
         });
 
-    var indicator = new RecoveryJournalHealthIndicator(source, TimeUnit.MILLISECONDS.toNanos(100));
+    var indicator = new RecoveryJournalHealthIndicator(source);
     try {
-      var first = new FutureTask<>(indicator::health);
-      Thread.ofVirtual().start(first);
-      assertThat(acquiring.await(5, TimeUnit.SECONDS)).isTrue();
-      assertThat(first.get(2, TimeUnit.SECONDS).getStatus()).isEqualTo(Status.DOWN);
+      var first = startProbeThatMustReach(indicator, acquiring);
+      assertThat(first.get(5, TimeUnit.SECONDS).getStatus()).isEqualTo(Status.DOWN);
       assertThat(borrowFinished.getCount()).isEqualTo(1);
-      assertThat(indicator.health().getStatus()).isEqualTo(Status.DOWN);
+      assertThat(boundedHealth(indicator).getStatus()).isEqualTo(Status.DOWN);
       var probes = (ThreadPoolExecutor) ReflectionTestUtils.getField(indicator, "probes");
       assertThat(probes).isNotNull();
       assertThat(probes.getTaskCount()).isEqualTo(1);
@@ -228,13 +226,14 @@ class RecoveryJournalHealthIndicatorTest {
         .when(connection)
         .close();
 
-    var indicator = new RecoveryJournalHealthIndicator(source, TimeUnit.MILLISECONDS.toNanos(100));
+    var indicator = new RecoveryJournalHealthIndicator(source);
     try {
-      var first = new FutureTask<>(indicator::health);
-      Thread.ofVirtual().start(first);
-      assertThat(closing.await(5, TimeUnit.SECONDS)).isTrue();
-      assertThat(first.get(2, TimeUnit.SECONDS).getStatus()).isEqualTo(Status.DOWN);
-      assertThat(indicator.health().getStatus()).isEqualTo(Status.DOWN);
+      var first = startProbeThatMustReach(indicator, closing);
+      assertThat(first.get(5, TimeUnit.SECONDS).getStatus()).isEqualTo(Status.DOWN);
+      assertThat(closeFinished.getCount()).isEqualTo(1);
+      // close() is still blocked. The successful readiness row must have been read first.
+      verify(rows).getBoolean(1);
+      assertThat(boundedHealth(indicator).getStatus()).isEqualTo(Status.DOWN);
       var probes = (ThreadPoolExecutor) ReflectionTestUtils.getField(indicator, "probes");
       assertThat(probes).isNotNull();
       assertThat(probes.getTaskCount()).isEqualTo(1);
@@ -243,17 +242,36 @@ class RecoveryJournalHealthIndicatorTest {
       release.countDown();
       assertThat(closeFinished.await(5, TimeUnit.SECONDS)).isTrue();
       long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-      Status status = indicator.health().getStatus();
-      while (!Status.UP.equals(status) && System.nanoTime() < deadline) {
+      while (probes.getCompletedTaskCount() == 0 && System.nanoTime() < deadline) {
         Thread.sleep(10);
-        status = indicator.health().getStatus();
       }
-      assertThat(status).isEqualTo(Status.UP);
-      verify(source, atLeast(2)).getConnection();
+      assertThat(probes.getCompletedTaskCount()).isEqualTo(1);
+      assertThat(boundedHealth(indicator).getStatus()).isEqualTo(Status.UP);
+      verify(source, times(2)).getConnection();
     } finally {
       release.countDown();
       indicator.stopProbes();
     }
+  }
+
+  private static FutureTask<Health> startProbeThatMustReach(
+      RecoveryJournalHealthIndicator indicator, CountDownLatch blocked) {
+    var result =
+        new FutureTask<>(() -> {
+          Health health = indicator.health();
+          assertThat(blocked.getCount())
+              .as("probe reached the blocked phase before return")
+              .isZero();
+          return health;
+        });
+    Thread.ofVirtual().start(result);
+    return result;
+  }
+
+  private static Health boundedHealth(RecoveryJournalHealthIndicator indicator) throws Exception {
+    var result = new FutureTask<>(indicator::health);
+    Thread.ofVirtual().start(result);
+    return result.get(5, TimeUnit.SECONDS);
   }
 
   private static void awaitTimedWaiting(Thread thread) {

@@ -28,6 +28,7 @@ RECOVERY_PROJECT = "recovery-controller-service"
 RECOVERY_LOCATION = "classpath:db/recovery-control-migration"
 RECOVERY_RESOURCE_ROOT = f"services/{RECOVERY_PROJECT}/src/main/resources"
 RECOVERY_CONFIG_DIRECTORY = f"{RECOVERY_RESOURCE_ROOT}/config"
+RECOVERY_OWNER_CONFIGURATION = "net.firedevops.firemud.recovery.config.RecoveryControllerOwnerConfiguration"
 RECOVERY_SQL_ROOT = f"{RECOVERY_RESOURCE_ROOT}/db/recovery-control-migration/"
 RECOVERY_JAVA_ROOT = f"services/{RECOVERY_PROJECT}/src/main/java/db/recovery-control-migration/"
 RECOVERY_MAIN_JAVA_ROOT = f"services/{RECOVERY_PROJECT}/src/main/java/"
@@ -130,6 +131,11 @@ def decode_indexed_string_list(
         ambiguous.discard(path)
     return True
 PLUGIN_RE = re.compile(r'(?:\bid|pluginManager\.apply)\(\s*"([^\"]+)"\s*\)')
+KOTLIN_COMMENT_OR_LITERAL_RE = re.compile(
+    r'//[^\r\n]*|/\*|"""[\s\S]*?"""|"(?:\\.|[^"\\\r\n])*"'
+    r"|'(?:\\.|[^'\\\r\n])*'"
+)
+KOTLIN_BLOCK_COMMENT_RE = re.compile(r"/\*|\*/")
 Snapshot = dict[str, bytes]
 SYMLINK_SNAPSHOT = b"\0recovery-migration-symlink\0"
 
@@ -506,6 +512,31 @@ def discover_migration_files(snapshot: Snapshot) -> list[MigrationFile]:
     return discovered
 
 
+def kotlin_without_comments(source: str, path: str) -> str:
+    """Blank Kotlin comments while preserving quoted literals and line positions."""
+    chunks = []
+    cursor = 0
+    copied = 0
+    while match := KOTLIN_COMMENT_OR_LITERAL_RE.search(source, cursor):
+        cursor = match.end()
+        token = match.group()
+        if not token.startswith(("//", "/*")):
+            continue
+        if token == "/*":
+            depth = 1
+            while depth:
+                delimiter = KOTLIN_BLOCK_COMMENT_RE.search(source, cursor)
+                if delimiter is None:
+                    raise ValueError(f"{path}: unterminated Kotlin block comment")
+                depth += 1 if delimiter.group() == "/*" else -1
+                cursor = delimiter.end()
+        chunks.append(source[copied:match.start()])
+        chunks.append(re.sub(r"[^\r\n]", " ", source[match.start():cursor]))
+        copied = cursor
+    chunks.append(source[copied:])
+    return "".join(chunks)
+
+
 def runtime_project_dependencies(
     snapshot: Snapshot, recovery_issues: list[str] | None = None,
 ) -> dict[str, set[str]]:
@@ -514,7 +545,8 @@ def runtime_project_dependencies(
     This follows the repository's literal Kotlin DSL wiring. Test dependencies are
     deliberately excluded from startup classpaths.
     """
-    registration = snapshot.get("buildSrc/build.gradle.kts", b"").decode()
+    registration_path = "buildSrc/build.gradle.kts"
+    registration = kotlin_without_comments(snapshot.get(registration_path, b"").decode(), registration_path)
     plugin_paths: dict[str, str] = {}
     for plugin_id, class_name in re.findall(
         r'id\s*=\s*"([^\"]+)"\s+implementationClass\s*=\s*"([^\"]+)"', registration
@@ -528,7 +560,7 @@ def runtime_project_dependencies(
                     if re.fullmatch(r"services/[^/]+/build.gradle.kts", path)}
 
     def collect(path: str, visited: set[str], dependencies: set[str], qualifying_recovery: bool) -> None:
-        source = snapshot[path].decode()
+        source = kotlin_without_comments(snapshot[path].decode(), path)
         if qualifying_recovery and recovery_issues is not None:
             for call in RUNTIME_DEPENDENCY_CALL_RE.finditer(source):
                 declaration = (RUNTIME_DEPENDENCY_RE.match(source, call.start())
@@ -567,7 +599,7 @@ def saga_adopters(snapshot: Snapshot, runtime_dependencies: dict[str, set[str]])
         # exposes Saga resources too, even without a redundant explicit saga location.
         configured_files = [data.decode() for path, data in snapshot.items()
                             if re.fullmatch(
-                                rf"services/{re.escape(project)}/src/main/resources/application[^/]*\.ya?ml",
+                                rf"services/{re.escape(project)}/src/main/resources/(?:config/)?application[^/]*\.ya?ml",
                                 path,
                             )]
         loads_saga_location = any(
@@ -911,7 +943,8 @@ def recovery_flyway_config(
     if spring_boolean(auto_configuration_enabled) is not True:
         return None
     if effective_exclusions is not None and any(
-        name.strip().rsplit(".", 1)[-1] in {"FlywayAutoConfiguration", "DataSourceAutoConfiguration"}
+        name.strip() == RECOVERY_OWNER_CONFIGURATION
+        or name.strip().rsplit(".", 1)[-1] in {"FlywayAutoConfiguration", "DataSourceAutoConfiguration"}
         for name in effective_exclusions
     ):
         return None
@@ -1154,6 +1187,15 @@ def run_self_test() -> None:
             raise AssertionError(f"{label}: expected {expected!r}, got {issues}")
 
     check("unchanged legacy history", history, history, None)
+    root_saga_config = "services/example-service/src/main/resources/application.yml"
+    nested_saga_config = root_saga_config.replace("/application.yml", "/config/application.yml")
+    nested_saga_history = {path: data for path, data in history.items() if path != root_saga_config}
+    nested_saga_history[nested_saga_config] = history[root_saga_config]
+    check("moving an adopter's configuration to config/ preserves Saga history",
+          nested_saga_history, history, None)
+    check("Saga history in config/ sets the effective parent frontier",
+          {**nested_saga_history, local + "V2__new.sql": b"-- new"},
+          nested_saga_history, "frontier V1002")
     check("duplicate-only without a base", history, None, None)
     check("new low local", {**history, local + "V2__new.sql": b"-- new"}, history, "frontier V1002")
     check("forward local", {**history, local + "V1003__new.sql": b"-- new"}, history, None)
@@ -1667,6 +1709,21 @@ def run_self_test() -> None:
               f"services/{RECOVERY_PROJECT}/build.gradle.kts":
                   b'dependencies { runtimeOnly(project(":shared-journal-inputs")) { isTransitive = false } }',
           }, "cannot resolve Recovery production runtime dependency")
+    commented_dependencies = {
+        **shared_recovery_parent,
+        f"services/{RECOVERY_PROJECT}/build.gradle.kts": (
+            b'val description = "literal // and /* delimiters";\n'
+            b'val notes = """literal // and /* text""";\n'
+            b'dependencies { /* legal comment */ runtimeOnly(project(":shared-journal-inputs")) }\n'
+            b'// implementation(project(path = ":common-saga"))\n'
+            b'/* outer /* nested */ implementation(project(":common-saga")) */\n'
+        ),
+    }
+    dependencies = runtime_project_dependencies(commented_dependencies)[RECOVERY_PROJECT]
+    if dependencies != {"shared-journal-inputs", "nested-journal-inputs"}:
+        raise AssertionError(f"comments changed the resolved Recovery dependency graph: {dependencies}")
+    check("commented Recovery project declarations preserve qualification",
+          {**commented_dependencies, **recovery_history}, dedicated_candidate, None)
     check("explicitly empty Flyway connection init SQL qualifies recovery history", {
         **recovery_history,
         recovery_config: recovery_settings + b"    init-sqls: []\n",
@@ -2040,6 +2097,13 @@ def run_self_test() -> None:
     check("Redis-only autoconfiguration exclusion preserves recovery Flyway", {
         **recovery_history, recovery_config: redis_exclusion_settings,
     }, recovery_history, None)
+    check("excluding the Recovery owner configuration prevents qualification", {
+        **recovery_history,
+        recovery_config: redis_exclusion_settings.replace(
+            b"org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration",
+            b"net.firedevops.firemud.recovery.config.RecoveryControllerOwnerConfiguration",
+        ),
+    }, recovery_history, "packaged Spring configuration must enable Flyway")
     check("higher-priority Redis-only exclusion replaces root Flyway exclusion", {
         **recovery_history,
         recovery_config: (

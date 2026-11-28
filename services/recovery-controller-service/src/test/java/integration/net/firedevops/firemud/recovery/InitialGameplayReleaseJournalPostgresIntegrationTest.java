@@ -134,7 +134,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           "V7__retain_preparation_receipt_identities.sql",
           "V8__require_pending_effect_without_dispatch_timestamp.sql",
           "V9__require_pristine_pending_attempt.sql",
-          "V10__refuse_pending_effects_with_retained_attempts.sql");
+          "V10__refuse_pending_effects_with_retained_attempts.sql",
+          "V11__retain_owner_rejection_refresh_floor.sql");
   private static final String DIGEST = "b".repeat(64);
   private static final java.util.logging.Logger POSTGRES_PROTOCOL_LOG =
       java.util.logging.Logger.getLogger("org.postgresql.core.v3.QueryExecutorImpl");
@@ -899,7 +900,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     "group, must commit each migration separately",
     "datasource, must use the journal datasource",
     "validate, must validate migrations before applying them",
-    "skip, must execute migrations before recording them"
+    "skip, must execute migrations before recording them",
+    "lock, lock retries must be finite"
   })
   @ResourceLock("packaged-recovery-control-fixture-database")
   void packagedFlywayRejectsDriftFromCustomizerBeforeMigration(String option, String diagnostic)
@@ -947,6 +949,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                   POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
           case "validate" -> configuration.validateOnMigrate(false);
           case "skip" -> configuration.skipExecutingMigrations(true);
+          case "lock" -> configuration.lockRetryCount(-1);
           default -> throw new AssertionError("Unexpected fixture customization");
         }
       };
@@ -1296,6 +1299,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         "local_no_send_key",
         "maintenance_lock",
         "finalized_at_default",
+        "outbox_effect_identity",
         "outbox_dispatch",
         "weakened_outbox_dispatch",
         "pending_dispatch_timestamp",
@@ -1332,6 +1336,21 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         packaged.execute(
             "ALTER TABLE recovery_control.initial_gameplay_release_operation"
                 + " ALTER COLUMN finalized_at SET DEFAULT CURRENT_TIMESTAMP");
+      } else if ("outbox_effect_identity".equals(drift)) {
+        String effectIdentityKey =
+            packaged
+                .fetchSingle(
+                    """
+                    SELECT conname FROM pg_catalog.pg_constraint
+                    WHERE conrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+                      AND contype = 'u'
+                      AND pg_get_constraintdef(oid) = 'UNIQUE (operation_id, effect_id)'
+                    """)
+                .get(0, String.class);
+        packaged
+            .alterTable(DSL.name(SCHEMA, "initial_gameplay_release_outbox"))
+            .dropConstraint(DSL.name(effectIdentityKey))
+            .execute();
       } else if ("outbox_dispatch".equals(drift)) {
         packaged.execute(
             "ALTER TABLE recovery_control.initial_gameplay_release_outbox"
@@ -1905,8 +1924,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               """
               INSERT INTO recovery_control.flyway_schema_history_recovery_control
                 (installed_rank, version, description, type, script, installed_by, execution_time, success)
-              SELECT max(installed_rank) + 1, '10', 'fixture newer migration', 'SQL',
-                'V10__fixture_newer_migration.sql', current_user, 0, true
+              SELECT max(installed_rank) + 1, '12', 'fixture newer migration', 'SQL',
+                'V12__fixture_newer_migration.sql', current_user, 0, true
               FROM recovery_control.flyway_schema_history_recovery_control
               """);
       var health = application.getBean(HealthEndpoint.class);
@@ -5836,9 +5855,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @ParameterizedTest
-  @CsvSource({"false,true", "true,true", "true,false"})
+  @CsvSource({"false,true,false", "true,true,false", "true,false,false", "true,false,true"})
   void stalePreparationHoldsExactHandoffRetryUntilFreshProof(
-      boolean ownerRejected, boolean observePartial) {
+      boolean ownerRejected, boolean observePartial, boolean closeRejectedAttempt) {
     Instant base = Instant.parse("2026-09-01T00:00:00Z");
     OutboxEntry preparation = authorizedDispatch(base);
     UUID operationId = preparation.effect().operationId();
@@ -5873,6 +5892,16 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 "DEFINITIVE_NO_EFFECT",
                 base.plusSeconds(9)))
         .isTrue();
+    if (closeRejectedAttempt) {
+      var closure =
+          readbackFor(
+              claimed,
+              claimed.lastAttemptId(),
+              EffectReadbackState.PROVEN_NO_EFFECT,
+              "closed-rejected-handoff",
+              base.plusSeconds(9));
+      journal.recordEffectReadback(claimed, closure, closure.observedAt());
+    }
     String retry = storedOutbox(operationId, handoffId);
     OutboxEntry held = journal.findNextEffect(operationId).orElseThrow();
     assertThat(held.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
@@ -5883,6 +5912,22 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isInstanceOf(InitialGameplayReleaseConflictException.class)
         .hasMessageContaining("preparation acknowledgement is unavailable");
     assertThat(storedOutbox(operationId, handoffId)).isEqualTo(retry);
+    if (ownerRejected) {
+      var sameMicrosecond =
+          readbackFor(
+              held,
+              held.lastAttemptId(),
+              EffectReadbackState.PREPARED_FENCED,
+              "same-microsecond-preparation",
+              base.plusSeconds(9).plusNanos(999));
+      journal.recordEffectReadback(held, sameMicrosecond, sameMicrosecond.observedAt());
+      assertThat(journal.findNextEffect(operationId)).contains(held);
+      assertThatThrownBy(() ->
+              journal.claimEffect(
+                  operationId, handoffId, retryAttemptId, () -> base.plusSeconds(10)))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("preparation acknowledgement is unavailable");
+    }
 
     journal.recordEffectReadback(
         held,
@@ -5894,11 +5939,68 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             base.plusSeconds(10)),
         base.plusSeconds(10));
     assertThat(storedOutbox(operationId, handoffId)).isEqualTo(retry);
+    if (ownerRejected && !closeRejectedAttempt) {
+      var partial =
+          readbackFor(
+              claimed,
+              claimed.lastAttemptId(),
+              EffectReadbackState.UNKNOWN_OR_PARTIAL,
+              "later-partial-handoff",
+              base.plusSeconds(12));
+      journal.recordEffectReadback(claimed, partial, partial.observedAt());
+      assertThat(storedOutbox(operationId, handoffId)).contains(tupleCodec.digest(partial));
+    }
+    assertThat(journal.findNextEffect(operationId))
+        .hasValueSatisfying(next -> assertThat(next.effect().effectId()).isEqualTo(handoffId));
     OutboxEntry retried =
-        journal.claimEffect(operationId, handoffId, retryAttemptId, () -> base.plusSeconds(11));
+        journal.claimEffect(operationId, handoffId, retryAttemptId, () -> base.plusSeconds(13));
     assertThat(retried.state()).isEqualTo(EffectOutboxState.DISPATCHED);
     assertThat(retried.lastAttemptId()).isEqualTo(retryAttemptId);
     assertThat(retried.attemptCount()).isEqualTo(claimed.attemptCount() + 1);
+  }
+
+  @Test
+  void legacyRejectionReceiptsGainAConservativeMigrationFloorWithoutRewritingTheirIdentity()
+      throws Exception {
+    String database = "recovery_rejection_refresh_floor";
+    String sourceUrl = POSTGRES.getJdbcUrl();
+    String journalUrl = sourceUrl.substring(0, sourceUrl.lastIndexOf('/') + 1) + database;
+    dsl.execute("CREATE DATABASE " + database);
+    try {
+      journalFlyway(journalUrl, "10").migrate();
+      try (var connection =
+          DriverManager.getConnection(journalUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        var fixture = DSL.using(connection, SQLDialect.POSTGRES);
+        seedImmutableV1Journal(fixture, true, Instant.parse("2026-09-01T00:00:00Z"));
+        fixture.execute(
+            """
+            INSERT INTO recovery_control.initial_gameplay_release_attempt_rejection
+                (outbox_id, attempt_id, attempt_ordinal)
+            VALUES (?, ?, 1)
+            """,
+            V1_OUTBOX_ID,
+            V1_PRIOR_ATTEMPT_ID);
+        var outbox = retainedOutboxRow(fixture);
+        var before = fixture.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class);
+        journalFlyway(journalUrl, null).migrate();
+        var after = fixture.fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class);
+        var retained =
+            fixture.fetchSingle(
+                """
+                SELECT outbox_id, attempt_id, attempt_ordinal, preparation_refresh_after
+                FROM recovery_control.initial_gameplay_release_attempt_rejection
+                """);
+        assertThat(retained.get("outbox_id", UUID.class)).isEqualTo(V1_OUTBOX_ID);
+        assertThat(retained.get("attempt_id", UUID.class)).isEqualTo(V1_PRIOR_ATTEMPT_ID);
+        assertThat(retained.get("attempt_ordinal", Integer.class)).isEqualTo(1);
+        assertThat(retained.get("preparation_refresh_after", OffsetDateTime.class))
+            .isBetween(before, after);
+        assertThat(retainedOutboxRow(fixture)).isEqualTo(outbox);
+        assertCompletePackagedMigrationReceipts(journalUrl);
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
   }
 
   @Test
@@ -6467,8 +6569,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                       .get(0))
               .isNull();
           journalFlyway(legacyUrl, "6").migrate();
+          journalFlyway(legacyUrl, null).migrate();
           OutboxEntry reconcilable = upgradedJournal.findNextEffect(V1_OPERATION_ID).orElseThrow();
-          journalFlyway(legacyUrl, "7").migrate();
           if (retainedRetry) {
             assertThat(reconcilable.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
             assertThatThrownBy(() ->
@@ -6688,6 +6790,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           upgrade.migrate();
           upgrade.validate();
           assertThat(upgrade.info().current().getVersion().getVersion()).isEqualTo("7");
+          journalFlyway(legacyUrl, null).migrate();
           OutboxEntry pendingHandoff = legacyJournal.findNextEffect(V1_OPERATION_ID).orElseThrow();
           assertThat(pendingHandoff.effect().kind())
               .isEqualTo(EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF);
@@ -6869,10 +6972,10 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                       V1_OUTBOX_ID))
               .isEqualTo(1);
         }
+        journalFlyway(legacyUrl, null).migrate();
         var held = legacyJournal.findNextEffect(V1_OPERATION_ID).orElseThrow();
         assertThat(held.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
         assertThat(held.lastAttemptId()).isEqualTo(attempt);
-        journalFlyway(legacyUrl, "7").migrate();
         assertThatThrownBy(() ->
                 legacyJournal.claimEffect(
                     V1_OPERATION_ID,

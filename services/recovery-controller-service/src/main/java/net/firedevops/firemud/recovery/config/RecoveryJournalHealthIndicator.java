@@ -38,7 +38,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       """
           + JooqInitialGameplayReleaseJournal.DURABLE_JOURNAL_RELATIONS
           + """
-            AND (SELECT count(*) = 10 AND count(DISTINCT version) FILTER (WHERE success AND (
+            AND (SELECT count(*) = 11 AND count(DISTINCT version) FILTER (WHERE success AND (
                (version = '1' AND script = 'V1__initial_gameplay_release_journal.sql')
                OR (version = '2' AND script = 'V2__retain_initial_gameplay_release_attempt_closure.sql')
                OR (version = '3'
@@ -56,7 +56,9 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                OR (version = '9'
                    AND script = 'V9__require_pristine_pending_attempt.sql')
                OR (version = '10'
-                   AND script = 'V10__refuse_pending_effects_with_retained_attempts.sql'))) = 10
+                   AND script = 'V10__refuse_pending_effects_with_retained_attempts.sql')
+               OR (version = '11'
+                   AND script = 'V11__retain_owner_rejection_refresh_floor.sql'))) = 11
              FROM recovery_control.flyway_schema_history_recovery_control
              WHERE version IS NOT NULL OR type <> 'SCHEMA')
             AND has_table_privilege(
@@ -194,20 +196,21 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                 AND i.indpred IS NULL AND i.indnkeyatts = 1
                 AND a.atttypid = 'pg_catalog.uuid'::regtype AND a.attnotnull
                 AND a.attname IN ('operation_id', 'maintenance_lock_identity'))
-            AND EXISTS (
-              SELECT 1
+            AND (SELECT count(DISTINCT effect.attname) = 2
               FROM pg_catalog.pg_index i
               JOIN pg_catalog.pg_attribute op ON op.attrelid = i.indrelid
                  AND op.attnum = i.indkey[0] AND NOT op.attisdropped
-              JOIN pg_catalog.pg_attribute kind ON kind.attrelid = i.indrelid
-                 AND kind.attnum = i.indkey[1] AND NOT kind.attisdropped
+              JOIN pg_catalog.pg_attribute effect ON effect.attrelid = i.indrelid
+                 AND effect.attnum = i.indkey[1] AND NOT effect.attisdropped
               WHERE i.indrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND i.indisunique AND i.indisvalid AND i.indisready AND i.indislive AND i.indimmediate
                 AND i.indpred IS NULL AND i.indnkeyatts = 2
                 AND op.attname = 'operation_id' AND op.attnotnull
                 AND op.atttypid = 'pg_catalog.uuid'::regtype
-                AND kind.attname = 'effect_kind' AND kind.attnotnull
-                AND kind.atttypid = 'pg_catalog.varchar'::regtype AND kind.atttypmod = 52)
+                AND effect.attnotnull
+                AND ((effect.attname = 'effect_kind'
+                      AND effect.atttypid = 'pg_catalog.varchar'::regtype AND effect.atttypmod = 52)
+                  OR (effect.attname = 'effect_id' AND effect.atttypid = 'pg_catalog.uuid'::regtype)))
             AND EXISTS (
               SELECT 1
               FROM pg_catalog.pg_index i
@@ -443,8 +446,13 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               SELECT outbox_id, attempt_id, attempt_ordinal, readback_payload, readback_digest,
                      dispatched_at, recorded_at
               FROM recovery_control.initial_gameplay_release_attempt_closure WHERE FALSE)
+            AND EXISTS (
+              SELECT 1 FROM pg_catalog.pg_attribute
+              WHERE attrelid = 'recovery_control.initial_gameplay_release_attempt_rejection'::regclass
+                AND attname = 'preparation_refresh_after' AND NOT attisdropped AND attnotnull
+                AND NOT atthasdef AND atttypid = 'pg_catalog.timestamptz'::regtype AND atttypmod = -1)
             AND NOT EXISTS (
-              SELECT outbox_id, attempt_id, attempt_ordinal
+              SELECT outbox_id, attempt_id, attempt_ordinal, preparation_refresh_after
               FROM recovery_control.initial_gameplay_release_attempt_rejection WHERE FALSE)
             AND NOT EXISTS (
               SELECT outbox_id, attempt_id, attempt_ordinal, dispatched_at, recorded_at
