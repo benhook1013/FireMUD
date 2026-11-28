@@ -23,8 +23,9 @@ Review working notes and coverage tables are ephemeral unless the human explicit
 - technical contracts go to `design/architecture/`;
 - implementation and proof status go to the owning implementation tracker;
 - consequential decisions use the established decision workflow;
-- release or operational evidence goes to the existing operations evidence surface; and
-- reusable process, tooling, environment, or design lessons go to dated appended entries in the [AI observations](../ai-observations.md).
+- release or operational evidence goes to the existing operations evidence surface;
+- unresolved process, tooling, or environment problems go to dated appended entries in the [AI observations](../ai-observations.md); and
+- the review pass itself, with its findings and decisions, is recorded in FireController (`reviews subagent-record`) by the delegating lane when its task authorizes that write. Read-only review invocations return findings to the caller.
 
 Do not create a permanent second backlog, finding database, invariant registry, or per-service status collection for this library.
 

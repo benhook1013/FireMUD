@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed - Pending Human Review
+Accepted
 
 ## Implementation Status
 
@@ -15,15 +15,16 @@ Not implemented. Develop still carries legacy and retained numeric-identifier ta
 
 ## Decision Record
 
-- Human review status: Pending
-- Human review date: Not yet reviewed
-- Human review disposition: Pending
-- Review source: `AI-AUTHORED-PENDING`
+- Human review status: Completed
+- Human review date: 2026-11-28
+- Human review disposition: Accepted
+- Review source: `DATA-CARRY-01`
 - Decision date: 2026-11-18
+- Decision key: `DATA-CARRY-01`
 - Primary capability: `SF-2.3` durable cross-service coordination and idempotency
 - Affected capabilities: `SF-2.1`, `AR-1.5`, `PO-4.4`
 - Decision owner: FireMUD human product and architecture owner
-- Consultation: direct human decision on 2026-11-18 that all pre-v1 preview data is disposable
+- Consultation: direct human decision on 2026-11-18 that all pre-v1 preview data is disposable; the human owner accepted this record as written on 2026-11-28
 
 ## Context
 
