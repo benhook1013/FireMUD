@@ -235,12 +235,36 @@ jobs:
             "$EXPECTED_NAMESPACE_UID" "$EXPECTED_DEPLOYED_HEAD"
 
       - name: Ensure dev-demo namespace exists
+        id: prepare-namespace
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
+          RETAINED_ACTIVATION: ${{ steps.v2-migration-mode.outputs.activation }}
+          PREVIOUS_NAMESPACE_UID: ${{ steps.v2-migration-mode.outputs.namespace_uid }}
         run: |
-          bash ./dev-tools/hosted/dev-demo/ensure-dev-demo-namespace.sh \
-            "${{ needs.dev-demo-plan.outputs.namespace }}"
+          set -euo pipefail
+          [[ "$RUNTIME_NAMESPACE" == dev ]]
+          if [[ "$RETAINED_ACTIVATION" == true ]]; then
+            namespace_json="$(kubectl --request-timeout=10s get namespace dev -o json)"
+          else
+            [[ "$RETAINED_ACTIVATION" == false ]]
+            namespace_json="$(kubectl --request-timeout=10s create -f - -o json <<'JSON'
+          {"apiVersion":"v1","kind":"Namespace","metadata":{"name":"dev","labels":{"firemud.dev/dev-demo":"true","firemud.dev/environment-class":"dev-demo-cluster"}}}
+          JSON
+            )"
+          fi
+          namespace_uid="$(
+            jq -er --arg previous "$PREVIOUS_NAMESPACE_UID" --arg retained "$RETAINED_ACTIVATION" '
+              select(.kind == "Namespace" and .metadata.name == "dev" and .metadata.deletionTimestamp == null
+                and .metadata.labels["firemud.dev/dev-demo"] == "true"
+                and .metadata.labels["firemud.dev/environment-class"] == "dev-demo-cluster")
+              | .metadata.uid
+              | select(type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"))
+              | select(if $retained == "true" then . == $previous else . != $previous end)
+            ' <<<"$namespace_json"
+          )"
+          echo "namespace_uid=$namespace_uid" >> "$GITHUB_OUTPUT"
 
       - name: Record exact dev-demo runtime target
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' }}
@@ -412,34 +436,44 @@ jobs:
             "${{ needs.dev-demo-plan.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify migration writer inventory access
+        id: migration-writer-access
         if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.v2-migration-mode.outputs.activation == 'true' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
         run: kubectl --request-timeout=10s -n "$RUNTIME_NAMESPACE" auth can-i list replicasets.apps
 
-      - name: Retain migration deployment intent
+      - name: Retain dev-demo deployment intent
         id: retain-deployment-intent
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.v2-migration-mode.outputs.activation == 'true' }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.prepare-namespace.outcome == 'success' && (steps.v2-migration-mode.outputs.activation == 'false' || steps.migration-writer-access.outcome == 'success') }}
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
-          NAMESPACE_UID: ${{ steps.v2-migration-mode.outputs.namespace_uid }}
+          NAMESPACE_UID: ${{ steps.prepare-namespace.outputs.namespace_uid }}
+          RETAINED_ACTIVATION: ${{ steps.v2-migration-mode.outputs.activation }}
           DEPLOYED_BASE_SHA: ${{ steps.v2-migration-mode.outputs.deployed_base_sha }}
           HEAD_SHA: ${{ needs.dev-demo-plan.outputs.head_sha }}
         run: |
           set -euo pipefail
           echo "DEV_DEMO_STAGE=retain-deployment-intent" >> "$GITHUB_ENV"
+          [[ "$RUNTIME_NAMESPACE" == dev ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ && "$DEPLOYED_BASE_SHA" =~ ^[0-9a-f]{40}$ && "$DEPLOYED_BASE_SHA" != "$HEAD_SHA" ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$RETAINED_ACTIVATION" == true || "$RETAINED_ACTIVATION" == false ]]
+          [[ "$NAMESPACE_UID" =~ ^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$ ]]
           resource_version="$(
             kubectl --request-timeout=10s get namespace "$RUNTIME_NAMESPACE" -o json |
-              jq -er --arg uid "$NAMESPACE_UID" --arg base "$DEPLOYED_BASE_SHA" --arg head "$HEAD_SHA" '
-                select(.metadata.name == "dev" and .metadata.uid == $uid
+              jq -er --arg uid "$NAMESPACE_UID" --arg base "$DEPLOYED_BASE_SHA" --arg head "$HEAD_SHA" \
+                --arg retained "$RETAINED_ACTIVATION" '
+                select(.kind == "Namespace" and .metadata.name == "dev" and .metadata.uid == $uid
+                  and .metadata.deletionTimestamp == null
                   and .metadata.labels["firemud.dev/dev-demo"] == "true"
                   and .metadata.labels["firemud.dev/environment-class"] == "dev-demo-cluster"
-                  and .metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == $base
                   and .metadata.annotations["firemud.dev/requested-dev-demo-head-sha"] == $head
                   and (.metadata.annotations
                     | (has("firemud.dev/pending-dev-demo-deployment") or has("firemud.dev/pending-dev-demo-bootstrap")) | not))
+                | select(.metadata.annotations["firemud.dev/last-dev-demo-head-sha"]
+                  == (if $retained == "true" then $base else null end))
                 | .metadata.resourceVersion | select(type == "string" and length > 0)
               '
           )"
@@ -456,7 +490,7 @@ jobs:
         run: bash ./dev-tools/deploy/quiesce-v2-schema-migrations.sh "$RUNTIME_NAMESPACE"
 
       - name: Deploy dev-demo release
-        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && (steps.v2-migration-mode.outputs.activation != 'true' || steps.quiesce-writers.outcome == 'success') }}
+        if: ${{ steps.cluster-access.outputs.available == 'true' && steps.v2-migration-mode.outcome == 'success' && steps.retain-deployment-intent.outcome == 'success' && (steps.v2-migration-mode.outputs.activation == 'false' || steps.quiesce-writers.outcome == 'success') }}
         id: deploy-release
         continue-on-error: true
         env:
@@ -475,7 +509,7 @@ jobs:
           RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
           HEAD_SHA: ${{ needs.dev-demo-plan.outputs.head_sha }}
           RETAINED_ACTIVATION: ${{ steps.v2-migration-mode.outputs.activation }}
-          NAMESPACE_UID: ${{ steps.v2-migration-mode.outputs.namespace_uid }}
+          NAMESPACE_UID: ${{ steps.prepare-namespace.outputs.namespace_uid }}
           DEPLOYED_BASE_SHA: ${{ steps.v2-migration-mode.outputs.deployed_base_sha }}
         run: |
           set -euo pipefail
@@ -490,44 +524,34 @@ jobs:
           [[ "$DEPLOYED_BASE_SHA" =~ ^[0-9a-f]{40}$ && "$DEPLOYED_BASE_SHA" != "$HEAD_SHA" ]]
           [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           [[ "$RETAINED_ACTIVATION" == true || "$RETAINED_ACTIVATION" == false ]]
+          [[ "$NAMESPACE_UID" =~ ^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$ ]]
           request_id="dev-demo-smoke-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           intent="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${DEPLOYED_BASE_SHA}:${HEAD_SHA}"
           bootstrap_hold="${intent}:${request_id}"
           (( ${#request_id} <= 128 && ${#bootstrap_hold} <= 256 ))
-          namespace_identity="$(
+          resource_version="$(
             kubectl --request-timeout=10s get namespace "$RUNTIME_NAMESPACE" -o json |
               jq -er --arg uid "$NAMESPACE_UID" --arg base "$DEPLOYED_BASE_SHA" --arg head "$HEAD_SHA" \
                 --arg intent "$intent" --arg retained "$RETAINED_ACTIVATION" '
                 select(.kind == "Namespace" and .metadata.name == "dev" and .metadata.deletionTimestamp == null
+                  and .metadata.uid == $uid
                   and .metadata.labels["firemud.dev/dev-demo"] == "true"
                   and .metadata.labels["firemud.dev/environment-class"] == "dev-demo-cluster"
                   and .metadata.annotations["firemud.dev/requested-dev-demo-head-sha"] == $head
+                  and .metadata.annotations["firemud.dev/pending-dev-demo-deployment"] == $intent
                   and .metadata.annotations["firemud.dev/pending-dev-demo-bootstrap"] == null)
-                | if $retained == "true" then
-                    select(.metadata.uid == $uid
-                      and .metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == $base
-                      and .metadata.annotations["firemud.dev/pending-dev-demo-deployment"] == $intent)
-                  else
-                    select(.metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == null
-                      and .metadata.annotations["firemud.dev/pending-dev-demo-deployment"] == null)
-                  end
-                | select(.metadata.uid | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"))
-                | select(.metadata.resourceVersion | type == "string" and length > 0)
-                | [.metadata.uid, .metadata.resourceVersion] | @tsv'
+                | select(.metadata.annotations["firemud.dev/last-dev-demo-head-sha"]
+                  == (if $retained == "true" then $base else null end))
+                | .metadata.resourceVersion | select(type == "string" and length > 0)'
           )"
-          IFS=$'\t' read -r namespace_uid resource_version <<<"$namespace_identity"
-          settle_deployment=()
-          if [[ "$RETAINED_ACTIVATION" == true ]]; then
-            settle_deployment+=("firemud.dev/pending-dev-demo-deployment-")
-          fi
           kubectl --request-timeout=10s annotate namespace "$RUNTIME_NAMESPACE" \
             --resource-version="$resource_version" \
             "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" \
             "firemud.dev/pending-dev-demo-bootstrap=${bootstrap_hold}" \
-            "${settle_deployment[@]}" --overwrite >/dev/null
+            "firemud.dev/pending-dev-demo-deployment-" --overwrite >/dev/null
           {
             echo "bootstrap_hold=$bootstrap_hold"
-            echo "namespace_uid=$namespace_uid"
+            echo "namespace_uid=$NAMESPACE_UID"
           } >> "$GITHUB_OUTPUT"
 
       - name: Show deployed dev-demo services
@@ -1116,11 +1140,33 @@ jobs:
           HEAD_SHA: ${{ needs.dev-demo-plan.outputs.head_sha }}
         run: |
           set -euo pipefail
-          receipt="$(jq -ce --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
-            --arg head "$HEAD_SHA" --arg uid "$BOOTSTRAP_NAMESPACE_UID" \
-            'select(.schema == "dev-demo-bootstrap-result/v1" and .intent.runId == $run
-              and .intent.attempt == $attempt and .intent.headSha == $head and .intent.namespaceUid == $uid)' \
-            "$BOOTSTRAP_EVIDENCE_DIR/result.json")"
+          receipt="$(python3 - "$BOOTSTRAP_EVIDENCE_DIR/intent.json" "$BOOTSTRAP_EVIDENCE_DIR/result.json" \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$HEAD_SHA" "$BOOTSTRAP_NAMESPACE_UID" <<'PY'
+          import json
+          import runpy
+          import sys
+          from pathlib import Path
+
+          intent_path, receipt_path, run_id, attempt, head, namespace_uid = sys.argv[1:]
+          read_verified_receipt = runpy.run_path(
+              "dev-tools/hosted/dev-demo/write-bootstrap-result.py"
+          )["read_verified_receipt"]
+          try:
+              intent, account_id, session = read_verified_receipt(Path(intent_path), Path(receipt_path))
+              if (intent["runId"], intent["attempt"], intent["headSha"], intent["namespaceUid"]) != (
+                  run_id, attempt, head, namespace_uid
+              ):
+                  raise ValueError
+          except (KeyError, OSError, TypeError, ValueError):
+              raise SystemExit("dev-demo namespace receipt refused") from None
+          print(json.dumps({
+              "schema": "dev-demo-bootstrap-result/v1",
+              "intent": intent,
+              "accountUuid": account_id,
+              "gameSession": session,
+          }, separators=(",", ":")))
+          PY
+          )"
           [[ "${#receipt}" -le 8192 ]]
           resource_version="$(
             kubectl --request-timeout=10s get namespace dev -o json |

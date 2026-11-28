@@ -491,6 +491,36 @@ jobs:
             };
             ci = await selectCi();
             if (!ci) return;
+            const provesVisibleTypedReceiver = async (run, deadline) => {
+              const options = request => withRequestDeadline(request, deadline, "Refresh visibility");
+              const {data} = await github.rest.actions.listJobsForWorkflowRunAttempt(options({
+                ...context.repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100, page: 1,
+              }));
+              if (!Array.isArray(data?.jobs) || data.jobs.length > 100 || data.total_count !== data.jobs.length) return false;
+              const metadata = data.jobs.filter(job => job?.name === "Derive Runtime Image Metadata");
+              const job = metadata[0];
+              if (metadata.length !== 1 || !positive(job.id) || job.run_id !== run.id || job.head_sha !== run.head_sha ||
+                  (Object.hasOwn(job, "run_attempt") && job.run_attempt !== run.run_attempt) ||
+                  job.status !== "completed" || job.conclusion !== "success" || !Array.isArray(job.steps)) return false;
+              const markers = job.steps.filter(step => typeof step?.name === "string" &&
+                step.name.startsWith("Runtime refresh claim generation"));
+              const marker = markers[0];
+              const identity = /^Runtime refresh claim generation ([1-9][0-9]*) attempt ([1-9][0-9]*) tag ([0-9a-f]{40})$/.exec(marker?.name);
+              if (markers.length !== 1 || !identity || Number(identity[2]) !== run.run_attempt ||
+                  marker.status !== "completed" || marker.conclusion !== "success") return false;
+              const baseRefHash = require("node:crypto").createHash("sha256").update(baseRef, "utf8").digest("hex");
+              const ref = `tags/firemud-runtime-refresh-intent/v1/pr-${number}/${merge}/${baseRefHash}/g${identity[1]}`;
+              try {
+                const {data: claim} = await github.rest.git.getRef(options({...context.repo, ref}));
+                if (claim?.ref !== `refs/${ref}` || claim.object?.type !== "tag" || claim.object.sha !== identity[3]) return false;
+              } catch (error) {
+                if ((error?.status ?? error?.response?.status) === 404) return false;
+                throw error;
+              }
+              const {data: current} = await github.rest.actions.getWorkflowRun(options({...context.repo, run_id: run.id}));
+              return trusted(current) && ["id", "workflow_id", "run_attempt", "event", "path", "display_title",
+                "head_branch", "head_sha", "created_at"].every(field => current[field] === run[field]);
+            };
             const newerRefresh = async (
               createdSince = event.created_at,
               deadline = prePostDeadline,
@@ -573,7 +603,7 @@ jobs:
               const unseen = exact.filter(run => !previousIds.has(run.id));
               const visible = unseen.filter(run => Date.parse(run.created_at) >= secondFloor);
               if (visible.length > 1) throw new Error("Multiple new exact typed producers are visible");
-              return {found: visible.length === 1, ids};
+              return {found: visible.length === 1 && await provesVisibleTypedReceiver(visible[0], deadline), ids};
             };
             const newerNativeProducer = async (createdSince, deadline) => {
               const phase = "Native runtime producer visibility";

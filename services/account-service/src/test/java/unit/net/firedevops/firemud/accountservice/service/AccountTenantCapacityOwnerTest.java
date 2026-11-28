@@ -170,6 +170,7 @@ class AccountTenantCapacityOwnerTest {
   private enum InitialDenialPath {
     QUOTA,
     EXPIRES_AT_MEMBERSHIP_OBSERVATION,
+    SCOPE_ALREADY_ELAPSED,
     DELEGATION_ALREADY_ELAPSED,
     EXPIRES_DURING_SCOPE_QUALIFICATION,
     EXPIRES_ACROSS_SCOPE_CLOCK_SAMPLES,
@@ -263,12 +264,12 @@ class AccountTenantCapacityOwnerTest {
     switch (path) {
       case QUOTA -> {}
       case EXPIRES_AT_MEMBERSHIP_OBSERVATION -> f.onDatabaseObservation = expire;
-      case DELEGATION_ALREADY_ELAPSED -> {
-        var elapsed = markDelegationExpired(f, exactSources.delegation());
-        when(f.issuances.readCurrentCommittedCandidateByJti(
-                CapacityAdmissionTestFixture.DELEGATION_JTI))
-            .thenThrow(elapsed);
+      case SCOPE_ALREADY_ELAPSED -> {
+        f.databaseExpired = true;
+        var scopeExpiry = Instant.parse(exactSources.scope().connectScopeExpiresAt());
+        when(f.clock.instant()).thenReturn(scopeExpiry);
       }
+      case DELEGATION_ALREADY_ELAPSED -> markDelegationExpired(f, exactSources.delegation());
       case EXPIRES_DURING_DELEGATION_READ ->
           when(f.issuances.readCurrentCommittedCandidateByJti(
                   CapacityAdmissionTestFixture.DELEGATION_JTI))
@@ -312,9 +313,15 @@ class AccountTenantCapacityOwnerTest {
     assertThat(f.originDecision).isSameAs(genericRefusal);
     assertThat(f.pendingOriginDecision).isNull();
     UUID committedId = genericRefusal.get("decision_id", UUID.class);
-    verify(f.issuances)
-        .readCurrentCommittedCandidateByJti(CapacityAdmissionTestFixture.DELEGATION_JTI);
-    verify(f.scopes).findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request));
+    if (path == InitialDenialPath.EXPIRES_AT_MEMBERSHIP_OBSERVATION
+        || path == InitialDenialPath.SCOPE_ALREADY_ELAPSED
+        || path == InitialDenialPath.DELEGATION_ALREADY_ELAPSED) {
+      verifyNoInteractions(f.issuances, f.scopes);
+    } else {
+      verify(f.issuances)
+          .readCurrentCommittedCandidateByJti(CapacityAdmissionTestFixture.DELEGATION_JTI);
+      verify(f.scopes).findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request));
+    }
     if (path != InitialDenialPath.QUOTA && path != InitialDenialPath.EXPIRES_DURING_USAGE_LOCK) {
       verify(f.dsl, never())
           .fetchOne(
@@ -373,16 +380,17 @@ class AccountTenantCapacityOwnerTest {
   }
 
   @Test
-  void alreadyElapsedDelegationWithDifferentCommitProofDoesNotRetainDenial() throws Exception {
+  void delegationExpiringDuringReadWithDifferentCommitProofDoesNotRetainDenial() throws Exception {
     var f = new Fixture(false, qualifiedRequest(true));
     f.existing = false;
     f.retained = true;
     var exactSources = qualifySources(f);
     when(exactSources.delegation().commitProofSha256()).thenReturn("f".repeat(64));
-    var elapsed = markDelegationExpired(f, exactSources.delegation());
     when(f.issuances.readCurrentCommittedCandidateByJti(
             CapacityAdmissionTestFixture.DELEGATION_JTI))
-        .thenThrow(elapsed);
+        .thenAnswer(ignored -> {
+          throw markDelegationExpired(f, exactSources.delegation());
+        });
 
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
         .isInstanceOfSatisfying(
@@ -560,7 +568,11 @@ class AccountTenantCapacityOwnerTest {
     verify(f.dsl)
         .execute(
             startsWith("INSERT INTO account_tenant_capacity_reservations "), any(Object[].class));
-    assertThat(f.transactionEvents).containsExactly("begin", "rollback");
+    assertThat(f.transactionEvents)
+        .containsExactlyElementsOf(
+            databaseRejectsCommit
+                ? List.of("begin", "deferred-commit", "rollback")
+                : List.of("begin", "rollback"));
     assertThat(f.originDecision).isNull();
     assertThat(f.pendingReservation).isFalse();
   }
@@ -1366,6 +1378,7 @@ class AccountTenantCapacityOwnerTest {
     @Override
     public void commit(TransactionStatus status) {
       if (fixture.databaseRejectsDeferredCommit) {
+        fixture.transactionEvents.add("deferred-commit");
         rollback(status);
         throw new org.springframework.transaction.TransactionSystemException(
             "Deferred transaction validation failed",

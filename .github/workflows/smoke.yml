@@ -632,7 +632,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "d998a410dc8661df613b2836c34c291c57653077aaaeeb0b42f5039498bccd03";
+            const canonicalRuntimeWorkflowSha256 = "fe87bbf9904be1b1c7874b170393d34679511c059e240034ba4f09416c2d98bc";
             // Only authenticated default-branch refreshes may use retained successful definitions.
             // Keep the pre-rollout default and predecessor definitions for mixed-version runs.
             const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -805,7 +805,10 @@ jobs:
               const [start, jobStart, jobEnd, end] =
                 [source.run_started_at, job.started_at, job.completed_at, source.updated_at].map(Date.parse);
               if (![start, jobStart, jobEnd, end].every(Number.isFinite)) return null;
-              return start <= jobStart && jobStart <= jobEnd && jobEnd <= end;
+              // GitHub can round job timestamps to seconds independently of
+              // the exact attempt's start timestamp.
+              const earliestJobStart = jobStart % 1000 === 0 ? Math.floor(start / 1000) * 1000 : start;
+              return earliestJobStart <= jobStart && jobStart <= jobEnd && jobEnd <= end;
             }
 
             async function verifyCanonicalSmokeProducer(run, candidate, identity, requireTerminalSmokeProof = false) {
@@ -2037,6 +2040,23 @@ jobs:
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue smokeGatePolling;
                 }
+                if (replacementProof !== "ordinary" && Date.now() < sameTupleCancellationDeadline) {
+                  const playIdentity = await resolveCurrentIdentity("Fencing cancelled-run PLAY exception", true);
+                  if (playIdentity?.obsolete) return;
+                  if (!playIdentity || identityKey({...playIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
+                      identityKey(currentIdentity)) {
+                    if (playIdentity) {
+                      cancelledRecoveryMoved = true;
+                      requireCurrentIdentity = true;
+                      currentIdentity = playIdentity;
+                    }
+                    continue smokeGatePolling;
+                  }
+                  if (!playIdentity.canonicalPlayEligible) {
+                    core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
+                    return;
+                  }
+                }
                 if (Date.now() < sameTupleCancellationDeadline && !await isCurrentCanonicalAttempt(replacement)) {
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue smokeGatePolling;
@@ -2049,33 +2069,7 @@ jobs:
                   );
                   return;
                 }
-                if (replacementProof === "ordinary") {
-                  finalIdentity = await resolveCurrentIdentity("Fencing proven cancelled-run replacement", true);
-                  if (finalIdentity?.obsolete) return;
-                  if (!finalIdentity || identityKey({...finalIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
-                      identityKey(currentIdentity)) {
-                    if (finalIdentity) {
-                      cancelledRecoveryMoved = true;
-                      requireCurrentIdentity = true;
-                      currentIdentity = finalIdentity;
-                    }
-                    continue smokeGatePolling;
-                  }
-                  if (Date.now() < sameTupleCancellationDeadline && !await isCurrentCanonicalAttempt(replacement)) {
-                    await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                    continue smokeGatePolling;
-                  }
-                  if (Date.now() >= sameTupleCancellationDeadline) {
-                    core.setFailed(
-                      `Cancelled runtime-images run ${cancelledRunId} has no freshly proven exact replacement ` +
-                      `after ${cancellationDiscoveryMs / 60000} minutes`
-                    );
-                    return;
-                  }
-                  core.info(`Exact repository_dispatch replacement ${replacement.id}/${replacement.run_attempt} passed full-stack smoke and authenticated cleanup.`);
-                  return;
-                }
-                const eligibleIdentity = await resolveCurrentIdentity("Fencing cancelled-run PLAY exception", true);
+                const eligibleIdentity = await resolveCurrentIdentity("Fencing proven cancelled-run replacement", true);
                 if (eligibleIdentity?.obsolete) return;
                 if (!eligibleIdentity ||
                     identityKey({...eligibleIdentity, sourceEvent: currentIdentity.sourceEvent}) !== identityKey(currentIdentity)) {
@@ -2086,19 +2080,19 @@ jobs:
                   }
                   continue smokeGatePolling;
                 }
-                if (!eligibleIdentity.canonicalPlayEligible) {
-                  core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
-                  return;
-                }
-                if (Date.now() < sameTupleCancellationDeadline && !await isCurrentCanonicalAttempt(replacement)) {
-                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                  continue smokeGatePolling;
-                }
                 if (Date.now() >= sameTupleCancellationDeadline) {
                   core.setFailed(
                     `Cancelled runtime-images run ${cancelledRunId} has no freshly proven exact replacement ` +
                     `after ${cancellationDiscoveryMs / 60000} minutes`
                   );
+                  return;
+                }
+                if (replacementProof === "ordinary") {
+                  core.info(`Exact repository_dispatch replacement ${replacement.id}/${replacement.run_attempt} passed full-stack smoke and authenticated cleanup.`);
+                  return;
+                }
+                if (!eligibleIdentity.canonicalPlayEligible) {
+                  core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
                   return;
                 }
                 core.setOutput("known_play_exception", "true");
@@ -2326,6 +2320,17 @@ jobs:
                             continue smokeGatePolling;
                           }
                           if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                          const acceptedIdentity = await resolveCurrentIdentity("Accepting exact passing typed smoke recovery", true);
+                          if (acceptedIdentity?.obsolete) return;
+                          if (!acceptedIdentity || identityKey({...acceptedIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
+                              identityKey(currentIdentity)) {
+                            if (acceptedIdentity) {
+                              requireCurrentIdentity = true;
+                              currentIdentity = acceptedIdentity;
+                            }
+                            continue smokeGatePolling;
+                          }
+                          if (Date.now() - started >= timeoutMs) break smokeGatePolling;
                           return;
                         }
                         knownPlayVerified = refreshProof?.status === "verified" &&
@@ -2372,33 +2377,32 @@ jobs:
                         await new Promise((resolve) => setTimeout(resolve, sleepMs));
                         continue smokeGatePolling;
                       }
-                      if (!needsLiveTuple && !await isCurrentCanonicalAttempt(selectedProofRun)) {
-                        await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                        continue smokeGatePolling;
-                      }
-                      // Re-read the live label after the awaited attempt lookup without
-                      // replacing a native producer's immutable event comparison.
-                      const finalIdentity = await resolveCurrentIdentity(
-                        "Stopping stale canonical transition PLAY exception", requireCurrentIdentity || needsLiveTuple);
-                      const comparableFinalIdentity = needsLiveTuple && finalIdentity
-                        ? {...finalIdentity, sourceEvent: currentIdentity.sourceEvent}
-                        : finalIdentity;
-                      if (finalIdentity?.obsolete) return;
-                      if (!finalIdentity || identityKey(comparableFinalIdentity) !== identityKey(currentIdentity)) {
-                        if (finalIdentity) {
-                          if (needsLiveTuple) requireCurrentIdentity = true;
-                          currentIdentity = finalIdentity;
+                      // Observe the typed comparison before and after the final attempt
+                      // lookup. Native proof retains its immutable event comparison.
+                      for (let pass = 0; pass < (needsLiveTuple ? 2 : 1); pass++) {
+                        if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                        if ((pass > 0 || !needsLiveTuple) && !await isCurrentCanonicalAttempt(selectedProofRun)) {
+                          await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                          continue smokeGatePolling;
                         }
-                        continue smokeGatePolling;
-                      }
-                      if (!finalIdentity.canonicalPlayEligible) {
-                        core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
-                        return;
-                      }
-                      if (Date.now() - started >= timeoutMs) break smokeGatePolling;
-                      if (needsLiveTuple && !await isCurrentCanonicalAttempt(selectedProofRun)) {
-                        await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                        continue smokeGatePolling;
+                        if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                        const finalIdentity = await resolveCurrentIdentity(
+                          "Stopping stale canonical transition PLAY exception", requireCurrentIdentity || needsLiveTuple);
+                        const comparableFinalIdentity = needsLiveTuple && finalIdentity
+                          ? {...finalIdentity, sourceEvent: currentIdentity.sourceEvent}
+                          : finalIdentity;
+                        if (finalIdentity?.obsolete) return;
+                        if (!finalIdentity || identityKey(comparableFinalIdentity) !== identityKey(currentIdentity)) {
+                          if (finalIdentity) {
+                            if (needsLiveTuple) requireCurrentIdentity = true;
+                            currentIdentity = finalIdentity;
+                          }
+                          continue smokeGatePolling;
+                        }
+                        if (!finalIdentity.canonicalPlayEligible) {
+                          core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
+                          return;
+                        }
                       }
                       if (Date.now() - started >= timeoutMs) break smokeGatePolling;
                       core.setOutput("known_play_exception", "true");
@@ -2519,29 +2523,15 @@ jobs:
                     await new Promise((resolve) => setTimeout(resolve, sleepMs));
                     continue smokeGatePolling;
                   }
-                  freshIdentity = await resolveCurrentIdentity("Fencing moved cancelled-run recovery", true);
+                  freshIdentity = await resolveCurrentIdentity(proof === "ordinary"
+                    ? "Fencing moved cancelled-run recovery" : "Fencing moved cancelled-run PLAY exception", true);
                   if (freshIdentity?.obsolete) return;
                   if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
                     if (freshIdentity) currentIdentity = freshIdentity;
                     await new Promise((resolve) => setTimeout(resolve, sleepMs));
                     continue smokeGatePolling;
                   }
-                  if (proof === "ordinary") {
-                    if (Date.now() - started >= timeoutMs) break smokeGatePolling;
-                    if (!await isCurrentCanonicalAttempt(matching)) {
-                      await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                      continue smokeGatePolling;
-                    }
-                    if (Date.now() - started >= timeoutMs) break smokeGatePolling;
-                    return;
-                  }
-                  freshIdentity = await resolveCurrentIdentity("Fencing moved cancelled-run PLAY exception", true);
-                  if (freshIdentity?.obsolete) return;
-                  if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
-                    if (freshIdentity) currentIdentity = freshIdentity;
-                    continue smokeGatePolling;
-                  }
-                  if (!freshIdentity.canonicalPlayEligible) {
+                  if (proof !== "ordinary" && !freshIdentity.canonicalPlayEligible) {
                     core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
                     return;
                   }
@@ -2551,6 +2541,18 @@ jobs:
                     continue smokeGatePolling;
                   }
                   if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                  freshIdentity = await resolveCurrentIdentity("Fencing moved cancelled-run recovery acceptance", true);
+                  if (freshIdentity?.obsolete) return;
+                  if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
+                    if (freshIdentity) currentIdentity = freshIdentity;
+                    continue smokeGatePolling;
+                  }
+                  if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                  if (proof === "ordinary") return;
+                  if (!freshIdentity.canonicalPlayEligible) {
+                    core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
+                    return;
+                  }
                   core.setOutput("known_play_exception", "true");
                   core.warning("Canonical PLAY transition exception accepted; no runtime qualification or image publication.");
                   return;
@@ -2849,32 +2851,30 @@ jobs:
                       await new Promise((resolve) => setTimeout(resolve, sleepMs));
                       continue smokeGatePolling;
                     }
-                    if (!needsLiveTuple && !await isCurrentCanonicalAttempt(matching)) {
-                      await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                      continue smokeGatePolling;
-                    }
-                    // Native event proof also needs a fresh label after the attempt GET.
-                    const finalIdentity = await resolveCurrentIdentity(
-                      "Stopping stale canonical transition PLAY exception", requireCurrentIdentity || needsLiveTuple);
-                    const comparableFinalIdentity = needsLiveTuple && finalIdentity
-                      ? {...finalIdentity, sourceEvent: currentIdentity.sourceEvent}
-                      : finalIdentity;
-                    if (finalIdentity?.obsolete) return;
-                    if (!finalIdentity || identityKey(comparableFinalIdentity) !== identityKey(currentIdentity)) {
-                      if (finalIdentity) {
-                        if (needsLiveTuple) requireCurrentIdentity = true;
-                        currentIdentity = finalIdentity;
+                    for (let pass = 0; pass < (needsLiveTuple ? 2 : 1); pass++) {
+                      if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                      if ((pass > 0 || !needsLiveTuple) && !await isCurrentCanonicalAttempt(matching)) {
+                        await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                        continue smokeGatePolling;
                       }
-                      continue smokeGatePolling;
-                    }
-                    if (!finalIdentity.canonicalPlayEligible) {
-                      core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
-                      return;
-                    }
-                    if (Date.now() - started >= timeoutMs) break smokeGatePolling;
-                    if (needsLiveTuple && !await isCurrentCanonicalAttempt(matching)) {
-                      await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                      continue smokeGatePolling;
+                      if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                      const finalIdentity = await resolveCurrentIdentity(
+                        "Stopping stale canonical transition PLAY exception", requireCurrentIdentity || needsLiveTuple);
+                      const comparableFinalIdentity = needsLiveTuple && finalIdentity
+                        ? {...finalIdentity, sourceEvent: currentIdentity.sourceEvent}
+                        : finalIdentity;
+                      if (finalIdentity?.obsolete) return;
+                      if (!finalIdentity || identityKey(comparableFinalIdentity) !== identityKey(currentIdentity)) {
+                        if (finalIdentity) {
+                          if (needsLiveTuple) requireCurrentIdentity = true;
+                          currentIdentity = finalIdentity;
+                        }
+                        continue smokeGatePolling;
+                      }
+                      if (!finalIdentity.canonicalPlayEligible) {
+                        core.setFailed("Canonical PLAY transition exception label is absent or no longer eligible.");
+                        return;
+                      }
                     }
                     if (Date.now() - started >= timeoutMs) break smokeGatePolling;
                     core.setOutput("known_play_exception", "true");
@@ -2946,9 +2946,16 @@ jobs:
                     continue smokeGatePolling;
                   }
                   if (Date.now() - started >= timeoutMs) break smokeGatePolling;
-                  // The final provider observation qualifies the selected attempt.
                   if (!await isCurrentCanonicalAttempt(matching)) {
                     await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                    continue smokeGatePolling;
+                  }
+                  if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                  const acceptedIdentity = await fenceCompletedRuntimeIdentity(
+                    "Stopping stale smoke gate after the final source attempt");
+                  if (acceptedIdentity?.obsolete) return;
+                  if (!acceptedIdentity || identityKey(acceptedIdentity) !== identityKey(currentIdentity)) {
+                    currentIdentity = acceptedIdentity;
                     continue smokeGatePolling;
                   }
                   if (Date.now() - started >= timeoutMs) break smokeGatePolling;

@@ -902,6 +902,7 @@ async function runDispatcher({
   fanoutCutoffAfterInventory = false, fanoutCutoffAfterPreviewPr = null, expireAfterFirstApiRequest = false,
   pullGetFailures = {}, lateProducer = null, runtimeWorkflowLookupFailures = [],
   pullListResponse = null, apiRequestMillis = 0, runtimeRunOverrides = {}, runtimeAttemptJobs = {}, runtimeNativeAttempts = {},
+  runtimeClaimJobs = {},
   initialTime = "2026-01-08T00:00:00Z", afterPreviewDispatch = null, publication = {},
 }) {
   const dispatches = [];
@@ -1156,12 +1157,13 @@ async function runDispatcher({
             const producer = inventoriedRuntimeRuns().find(run => run?.id === request.run_id);
             assert(producer, "native job listing must address an inventoried producer");
             assert.equal(request.attempt_number, producer.run_attempt, "native jobs must be read from the selected attempt");
-            const jobs = producer.event === "repository_dispatch" && producer.status !== "completed" ? [{
+            const claimJobs = runtimeClaimJobs[producer.id] ?? (producer.event === "repository_dispatch" ? [{
               id: producer.id + 1000000, run_id: producer.id, run_attempt: producer.run_attempt,
               name: "Derive Runtime Image Metadata", head_sha: producer.head_sha, status: "completed", conclusion: "success",
-              steps: [{name: `Runtime refresh claim generation 1 attempt 1 tag ${sha("9")}`, status: "completed", conclusion: "success"}],
-            }] : [];
-            return {data: runtimeAttemptJobs[request.run_id] ?? {total_count: jobs.length, jobs}};
+              steps: [{name: `Runtime refresh claim generation 1 attempt ${producer.run_attempt} tag ${sha("9")}`, status: "completed", conclusion: "success"}],
+            }] : []);
+            const proof = runtimeAttemptJobs[request.run_id] ?? {total_count: 0, jobs: []};
+            return {data: {total_count: proof.total_count + claimJobs.length, jobs: [...proof.jobs, ...claimJobs]}};
           }
           ciJobRequests.push(request);
           const jobs = ciEvidence.jobs ?? [ciGate];
@@ -1935,6 +1937,19 @@ async function runDispatcher({
       {name: "Known canonical transition PLAY failure with successful authenticated cleanup", status: "completed", conclusion: "skipped"},
     ]};
   const successfulJobs = {[completedRefresh.id]: {total_count: 1, jobs: [successfulJob]}};
+  const foreignBaseClaim = {
+    id: completedRefresh.id + 1000000, run_id: completedRefresh.id, run_attempt: completedRefresh.run_attempt,
+    name: "Derive Runtime Image Metadata", head_sha: completedRefresh.head_sha, status: "completed", conclusion: "success",
+    steps: [{name: `Runtime refresh claim generation 1 attempt 1 tag ${sha("8")}`,
+      status: "completed", conclusion: "success"}],
+  };
+  for (const claimJobs of [[], [foreignBaseClaim]]) {
+    const unboundSuccess = await runDispatcher({tuples: [tuple], inventories: {repository_dispatch: [completedRefresh]},
+      runtimeAttemptJobs: successfulJobs, runtimeClaimJobs: {[completedRefresh.id]: claimJobs}});
+    assert.deepEqual(numbers(unboundSuccess), ["101"],
+      "an exact successful same-tip run cannot suppress a different or unproven base-ref claim");
+    assert.deepEqual(unboundSuccess.errors, []);
+  }
   const refinedCompleted = await runDispatcher({
     tuples: [tuple], callback: {updated_at: "2026-01-01T06:00:00Z"},
     inventories: {
@@ -1993,7 +2008,8 @@ async function runDispatcher({
     });
     assert.deepEqual(numbers(result), [], "a usable exact completed refresh suppresses a duplicate even if it completed before Validation");
     assert.deepEqual(result.errors, []);
-    assert.deepEqual(result.runtimeRunReads, [completedRefresh.id, completedRefresh.id], "reuse requires a final current-attempt read");
+    assert.deepEqual(result.runtimeRunReads, [completedRefresh.id, completedRefresh.id, completedRefresh.id],
+      "reuse verifies the same-base claim plus the final current source attempt");
   }
   const upload = {name: "Upload preview image artifact", status: "completed", conclusion: "success",
     started_at: "2026-01-01T12:02:30Z", completed_at: "2026-01-01T12:02:40Z"};
@@ -2116,7 +2132,8 @@ async function runDispatcher({
     });
     assert.deepEqual(numbers(held), [],
       "legacy failure/PLAY and unknown dispositions keep the existing typed refresh hold");
-    if (conclusion !== "failure") assert.deepEqual(held.runtimeRunReads, [], "unrelated conclusions need no native classification");
+    if (conclusion !== "failure") assert.deepEqual(held.runtimeRunReads, [terminalTyped(conclusion).id],
+      "unrelated conclusions still need exact base-ref custody");
     assert.deepEqual(held.errors, []);
   }
   const failedTyped = {...terminalTyped("failure"), run_started_at: "2026-01-03T00:01:00Z", updated_at: "2026-01-03T00:04:00Z"};
@@ -2158,7 +2175,11 @@ async function runDispatcher({
     const result = await runDispatcher({tuples:[tuple], callback:{updated_at: "2026-01-02T00:00:00Z"},
       inventories: {repository_dispatch:[failedTyped]}, runtimeAttemptJobs: {[failedTyped.id]: {total_count: total, jobs}}});
     assert.deepEqual(numbers(result), expected);
-    assert.deepEqual(result.errors, []);
+    if (total !== jobs.length) {
+      assert(result.errors.some(message => message.includes("incomplete claim job evidence")));
+    } else {
+      assert.deepEqual(result.errors, []);
+    }
   }
   for (const attempt of [{...failedTyped, run_started_at: "2026-01-03T01:00:00Z", updated_at: "2026-01-03T01:04:00Z"},
     {...failedTyped, run_attempt: 2}, {...failedTyped, repository: {full_name: "other/repo"}},
@@ -2174,7 +2195,7 @@ async function runDispatcher({
     runtimeAttemptJobs: {[failedTyped.id]: {total_count: 1, jobs: [failedJob]}}});
   assert.deepEqual(numbers(supersededFailure), [], "a rerun beginning during native attempt/job proof must retain the failed refresh hold");
   assert.deepEqual(supersededFailure.runtimeRunReads, [failedTyped.id, failedTyped.id]);
-  assert.deepEqual(supersededFailure.errors, []);
+  assert(supersededFailure.errors.some(message => message.includes("changed during exact attempt proof")));
   const validRerun = {...failedTyped, run_attempt: 2};
   const validRerunJob = {...failedJob, run_attempt: 2, started_at: "2026-01-03T01:00:01Z", completed_at: "2026-01-03T01:03:00Z",
     steps: [{name: diagnosticMarker.name, status: "completed", conclusion: "skipped", started_at: null, completed_at: null}]};
@@ -2265,24 +2286,41 @@ async function runDispatcher({
   assert.equal(manyInvisible.waitedMillis, 120000, "fan-out shares exactly one visibility window");
   const visibilityFloor = "2026-01-08T00:00:00.000Z..*";
   const observations = manyInvisible.inventoryCalls.filter(request => request.created === visibilityFloor);
-  assert.equal(observations.length, 24, "each interval checks typed visibility within the shared window");
-  assert(observations.every(request => request.event === "repository_dispatch" && request.page === 1 && request.per_page === 100));
+  for (const event of ["repository_dispatch", "pull_request"]) {
+    const perEvent = observations.filter(request => request.event === event);
+    assert.equal(perEvent.length, 24, "each interval checks both progress paths within the shared window");
+    assert(perEvent.every(request => request.page === 1 && request.per_page === 100));
+  }
   const nativeProducer = producer(tuple, "pull_request", "in_progress", null, {
     created_at: "2026-01-08T00:00:00Z",
     pull_requests: [{number: Number(tuple.prNumber), head: {sha: tuple.headSha}, base: {sha: tuple.baseSha, ref: "develop"}}],
   });
-  const ignoredNative = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true, observedNativeProducer: nativeProducer});
-  assert.deepEqual(numbers(ignoredNative), ["101"]);
-  assert(ignoredNative.errors.some(message => message.includes("visibility is unknown")));
-  assert.deepEqual(ignoredNative.runtimeRunReads, []);
-  assert.equal(ignoredNative.waitedMillis, 120000);
-  assert(manyInvisible.inventoryCalls.every(request => request.event === "repository_dispatch"),
-    "both inventory and visibility require typed producers");
+  const nativeProgress = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true, observedNativeProducer: nativeProducer,
+    inventories: {pull_request: [nativeProducer]}});
+  assert.deepEqual(numbers(nativeProgress), ["101"], "native progress cannot suppress the typed admission request");
+  assert.deepEqual(nativeProgress.errors, []);
+  assert.deepEqual(nativeProgress.runtimeRunReads, [nativeProducer.id]);
+  assert.equal(nativeProgress.waitedMillis, 0);
+  assert(nativeProgress.infos.some(message => message.includes("typed admission remains separate and unconfirmed")));
+  assert(!nativeProgress.infos.some(message => message.includes("became visible after")),
+    "native activity is neither typed visibility nor attribution to the POST");
+  for (const override of [
+    {run_attempt: 2}, {status: "completed", conclusion: "failure"},
+    {pull_requests: [{number: Number(tuple.prNumber), head: {sha: tuple.headSha},
+      base: {sha: tuple.baseSha, ref: "same-tip-other-ref"}}]},
+  ]) {
+    const heldNative = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true, observedNativeProducer: nativeProducer,
+      runtimeRunOverrides: {[nativeProducer.id]: override}});
+    assert.deepEqual(numbers(heldNative), ["101"]);
+    assert(heldNative.errors.some(message => message.includes("visibility is unknown")));
+  }
+  assert(manyInvisible.inventoryCalls.filter(request => request.created !== visibilityFloor)
+    .every(request => request.event === "repository_dispatch"), "admission proof inventory stays typed-only");
   let earlierProofAvailable = false;
   const earlierBound = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true,
     inventories: {repository_dispatch: [earlierRunning]},
-    runtimeAttemptJobs: {get [earlierRunning.id]() {
-      return earlierProofAvailable ? undefined : {total_count: 0, jobs: []};
+    runtimeClaimJobs: {get [earlierRunning.id]() {
+      return earlierProofAvailable ? undefined : [];
     }},
     afterPreviewDispatch: () => { earlierProofAvailable = true; },
   });
@@ -2984,7 +3022,10 @@ if "<script>" in summary:
     raise SystemExit("trusted PR image publisher emitted unescaped HTML")
 PY
 
-require_contains "$image_wait_path" 'publish-pr-runtime-images.yml/runs?event={event}&created={lower_text}..{upper_text}&per_page=100'
+# shellcheck disable=SC2016 # This assertion intentionally matches the unevaluated workflow default.
+require_contains "$image_wait_path" '"${5:-publish-pr-runtime-images.yml}"'
+require_contains "$image_wait_path" '{workflow}/runs?event={event}&created={lower_text}..{upper_text}&per_page=100'
+require_contains "$image_wait_path" 'for publisher_event in workflow_run repository_dispatch; do'
 require_contains "$image_wait_path" '"Publish", "PR", "Runtime", "Images", "Build", "Runtime", "Images"'
 require_contains "$image_wait_path" 're.fullmatch(r"pr-[1-9][0-9]{0,50}", tokens[8])'
 require_contains "$image_wait_path" 'tokens[9] == f"base-{base_sha}"'

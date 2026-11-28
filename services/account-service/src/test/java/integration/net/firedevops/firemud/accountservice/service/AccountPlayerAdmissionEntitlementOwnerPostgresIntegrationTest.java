@@ -563,8 +563,9 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     assertThat(f.dsl.fetchSingle(countDeniedReservations, identity).get("n", Long.class)).isZero();
   }
 
-  @Test
-  void expiredOriginalEvaluationRetainsOnlyTheExactDenial() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void expiredOriginalEvaluationRetainsOnlyTheExactDenial(boolean scopeElapsed) {
     Fixture f = fixture(true, true);
     var request = capacityRequest(f);
     var expiry = request.evidence().expiresAt();
@@ -586,7 +587,10 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isZero();
     assertThat(f.dsl.fetchCount(DSL.table("account_capacity_origin_refusal_slots"))).isZero();
 
-    f.clock.setInstant(expiry.plus(1, ChronoUnit.MICROS));
+    var scope = (Map<?, ?>) request.evidence().fields().get("target");
+    var scopeExpiry = Instant.parse((String) scope.get("connectScopeExpiresAt"));
+    assertThat(scopeExpiry).isAfterOrEqualTo(expiry);
+    f.clock.setInstant(scopeElapsed ? scopeExpiry : expiry.plus(1, ChronoUnit.MICROS));
     var decisionId = new AtomicReference<UUID>();
     assertThatThrownBy(() -> f.capacityOwner.commit(request, PEER))
         .isInstanceOfSatisfying(

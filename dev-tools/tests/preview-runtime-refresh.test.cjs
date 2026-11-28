@@ -159,10 +159,11 @@ function preparePreviewRefusal(f) {
 function completeOwnerReceiptAttempt(f, kind = 'unsent') {
   const run = f.makeRun({id: 600, workflow_id: 43, path: '.github/workflows/admit-pr-runtime-refresh.yml',
     status: 'completed', conclusion: 'success'});
+  const receipt = f.outputs.get(`${kind}_claim`);
   const job = {id: 2, run_id: run.id, head_sha: run.head_sha, name: 'Admit Exact Runtime Tuple',
     status: 'completed', conclusion: 'success',
-    steps: [{name: `Runtime refresh ${kind} claim ${f.outputs.get(`${kind}_claim`)}`,
-      status: 'completed', conclusion: 'success'}]};
+    steps: [{name: `Runtime refresh ${kind} claim${receipt ? ` ${receipt}` : ''}`,
+      status: 'completed', conclusion: receipt ? 'success' : 'skipped'}]};
   f.admissionRuns.set(run.id, run);
   const originalAttempt = structuredClone(run);
   f.admissionAttempts.set(`${run.id}:${run.run_attempt}`, originalAttempt);

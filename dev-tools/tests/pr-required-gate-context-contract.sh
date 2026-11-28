@@ -1045,6 +1045,7 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
     ]};
   if (kind.startsWith("replacement-omitted-job-attempt")) {
     delete job.run_attempt;
+    if (kind.endsWith("-rounded-start")) source.run_started_at = "2026-09-01T00:00:01.329Z";
     if (kind.endsWith("-outside-interval")) job.started_at = source.created_at;
   }
   if (kind === "marker-missing") job.steps = [];
@@ -1077,7 +1078,7 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
       reads += 1;
       const afterFinalGet = finalGetDrift && qualifiedAttemptReads >= 2;
       if (afterFinalGet) postAttemptIdentityReads++;
-      if (kind === "ordinary-final-comparison-deadline" && qualifiedAttemptReads === 2) {
+      if (kind === "ordinary-final-comparison-deadline" && qualifiedAttemptReads === 3) {
         now += 90 * 60 * 1000;
       }
       const moved = kind === "ordinary-final-base-drift" && qualifiedAttemptReads > 0 ||
@@ -1180,6 +1181,8 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
     if (kind === "cross-snapshot-changed-job-id" && snapshots === 2) {
       const changed = {...job, id: job.id + 1};
       changed.check_run_url = `https://api.github.com/repos/${repository}/check-runs/${changed.id}`;
+      changed.url = `https://api.github.com/repos/${repository}/actions/jobs/${changed.id}`;
+      changed.html_url = `https://github.com/${repository}/actions/runs/${changed.run_id}/job/${changed.id}`;
       return [changed];
     }
     const mutations = {
@@ -1263,10 +1266,12 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
     if (kind === "transient-exact-attempt") assert(result.exactAttemptReads >= 5);
     if (kind.startsWith("sparse-exact-attempt-")) assert(result.exactAttemptReads >= 3);
   }
-  const omittedAttempt = await scenario("replacement-omitted-job-attempt", "repository_dispatch");
-  assert.deepEqual(omittedAttempt.failures, []);
-  assert.equal(omittedAttempt.waitedMillis, 0, "exact timestamps qualify an ordinary replacement with an omitted job attempt");
-  assert(omittedAttempt.snapshots >= 2, "the omitted attempt must reach the ordinary exact-attempt verifier");
+  for (const kind of ["replacement-omitted-job-attempt", "replacement-omitted-job-attempt-rounded-start"]) {
+    const omittedAttempt = await scenario(kind, "repository_dispatch");
+    assert.deepEqual(omittedAttempt.failures, [], kind);
+    assert.equal(omittedAttempt.waitedMillis, 0, "exact attempt timestamps qualify an ordinary replacement");
+    assert(omittedAttempt.snapshots >= 2, "the omitted attempt must reach the ordinary exact-attempt verifier");
+  }
   for (const kind of ["replacement-omitted-job-attempt-outside-interval", "wrong-job-attempt"]) {
     const result = await scenario(kind, "repository_dispatch");
     assert.equal(result.waitedMillis, 0);
@@ -4396,18 +4401,19 @@ async function selectedProducerFinalFence(event, moved = false, superseded = fal
     }, selected => { const {canonicalPlayEligible, ...tuple} = selected; return JSON.stringify(tuple); },
     async selected => {
       attemptReads++;
-      if (attemptReads === priorAttemptReads && duringFinal === "label") return finalAttemptCheck({...selected, status: "completed"}, null, () => {
-        labelRemoved = true;
-      }, selected);
       if (typed && attemptReads === 2) {
-        assert.equal(required.length, 2, "typed PLAY revalidates the attempt after the final live label read");
+        assert.equal(required.length, 2, "typed PLAY rechecks the comparison before the final attempt");
         if (duringFinal === "attempt-deadline") now = 100;
       }
+      if (attemptReads === 2 && duringFinal === "label") return finalAttemptCheck({...selected, status: "completed"}, null, () => {
+        labelRemoved = true;
+      }, selected);
       return !attemptChanged;
     }, resolve => {sleeps++; resolve();}, 0, {now: () => now});
   assert.equal(proofs, superseded ? 2 : 1);
   assert.equal(sleeps, superseded || rerunDuringIdentity || duringFinal === "rerun" ? 1 : 0);
-  const fenceCount = !(typed && moved) && !rerunDuringIdentity ? 2 : 1;
+  const fenceCount = typed && (duringFinal === null || duringFinal === "label") && !moved && !rerunDuringIdentity
+    ? 3 : !(typed && moved) && !rerunDuringIdentity ? 2 : 1;
   assert.deepEqual(required, Array((proofs - (superseded ? 1 : 0)) * fenceCount).fill(event === "repository_dispatch"));
   assert.deepEqual(failures, duringFinal === "label"
     ? ["Canonical PLAY transition exception label is absent or no longer eligible."] : []);
@@ -4460,7 +4466,7 @@ async function recoveredFinalFence(disposition, change = null) {
     }, resolve => resolve(), 0, () => {resumedPolling = true;}, {now: () => now}, 0, 1000);
   const reachedSecondAttempt = [null, "rerun-at-final-attempt"].includes(change);
   assert.equal(finalAttempts, 1 + Number(reachedSecondAttempt));
-  assert.equal(postAttemptFences, 1);
+  assert.equal(postAttemptFences, change === null ? 2 : 1);
   assert.deepEqual(failures, disposition === "verified" && change === "label"
     ? ["Canonical PLAY transition exception label is absent or no longer eligible."] : []);
   assert.deepEqual(outputs, disposition === "verified" && change === null ? [["known_play_exception", "true"]] : []);
@@ -4763,6 +4769,9 @@ async function movedCancellation(ordinaryProof, listedOldReplacement = false, op
       if (label === "Fencing moved cancelled-run PLAY exception") {
         playLabelReads++;
         if (options.latePlayLabel) now = 100;
+        return {...moved, canonicalPlayEligible: true};
+      }
+      if (label === "Fencing moved cancelled-run recovery acceptance" && options.play) {
         return {...moved, canonicalPlayEligible: true};
       }
       return live ? moved : eventIdentity;
@@ -5136,8 +5145,8 @@ function markerAccepted(overrides = {}) {
   const finalReadsWithinBudget = await sameTupleCancellation("completed", ["ordinary"], false,
     {overallMs: 61, finalIdentityReadMs: 10, finalAttemptReadMs: 10});
   assert.deepEqual(finalReadsWithinBudget.failures, [], "the final deadline fence still accepts within the same allowance");
-  assert.equal(finalReadsWithinBudget.finalAttemptReads, 3);
-  assert.equal(finalReadsWithinBudget.now, 60);
+  assert.equal(finalReadsWithinBudget.finalAttemptReads, 2);
+  assert.equal(finalReadsWithinBudget.now, 50);
   const playAfterLabel = await sameTupleCancellation("completed", [true], false,
     {overallMs: 10, siblingConclusions: ["skipped"], rerunDuringPlayLabel: true});
   assert.equal(playAfterLabel.finalPlayLabelReads, 1);
@@ -5838,7 +5847,7 @@ assert.equal(admits("source", {event: "repository_dispatch"}), true);
 assert.equal(admits("source", {eventName: "repository_dispatch", action: "pr-runtime-image-publication"}), true);
 assert.equal(admits("source", {eventName: "repository_dispatch", action: "pr-runtime-image-publication", branch: "other"}), false);
 assert.equal(admits("source", {eventName: "REPOSITORY_DISPATCH", action: "PR-RUNTIME-IMAGE-PUBLICATION", branch: "Main"}), true);
-const execute = new Function("github", "context", "core", "Date", "setTimeout",
+const execute = new Function("github", "context", "core", "Date", "setTimeout", "require",
   `return (async () => {${fs.readFileSync(process.argv[2], "utf8")}\n})()`);
 async function exactRerunChronology() {
   const source = fs.readFileSync(process.argv[2] + ".dispatcher", "utf8");
@@ -5914,6 +5923,10 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     path: kind === "metadata-wake-qualified" ? qualified(validationPath) : validationPath};
   const refresh = {...source, id: 110, event: "repository_dispatch", head_branch: "develop", head_sha: "d".repeat(40),
     created_at: shared.refreshCreatedAt ?? source.created_at};
+  const claimTag = "f".repeat(40);
+  const claimRef = `tags/firemud-runtime-refresh-intent/v1/pr-42/${merge}/${require("node:crypto")
+    .createHash("sha256").update("develop", "utf8").digest("hex")}/g1`;
+  const replacementRefresh = () => ({...refresh, id: refresh.id + 1, status: "queued", conclusion: null});
   if (kind === "visible-pending-refresh") Object.assign(refresh, {status: "in_progress", conclusion: null});
   const event = structuredClone(wake ? metadataWake ? newerMetadata : newerCancelled : source);
   if (kind === "malformed-callback-path") event.path += "@refs/heads/a..b";
@@ -5959,6 +5972,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
       getWorkflowRun: async ({run_id}) => {
         (shared.nativeRunReads ??= []).push(run_id);
         if (run_id === refresh.id) return {data: kind === "visible-mismatched-refresh" ? source : refresh};
+        if (run_id === refresh.id + 1 && kind === "visible-typed-failure") return {data: replacementRefresh()};
         if (cancelledCase && kind === "cancel-wake-newer-ci" && run_id === 92)
           return {data: {...ci, id: 92, status: "in_progress", conclusion: null}};
         if (metadataWake && run_id === 92) {
@@ -6017,7 +6031,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
         }
         if (workflow_id === "runtime-images.yml" && runEvent === "repository_dispatch" && shared.posts) {
           if (kind === "visible-typed-failure") {
-            runs = [{...refresh, id: refresh.id + 1, status: "queued", conclusion: null}];
+            runs = [replacementRefresh()];
           }
           shared.observations = (shared.observations || 0) + 1;
           if ((kind === "post-read-transient" && shared.observations === 1) || kind === "post-read-timeout") {
@@ -6066,7 +6080,15 @@ async function run(kind, shared = {visible: false, posts: 0}) {
       merge_commit_sha: kind === "merge-moved" ? head : merge,
       head: {sha: kind === "head-moved" ? base : head, ref: "feature", repo: {full_name: repository}},
       base: {ref: kind === "base-ref-moved" && tupleReads > 1 ? "main" : "develop", sha: kind === "cached-base-stale" || kind === "merge-drift" && tupleReads > 1 ? head : base, repo: {full_name: repository}}}};}},
-    git: {getRef: async ({ref}) => ({data: {ref: `refs/${kind === "wrong-ref" ? "heads/main" : ref}`, object: {sha: kind === "ref-moved" || kind === "late-drift" && tupleReads > 1 ? head : base}}})},
+    git: {getRef: async ({ref}) => {
+      if (ref.startsWith("tags/")) {
+        assert.equal(ref, claimRef);
+        (shared.claimReads ??= []).push(ref);
+        return {data: {ref: `refs/${ref}`, object: {type: "tag", sha: kind === "visible-wrong-claim" ? head : claimTag}}};
+      }
+      return {data: {ref: `refs/${kind === "wrong-ref" ? "heads/main" : ref}`,
+        object: {sha: kind === "ref-moved" || kind === "late-drift" && tupleReads > 1 ? head : base}}};
+    }},
     repos: {
       getCommit: async () => ({data: {sha: merge, parents: kind === "parents-reversed" ? [{sha: head}, {sha: base}] : [{sha: base}, {sha: head}]}}),
       createDispatchEvent: async ({request, ...payload}) => {
@@ -6085,6 +6107,12 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   }};
   async function fixtureCIJobs(request) {
     assert.equal(request.attempt_number, 1);
+    if (shared.posts && request.run_id === (kind === "visible-typed-failure" ? refresh.id + 1 : refresh.id)) {
+      return [{id: 40, run_id: request.run_id, run_attempt: 1, head_sha: refresh.head_sha,
+        name: "Derive Runtime Image Metadata", status: "completed", conclusion: "success", steps: [
+          {name: `Runtime refresh claim generation 1 attempt 1 tag ${claimTag}`, status: "completed", conclusion: "success"},
+        ]}];
+    }
     if (request.run_id === refresh.id) {
       const marker = "Known canonical transition PLAY failure with successful authenticated cleanup";
       return [{id: 41, run_id: refresh.id, run_attempt: refresh.run_attempt, head_sha: refresh.head_sha,
@@ -6184,7 +6212,7 @@ async function run(kind, shared = {visible: false, posts: 0}) {
     class extends Date {
       constructor(...args) { super(...(args.length ? args : [clock])); }
       static now() { return clock; }
-    }, (callback, delay) => {clock += delay; callback();});
+    }, (callback, delay) => {clock += delay; callback();}, require);
   if (kind === "merge-unknown") assert.equal(tupleReads, 6, "unresolved mergeability retries are bounded");
   if (kind === "merge-pending") assert.equal(tupleReads, 3, "one convergence retry plus final current tuple fence");
   return shared.posts;
@@ -6194,6 +6222,11 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   const valid = {visible: false, posts: 0};
   assert.equal(await run("valid", valid), 1);
   assert.equal(valid.failure, undefined, "a completed exact handoff must not report workflow failure");
+  assert.equal(valid.claimReads.length, 1, "a visible receiver must prove the same-base claim");
+  const wrongClaim = {visible: false, posts: 0};
+  await assert.rejects(run("visible-wrong-claim", wrongClaim), /accepted but visibility is unknown/);
+  assert.equal(wrongClaim.posts, 1);
+  assert.equal(wrongClaim.claimReads.length, 24);
   const sameSecondHandoff = {visible: false, posts: 0};
   assert.equal(await run("same-second", sameSecondHandoff), 1);
   assert.equal(sameSecondHandoff.observations, 1, "a unique new exact run is visible in the POST's own timestamp second");
@@ -6398,8 +6431,9 @@ async function dispatch(kind) {
       },
       listWorkflowRuns: async ({page, event}) => {
         events.push(event);
-        if (event === "pull_request" && kind === "native-only") {
-          return {data: {total_count: 1, workflow_runs: [native]}};
+        if (event === "pull_request") {
+          return {data: kind === "native-only" ? {total_count: 1, workflow_runs: [native]}
+            : {total_count: 0, workflow_runs: []}};
         }
         if (!posts && kind !== "preflight-drift") {
           return {data: ["existing-typed", "earlier-gains-claim"].includes(kind) ? {total_count: 1, workflow_runs: [refresh]}
@@ -6488,7 +6522,7 @@ async function dispatch(kind) {
   for (const kind of ["native-only", "wrong-claim-attempt", "wrong-claim-ref"]) {
     const result = await dispatch(kind);
     assert.equal(result.posts, 1, "unqualified producers cannot suppress or cause a repeat POST");
-    assert.deepEqual([...new Set(result.events)], ["repository_dispatch"]);
+    assert.deepEqual([...new Set(result.events)], ["repository_dispatch", "pull_request"]);
     assert.equal(result.elapsed, 120000);
     assert.equal(result.failures.length, 1);
     assert.match(result.failures[0], /visibility is unknown/);

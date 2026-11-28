@@ -33,6 +33,24 @@ fi
 [[ "$(git -C "$helper_dir" rev-parse HEAD)" == "$target_sha" ]] ||
   fail "the checked-out probe source does not match the target"
 
+migration_directory=services/account-service/src/main/resources/db/migration
+deployed_migrations="$(git -C "$helper_dir" ls-tree -r --full-tree --name-only "$deployed_sha" -- "$migration_directory")" ||
+  fail "the deployed Account migration tree is unavailable"
+deployed_prefix=0
+while IFS= read -r migration; do
+  case "${migration##*/}" in
+    V1040.1__account_capacity_origin_decisions.sql) next=1 ;;
+    V1040.2__bound_capacity_origin_refusals.sql) next=2 ;;
+    V1040.3__validate_only_inserted_refusal_budgets.sql) next=3 ;;
+    V1040.*__*.sql) fail "the deployed Account migration tree is outside the supported V1040 prefix" ;;
+    *) continue ;;
+  esac
+  (( next == deployed_prefix + 1 )) || fail "the deployed Account migration prefix is incomplete"
+  deployed_prefix=$next
+done <<<"$deployed_migrations"
+[[ "$origin_prefix" == "$deployed_prefix" ]] ||
+  fail "the supplied Account migration prefix disagrees with the deployed revision"
+
 cluster_route() {
   kubectl --kubeconfig "$1" config view --raw --flatten --minify -o json |
     jq -ce '

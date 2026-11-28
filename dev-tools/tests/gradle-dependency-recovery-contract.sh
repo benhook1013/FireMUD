@@ -242,7 +242,9 @@ new_case load-testing-gatling-pom-rate-limit
 write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; exit 0'
 run_case load-testing 0
 assert_call_count 2
-[[ "$(head -n 1 "$CASE_DIR/calls")" == "$(tail -n 1 "$CASE_DIR/calls")" ]] || fail "classpath rate limit changed the original command"
+for attempt in 1 2; do
+  assert_call "$attempt" --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :load-testing:check -PfullCheck --profile --info --console=plain
+done
 assert_rate_limit_delay
 
 # Preserve the c515-style pinned missing-artifact recovery path without

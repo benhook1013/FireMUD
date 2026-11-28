@@ -164,6 +164,10 @@ public final class AccountTenantCapacityOwner {
           var parsed = currentMembership(request);
           requireSupportedShape(request);
           EvaluationLifetime lifetime = observeLifetime(evidence, retainedExpiry);
+          // An already elapsed original can only commit a denial. It binds the
+          // exact retained evaluation and current membership without renewing
+          // the historical delegation or connect scope.
+          if (lifetime.expired() && evidence.permitsCreation()) return refuseExpired(request);
           boolean delegationElapsed = false;
           try {
             currentDelegation(request, lifetime.accountNow());
@@ -347,32 +351,35 @@ public final class AccountTenantCapacityOwner {
   }
 
   private void currentDelegation(Request request, Instant now) {
+    var source = sourceReferences(request.evidence());
+    var tokenJti = UUID.fromString((String) source.get("callerTokenJti"));
     CommittedCandidateVerificationData issuance;
     try {
       issuance =
-          qualifiedSource(() ->
-                  issuances.readCurrentCommittedCandidateByJti(sourceTokenJti(request.evidence())))
+          qualifiedSource(() -> issuances.readCurrentCommittedCandidateByJti(tokenJti))
               .orElseThrow(AccountTenantCapacityRepository::unavailable);
     } catch (CommittedCandidateExpiredException expired) {
-      requireExactDelegation(request, expired.verifiedCandidate());
+      requireExactDelegation(request, source, tokenJti, expired.verifiedCandidate());
       throw expired;
     }
-    requireExactDelegation(request, issuance);
+    requireExactDelegation(request, source, tokenJti, issuance);
     if (now.getEpochSecond() < issuance.identity().notBeforeEpochSecond()
         || now.getEpochSecond() >= issuance.identity().expiresAtEpochSecond()) throw unavailable();
   }
 
   private static void requireExactDelegation(
-      Request request, CommittedCandidateVerificationData issuance) {
+      Request request,
+      Map<?, ?> source,
+      UUID tokenJti,
+      CommittedCandidateVerificationData issuance) {
     if (!(request.context() instanceof PlayerContext player)) throw unavailable();
-    var source = sourceReferences(request.evidence());
     if (!issuance.identity().accountId().equals(player.accountId())
         || !issuance.identity().callerWorkload().equals(request.evidence().callerWorkload())
         || !issuance.identity().callerContextId().toString().equals(source.get("callerContextId"))
         || !issuance.identity().operationId().toString().equals(source.get("callerOperationId"))
-        || !issuance.identity().tokenJti().equals(sourceTokenJti(request.evidence()))
+        || !issuance.identity().tokenJti().equals(tokenJti)
         || !Instant.ofEpochSecond(issuance.identity().expiresAtEpochSecond())
-            .equals(sourceTokenExpiry(request.evidence()))
+            .equals(Instant.parse((String) source.get("callerTokenExpiresAt")))
         || !issuance.tokenSha256().equals(source.get("callerTokenSha256"))
         || !issuance
             .canonicalRegistryRecordSha256()
@@ -403,14 +410,6 @@ public final class AccountTenantCapacityOwner {
     if (!(evidence.fields().get("sourceReferences") instanceof Map<?, ?> source))
       throw unavailable();
     return source;
-  }
-
-  private static UUID sourceTokenJti(Evidence evidence) {
-    return UUID.fromString((String) sourceReferences(evidence).get("callerTokenJti"));
-  }
-
-  private static Instant sourceTokenExpiry(Evidence evidence) {
-    return Instant.parse((String) sourceReferences(evidence).get("callerTokenExpiresAt"));
   }
 
   private static <T> T qualifiedSource(Supplier<T> read) {

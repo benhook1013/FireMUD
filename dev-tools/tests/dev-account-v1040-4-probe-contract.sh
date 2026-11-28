@@ -155,6 +155,21 @@ export PROBE_FIXTURE_JOB_NAME="firemud-account-v1040-4-aaaaaaaaaaaaaaaaaaaaaaaaa
 export KUBECONFIG=fixture-runtime
 export DEV_NAMESPACE_MANAGER_KUBECONFIG=fixture-namespace-manager
 
+git() {
+  if [[ "${3:-}" != ls-tree ]]; then
+    command git "$@"
+    return
+  fi
+  local directory=services/account-service/src/main/resources/db/migration
+  [[ "${*:4}" == "-r --full-tree --name-only $PROBE_FIXTURE_BASE -- $directory" ]] || return 2
+  printf '%s/%s\n' "$directory" V1040.1__account_capacity_origin_decisions.sql
+  if [[ "${PROBE_SCENARIO:-}" != mismatched-migration-prefix ]]; then
+    printf '%s/%s\n' "$directory" V1040.2__bound_capacity_origin_refusals.sql
+    printf '%s/%s\n' "$directory" V1040.3__validate_only_inserted_refusal_budgets.sql
+  fi
+}
+export -f git
+
 openssl() {
   [[ "$*" == "rand -hex 16" ]] || return 2
   printf '%s\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -314,6 +329,13 @@ run_protected_probe() {
   bash "${PROBE_SCRIPT:-$root_dir/dev-tools/deploy/run-dev-account-v1040-4-probe.sh}" \
     "$@" dev "$namespace_uid" "$deployed_sha" "$PROBE_FIXTURE_HEAD" 3
 }
+
+if PROBE_SCENARIO=mismatched-migration-prefix run_protected_probe --check-permissions >"$temp_dir/receipt" 2>"$temp_dir/error"; then
+  echo "Protected probe accepted a prefix different from the deployed revision." >&2
+  exit 1
+fi
+grep -Fq "supplied Account migration prefix disagrees with the deployed revision" "$temp_dir/error"
+[[ ! -s "$temp_dir/receipt" && ! -e "$PROBE_JOB_MANIFEST" && ! -e "$PROBE_DRY_RUN" ]]
 
 for scenario in mismatched-server mismatched-ca insecure-runtime; do
   if PROBE_SCENARIO="$scenario" run_protected_probe --check-permissions >"$temp_dir/receipt" 2>"$temp_dir/error"; then

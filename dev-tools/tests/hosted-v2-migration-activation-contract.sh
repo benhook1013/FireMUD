@@ -111,9 +111,11 @@ assert_rejected() {
   jq -e '.preconditions == {uid:"fixture-dev-uid",resourceVersion:"7"}' "$delete_request" >/dev/null
   for outcome in lost-response-absent lost-response-original lost-response-replacement lost-response-unavailable; do
     rm "$delete_request"
+    prior_attempts="$(wc -l <"$delete_attempt")"
     reset_status=0
     RESET_DELETE_OUTCOME="$outcome" bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" \
       >"$fixture_dir/reset.stdout" 2>"$fixture_dir/reset.stderr" || reset_status=$?
+    [[ "$(wc -l <"$delete_attempt")" -eq $((prior_attempts + 1)) ]]
     jq -e '.preconditions == {uid:"fixture-dev-uid",resourceVersion:"7"}' "$delete_request" >/dev/null
     if [[ "$outcome" == lost-response-absent ]]; then
       test "$reset_status" -eq 0

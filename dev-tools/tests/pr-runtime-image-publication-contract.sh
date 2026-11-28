@@ -726,7 +726,8 @@ for (const publishable of ["false", "", undefined]) {
   await rejectsResolver(resolve({runs: [pending]}), /bounded deadline/);
   await assert.rejects(resolve({error: true}), /API unavailable/);
   await rejectsResolver(resolve({context: {...baseContext, ref: "refs/heads/feature"}}), /closed default-branch source-run payload/);
-  await rejectsResolver(resolve({context: {...baseContext, payload: {...baseContext.payload, client_payload: {source_run_id: "4242", extra: true}}}}),
+  await rejectsResolver(resolve({context: {...baseContext, payload: {...baseContext.payload,
+    client_payload: {...baseContext.payload.client_payload, extra: true}}}}),
     /closed default-branch source-run payload/);
   await rejectsResolver(resolve({context: {...baseContext, payload: {...baseContext.payload, client_payload: {source_run_id: "../4242", source_run_attempt: "1"}}}}),
     /source run ID is not a positive safe integer/);
@@ -794,13 +795,14 @@ async function runReconcile({
   ciRuns = [ciRun], ciNativeRuns = {}, ciJobsByRun = {}, postVisibilityRuns = null,
   postVisibilityFailures = [], preflightRefreshRuns = [], refreshNativeRuns = {}, refreshAttemptJobs = {},
   refreshNativeAttempts = {}, sourceRun = source, sourceCallback = sourceRun,
-  postNativePrRuns = [], postNativePrSnapshots = {}, postNativePrJobs = {},
+  postNativePrRuns = [], postNativePrSnapshots = {}, postNativePrJobs = {}, visibleMarkerAfter = 0,
 } = {}) {
   let now = Date.parse("2026-01-08T00:00:00Z");
   let expire = expireFirstRequest;
   let failInitialDiscovery = initialDiscoveryUnavailable;
   let visibleRun = null;
   let postAttempts = 0;
+  let visibleMarkerReads = 0;
   const requests = [];
   const inventoryRequests = [];
   const nativeJobRunIds = [];
@@ -882,6 +884,8 @@ async function runReconcile({
             if (response instanceof Error) throw response;
             return {data: response};
           }
+          const posted = visibleRun && (postVisibilityRuns ?? [visibleRun]).find(run => run?.id === options.run_id);
+          if (posted) return {data: posted};
           return {data: ciNativeRuns[options.run_id] ?? ciRun};
         },
         getWorkflowRunAttempt: async options => {
@@ -911,6 +915,17 @@ async function runReconcile({
             assert.equal(page, 1);
             const jobs = postNativePrJobs[run_id] ?? [];
             return {data: {total_count: jobs.length, jobs}};
+          }
+          const posted = visibleRun && (postVisibilityRuns ?? [visibleRun]).find(run => run?.id === run_id);
+          if (posted) {
+            assert.equal(attempt_number, posted.run_attempt);
+            if (visibleMarkerReads++ < visibleMarkerAfter) return {data: {total_count: 0, jobs: []}};
+            return {data: {total_count: 1, jobs: [{
+              id: 20000 + run_id, run_id, run_attempt: attempt_number, head_sha: posted.head_sha,
+              name: "Derive Runtime Image Metadata", status: "completed", conclusion: "success",
+              steps: [{name: `Runtime refresh claim generation 1 attempt ${attempt_number} tag ${"b".repeat(40)}`,
+                status: "completed", conclusion: "success"}],
+            }]}};
           }
           assert.equal(attempt_number, (ciNativeRuns[run_id] ?? ciRun).run_attempt);
           assert(Number.isInteger(page) && page > 0);
@@ -964,6 +979,12 @@ async function runReconcile({
       },
       git: {
         getRef: async options => {
+          if (options.ref.startsWith("tags/")) {
+            const baseRefHash = require("node:crypto").createHash("sha256").update("develop").digest("hex");
+            const ref = `tags/firemud-runtime-refresh-intent/v1/pr-42/${merge}/${baseRefHash}/g1`;
+            record("git.getRef", options, {owner, repo, ref});
+            return {data: {ref: `refs/${ref}`, object: {type: "tag", sha: "b".repeat(40)}}};
+          }
           record("git.getRef", options, {owner, repo, ref: "heads/develop"});
           return {data: {ref: "refs/heads/develop", object: {sha: base}}};
         },
@@ -1014,7 +1035,7 @@ async function runReconcile({
   }
   assert.deepEqual(mockFailures, [], "mock contract assertion failures never count as production refusals");
   return {failure, now, requests, signals, inventoryRequests, nativeJobRunIds, nativeRefreshRunIds,
-    dispatchRequests, postAttempts, warnings, infos};
+    dispatchRequests, postAttempts, visibleMarkerReads, warnings, infos};
 }
 
 (async () => {
@@ -1029,6 +1050,13 @@ async function runReconcile({
     message.includes("separate from admission")));
   assert(uncertainPost.requests.some(({name}) => name === "actions.listWorkflowRuns"),
     "the one-shot handoff must be followed by source-derived visibility observation");
+  const lateMarker = await runReconcile({visibleMarkerAfter: 1});
+  assert.equal(lateMarker.failure, null);
+  assert.equal(lateMarker.postAttempts, 1);
+  assert.equal(lateMarker.visibleMarkerReads, 2);
+  const markerUnavailable = await runReconcile({visibleMarkerAfter: Infinity});
+  assert(markerUnavailable.failure, "a receiver without exact claim proof cannot complete visibility");
+  assert.equal(markerUnavailable.postAttempts, 1);
   const postVisibilityFloor = "2026-01-08T00:00:00.000Z..*";
   const assertExactPostVisibilityFilter = result => {
     const observationReads = result.inventoryRequests.filter(request =>
@@ -1068,7 +1096,8 @@ async function runReconcile({
     ciJobsByRun: {[ciRun.id]: [...Array.from({length: 100}, (_, i) => ({id: 500 + i, name: "Sibling"})), gate]},
   });
   assert.equal(pagedJobs.failure, null);
-  const jobPages = pagedJobs.requests.filter(row => row.name === "actions.listJobsForWorkflowRunAttempt");
+  const jobPages = pagedJobs.requests.filter(row =>
+    row.name === "actions.listJobsForWorkflowRunAttempt" && row.options.run_id === ciRun.id);
   assert.deepEqual(jobPages.map(row => row.options.page), [1, 2, 1, 2]);
   assert.equal(new Set(jobPages.map(row => row.signal)).size, jobPages.length);
   assert.equal(pagedJobs.postAttempts, 1);
