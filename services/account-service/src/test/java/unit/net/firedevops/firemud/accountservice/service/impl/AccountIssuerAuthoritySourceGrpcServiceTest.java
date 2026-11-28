@@ -11,9 +11,12 @@ import io.grpc.stub.StreamObserver;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.AccountIssuerAuthoritySourceSnapshot;
+import net.firedevops.firemud.account.v1.ExactIssuerAuthorityEventReadback;
 import net.firedevops.firemud.account.v1.ReadCurrentIssuerAuthoritySourceRequest;
+import net.firedevops.firemud.account.v1.ReadExactIssuerAuthorityEventRequest;
 import net.firedevops.firemud.accountservice.repository.AccountIssuerSourceSnapshotReadOwner;
 import net.firedevops.firemud.accountservice.service.impl.AccountIssuerAuthoritySourceGrpcService;
+import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotEvidence;
 import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotGrpcCodec;
 import org.junit.jupiter.api.Test;
@@ -86,6 +89,80 @@ class AccountIssuerAuthoritySourceGrpcServiceTest {
         ReadCurrentIssuerAuthoritySourceRequest.getDefaultInstance(), unavailable);
     assertThat(unavailable.error.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
     assertThat(unavailable.error.getDescription()).doesNotContain("password detail");
+  }
+
+  @Test
+  void encodesOwnerHistoryAndRejectsAConflictingOwnerResult() {
+    UUID operation = UUID.randomUUID();
+    var event =
+        AccountAuthoritySourceEventV1Codec.sealIssuer(
+            new AccountAuthoritySourceEventV1Codec.IssuerPreimage(
+                "event-a", "event-a", STREAM, "1", ISSUER, "2", "2", "SIGNER_COMPROMISE"));
+    var scope =
+        new AccountIssuerSourceSnapshotGrpcCodec.ReadRequest(
+            operation, NAMESPACE, ISSUER, Optional.empty());
+    var typedRequest =
+        new AccountIssuerSourceSnapshotGrpcCodec.ExactEventRequest(
+            scope, 1L, event.eventId(), event.eventDigest());
+    var request =
+        AccountIssuerSourceSnapshotGrpcCodec.toExactEventRequest(typedRequest, NAMESPACE, CALLER);
+    var evidence =
+        new AccountIssuerSourceSnapshotEvidence(
+            operation,
+            NAMESPACE,
+            CALLER,
+            ISSUER,
+            "2",
+            "2",
+            STREAM,
+            "1",
+            Optional.of(event.canonicalJson()));
+    var baseline =
+        new AccountIssuerSourceSnapshotEvidence(
+            operation, NAMESPACE, CALLER, ISSUER, "1", "1", STREAM, "0", Optional.empty());
+    when(owner.readExactEvent(request))
+        .thenReturn(
+            new AccountIssuerSourceSnapshotReadOwner.ExactEventReadResult(
+                typedRequest,
+                CALLER,
+                new AccountIssuerSourceSnapshotGrpcCodec.ExactEventReadback(evidence, event)),
+            new AccountIssuerSourceSnapshotReadOwner.ExactEventReadResult(
+                typedRequest,
+                CALLER,
+                new AccountIssuerSourceSnapshotGrpcCodec.ExactEventReadback(baseline, event)));
+
+    var accepted = new RecordingObserver<ExactIssuerAuthorityEventReadback>();
+    service.readExactIssuerAuthorityEvent(request, accepted);
+    assertThat(accepted.error).isNull();
+    assertThat(accepted.completed).isTrue();
+    assertThat(accepted.value.getCurrentSnapshot())
+        .isEqualTo(AccountIssuerSourceSnapshotGrpcCodec.toWire(evidence));
+    assertThat(accepted.value.getSelectedEvent().toByteArray())
+        .isEqualTo(event.canonicalJsonUtf8());
+
+    var denied = new RecordingObserver<ExactIssuerAuthorityEventReadback>();
+    service.readExactIssuerAuthorityEvent(request, denied);
+    assertThat(denied.error.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(denied.completed).isFalse();
+    assertThat(denied.value).isNull();
+  }
+
+  @Test
+  void sanitizesExactHistoryOwnerRefusalWithoutAReply() {
+    when(owner.readExactEvent(any()))
+        .thenThrow(
+            Status.FAILED_PRECONDITION
+                .withDescription("private retained event")
+                .asRuntimeException());
+    var observer = new RecordingObserver<ExactIssuerAuthorityEventReadback>();
+
+    service.readExactIssuerAuthorityEvent(
+        ReadExactIssuerAuthorityEventRequest.getDefaultInstance(), observer);
+
+    assertThat(observer.error.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(observer.error.getDescription()).doesNotContain("private retained event");
+    assertThat(observer.value).isNull();
+    assertThat(observer.completed).isFalse();
   }
 
   private static final class RecordingObserver<T> implements StreamObserver<T> {
