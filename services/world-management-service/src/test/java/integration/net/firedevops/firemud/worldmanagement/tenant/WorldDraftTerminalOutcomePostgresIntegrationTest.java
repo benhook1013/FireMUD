@@ -25,7 +25,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -298,6 +300,92 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
                 retainedTerminalSourceFenceAndEpochSnapshot(appliedApplication.operation()),
                 retainedTerminalSourceFenceAndEpochSnapshot(operation)))
         .containsExactlyElementsOf(retainedBefore);
+  }
+
+  @Test
+  void retainedNumericRegionWriterWaitsForExactAbortAndRejectsCommittedRetry() throws Exception {
+    Fixture f = fixture();
+    WorldDraftGraphApplication graph = currentGraphApplication(f);
+    controlledGraphApplicationService().apply(graph);
+    long privateRegionKey =
+        Objects.requireNonNull(
+            dsl.fetchSingle(
+                    "SELECT id FROM region WHERE tenant_id = ? AND version_id = ?",
+                    f.intake().localTenantKey(),
+                    f.version().localVersionKey())
+                .get(0, Long.class));
+    HistoricalRegionWrite write = historicalRegionWrite(f, graph.operation(), privateRegionKey);
+    WorldDraftTerminalOperation operation = write.operation();
+    String originalRegion = physicalRegionSnapshot(privateRegionKey);
+    String originalGraph = retainedTerminalSourceFenceAndEpochSnapshot(graph.operation());
+
+    // The actual graph owner creates the mapped REGION. Without an abort, the numeric writer
+    // reaches the region UPDATE and its current guard rejects the mapped-row change.
+    assertThatThrownBy(() -> ownerTransaction().executeWithoutResult(status -> storeRegion(write)))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("Mapped UUID World content cannot be changed by numeric writers");
+    assertThat(terminalService().readDefinitiveAbort(operation)).isEmpty();
+
+    var abortPid = new CompletableFuture<Integer>();
+    var writerPid = new CompletableFuture<Integer>();
+    var releaseAbort = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    WorldDraftTerminalOutcome committedAbort;
+    try {
+      Future<WorldDraftTerminalOutcome> abort =
+          executor.submit(
+              () ->
+                  ownerTransaction()
+                      .execute(
+                          status -> {
+                            var result = terminalRepository().recordDefinitiveAbort(operation);
+                            abortPid.complete(backendPid());
+                            await(releaseAbort);
+                            return result;
+                          }));
+      int blocker = abortPid.get(5, TimeUnit.SECONDS);
+      Future<?> writer =
+          executor.submit(
+              () ->
+                  ownerTransaction()
+                      .executeWithoutResult(
+                          status -> {
+                            writerPid.complete(backendPid());
+                            storeRegion(write);
+                          }));
+      int waiter = writerPid.get(5, TimeUnit.SECONDS);
+      assertWriterBlockedByAbort(waiter, blocker);
+      releaseAbort.countDown();
+      committedAbort = Objects.requireNonNull(abort.get(30, TimeUnit.SECONDS));
+      assertThatThrownBy(() -> writer.get(30, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .hasCauseInstanceOf(RuntimeException.class)
+          .hasStackTraceContaining("definitive no-commit");
+    } finally {
+      releaseAbort.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+    }
+
+    assertThatThrownBy(() -> ownerTransaction().executeWithoutResult(status -> storeRegion(write)))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("definitive no-commit");
+    var readback = terminalService().readDefinitiveAbort(operation).orElseThrow();
+    assertThat(readback.canonicalBytes()).containsExactly(committedAbort.canonicalBytes());
+    assertThat(readback.observedEpochs())
+        .extracting(WorldDraftTerminalOutcome.ObservedEpoch::epoch)
+        .containsExactly("1", "0");
+    assertThat(count("world_region_draft_commit", operation.requestId())).isZero();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM world_region_draft_execution_manifest "
+                        + "WHERE operation_id = ?",
+                    operation.commitId())
+                .get(0, Long.class))
+        .isZero();
+    assertThat(physicalRegionSnapshot(privateRegionKey)).isEqualTo(originalRegion);
+    assertThat(retainedTerminalSourceFenceAndEpochSnapshot(graph.operation()))
+        .isEqualTo(originalGraph);
   }
 
   @Test
@@ -805,6 +893,98 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
     } catch (RuntimeException expectedRaceLoser) {
       return false;
     }
+  }
+
+  private int backendPid() {
+    return Objects.requireNonNull(dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+  }
+
+  private void assertWriterBlockedByAbort(int writerPid, int abortPid) throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (System.nanoTime() < deadline) {
+      if (Boolean.TRUE.equals(
+          dsl.fetchSingle("SELECT ? = ANY(pg_blocking_pids(?))", abortPid, writerPid)
+              .get(0, Boolean.class))) {
+        return;
+      }
+      Thread.sleep(20);
+    }
+    throw new AssertionError("The direct REGION writer did not wait on the abort backend");
+  }
+
+  private String physicalRegionSnapshot(long privateRegionKey) {
+    return Objects.requireNonNull(
+        dsl.fetchSingle(
+                "SELECT to_jsonb(region)::text || ':' || xmin::text FROM region WHERE id = ?",
+                privateRegionKey)
+            .get(0, String.class));
+  }
+
+  private HistoricalRegionWrite historicalRegionWrite(
+      Fixture f, WorldDraftTerminalOperation creation, long privateRegionKey) {
+    String id = Long.toString(privateRegionKey);
+    UUID commit = UUID.randomUUID();
+    UUID revision = UUID.randomUUID();
+    var content =
+        RegionDesignMutation.newBuilder()
+            .setName("Delayed historical REGION update")
+            .setShardId(1)
+            .setWeather("rain")
+            .setGenerationSeed(17)
+            .setGeneratorType("test")
+            .setGeneratorParams("{}")
+            .build();
+    var mutation =
+        WorldDesignMutationRevision.newBuilder()
+            .setCommitId(commit.toString())
+            .setLogicalRevisionId(revision.toString())
+            .setAggregateId(id)
+            .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+            .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
+            .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
+            .setScopeId(id)
+            .setExpectedDraftRevisionEpoch(1)
+            .setExpectedDraftScopeRevisionEpoch(0)
+            .setRegion(content)
+            .build();
+    var binding =
+        DraftCommitBinding.create(
+            creation.binding().target(),
+            UUID.randomUUID(),
+            commit,
+            creation.commitId().toString(),
+            List.of(
+                creation.binding().revisions().getFirst(),
+                new RevisionPayload("1", revision, Owner.WORLD_MANAGEMENT, json(mutation))),
+            List.of(
+                creation.binding().affectedUnits(Owner.GAME_DESIGN_CONTROL_PLANE).getFirst(),
+                new AffectedUnit(Owner.WORLD_MANAGEMENT, "REGION", id, "AGGREGATE", id, "1"),
+                new AffectedUnit(Owner.WORLD_MANAGEMENT, "REGION", id, "REGION_SUBTREE", id, "0")));
+    String changesJson =
+        mapper.writeValueAsString(
+            List.of(
+                Map.of(
+                    "id", privateRegionKey,
+                    "expectedAggregateEpoch", mutation.getExpectedDraftRevisionEpoch(),
+                    "expectedScopeEpoch", mutation.getExpectedDraftScopeRevisionEpoch(),
+                    "name", content.getName(),
+                    "shardId", content.getShardId(),
+                    "weather", content.getWeather(),
+                    "generationSeed", content.getGenerationSeed(),
+                    "generatorType", content.getGeneratorType(),
+                    "generatorParams", content.getGeneratorParams(),
+                    "spacingMultiplier", 1.0d)));
+    return new HistoricalRegionWrite(
+        operation(f, binding, UUID.randomUUID(), UUID.randomUUID()), changesJson);
+  }
+
+  private void storeRegion(HistoricalRegionWrite write) {
+    dsl.resultQuery(
+            "SELECT world_store_guarded_region_rows(?::jsonb, ?::jsonb, ?::jsonb)",
+            mapper.writeValueAsString(write.operation().ownerBinding()),
+            write.operation().binding().canonicalJson(),
+            write.changesJson())
+        .fetch();
   }
 
   private void assertGuardedUuidTopologyFunctionDenied(WorldDraftGraphApplication application)
@@ -1500,6 +1680,8 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
   }
 
   private record OperationIds(UUID operation, UUID request, UUID commit, UUID fence, UUID actor) {}
+
+  private record HistoricalRegionWrite(WorldDraftTerminalOperation operation, String changesJson) {}
 
   private record Fixture(
       WorldAuthoredSourceIntakeReceipt intake,
