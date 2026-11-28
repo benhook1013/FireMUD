@@ -113,7 +113,11 @@ def is_matching_run(run):
     )
 
 matching_runs = [run for run in workflow_runs if is_matching_run(run)]
-if excluded_id:
+if excluded_id and selection == "selected":
+    matching_runs = [run for run in matching_runs if str(run.get("id")) == excluded_id]
+    if len(matching_runs) > 1:
+        raise SystemExit(1)
+elif excluded_id:
     matching_runs = [run for run in matching_runs if str(run.get("id")) != excluded_id]
     if selection == "active-alternates":
         active_statuses = {"requested", "queued", "in_progress", "waiting", "pending"}
@@ -811,12 +815,34 @@ wait_for_pr_publisher() {
     if find_completed_alternate_publication "$alternate_sources" "$publisher_deadline"; then
       return 0
     fi
-    local refreshed_source_payload refreshed_alternates new_alternates active_replacement source_refresh_unavailable=true
+    local refreshed_source_payload refreshed_alternates new_alternates active_replacement
+    local selected_source selected_id selected_status selected_conclusion selected_event selected_created_at
+    local source_refresh_unavailable=true
     active_replacement=""
     local source_refresh_remaining=$((publisher_deadline - SECONDS))
     if (( source_refresh_remaining > 0 )) && refreshed_source_payload="$(fetch_workflow_runs \
       "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" \
       "refreshing alternate runtime-image sources while waiting for publication" "$source_refresh_remaining")"; then
+      selected_source="$(read_run_state "$source_run_id" selected <<<"$refreshed_source_payload")" || selected_source=""
+      if [[ "$selected_source" == found$'\t'* ]]; then
+        IFS=$'\t' read -r _ selected_id selected_status selected_conclusion _ selected_event selected_created_at <<<"$selected_source"
+        if [[ "$selected_id" == "$source_run_id" && "$selected_event" == "$source_state_event" ]]; then
+          case "$selected_status" in
+            requested|queued|in_progress|waiting|pending)
+              printf 'Selected runtime-images producer %s is active again; continuing bounded publication wait.\n' "$source_run_id"
+              sleep "$sleep_seconds"
+              continue
+              ;;
+            completed)
+              if [[ "$selected_conclusion" == success && "$selected_source" != "$source_state" ]]; then
+                source_state="$selected_source"
+                source_created_at="$selected_created_at"
+                continue
+              fi
+              ;;
+          esac
+        fi
+      fi
       if refreshed_alternates="$(read_run_state "${source_run_id}" alternates <<<"${refreshed_source_payload}")"; then
         if active_replacement="$(read_run_state "${source_run_id}" active-alternates <<<"${refreshed_source_payload}")"; then
           source_refresh_unavailable=false
@@ -994,13 +1020,15 @@ while (( SECONDS < deadline )); do
 
   if [[ "${run_status}" == "completed" ]]; then
     if [[ "$wait_mode" == "pull-request" ]] && (( SECONDS < deadline )); then
+      terminal_alternates=""
       # A successful alternate can start a rerun during publication lookup.
       # Only a fresh, complete inventory can justify a terminal decision.
       if ! terminal_inventory="$(fetch_workflow_runs \
         "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" \
         "confirming terminal runtime-image failure" "$((deadline - SECONDS))")" ||
         ! terminal_state="$(read_run_state <<<"$terminal_inventory")" ||
-        ! active_alternates="$(read_run_state "$run_id" active-alternates <<<"$terminal_inventory")"; then
+        ! active_alternates="$(read_run_state "$run_id" active-alternates <<<"$terminal_inventory")" ||
+        ! terminal_alternates="$(read_run_state "$run_id" alternates <<<"$terminal_inventory")"; then
         sleep "${sleep_seconds}"
         continue
       fi
@@ -1008,6 +1036,11 @@ while (( SECONDS < deadline )); do
         printf 'Exact runtime-images producer ordering changed or a replacement is active for %s; continuing bounded wait.\n' "$image_tag"
         sleep "${sleep_seconds}"
         continue
+      fi
+      if [[ "$terminal_alternates" != "$older_states" && "$terminal_alternates" != missing ]]; then
+        alternate_status=0
+        find_completed_alternate_publication "$terminal_alternates" "$deadline" handoff || alternate_status=$?
+        if (( alternate_status == 0 )); then exit 0; fi
       fi
     fi
     if (( alternate_status == 2 )); then

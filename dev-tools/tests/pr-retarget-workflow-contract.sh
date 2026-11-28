@@ -3112,6 +3112,7 @@ for variant in qualified wrong-ref wrong-head full-ref wrong-workflow fork; do
   [[ -f "$lookup_marker" ]] || { echo "Publisher lookup was not reached: $variant" >&2; exit 1; }
 done
 for fixture in missing-url empty-url; do
+  missing_status=0
   if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/$fixture.json" \
     PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
@@ -3120,8 +3121,10 @@ for fixture in missing-url empty-url; do
       >"$contract_fixture_dir/$fixture.output" 2>"$contract_fixture_dir/$fixture.error"; then
     echo "$fixture unexpectedly verified publication" >&2
     exit 1
-  fi
+  else missing_status=$?; fi
+  [[ "$missing_status" -eq 1 ]] || { echo "$fixture returned harness/timeout status $missing_status" >&2; exit 1; }
   require_contains "$contract_fixture_dir/$fixture.error" 'GitHub API response was empty or invalid while waiting for the runtime-images workflow; retrying.'
+  require_contains "$contract_fixture_dir/$fixture.error" 'Timed out waiting for runtime-images workflow'
   if [[ -s "$contract_fixture_dir/$fixture.output" ]]; then
     echo "$fixture must not report source or publisher success" >&2
     exit 1

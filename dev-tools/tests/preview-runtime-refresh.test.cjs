@@ -114,7 +114,6 @@ function admissionFixture() {
         assert.equal(workflow_id, 42);
         assert.equal(per_page, 100);
         assert.ok(Number.isSafeInteger(page) && page > 0 && page <= 3);
-        state.lookups.push({status, event, per_page, page, created});
         state.afterInventory?.();
         const matching = runs.filter(run => (!status || run.status === status) && run.event === event &&
           (!created || (() => {
@@ -122,8 +121,9 @@ function admissionFixture() {
             const timestamp = Date.parse(run.created_at);
             return timestamp >= Date.parse(start) && (end === '*' || timestamp < Date.parse(end) + 1000);
           })()));
-        return {data: {workflow_runs: matching.slice((page - 1) * per_page, page * per_page),
-          total_count: matching.length}};
+        const pageRuns = matching.slice((page - 1) * per_page, page * per_page);
+        state.lookups.push({status, event, per_page, page, created, runIds: pageRuns.map(run => run.id)});
+        return {data: {workflow_runs: pageRuns, total_count: matching.length}};
       },
     },
     repos: {
@@ -311,7 +311,8 @@ test('a newer exact failure visible during live identity lookup defeats stale ac
   let identityReads = 0;
   api.get = async (...args) => {
     if (++identityReads === 2) {
-      assert.ok(f.state.producerReads.includes(old.id), 'old active proof must precede live tuple lookup');
+      assert.ok(f.state.lookups.some(({status, runIds}) => status === 'queued' && runIds.includes(old.id)));
+      assert.deepEqual(f.state.producerReads, [], 'the first inventory does not authorize reuse');
       f.runs.push(failed);
     }
     return readPull(...args);
@@ -319,6 +320,28 @@ test('a newer exact failure visible during live identity lookup defeats stale ac
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
   assert.equal(f.sent.length, 1);
   assert.ok(identityReads >= 4, 'changed inventory must recheck tuple before claim and dispatch');
+});
+
+test('an exact native active producer appearing during live identity validation suppresses dispatch', async () => {
+  const f = admissionFixture();
+  const producer = f.makePullRequestRun({id: 220});
+  const api = f.admission.github.rest.pulls;
+  const readPull = api.get;
+  let identityReads = 0;
+  api.get = async (...args) => {
+    if (++identityReads === 2) {
+      assert.ok(f.state.lookups.length > 0);
+      assert.ok(f.state.lookups.every(({runIds}) => runIds.length === 0));
+      f.runs.push(producer);
+    }
+    return readPull(...args);
+  };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
+  assert.deepEqual(f.state.producerReads, [producer.id]);
+  assert.equal(identityReads, 2);
+  assert.deepEqual(f.sent, []);
+  assert.equal(f.claimTags.size, 0);
+  assert.equal(f.claimRefs.size, 0);
 });
 
 test('identity retries are bounded and do not retry authorization failure', async () => {
@@ -422,8 +445,8 @@ test('admission rereads PR and base through pending mergeability, a stale base p
   f.state.alternateCommit = {sha: E, parents: [{sha: D}, {sha: C}]};
   f.state.missingExactCommitReads = 1;
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
-  assert.deepEqual(f.state.commitRefs, [E, A, A, A, A]);
-  assert.equal(f.state.baseReads, 7);
+  assert.deepEqual(f.state.commitRefs, [E, A, A, A, A, A]);
+  assert.equal(f.state.baseReads, 8);
   assert.deepEqual(f.state.waits, [2000, 2000, 2000, 2000, 2000]);
   assert.equal(f.sent[0].client_payload.merge_sha, A);
 });
@@ -463,7 +486,7 @@ test('admission suppresses only when the selected active producer still proves t
   f.runs.push(f.makePullRequestRun());
   f.state.refreshProducer = run => ({...run, status: 'in_progress'});
   assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
-  assert.deepEqual(f.state.producerReads, [300, 300]);
+  assert.deepEqual(f.state.producerReads, [300]);
   assert.deepEqual(f.sent, []);
 });
 
@@ -482,17 +505,19 @@ test('a stale or unavailable selected producer leaves an exact refresh eligible'
     run => ({...run, status: 'completed', conclusion: 'failure'}),
     run => ({...run, status: 'completed', conclusion: 'cancelled'}),
   ];
-  for (const afterFinalTuple of [false, true]) {
-    for (const refreshProducer of invalidProducers) {
-      const f = admissionFixture();
-      f.runs.push(f.makePullRequestRun());
-      f.state.refreshProducer = run => !afterFinalTuple || f.state.commitRefs.length >= 2 ?
-        refreshProducer(run) : run;
-      assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
-      assert.deepEqual(f.state.producerReads, afterFinalTuple ? [300, 300] : [300]);
-      assert.deepEqual(f.state.commitRefs, afterFinalTuple ? [A, A, A, A] : [A, A, A]);
-      assert.equal(f.sent.length, 1);
-    }
+  for (const refreshProducer of invalidProducers) {
+    const f = admissionFixture();
+    f.runs.push(f.makePullRequestRun());
+    let comparisonAtProducerRead;
+    f.state.refreshProducer = run => {
+      comparisonAtProducerRead = [...f.state.commitRefs];
+      return refreshProducer(run);
+    };
+    assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+    assert.deepEqual(f.state.producerReads, [300]);
+    assert.deepEqual(comparisonAtProducerRead, [A, A]);
+    assert.deepEqual(f.state.commitRefs, [A, A, A, A]);
+    assert.equal(f.sent.length, 1);
   }
 });
 
@@ -502,33 +527,34 @@ test('a producer that completes while the final live tuple is pending cannot sup
   f.state.pullObservations = [{}, {mergeable: null, merge_commit_sha: null}];
   f.state.afterWait = () => { f.runs[0] = {...f.runs[0], status: 'completed', conclusion: 'failure'}; };
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
-  assert.deepEqual(f.state.producerReads, [300]);
-  assert.ok(f.state.lookups.some(call => call.event === 'pull_request' && call.status === 'completed'));
+  assert.deepEqual(f.state.producerReads, []);
+  assert.deepEqual(f.state.lookups.filter(({event, status}) => event === 'pull_request' && status === 'queued')
+    .map(({runIds}) => runIds), [[300], []]);
   assert.deepEqual(f.state.commitRefs, [A, A, A, A]);
   assert.deepEqual(f.state.waits, [2000, 2000]);
   assert.equal(f.sent.length, 1);
 });
 
 test('admission rereads the pinned comparison after the producer lookup before fallback', async () => {
-  for (const afterFinalTuple of [false, true]) {
-    const f = admissionFixture();
-    f.runs.push(f.makePullRequestRun());
-    f.state.refreshProducer = run => {
-      if (afterFinalTuple && f.state.commitRefs.length < 2) return run;
-      f.state.base = D;
-      return {...run, status: 'completed', conclusion: 'failure'};
-    };
-    assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
-    assert.deepEqual(f.state.producerReads, afterFinalTuple ? [300, 300] : [300]);
-    assert.deepEqual(f.sent, []);
-  }
+  const f = admissionFixture();
+  f.runs.push(f.makePullRequestRun());
+  f.state.refreshProducer = run => {
+    f.state.base = D;
+    return {...run, status: 'completed', conclusion: 'failure'};
+  };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
+  assert.deepEqual(f.state.producerReads, [300]);
+  assert.deepEqual(f.state.commitRefs, [A, A]);
+  assert.equal(f.state.baseReads, 3);
+  assert.deepEqual(f.sent, []);
+  assert.equal(f.claimTags.size, 0);
 });
 
 test('only a same-repository exact native producer can suppress the repair', async () => {
   const matched = admissionFixture();
   matched.runs.push(matched.makePullRequestRun());
   assert.equal(await admitRuntimeRefresh(matched.admission), 'already-active');
-  assert.deepEqual(matched.state.producerReads, [300, 300]);
+  assert.deepEqual(matched.state.producerReads, [300]);
   assert.deepEqual(matched.sent, []);
 
   const foreign = admissionFixture();
@@ -1225,7 +1251,7 @@ async function execute(f, sent = []) {
     repos: {
       getCommit: async ({ref}) => {
         (f.mergeReads ??= []).push(ref);
-        return {data: f.mergeReads.length === 1 ? f.recordedMerge :
+        return {data: ref === f.recordedMerge.sha ? f.recordedMerge :
           f.pendingMerges?.[ref] ?? (ref === f.resolvedMerge?.sha ? f.resolvedMerge : f.merge)};
       },
       createDispatchEvent: async p => sent.push(p),
@@ -1587,20 +1613,33 @@ test('observer stops waiting on changed head, ineligibility, or an actual merge 
   }
 });
 
-test('event base drift can repair the independently revalidated current merge', async () => {
+for (const [nativeForm, runSha] of [['PR head', C], ['test merge', A]]) {
+  test(`event base drift repairs the independently verified current merge for native ${nativeForm} SHA`, async () => {
+    const f = fixture();
+    f.run.head_sha = runSha;
+    f.run.display_title = `PR preview 7 base-${D} head-${C} merge-${A}`;
+    f.jobs[0].head_sha = runSha;
+    f.jobs[0].steps = [tupleStep('event', D, A), tupleStep('resolved', B, A)];
+    f.recordedMerge = f.merge;
+    const sent = await execute(f);
+    assert.equal(sent.length, 1);
+    assert.deepEqual(sent[0].client_payload, {pr_number: '7', base_ref: 'develop',
+      base_sha: B, head_sha: C, merge_sha: A, preview_only: true});
+    assert.deepEqual(f.mergeReads, [A, A]);
+  });
+}
+
+test('a new live base and test merge invalidate the independently verified stale plan', async () => {
   const f = fixture();
   f.jobs[0].steps = [tupleStep('event', D, A), tupleStep('resolved', B, A)];
-  f.recordedMerge = structuredClone(f.merge);
-  assert.equal((await execute(f)).length, 1);
+  f.recordedMerge = f.merge;
+  const advancedBase = 'f'.repeat(40);
+  f.latestBase = {object: {sha: advancedBase}};
+  f.latestPr = {...f.pr, merge_commit_sha: E};
+  f.pendingMerges = {[E]: {sha: E, parents: [{sha: advancedBase}, {sha: C}]}};
+  assert.deepEqual(await execute(f), []);
   assert.deepEqual(f.mergeReads, [A, A]);
-
-  const moved = fixture();
-  moved.jobs[0].steps = [tupleStep('event', D, A), tupleStep('resolved', B, A)];
-  moved.recordedMerge = structuredClone(moved.merge);
-  moved.merge.parents[0].sha = D;
-  assert.deepEqual(await execute(moved), []);
-  assert.equal(moved.mergeReads.length, 7);
-  assert.ok(moved.mergeReads.every(sha => sha === A));
+  assert.ok(f.messages.some(message => message.includes('exact tuple changed')));
 });
 
 test('a resolved historical merge can precede a second base advance', async () => {

@@ -1219,7 +1219,7 @@ jobs:
   build-runtime-images:
     name: Build Runtime Images (${{ matrix.service }})
     needs: [image-meta, build-base-image, select-protected-runtime-digests]
-    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.select-protected-runtime-digests.result == 'success' && needs.select-protected-runtime-digests.outputs.runtime_digests == '' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.select-protected-runtime-digests.result == 'success' && needs.select-protected-runtime-digests.outputs.missing_services != '' && needs.select-protected-runtime-digests.outputs.missing_services != '[]' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
     runs-on: ubuntu-latest
     permissions:
       # This job publishes only unique staging service tags. Canonical aliases
@@ -1229,18 +1229,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service:
-          - account-service
-          - automation-scripting-service
-          - entity-management-service
-          - game-design-service
-          - game-logic-service
-          - game-session-service
-          - logging-admin-service
-          - social-groups-service
-          - spring-cloud-gateway
-          - tcp-proxy-service
-          - world-management-service
+        service: ${{ fromJSON(needs.select-protected-runtime-digests.outputs.missing_services) }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
@@ -2035,7 +2024,8 @@ jobs:
       contents: read
       packages: read
     outputs:
-      runtime_digests: ${{ steps.select.outputs.runtime_digests }}
+      fixed_digests: ${{ steps.select.outputs.fixed_digests }}
+      missing_services: ${{ steps.select.outputs.missing_services }}
     env:
       HEAD_SHA: ${{ needs.image-meta.outputs.head_sha }}
       HEAD_BRANCH: ${{ needs.image-meta.outputs.head_branch }}
@@ -2102,7 +2092,7 @@ jobs:
   pin-protected-runtime-digests:
     name: Pin Runtime Digest Set for Smoke
     needs: [image-meta, build-runtime-images, select-protected-runtime-digests]
-    if: ${{ always() && !cancelled() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.select-protected-runtime-digests.result == 'success' && ((needs.select-protected-runtime-digests.outputs.runtime_digests == '' && needs.build-runtime-images.result == 'success') || (needs.select-protected-runtime-digests.outputs.runtime_digests != '' && needs.build-runtime-images.result == 'skipped')) }}
+    if: ${{ always() && !cancelled() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.select-protected-runtime-digests.result == 'success' && ((needs.select-protected-runtime-digests.outputs.missing_services != '' && needs.select-protected-runtime-digests.outputs.missing_services != '[]' && needs.build-runtime-images.result == 'success') || (needs.select-protected-runtime-digests.outputs.missing_services == '[]' && needs.build-runtime-images.result == 'skipped')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -2139,7 +2129,7 @@ jobs:
         id: pin
         env:
           CANDIDATE_TAG: ${{ needs.image-meta.outputs.candidate_tag }}
-          RUNTIME_DIGESTS: ${{ needs.select-protected-runtime-digests.outputs.runtime_digests }}
+          FIXED_RUNTIME_DIGESTS: ${{ needs.select-protected-runtime-digests.outputs.fixed_digests }}
         run: |
           set -euo pipefail
           source ./dev-tools/hosted/shared/protected-runtime-image-registry.sh
@@ -2150,7 +2140,7 @@ jobs:
     needs: [image-meta, pin-protected-runtime-digests]
     if: ${{ always() && !cancelled() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.pin-protected-runtime-digests.result == 'success' && needs.pin-protected-runtime-digests.outputs.runtime_digests != '' }}
     permissions:
-      # The trusted branch smoke workflow only pulls the staged candidate images.
+      # The trusted smoke workflow pulls the complete fixed and staged set by digest.
       contents: read
       packages: read
     uses: ./.github/workflows/smoke-full.yml
@@ -2180,7 +2170,7 @@ jobs:
       HEAD_SHA: ${{ needs.image-meta.outputs.head_sha }}
       HEAD_BRANCH: ${{ needs.image-meta.outputs.head_branch }}
       RUNTIME_DIGESTS: ${{ needs.pin-protected-runtime-digests.outputs.runtime_digests }}
-      REUSING_FIXED_DIGESTS: ${{ needs.select-protected-runtime-digests.outputs.runtime_digests != '' }}
+      FIXED_RUNTIME_DIGESTS: ${{ needs.select-protected-runtime-digests.outputs.fixed_digests }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
@@ -2220,15 +2210,15 @@ jobs:
           source ./dev-tools/hosted/shared/protected-runtime-image-registry.sh
 
           promote_alias() {
-            local source="$1" target="$2" fixed="$3"
+            local source="$1" target="$2" fixed="$3" retained_digest="${4:-}"
             local source_digest="${source##*@}" existing_digest target_digest
             local target_state
-            if ! target_state="$(registry_manifest_state "$target")"; then
+            if ! registry_manifest_state "$target" target_state; then
               echo "Immutable target preflight failed for $target; refusing to publish." >&2
               exit 1
             fi
             if [[ "$target_state" == missing ]]; then
-              if [[ "$fixed" == true && "$REUSING_FIXED_DIGESTS" == true ]]; then
+              if [[ "$fixed" == true && -n "$retained_digest" ]]; then
                 echo "Fixed runtime tag $target disappeared after smoke qualification." >&2
                 exit 1
               fi
@@ -2257,7 +2247,7 @@ jobs:
             branch_tag="ghcr.io/benhook1013/${service}:${HEAD_BRANCH}"
 
             assert_current_branch_head
-            promote_alias "$candidate" "$sha_tag" true
+            promote_alias "$candidate" "$sha_tag" true "${retained_fixed[$service]}"
             assert_current_branch_head
             promote_alias "$candidate" "$branch_tag" false
             if [[ "$HEAD_BRANCH" == develop ]]; then

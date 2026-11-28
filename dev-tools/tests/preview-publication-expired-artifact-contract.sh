@@ -36,12 +36,16 @@ jq -e '.id == 4 and .digest == ("sha256:"+("a"*64))' "$tmp/active" >/dev/null
 [[ ! -s "$tmp/active.err" ]]
 
 artifact_state=expired
-if read_exact_run_artifact 30 "$run" "$name"; then exit 1; fi
+expired_status=0
+read_exact_run_artifact 30 "$run" "$name" || expired_status=$?
+test "$expired_status" -eq 1
 read_exact_run_artifact 30 "$run" "$name" true |
   jq -e '.id == 4 and .digest == ("sha256:"+("a"*64))' >/dev/null
 
 artifact_state=missing
-if read_exact_run_artifact 30 "$run" "$name"; then exit 1; fi
+missing_status=0
+read_exact_run_artifact 30 "$run" "$name" || missing_status=$?
+test "$missing_status" -eq 1
 read_exact_run_artifact 30 "$run" "$name" true |
   jq -e '. == {id:null,digest:null}' >/dev/null
 

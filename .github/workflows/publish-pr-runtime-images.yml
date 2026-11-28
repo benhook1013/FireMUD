@@ -791,7 +791,24 @@ jobs:
           SOURCE_RUN_ATTEMPT: ${{ fromJSON(needs.source.outputs.source).run_attempt }}
           SOURCE_ARTIFACT_ID: ${{ needs.source.outputs.artifact_id }}
           SOURCE_ARTIFACT_DIGEST: ${{ needs.source.outputs.artifact_digest }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+
+          if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" |
+            jq -e --argjson id "$SOURCE_RUN_ID" --argjson attempt "$SOURCE_RUN_ATTEMPT" \
+              '.id == $id and .run_attempt == $attempt and .status == "completed" and .conclusion == "success"' >/dev/null; then
+            echo "The pinned source attempt is no longer a verified current success; withholding the publication receipt." >&2
+            {
+              echo "### Fixed tags verified before the publication receipt was withheld"
+              while IFS= read -r service || [[ -n "$service" ]]; do
+                # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
+                printf -- '- `ghcr.io/benhook1013/%s:%s`\n' "$service" "$IMAGE_TAG"
+              done < "$PR_RUNTIME_ARTIFACT_DIR/pr-runtime-services.txt"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
           python3 - <<'PY'
           import json
           import os

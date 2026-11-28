@@ -55,13 +55,27 @@ print(json.dumps({"metadata":{"generation":2},"spec":{"failurePolicy":"Ignore" i
                           ("expired-before-request", False), ("stale", False),
                           ("warnings", False), ("ignore", False), ("api-error", False),
                           ("shared-deadline", False)]:
-        for name in ("clock", "calls"):
+        for name in ("clock", "calls", "date-calls"):
             (tmp/name).unlink(missing_ok=True)
         env = dict(os.environ, PATH=str(tmp)+":"+os.environ["PATH"], CASE=case,
                    CLOCK=str(tmp/"clock"), CALLS=str(tmp/"calls"),
                    DATE_CALLS=str(tmp/"date-calls"),
                    KUBECONFIG="/not-a-live-config", expected_context="fixture")
+        (tmp/"calls").write_text("")
         date_command = tmp / "date"
+        date_command.write_text('''#!/usr/bin/env python3
+import os,pathlib
+case=os.environ["CASE"]
+p=pathlib.Path(os.environ["CLOCK"])
+calls=pathlib.Path(os.environ["DATE_CALLS"])
+if case in ("stale", "warnings", "ignore", "api-error"):
+    n=int(calls.read_text()) if calls.exists() else 0
+    calls.write_text(str(n+1))
+    print("0" if n < 2 else "90")
+else:
+    print(p.read_text() if p.exists() else "0")
+''')
+        date_command.chmod(0o700)
         if case == "expired-before-request":
             date_command.write_text('#!/usr/bin/env python3\nimport os,pathlib\np=pathlib.Path(os.environ["CLOCK"]);n=int(p.read_text()) if p.exists() else 0\nif n == 0:p.write_text("90")\nprint(n)\n')
             date_command.chmod(0o700)
@@ -94,6 +108,9 @@ print(now)
                 calls = (tmp/"calls").read_text().splitlines() if (tmp/"calls").exists() else []
                 assert len(calls) == (1 if case == "late-ready" else 0)
                 assert ("boundary=ready_response" in result.stderr) == (case == "late-ready")
+            if case in ("stale", "warnings", "ignore", "api-error"):
+                calls = (tmp/"calls").read_text().splitlines()
+                assert len(calls) == 1, (case, calls)
             if case == "shared-deadline":
                 first = "firemud-trust-runtime-namespace-boundary"
                 second = "firemud-trust-runtime-binding-boundary"

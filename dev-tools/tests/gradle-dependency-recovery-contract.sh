@@ -1632,10 +1632,10 @@ done
 
 # Preserve unrelated Gradle configuration failures without another attempt.
 prepare_jacoco_case jacoco-task-graph-semantic-failure
-write_wrapper 'printf "%s\n" "FAILURE: Build failed with an exception." "* What went wrong:" "Could not create task :common-saga:test." "* Try:" "BUILD FAILED"; exit 1'
+write_wrapper 'printf "%s\n" "FAILURE: Build failed with an exception." "* What went wrong:" "Could not create task :common-saga:test." "* Try:" "BUILD FAILED"; exit 42'
 status=0
 run_jacoco_case || status=$?
-[[ "$status" -eq 1 ]] || fail "JaCoCo task-graph semantic failure did not retain exit code 1"
+[[ "$status" -eq 42 ]] || fail "JaCoCo task-graph semantic failure did not retain exit code 42"
 assert_no_retry
 assert_output_contains "Could not create task :common-saga:test."
 cmp "$CASE_DIR/calls" "$CASE_DIR/locked-calls" || fail "JaCoCo bypassed the existing locked runner"

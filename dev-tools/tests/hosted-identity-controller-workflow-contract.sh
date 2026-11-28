@@ -6581,7 +6581,8 @@ case "$resource" in
       --argjson mergeable_state "$mergeable_state_json" \
       --argjson labels "${TEST_PR_LABELS_JSON:-[]}" \
       --argjson changed_files "$changed_file_count" \
-      '{state:$state,changed_files:$changed_files,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:$base_sha,repo:{full_name:"example/FireMUD"}},merge_commit_sha:$merge,mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels}'
+      --argjson number "${TEST_PR_NUMBER:-900}" \
+      '{number:$number,state:$state,changed_files:$changed_files,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:$base_sha,repo:{full_name:"example/FireMUD"}},merge_commit_sha:$merge,mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels}'
     ;;
   repos/example/FireMUD/git/ref/heads/*)
     printf '%s' '{"ref":"refs/heads/develop","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
@@ -6836,6 +6837,7 @@ FAKE_FIXTURE_CALLBACK_ATTEMPT=2 \
 FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT=1 \
   run_deploy_target_fixture natural-stale-artifact 0 \
     'Ignoring render metadata not bound to the current source attempt.'
+test "$(cat "$TEMP_DIR/deploy-target-natural-stale-artifact.output")" = $'action=none\nretire_identity=false\ncleanup_state=none'
 
 # A real natural preview uses H in the REST run, its workflow_run callback and PR
 # association; the sanitized artifact also records the different execution merge M.
@@ -6968,7 +6970,10 @@ for comparison_case in base merge pending-merge stale-parents; do
       | .display_title |= sub("-merge-[0-9a-f]{40}"; "-merge-" + $merge)
   ' <<<"$retry_source_run_json")"
   case "$comparison_case" in
-    base|merge)
+    base)
+      expected_message='Ignoring retry render bound to a stale or different pull-request base.'
+      ;;
+    merge)
       expected_message="Ignoring render artifact bound to a stale or different pull-request ${comparison_case}."
       ;;
     pending-merge)

@@ -174,7 +174,7 @@ repair_requested_tuple() {
 
 prepare_preview_dispatch() {
   local namespace="$1" pr_number="$2" base_sha="$3" head_sha="$4" merge_sha="$5" image_tag="$6"
-  local require_deployed_tuple="$7" priority="$8" expected_namespace_uid="$9"
+  local require_deployed_tuple="$7" priority="$8" expected_namespace_uid="$9" settled_once="${10:-false}"
   local snapshot="" tuple="" namespace_uid="" namespace_resource_version=""
   local deployed_base deployed_head deployed_merge deployed_image deployed_exact=false
   local proof_base proof_head proof_merge proof_image proof_uid
@@ -330,6 +330,8 @@ prepare_preview_dispatch() {
     start_reserved_proof_retry "$holder" "$namespace" "$pr_number"
     return $?
   elif [[ "$phase" == SEND_STARTED ]]; then
+    # Another actor may have started a distinct send after the first settlement.
+    [[ "$settled_once" != true ]] || return 1
     local settled
     if ! settled="$(settle_terminal_preview_retry "$namespace" "$pr_number" "$prior")"; then
       echo "Retained proof-retry send-start for PR #${pr_number} has no guarded rejection; leaving it charged without positive terminal receiver evidence."
@@ -338,7 +340,11 @@ prepare_preview_dispatch() {
     holder="$(read_preview_retry_holder)" || return 1
     prior="$(preview_retry_entry "$holder" "$namespace")" || return 1
     jq -en --argjson current "$prior" --argjson settled "$settled" '$current == $settled' >/dev/null || return 1
-    phase=""
+    # The receiver can update proof or allocate the Namespace while we wait for
+    # settlement. Re-read the Namespace and ordinary capacity before dispatch.
+    prepare_preview_dispatch "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" \
+      "$require_deployed_tuple" "$priority" "$expected_namespace_uid" true
+    return $?
   fi
   if [[ "$proof_completed" == true ]]; then
     echo "Skipping PR #${pr_number}: proof completed before retry dispatch." >&2
@@ -895,10 +901,20 @@ completed_preview_inventory() {
   local -a filters=(-f "event=${event}" -f status=completed -f "$filter")
   local -a initial_range=()
   if [[ -n "$earliest" ]]; then initial_range=(-f "created=>=${earliest}"); fi
-  pages="$(timeout 30s gh api --method GET --paginate --slurp \
-    "$workflow_runs_path" "${filters[@]}" "${initial_range[@]}" -f per_page=100)" || return 1
-  count="$(jq -er '.[0].total_count | select(type == "number" and . >= 0 and . <= 2147483647 and . == floor)' <<<"$pages")" || return 1
+  local initial_page initial_remaining
+  initial_page="$(timeout 30s gh api --method GET \
+    "$workflow_runs_path" "${filters[@]}" "${initial_range[@]}" -f per_page=1)" || return 1
+  count="$(jq -er '.total_count | select(type == "number" and . >= 0 and . <= 2147483647 and . == floor)' <<<"$initial_page")" || return 1
   if (( count < 1000 )); then
+    if (( count <= 1 )); then
+      pages="[$initial_page]"
+    else
+      initial_remaining=$((deadline - SECONDS))
+      (( initial_remaining > 0 )) || return 1
+      pages="$(timeout "${initial_remaining}s" gh api --method GET --paginate --slurp \
+        "$workflow_runs_path" "${filters[@]}" "${initial_range[@]}" -f per_page=100)" || return 1
+    fi
+    jq -e --argjson count "$count" '.[0].total_count == $count' <<<"$pages" >/dev/null || return 1
     parse_completed_preview_pages "$event" "$workflow_id" <<<"$pages"
     return
   fi

@@ -43,7 +43,7 @@ import yaml
 
 jobs = yaml.load(source, Loader=yaml.BaseLoader)["jobs"]
 
-def admitted_branch_job(condition, event, branch, *, digests="", pinned="complete", results=None):
+def admitted_branch_job(condition, event, branch, *, missing='["account-service"]', pinned="complete", results=None):
     assert condition.startswith("${{") and condition.endswith("}}"), condition
     expression = condition[3:-2].strip()
     expression = expression.replace("&&", " and ").replace("||", " or ")
@@ -51,7 +51,7 @@ def admitted_branch_job(condition, event, branch, *, digests="", pinned="complet
     expression = expression.replace("!cancelled()", "True")
     expression = expression.replace("github.event_name", repr(event))
     expression = expression.replace("needs.image-meta.outputs.head_branch", repr(branch))
-    expression = expression.replace("needs.select-protected-runtime-digests.outputs.runtime_digests", repr(digests))
+    expression = expression.replace("needs.select-protected-runtime-digests.outputs.missing_services", repr(missing))
     expression = expression.replace("needs.pin-protected-runtime-digests.outputs.runtime_digests", repr(pinned))
     expression = re.sub(r"needs\.([a-z0-9-]+)\.result",
                         lambda match: repr((results or {}).get(match[1], "success")), expression)
@@ -68,13 +68,13 @@ for job in ("build-base-image", "build-runtime-images", "build-backup-verifier",
 for branch in ("develop", "main"):
     build = jobs["build-runtime-images"]["if"]
     pin = jobs["pin-protected-runtime-digests"]["if"]
-    assert not admitted_branch_job(build, "workflow_run", branch, digests="complete")
+    assert not admitted_branch_job(build, "workflow_run", branch, missing="[]")
     assert admitted_branch_job(pin, "workflow_run", branch)
-    assert admitted_branch_job(pin, "workflow_run", branch, digests="complete",
+    assert admitted_branch_job(pin, "workflow_run", branch, missing="[]",
                                results={"build-runtime-images": "skipped"})
     assert not admitted_branch_job(pin, "workflow_run", branch,
                                    results={"build-runtime-images": "skipped"})
-    assert not admitted_branch_job(pin, "workflow_run", branch, digests="complete",
+    assert not admitted_branch_job(pin, "workflow_run", branch, missing="[]",
                                    results={"select-protected-runtime-digests": "failure"})
     for job in ("smoke-full", "publish-runtime-images"):
         guard = jobs[job]["if"]
@@ -85,6 +85,13 @@ for branch in ("develop", "main"):
     assert not admitted_branch_job(jobs["publish-runtime-images"]["if"], "workflow_run", branch,
                                    results={"smoke-full": "failure"})
 
+assert jobs["build-runtime-images"]["strategy"]["matrix"]["service"] == (
+    "${{ fromJSON(needs.select-protected-runtime-digests.outputs.missing_services) }}"
+)
+fixed_digest_output = "${{ needs.select-protected-runtime-digests.outputs.fixed_digests }}"
+pin_step = next(step for step in jobs["pin-protected-runtime-digests"]["steps"] if step.get("id") == "pin")
+assert pin_step["env"]["FIXED_RUNTIME_DIGESTS"] == fixed_digest_output
+assert jobs["publish-runtime-images"]["env"]["FIXED_RUNTIME_DIGESTS"] == fixed_digest_output
 pinned_digest_output = "${{ needs.pin-protected-runtime-digests.outputs.runtime_digests }}"
 assert jobs["smoke-full"]["with"]["runtime_digests"] == pinned_digest_output
 assert jobs["publish-runtime-images"]["env"]["RUNTIME_DIGESTS"] == pinned_digest_output
@@ -400,14 +407,12 @@ validation_path.write_text(
     "\n".join(line[10:] if line.startswith("          ") else line for line in script.splitlines()) + "\n",
     encoding="utf-8",
 )
-publish_start = workflow.index("      - name: Publish fixed PR image tags")
-publish_run = workflow.index("        run: |\n", publish_start) + len("        run: |\n")
-publish_end = len(workflow)
-publish_script = workflow[publish_run:publish_end]
-publisher_path.write_text(
-    "\n".join(line[10:] if line.startswith("          ") else line for line in publish_script.splitlines()) + "\n",
-    encoding="utf-8",
-)
+publish = step_names.index("Publish fixed PR image tags")
+receipt = step_names.index("Record exact fixed-tag publication receipt")
+retain = step_names.index("Retain exact fixed-tag publication receipt")
+assert publish < receipt < retain
+publisher_path.write_text(publisher_steps[publish]["run"], encoding="utf-8")
+validation_path.with_name("publication-receipt.sh").write_text(publisher_steps[receipt]["run"], encoding="utf-8")
 def javascript_step(text, name):
     section = text.split("      - name: " + name + "\n", 1)[1]
     section = section.split("          script: |\n", 1)[1]
@@ -1569,7 +1574,7 @@ case "${1:-}" in
     image="${5:-}"
     service="${image##*/}"
     service="${service%%:*}"
-    if [[ "${PUBLISH_TARGET_MODE:-}" != later-existing && "$service" == account-service && -f "$PULL_STATE" ]]; then
+    if [[ -z "${PUBLISH_TARGET_MODE:-}" && "$service" == account-service && -f "$PULL_STATE" ]]; then
       printf 'sha256:target-account-service\n'
     else
       printf 'sha256:source-%s\n' "$service"
@@ -1586,7 +1591,13 @@ case "${1:-}" in
     image="${2:-}"
     service="${image##*/}"
     service="${service%%:*}"
-    if [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$service" == social-groups-service ]]; then
+    if [[ "${PUBLISH_TARGET_MODE:-}" == all-existing ]]; then
+      printf '%s\n' "$service" >> "$FIXTURE_DIR/verified-services"
+      if [[ "${ADVANCE_DURING_PUBLICATION:-}" == final-verification && "$service" == backup-verifier ]]; then
+        jq '.run_attempt += 1' "$FIXTURE_DIR/exact-source-run.json" > "$FIXTURE_DIR/source-run.json"
+        : > "$FIXTURE_DIR/advance-marker"
+      fi
+    elif [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$service" == social-groups-service ]]; then
       : > "$PULL_STATE"
       if [[ "${ADVANCE_DURING_PUBLICATION:-}" == preflight ]]; then
         jq '.run_attempt += 1' "$FIXTURE_DIR/exact-source-run.json" > "$FIXTURE_DIR/source-run.json"
@@ -1631,7 +1642,9 @@ if [[ -n "${CURL_STATUS:-}" ]]; then
   exit 0
 fi
 image_url="${*: -1}"
-if [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$image_url" == *"/social-groups-service/manifests/"* ]]; then
+if [[ "${PUBLISH_TARGET_MODE:-}" == all-existing ]]; then
+  printf '200\n'
+elif [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$image_url" == *"/social-groups-service/manifests/"* ]]; then
   printf '200\n'
 elif [[ "${PUBLISH_TARGET_MODE:-}" != later-existing && "$image_url" == *"/account-service/manifests/"* ]]; then
   printf '200\n'
@@ -1730,6 +1743,43 @@ if "`social-groups-service`" in unpublished:
     raise SystemExit("already-available later service was incorrectly reported unpublished")
 PY
 
+for receipt_case in unchanged final-verification; do
+  cp "$fixture_dir/exact-source-run.json" "$fixture_dir/source-run.json"
+  rm -f "$fixture_dir/registry-marker" "$fixture_dir/advance-marker" "$fixture_dir/verified-services" \
+    "$fixture_dir/exact-pr-runtime-publication.json" "$fixture_dir/summary"
+  receipt_env=(
+    "PATH=$fake_bin:$PATH" "FIXTURE_DIR=$fixture_dir" "GITHUB_REPOSITORY=$repository"
+    "SOURCE_RUN_ID=$source_run_id" "SOURCE_RUN_ATTEMPT=$source_run_attempt"
+    "PR_RUNTIME_ARTIFACT_DIR=$artifact_dir" "IMAGE_TAG=pr-merge-$merge_sha"
+    "GITHUB_STEP_SUMMARY=$fixture_dir/summary" "RUNNER_TEMP=$fixture_dir"
+  )
+  env "${receipt_env[@]}" PUBLISH_TARGET_MODE=all-existing ADVANCE_DURING_PUBLICATION="$receipt_case" \
+    GHCR_USERNAME=test-user GHCR_TOKEN=test-token PULL_STATE="$fixture_dir/pull-state" \
+    REGISTRY_MARKER="$fixture_dir/registry-marker" bash "$publisher_script"
+  diff -u "$artifact_dir/pr-runtime-services.txt" "$fixture_dir/verified-services"
+  test ! -e "$fixture_dir/registry-marker"
+  receipt_status=0
+  env "${receipt_env[@]}" PR_NUMBER="$pr_number" BASE_SHA="$base_sha" HEAD_SHA="$head_sha" MERGE_SHA="$merge_sha" \
+    SOURCE_WORKFLOW_ID=7 SOURCE_ARTIFACT_ID=900 SOURCE_ARTIFACT_DIGEST="sha256:$(printf '%064d' 1)" \
+    GITHUB_WORKFLOW_REF="$repository/.github/workflows/publish-pr-runtime-images.yml@refs/heads/develop" \
+    GITHUB_RUN_ID=800 GITHUB_RUN_ATTEMPT=1 bash "$fixture_dir/publication-receipt.sh" \
+    2>"$fixture_dir/receipt-error" || receipt_status=$?
+  if [[ "$receipt_case" == unchanged ]]; then
+    [[ "$receipt_status" == 0 ]]
+    jq -e --argjson run "$source_run_id" --argjson attempt "$source_run_attempt" \
+      '.producerRunId == $run and .producerAttempt == $attempt and .producerArtifactId == 900' \
+      "$fixture_dir/exact-pr-runtime-publication.json" >/dev/null
+  else
+    [[ "$receipt_status" == 1 ]]
+    test -e "$fixture_dir/advance-marker"
+    test ! -e "$fixture_dir/exact-pr-runtime-publication.json"
+    grep -Fq 'withholding the publication receipt' "$fixture_dir/receipt-error"
+    while IFS= read -r service; do
+      grep -Fxq -- "- \`ghcr.io/benhook1013/$service:pr-merge-$merge_sha\`" "$fixture_dir/summary"
+    done < "$fixture_dir/verified-services"
+  fi
+done
+
 cat > "$fixture_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1749,18 +1799,33 @@ cat > "$fixture_dir/curl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$*" == *"https://ghcr.io/token"* ]]; then
+  for arg in "$@"; do
+    if [[ "$arg" == scope=repository:*:pull ]]; then
+      printf '%s\n' "$arg" >> "$RUNTIME_TOKEN_LOG"
+    fi
+  done
   printf '{"token":"mock-registry-token"}\n'
   exit 0
 fi
+[[ "$*" == *" --head "* ]]
+image_url="${*: -1}"
+printf '%s\n' "${image_url#https://ghcr.io/v2/}" >> "$RUNTIME_MANIFEST_LOG"
 if [[ -n "${RUNTIME_CURL_STATUS:-}" ]]; then
   printf '%s\n' "$RUNTIME_CURL_STATUS"
   exit 0
 fi
 case "${RUNTIME_TARGET_MODE:-}" in
-  missing|candidate-moved|source-digest-mismatch|target-digest-mismatch) printf '404\n' ;;
+  missing|candidate-moved|source-digest-mismatch|target-digest-mismatch|partial-retained-missing) printf '404\n' ;;
   matching|different|fixed-reuse|inspect-failure) printf '200\n' ;;
   late-fixed-conflict)
     if [[ "$*" == *world-management-service/manifests/"$HEAD_SHA" ]]; then
+      printf '200\n'
+    else
+      printf '404\n'
+    fi
+    ;;
+  partial|partial-retained-drift)
+    if [[ "$image_url" == */account-service/manifests/"$HEAD_SHA" ]]; then
       printf '200\n'
     else
       printf '404\n'
@@ -1777,30 +1842,49 @@ set -euo pipefail
 if [[ "${1:-}" == buildx && "${2:-}" == imagetools && "${3:-}" == inspect ]]; then
   image="${4:-}"
   service="${image##*/}"
-  tag="${service##*:}"
-  service="${service%%:*}"
-  digest='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-  if [[ "${RUNTIME_TARGET_MODE:-}" =~ ^(different|late-fixed-conflict)$ && "$tag" == "$HEAD_SHA" ]]; then
-    digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-  fi
-  if [[ "${RUNTIME_TARGET_MODE:-}" == fixed-reuse ]]; then
-    if [[ "$tag" == "$HEAD_SHA" || "$image" == *@sha256:* ]] ||
-        { [[ -f "$RUNTIME_REGISTRY_MARKER" ]] && grep -Fq -- "--tag $image " "$RUNTIME_REGISTRY_MARKER"; }; then
-      digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  service="${service%%[@:]*}"
+  tag="${image##*:}"
+  printf '%s\n' "$image" >> "$RUNTIME_INSPECT_LOG"
+  candidate="$(jq -er --arg service "$service" '.[$service]' "$RUNTIME_CANDIDATE_DIGESTS")"
+  fixed="$(jq -er --arg service "$service" '.[$service]' "$RUNTIME_FIXED_DIGESTS")"
+  mode="${RUNTIME_TARGET_MODE:-}"
+  digest="$candidate"
+  if [[ "$image" == *@sha256:* ]]; then
+    digest="${image##*@}"
+    [[ "$digest" == "$candidate" || "$digest" == "$fixed" ]] || exit 90
+    if [[ "$mode" == source-digest-mismatch ]]; then digest="$fixed"; fi
+  elif [[ "$tag" == candidate-* ]]; then
+    if [[ "$mode" == fixed-reuse || "$mode" == partial && "$service" == account-service ]]; then
+      echo "unexpected staged lookup for retained $service" >&2
+      exit 91
+    fi
+    if [[ "$mode" == candidate-moved ]]; then digest="$fixed"; fi
+  else
+    if [[ -f "$RUNTIME_REGISTRY_MARKER" ]]; then
+      written="$(awk -v target="$image" '$6 == target { print $7 }' "$RUNTIME_REGISTRY_MARKER" | tail -n 1)"
+      if [[ -n "$written" ]]; then digest="${written##*@}"; fi
+    fi
+    if [[ "$tag" == "$HEAD_SHA" ]]; then
+      case "$mode" in
+        different|late-fixed-conflict|target-digest-mismatch|fixed-reuse) digest="$fixed" ;;
+        partial)
+          if [[ "$service" == account-service ]]; then digest="$fixed"; fi
+          ;;
+      esac
     fi
   fi
-  if [[ "${RUNTIME_TARGET_MODE:-}" == candidate-moved && "$tag" == candidate-* ]] ||
-      [[ "${RUNTIME_TARGET_MODE:-}" == source-digest-mismatch && "$image" == *@sha256:* ]] ||
-      [[ "${RUNTIME_TARGET_MODE:-}" == target-digest-mismatch && "$tag" == "$HEAD_SHA" ]]; then
-    digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-  fi
-  python3 - "$digest" <<'PY'
+  python3 - "$digest" "$mode" <<'PY_DIGEST'
 import sys
 
-print(f"Digest: {sys.argv[1]}")
+digest, mode = sys.argv[1:]
+print(f"Digest: {digest[:-1] if mode == 'inspect-short' else digest}")
+if mode == "inspect-ambiguous":
+    print(f"Digest: {digest}")
+if mode == "inspect-nested":
+    print(f"  Digest: {digest}")
 print("manifest detail " * 8192)
-PY
-  if [[ "${RUNTIME_TARGET_MODE:-}" == inspect-failure ]]; then
+PY_DIGEST
+  if [[ "$mode" == inspect-failure ]]; then
     exit 42
   fi
   exit 0
@@ -1819,6 +1903,21 @@ exit 2
 EOF
 chmod +x "$fixture_dir/docker"
 
+python3 - "$artifact_dir/pr-runtime-services.txt" "$fixture_dir" <<'PY_RUNTIME_DIGESTS'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+# The PR publication manifest also carries the independently published backup verifier.
+services = [service for service in Path(sys.argv[1]).read_text().splitlines() if service != "backup-verifier"]
+root = Path(sys.argv[2])
+for mode in ("candidate", "fixed"):
+    inventory = {service: "sha256:" + hashlib.sha256(f"{mode}:{service}".encode()).hexdigest() for service in services}
+    assert len(set(inventory.values())) == len(services) == 11
+    (root / f"{mode}-digests.json").write_text(json.dumps(inventory, separators=(",", ":"), sort_keys=True))
+PY_RUNTIME_DIGESTS
+
 runtime_common_env=(
   HEAD_SHA='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
   HEAD_BRANCH='develop'
@@ -1830,34 +1929,75 @@ runtime_common_env=(
   RUNTIME_REGISTRY_MARKER="$fixture_dir/runtime-registry-marker"
   RUNTIME_HEAD_READ_LOG="$fixture_dir/runtime-head-reads"
   RUNTIME_HEAD_MOVED_MARKER="$fixture_dir/runtime-head-moved"
+  RUNTIME_CANDIDATE_DIGESTS="$fixture_dir/candidate-digests.json"
+  RUNTIME_FIXED_DIGESTS="$fixture_dir/fixed-digests.json"
+  RUNTIME_TOKEN_LOG="$fixture_dir/runtime-token-log"
+  RUNTIME_MANIFEST_LOG="$fixture_dir/runtime-manifest-log"
+  RUNTIME_INSPECT_LOG="$fixture_dir/runtime-inspect-log"
   PATH="$fixture_dir:$PATH"
 )
+empty_fixed_map='{}'
 run_runtime() {
   : > "$fixture_dir/runtime-head-reads"
+  : > "$fixture_dir/runtime-token-log"
+  : > "$fixture_dir/runtime-manifest-log"
+  : > "$fixture_dir/runtime-inspect-log"
   rm -f "$fixture_dir/runtime-head-moved"
   (cd "$ROOT_DIR" && env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" \
     RUNTIME_HEAD_MODE="${2:-unchanged}" RUNTIME_DIGESTS="${3:-$candidate_map}" \
-    REUSING_FIXED_DIGESTS="${4:-false}" bash "$runtime_script")
+    FIXED_RUNTIME_DIGESTS="${4-$empty_fixed_map}" bash "$runtime_script")
 }
 pin_runtime() {
   : > "$fixture_dir/runtime-pin"
+  : > "$fixture_dir/runtime-inspect-log"
   env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" GITHUB_OUTPUT="$fixture_dir/runtime-pin" \
-    RUNTIME_DIGESTS="${2:-}" bash -euo pipefail -c 'source "$1"; pin_runtime_digests' bash "$RUNTIME_REGISTRY"
+    FIXED_RUNTIME_DIGESTS="${2-$empty_fixed_map}" bash -euo pipefail -c 'source "$1"; pin_runtime_digests' bash "$RUNTIME_REGISTRY"
 }
 pin_runtime missing
 candidate_map=$(sed -n 's/^runtime_digests=//p' "$fixture_dir/runtime-pin")
-candidate_digest='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-jq -e --arg digest "$candidate_digest" 'length==11 and all(.[]; .==$digest)' <<<"$candidate_map" >/dev/null
+[[ "$candidate_map" == "$(<"$fixture_dir/candidate-digests.json")" ]]
+candidate_digest="$(jq -er '."account-service"' <<<"$candidate_map")"
+
+assert_runtime_aliases() {
+  local digest_map="$1" retained="$2"
+  python3 - "$fixture_dir/runtime-registry-marker" "$head_sha" "$digest_map" "$retained" <<'PY_ALIASES'
+import json
+from pathlib import Path
+import sys
+
+writes, head, digests, retained = sys.argv[1:]
+expected = []
+retained = json.loads(retained)
+for service, digest in json.loads(digests).items():
+    repository = f"ghcr.io/benhook1013/{service}"
+    tags = ["develop", "latest"] if service in retained else [head, "develop", "latest"]
+    expected += [f"buildx imagetools create --prefer-index=false --tag {repository}:{tag} {repository}@{digest}" for tag in tags]
+assert Path(writes).read_text().splitlines() == expected
+PY_ALIASES
+}
 expected_account='ghcr.io/benhook1013/account-service'
 expected_create='buildx imagetools create --prefer-index=false --tag'
 
 # Unchanged A remains eligible for immutable A, develop and latest publication.
 rm -f "$fixture_dir/runtime-registry-marker"
 run_runtime missing
-if [[ "$(wc -l < "$fixture_dir/runtime-registry-marker")" -ne 33 ]]; then
-  echo "runtime publisher did not create every explicitly absent alias" >&2
-  exit 1
-fi
+assert_runtime_aliases "$candidate_map" '{}'
+python3 - "$fixture_dir" "$head_sha" "$candidate_map" <<'PY_TOKEN_CACHE'
+from collections import Counter
+import json
+from pathlib import Path
+import sys
+
+root, head, digest_map = sys.argv[1:]
+paths = [f"benhook1013/{service}" for service in json.loads(digest_map)]
+root = Path(root)
+assert Counter((root / "runtime-token-log").read_text().splitlines()) == Counter(
+    f"scope=repository:{path}:pull" for path in paths
+)
+assert Counter((root / "runtime-manifest-log").read_text().splitlines()) == Counter(
+    f"{path}/manifests/{tag}" for path in paths for tag in [head, head, "develop", "latest"]
+)
+PY_TOKEN_CACHE
 if grep -Fvxq "$head_sha" "$fixture_dir/runtime-head-reads"; then
   echo "unchanged-A publication observed an unexpected branch head" >&2
   exit 1
@@ -1866,7 +2006,7 @@ fi
 # A staging tag that moves after pinning cannot change the tested or promoted bytes.
 rm -f "$fixture_dir/runtime-registry-marker"
 run_runtime candidate-moved
-[[ $(grep -Fc "@$candidate_digest" "$fixture_dir/runtime-registry-marker") -eq 33 ]]
+assert_runtime_aliases "$candidate_map" '{}'
 if grep -Fq ':candidate-' "$fixture_dir/runtime-registry-marker"; then
   echo "runtime publisher wrote aliases from a mutable staging tag" >&2
   exit 1
@@ -1938,27 +2078,62 @@ select_runtime() {
     bash -euo pipefail -c 'source "$1"; select_existing_fixed_digests' bash "$RUNTIME_REGISTRY"
 }
 select_runtime late-fixed-conflict
-[[ $(< "$fixture_dir/runtime-selection") == 'runtime_digests=' ]]
+expected_late_fixed="$(jq -cS 'with_entries(select(.key == "world-management-service"))' "$fixture_dir/fixed-digests.json")"
+[[ "$(sed -n 's/^fixed_digests=//p' "$fixture_dir/runtime-selection")" == "$expected_late_fixed" ]]
 select_runtime fixed-reuse
-fixed_map=$(sed -n 's/^runtime_digests=//p' "$fixture_dir/runtime-selection")
-fixed_digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-jq -e --arg digest "$fixed_digest" 'length==11 and all(.[]; .==$digest)' <<<"$fixed_map" >/dev/null
+fixed_map="$(sed -n 's/^fixed_digests=//p' "$fixture_dir/runtime-selection")"
+[[ "$fixed_map" == "$(<"$fixture_dir/fixed-digests.json")" ]]
+[[ "$(sed -n 's/^missing_services=//p' "$fixture_dir/runtime-selection")" == '[]' ]]
 pin_runtime fixed-reuse "$fixed_map"
 [[ $(< "$fixture_dir/runtime-pin") == "runtime_digests=$fixed_map" ]]
-run_runtime fixed-reuse unchanged "$fixed_map" true
-[[ $(wc -l < "$fixture_dir/runtime-registry-marker") -eq 22 ]]
-if grep -Fq ":$head_sha " "$fixture_dir/runtime-registry-marker" ||
-    grep -Fq ':candidate' "$fixture_dir/runtime-registry-marker"; then
-  echo "fixed-set reuse overwrote a fixed tag or used a mutable staging tag" >&2
-  exit 1
-fi
-[[ $(grep -Fc "@$fixed_digest" "$fixture_dir/runtime-registry-marker") -eq 22 ]]
+[[ ! -s "$fixture_dir/runtime-inspect-log" ]]
+run_runtime fixed-reuse unchanged "$fixed_map" "$fixed_map"
+assert_runtime_aliases "$fixed_map" "$fixed_map"
 rm -f "$fixture_dir/runtime-registry-marker"
-if run_runtime fixed-reuse unchanged "$(jq '.["account-service"]="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' <<<"$fixed_map")" true; then
-  echo "runtime publisher accepted a fixed set that changed after smoke" >&2
+if run_runtime fixed-reuse unchanged "$(jq -c --arg digest "$candidate_digest" '."account-service" = $digest' <<<"$fixed_map")" "$fixed_map"; then
+  echo "runtime publisher accepted a smoke set differing from a retained fixed digest" >&2
   exit 1
 fi
 [[ ! -e "$fixture_dir/runtime-registry-marker" ]]
+
+# Continue a partial set with one fixed member and only its missing staged members.
+select_runtime partial
+partial_map="$(sed -n 's/^fixed_digests=//p' "$fixture_dir/runtime-selection")"
+[[ "$partial_map" == "$(jq -cS 'with_entries(select(.key == "account-service"))' <<<"$fixed_map")" ]]
+missing_services="$(sed -n 's/^missing_services=//p' "$fixture_dir/runtime-selection")"
+[[ "$missing_services" == "$(jq -c 'keys - ["account-service"]' <<<"$candidate_map")" ]]
+pin_runtime partial "$partial_map"
+mixed_map="$(sed -n 's/^runtime_digests=//p' "$fixture_dir/runtime-pin")"
+[[ "$mixed_map" == "$(jq -cS --argjson fixed "$partial_map" '. + $fixed' <<<"$candidate_map")" ]]
+mapfile -t staged_lookups < "$fixture_dir/runtime-inspect-log"
+mapfile -t expected_lookups < <(jq -r --arg tag "candidate-${head_sha}-101-1" '.[] | "ghcr.io/benhook1013/\(.):\($tag)"' <<<"$missing_services")
+diff -u <(printf '%s\n' "${expected_lookups[@]}") <(printf '%s\n' "${staged_lookups[@]}")
+run_runtime partial unchanged "$mixed_map" "$partial_map"
+assert_runtime_aliases "$mixed_map" "$partial_map"
+rm -f "$fixture_dir/runtime-registry-marker"
+for mode in partial-retained-missing partial-retained-drift; do
+  if run_runtime "$mode" unchanged "$mixed_map" "$partial_map" 2>"$fixture_dir/runtime-retained-error"; then
+    echo "runtime publisher accepted missing or changed retained fixed evidence ($mode)" >&2
+    exit 1
+  fi
+  [[ ! -e "$fixture_dir/runtime-registry-marker" ]]
+  if [[ "$mode" == partial-retained-missing ]]; then
+    grep -Fq 'disappeared after smoke qualification' "$fixture_dir/runtime-retained-error"
+  else
+    grep -Fq 'Refusing to overwrite fixed runtime tag' "$fixture_dir/runtime-retained-error"
+  fi
+done
+
+for mode in inspect-short inspect-ambiguous; do
+  if pin_runtime "$mode" '{}' 2>"$fixture_dir/runtime-digest-error"; then
+    echo "runtime digest reader accepted malformed top-level digest metadata ($mode)" >&2
+    exit 1
+  fi
+  [[ ! -s "$fixture_dir/runtime-pin" ]]
+  grep -Fq 'malformed or ambiguous digest metadata' "$fixture_dir/runtime-digest-error"
+done
+pin_runtime inspect-nested '{}'
+[[ $(< "$fixture_dir/runtime-pin") == "runtime_digests=$candidate_map" ]]
 
 if run_runtime source-digest-mismatch; then
   echo "runtime publisher accepted a source digest mismatch before writing tags" >&2

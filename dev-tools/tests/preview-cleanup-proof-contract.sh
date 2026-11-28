@@ -102,7 +102,7 @@ elif args[:2] == ["get","namespace"]:
             obj = {"metadata":{"name":name,"uid":uid,
                 "labels":{"firemud.dev/preview":env("MOCK_PREVIEW_LABEL","true"),
                           "firemud.dev/pr-number":env("MOCK_PR_LABEL","42")},
-                "annotations":{"firemud.dev/cleanup-proof":marker}}}
+                "annotations":({} if env("MOCK_OMIT_PROOF_MARKER") == "yes" and count >= 2 else {"firemud.dev/cleanup-proof":marker})}}
             if version: obj["metadata"]["resourceVersion"] = version
             if "-o" in args and args[args.index("-o")+1] == "json": print(json.dumps(obj))
             else: print("namespace/" + name)
@@ -182,6 +182,9 @@ with tempfile.TemporaryDirectory(prefix="preview-cleanup-proof-contract-") as tm
     assert result.returncode != 0
     result,_=scenario("missing-marker-on-delete-snapshot",delete={"MOCK_HELPER_PROOF_MARKER":"false"})
     assert result.returncode != 0 and "cleanup-proof marker is missing at deletion" in result.stderr
+    result,state=scenario("absent-marker-on-delete-snapshot",delete={"MOCK_OMIT_PROOF_MARKER":"yes"})
+    assert result.returncode != 0 and "cleanup-proof marker is missing at deletion" in result.stderr
+    assert not (state/"delete-options").exists(), "missing marker issued DELETE"
     result,_=scenario("uid-mismatch",delete={"EXPECTED_NAMESPACE_UID":"uid-other"})
     assert result.returncode != 0
     result,_=scenario("replacement-race",delete={"MOCK_HELPER_NAMESPACE_UID":"uid-recreated"})

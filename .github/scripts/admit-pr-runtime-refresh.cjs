@@ -608,25 +608,21 @@ module.exports = async function admitPrRuntimeRefresh({
       latest.conclusion === receiver.conclusion;
   };
 
-  const newestExact = await readNewestExact();
-  const activeProducerVerified = newestExact && isExactActiveRun(newestExact) &&
-    await selectedProducerIsActive(newestExact);
+  // Preserve observed run identities for the later dispatch visibility check.
+  await readNewestExact();
   if (!await currentIdentity()) {
     core.info('Runtime refresh tuple changed during admission; no dispatch.');
     return 'obsolete';
   }
-  if (activeProducerVerified) {
-    // Tuple resolution can wait for merge computation. Do not suppress a repair
-    // using producer evidence from before that final live comparison lookup.
-    const currentProducer = await readNewestExact();
-    if (currentProducer && isExactActiveRun(currentProducer) && await selectedProducerIsActive(currentProducer)) {
-      core.info('The unique newest exact runtime producer is already active; no dispatch.');
-      return 'already-active';
-    }
-    if (!await currentIdentity()) {
-      core.info('Runtime refresh tuple changed during the final producer lookup; no dispatch.');
-      return 'obsolete';
-    }
+  // A producer may have appeared while the PR comparison was resolving.
+  const currentProducer = await readNewestExact();
+  if (currentProducer && isExactActiveRun(currentProducer) && await selectedProducerIsActive(currentProducer)) {
+    core.info('The unique newest exact runtime producer is already active; no dispatch.');
+    return 'already-active';
+  }
+  if (!await currentIdentity()) {
+    core.info('Runtime refresh tuple changed during the final producer lookup; no dispatch.');
+    return 'obsolete';
   }
 
   let claim;

@@ -358,16 +358,18 @@ recover_stranded_hosted_identities() {
   done 3<<<"$candidate_rows"
 }
 
+runtime_inventory_failed=0
 if ! namespace_rows_output="$(
   kubectl get namespaces -l firemud.dev/preview=true \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.firemud\.dev/pr-number}{"\n"}{end}'
 )"; then
   echo "Unable to list current preview namespaces; refusing stale cleanup" >&2
-  exit 1
+  runtime_inventory_failed=1
+  namespace_rows_output=""
 fi
 mapfile -t namespace_rows < <(printf '%s\n' "$namespace_rows_output" | sed '/^$/d')
 
-if (( ${#namespace_rows[@]} == 0 )); then
+if (( runtime_inventory_failed == 0 && ${#namespace_rows[@]} == 0 )); then
   echo "No preview namespaces found."
 fi
 
@@ -424,7 +426,7 @@ for row in "${namespace_rows[@]}"; do
   fi
 done
 
-if [[ "$retire_terminal_identities" == true ]]; then
+if [[ "$retire_terminal_identities" == true ]] && (( runtime_inventory_failed == 0 )); then
   if ! recover_stranded_hosted_identities; then
     retirement_failures=$((retirement_failures + 1))
   fi
@@ -445,6 +447,6 @@ if (( runtime_deletion_failures > 0 || retirement_failures > 0 )); then
   echo "${runtime_deletion_failures} hosted runtime deletion(s) and ${retirement_failures} hosted identity retirement(s) failed; stale cleanup is incomplete." >&2
   exit 1
 fi
-if (( proof_retry_retirement_failed > 0 )); then
+if (( runtime_inventory_failed > 0 || proof_retry_retirement_failed > 0 )); then
   exit 1
 fi

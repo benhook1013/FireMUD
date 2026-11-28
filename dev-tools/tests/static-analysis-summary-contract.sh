@@ -900,13 +900,13 @@ run(github, context, core).then(async () => {
   const canonicalBody = calls.updated[0].body;
   context.payload.workflow_run.name = "Forged workflow name";
   await run(github, context, core);
-  if (calls.paginate.length !== 3 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
+  if (calls.paginate.length !== 3 || calls.updated.length !== 1 || calls.created.length !== 0 || calls.deleted.length !== 1) {
     throw new Error("unrelated source names must not query runs or alter comments");
   }
   context.payload.workflow_run.name = "CodeQL Analysis";
   context.payload.workflow_run.head_sha = "invalid";
   return run(github, context, core).then(() => {
-    if (calls.paginate.length !== 3 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
+    if (calls.paginate.length !== 3 || calls.updated.length !== 1 || calls.created.length !== 0 || calls.deleted.length !== 1) {
       throw new Error("malformed source head should not query runs or alter comments");
     }
     context.payload.workflow_run.head_sha = headSha;
@@ -915,20 +915,20 @@ run(github, context, core).then(async () => {
     pullRequestReads = 0;
     context.payload.workflow_run.display_title = `CodeQL Analysis pr-42 base-invalid head-${headSha}`;
     return run(github, context, core).then(() => {
-      if (calls.paginate.length !== 3 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
+      if (calls.paginate.length !== 3 || calls.updated.length !== 1 || calls.created.length !== 0 || calls.deleted.length !== 1) {
         throw new Error("source run with a malformed canonical title must not query runs or alter comments");
       }
       context.payload.workflow_run.display_title = `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`;
       context.payload.workflow_run.path = ".github/workflows/unrelated.yml";
       return run(github, context, core).then(() => {
-        if (calls.paginate.length !== 3 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
+        if (calls.paginate.length !== 3 || calls.updated.length !== 1 || calls.created.length !== 0 || calls.deleted.length !== 1) {
           throw new Error("an unrelated source workflow must not query runs or alter comments");
         }
         context.payload.workflow_run.path = ".github/workflows/codeql.yml";
         pullRequestReads = 0;
         changeBaseDuringRun = true;
         return run(github, context, core).then(() => {
-          if (calls.paginate.length !== 6 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
+          if (calls.paginate.length !== 6 || calls.updated.length !== 1 || calls.created.length !== 0 || calls.deleted.length !== 1) {
             throw new Error("base changes during summarization must not alter comments");
           }
           currentHeadSha = headSha;

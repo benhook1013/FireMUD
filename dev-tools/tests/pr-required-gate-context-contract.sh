@@ -447,7 +447,8 @@ def evaluate(expression, action, base_ref, event="pull_request"):
     }
     for key, value in values.items():
         body = body.replace(key, value)
-    body = body.replace("&&", " and ").replace("||", " or ").replace("!=", " != ").replace("null", "None")
+    body = re.sub(r"(?<!['\"])\bnull\b(?!['\"])", "None", body)
+    body = body.replace("&&", " and ").replace("||", " or ").replace("!=", " != ")
     return bool(interpret_selector(ast.parse(body.strip(), mode="eval").body))
 
 
@@ -556,6 +557,10 @@ for forbidden in ("{name}", "{0.attr}", "{0[0]}", "{0:04}", "{0!r}", "{{0}}", "{
         pass
     else:
         raise AssertionError(f"Accepted unsupported concurrency format: {forbidden}")
+
+
+assert evaluate("github.event.changes.base.ref == null", "edited", None)
+assert not evaluate("'null' == 'None'", "edited", None)
 
 
 def effective_group(group, action, base_ref, workflow_name="Required Gate", *, pr_number=42, push_branch=None, run_id="123"):
@@ -1240,6 +1245,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   const movedNativeCancellation = kind === "cancelled-native-attempt-moves";
   const transientFinalPull = kind === "optional-final-read-pr-identity";
   let nativeCancellationRead = false, failedFinalPullReads = 0, pendingReplacementRead = false;
+  let movedNativeFailureObserved = false;
   let nativeCancellationDisappeared = false;
   const finalAttemptError = kind.startsWith("optional-final-read-attempt-");
   const duplicatePrimary = kind === "optional-final-read-duplicate";
@@ -1528,6 +1534,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     if (event === "repository_dispatch" && input.event === "pull_request") {
       const nativeFailed = kind === "pending-native-dual-native-fails-during-refresh" && pendingRefreshObserved;
       const rerunFailed = movedNativeCancellation && nativeCancellationRead;
+      if (rerunFailed) movedNativeFailureObserved = true;
       yield {data: [{...exactPrimary, run_attempt: rerunFailed ? 2 : 1,
         status: kind.startsWith("pending-native") && !nativeFailed ? "queued" : "completed",
         conclusion: nativeFailed || rerunFailed ? "failure" : kind.startsWith("pending-native") ? null : "cancelled"}]}; return;
@@ -1586,7 +1593,8 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     lookupFailure = error;
   }
   return {failures, refs, snapshots, info, warnings, refreshInventoryReads, alternativeJobsReads, primaryInventoryReads,
-    completedPrimaryJobReads, acceptanceLookupAttempts, failedFinalPullReads, rerunStartedDuringFinalTupleRead, lookupFailure, fallbackReadOrder};
+    completedPrimaryJobReads, acceptanceLookupAttempts, failedFinalPullReads, rerunStartedDuringFinalTupleRead, lookupFailure,
+    fallbackReadOrder, movedNativeFailureObserved};
 }
 (async () => {
   for (const event of ["pull_request", "repository_dispatch"]) {
@@ -1595,8 +1603,13 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     assert.deepEqual(success.refs, [event === "pull_request" ? merge : defaultSha], "immutable definition must come from actual source event revision");
   }
   const movedCancellation = await scenario("cancelled-native-attempt-moves", "repository_dispatch");
-  assert(movedCancellation.warnings.some(line => line.includes("Native cancellation changed before accepting replacement proof")));
+  assert.equal(movedCancellation.movedNativeFailureObserved, true,
+    "the fresh exact native inventory must observe attempt 2 failing after the original cancellation");
+  assert(movedCancellation.warnings.some(line => line.includes("Native runtime ordering changed before accepting replacement proof")),
+    movedCancellation.warnings.join("\n"));
   assert.equal(movedCancellation.failures.length, 1, "a later native failed attempt cannot inherit cancelled-attempt fallback proof");
+  const stableCancellation = await scenario("cancelled-native-attempt-stable", "repository_dispatch");
+  assert.deepEqual(stableCancellation.failures, [], "unchanged exact cancellation may still admit the proven fallback");
   const transientRefreshPull = await scenario("optional-final-read-pr-identity", "repository_dispatch");
   assert.equal(transientRefreshPull.failedFinalPullReads, 4, "bounded PR validation retry must finish before returning to native selection");
   assert(transientRefreshPull.info.some(line => line.includes("Found runtime-images run 43 with status=completed")));

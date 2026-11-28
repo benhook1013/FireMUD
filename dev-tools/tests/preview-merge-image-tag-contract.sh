@@ -348,6 +348,7 @@ PY_RECEIPT
           : >"$GH_FIXTURE_STATE"
           jq -c '.run_attempt=2 | .status="in_progress" | .conclusion=null' <<<"$source"
         elif [[ "$GH_FIXTURE" == publisher_producer_rerun_at_acceptance && -e "$GH_FIXTURE_STATE" ]]; then
+          printf '%s\n' 'mock observed producer attempt 2' >&2
           jq -c '.run_attempt=2 | .status="in_progress" | .conclusion=null' <<<"$source"
         else
           printf '%s' "$source"
@@ -603,6 +604,9 @@ for publisher_fixture in publisher_steps_absent publisher_duplicate_steps typed_
     exit 1
   fi
   grep -Fq 'publisher 102 completed successfully, but its exact current-attempt fixed-tag publication proof is unavailable' <<<"$publisher_output"
+  if [[ "$publisher_fixture" == publisher_producer_rerun_at_acceptance ]]; then
+    grep -Fq 'mock observed producer attempt 2' <<<"$publisher_output"
+  fi
 done
 
 # A publisher with a mismatched merge token must not satisfy the PR wait.

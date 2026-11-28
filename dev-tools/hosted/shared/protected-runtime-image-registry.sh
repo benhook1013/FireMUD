@@ -17,7 +17,7 @@ services=(
 
 declare -A registry_tokens=()
 registry_manifest_state() {
-  local image="$1"
+  local image="$1" output_name="$2"
   local image_path="${image#ghcr.io/}"
   local repository_path="${image_path%:*}"
   local tag="${image_path##*:}"
@@ -54,8 +54,8 @@ registry_manifest_state() {
     return 1
   fi
   case "$status" in
-    200) printf 'existing\n' ;;
-    404) printf 'missing\n' ;;
+    200) printf -v "$output_name" '%s' existing ;;
+    404) printf -v "$output_name" '%s' missing ;;
     *)
       echo "Authenticated OCI manifest HEAD returned HTTP ${status} for $image; refusing to push." >&2
       return 1
@@ -66,7 +66,7 @@ registry_manifest_state() {
 registry_digest() {
   local image="$1"
   local inspect_output inspect_status
-  local digest
+  local line digest=''
   if inspect_output="$(docker buildx imagetools inspect "$image")"; then
     :
   else
@@ -74,8 +74,15 @@ registry_digest() {
     echo "Unable to inspect exact registry digest for $image (imagetools exit $inspect_status); refusing to publish." >&2
     return "$inspect_status"
   fi
-  digest="$(awk '$1 == "Digest:" && $2 ~ /^sha256:[0-9a-f]{64}$/ { print $2; exit }' <<<"$inspect_output")"
-  [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+  while IFS= read -r line; do
+    [[ "$line" == Digest:* ]] || continue
+    if [[ -n "$digest" || ! "$line" =~ ^Digest:[[:space:]]+(sha256:[0-9a-f]{64})[[:space:]]*$ ]]; then
+      echo "Registry manifest for $image has malformed or ambiguous digest metadata." >&2
+      return 1
+    fi
+    digest="${BASH_REMATCH[1]}"
+  done <<<"$inspect_output"
+  [[ -n "$digest" ]] || {
     echo "Registry manifest for $image has no exact digest." >&2
     return 1
   }
@@ -94,76 +101,84 @@ assert_current_branch_head() {
 }
 
 select_existing_fixed_digests() {
-  local service image state digest
-  local -a entries=()
+  local service image state digest manifest missing
+  local -a entries=() missing_services=()
   for service in "${services[@]}"; do
     image="ghcr.io/benhook1013/${service}:${HEAD_SHA}"
-    state="$(registry_manifest_state "$image")" || return
+    registry_manifest_state "$image" state || return
     if [[ "$state" == missing ]]; then
-      # The branch candidate will supply the entire smoke set. Promotion checks
-      # every fixed tag before any writes, including known partial sets.
-      printf 'runtime_digests=\n' >> "$GITHUB_OUTPUT"
-      return
+      missing_services+=("$service")
+      continue
     fi
     digest="$(registry_digest "$image")" || return
     entries+=("$service=$digest")
   done
-  write_digest_inventory "${entries[@]}"
+  manifest="$(encode_digest_inventory "${entries[@]}")" || return
+  validate_digest_inventory "$manifest" false || return
+  missing="$(printf '%s\n' "${missing_services[@]}" | jq -nRc '[inputs | select(length > 0)]')" || return
+  printf 'fixed_digests=%s\nmissing_services=%s\n' "$manifest" "$missing" >> "$GITHUB_OUTPUT"
 }
 
-write_digest_inventory() {
-  local manifest
-  manifest="$(printf '%s\n' "$@" | jq -nRcS '[inputs | split("=") | {key:.[0],value:.[1]}] | from_entries')" || return
-  validate_digest_inventory "$manifest" || return
-  printf 'runtime_digests=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
+encode_digest_inventory() {
+  printf '%s\n' "$@" | jq -nRcS '[inputs | select(length > 0) | split("=") | {key:.[0],value:.[1]}] | from_entries'
 }
 
 validate_digest_inventory() {
-  local manifest="$1" inventory
+  local manifest="$1" complete="${2:-true}" inventory
   inventory="$(printf '%s\n' "${services[@]}" | jq -nRc '[inputs] | sort')" || return
-  jq -e --argjson services "$inventory" '
-    type == "object" and keys == $services and
+  jq -e --argjson services "$inventory" --argjson complete "$complete" '
+    type == "object" and
+    (if $complete then keys == $services else (keys - $services | length) == 0 end) and
     all(.[]; type == "string" and test("^sha256:[0-9a-f]{64}$"))
   ' <<<"$manifest" >/dev/null
 }
 
 pin_runtime_digests() {
-  local manifest="${RUNTIME_DIGESTS:-}" service digest
+  local fixed_manifest="${FIXED_RUNTIME_DIGESTS:-}" manifest service digest
   local -a entries=()
-  if [[ -n "$manifest" ]]; then
-    validate_digest_inventory "$manifest" || return
-    printf 'runtime_digests=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
-    return
-  fi
-  [[ "$CANDIDATE_TAG" =~ ^candidate-[0-9a-f]{40}-[0-9]+-[0-9]+$ ]] || return 1
+  validate_digest_inventory "$fixed_manifest" false || return
   for service in "${services[@]}"; do
-    digest="$(registry_digest "ghcr.io/benhook1013/$service:$CANDIDATE_TAG")" || return
+    digest="$(jq -r --arg service "$service" '.[$service] // empty' <<<"$fixed_manifest")" || return
+    if [[ -z "$digest" ]]; then
+      [[ "$CANDIDATE_TAG" =~ ^candidate-[0-9a-f]{40}-[0-9]+-[0-9]+$ ]] || return 1
+      digest="$(registry_digest "ghcr.io/benhook1013/$service:$CANDIDATE_TAG")" || return
+    fi
     entries+=("$service=$digest")
   done
-  write_digest_inventory "${entries[@]}"
+  manifest="$(encode_digest_inventory "${entries[@]}")" || return
+  validate_digest_inventory "$manifest" || return
+  printf 'runtime_digests=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
 }
 
 # Check the entire smoke-qualified set and every existing fixed tag before
 # writing an alias. A reused fixed tag must stay present and unchanged.
-declare -A smoke_sources=()
+declare -A smoke_sources=() retained_fixed=()
 preflight_fixed_digest_set() {
-  local manifest="${RUNTIME_DIGESTS:-}"
-  local service repository fixed state expected actual
+  local manifest="${RUNTIME_DIGESTS:-}" fixed_manifest="${FIXED_RUNTIME_DIGESTS:-}"
+  local service repository fixed state expected actual retained_digest
   validate_digest_inventory "$manifest" || return
-  [[ "$REUSING_FIXED_DIGESTS" == true || "$REUSING_FIXED_DIGESTS" == false ]] || return 1
+  validate_digest_inventory "$fixed_manifest" false || return
   for service in "${services[@]}"; do
     repository="ghcr.io/benhook1013/$service"
     fixed="$repository:$HEAD_SHA"
     expected="$(jq -er --arg service "$service" '.[$service]' <<<"$manifest")" || return
+    retained_digest="$(jq -r --arg service "$service" '.[$service] // empty' <<<"$fixed_manifest")" || return
+    if [[ -n "$retained_digest" && "$retained_digest" != "$expected" ]]; then
+      echo "Retained fixed runtime digest for $service differs from the tested digest." >&2
+      return 1
+    fi
+    # The promotion workflow retains this per-service fence through its final tag check.
+    # shellcheck disable=SC2034
+    retained_fixed[$service]="$retained_digest"
     smoke_sources[$service]="$repository@$expected"
     actual="$(registry_digest "${smoke_sources[$service]}")" || return
     if [[ "$actual" != "$expected" ]]; then
       echo "Registry source for $service does not match tested digest $expected (got $actual)." >&2
       return 1
     fi
-    state="$(registry_manifest_state "$fixed")" || return
+    registry_manifest_state "$fixed" state || return
     if [[ "$state" == missing ]]; then
-      if [[ "$REUSING_FIXED_DIGESTS" == true ]]; then
+      if [[ -n "$retained_digest" ]]; then
         echo "Fixed runtime tag $fixed disappeared after smoke qualification." >&2
         return 1
       fi

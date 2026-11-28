@@ -122,11 +122,10 @@ jobs:
             const {data: recordedMerge} = await github.rest.repos.getCommit({
               ...context.repo, ref: recorded[4],
             });
-            if (recordedMerge.sha !== recorded[4] || recordedMerge.parents?.length !== 2 ||
-                !sha.test(recordedMerge.parents[0].sha) ||
-                recordedMerge.parents[1].sha !== sourceHead ||
-                (mergeReported && recordedMerge.parents[0].sha !== recorded[2])) {
-              core.info('Recorded preview merge does not prove its base/head tuple; no dispatch.');
+            if (recordedMerge?.sha !== recorded[4] || !Array.isArray(recordedMerge.parents) ||
+                recordedMerge.parents.length !== 2 || !sha.test(recordedMerge.parents[0]?.sha) ||
+                recordedMerge.parents[1]?.sha !== sourceHead) {
+              core.info('Recorded preview merge does not prove its ordered parent identity; no dispatch.');
               return;
             }
             // Execute only the checked-out default-branch eligibility policy.

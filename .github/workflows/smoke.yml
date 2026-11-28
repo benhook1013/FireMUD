@@ -628,7 +628,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "90b3c3f064d7e2f6700dda14030765fb5b87dad4013fb5d1fdb5ecbcde2b958e";
+            const canonicalRuntimeWorkflowSha256 = "041edc8496fba6c65323a2d09d57f4729e791ee04d968e02a2aa18c4f282b52b";
             // The previous archive format does not change this definition's independently valid smoke proof.
             const canonicalMergeOnlyArtifactRuntimeWorkflowSha256 = "004af984d2aa7ab023758cbc38c6c20f92976b8f07040c9a4965bda6616d5dd5";
             const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -1766,8 +1766,20 @@ jobs:
                   }
                 }
                 if (cancelledNative) {
+                  let freshNative;
                   let finalCancellation;
                   try {
+                    freshNative = await findMatchingRuntimeImagesRun(
+                      "pull_request", expectedDisplayTitle, currentIdentity, { allowCompletedFallback: false }
+                    );
+                    if (freshNative?.id !== cancelledNative.id || freshNative.run_attempt !== cancelledNative.run_attempt ||
+                        freshNative.status !== "completed" || freshNative.conclusion !== "cancelled") {
+                      if (await retryExactSelection(
+                        "Native runtime ordering changed before accepting replacement proof; retry exact selection.",
+                        { requirePendingPrimary: false }
+                      )) continue smokeGatePolling;
+                      break smokeGatePolling;
+                    }
                     ({ data: finalCancellation } = await withTransientGitHubRetry(
                       "native cancellation before replacement proof",
                       () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: cancelledNative.id })

@@ -131,6 +131,11 @@ if [[ "${1:-}" == -n && "${2:-}" == firemud-system && "${3:-}" == patch &&
     jq -c '.metadata.resourceVersion = "4"' <<<"$state" > "$FAKE_RETRY_HOLDER"
     exit 1
   fi
+  if [[ "${FAKE_RETRY_PATCH_CASE:-}" == competing-start && "$target_phase" == SEND_STARTED ]]; then
+    state="$(jq -c '.metadata.resourceVersion = "2"
+      | .data["pr-901"] |= (fromjson | .phase = "SEND_STARTED" | .count = 2 | tojson)' <<<"$state")"
+    printf '%s\n' "$state" > "$FAKE_RETRY_HOLDER"
+  fi
   next="$(jq -ec --argjson patch "$8" '
     select(($patch | length) == 3
       and $patch[0] == {op:"test",path:"/metadata/uid",value:.metadata.uid}
@@ -592,7 +597,7 @@ if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/173
     probe=false
     if [[ "$*" == *"per_page=1 "* || "$*" == *"per_page=1" ]]; then
       probe=true
-      if [[ -z "$range" || "$*" == *"--paginate"* || "$*" == *"--slurp"* ]]; then
+      if [[ "$*" == *"--paginate"* || "$*" == *"--slurp"* ]]; then
         echo "invalid completed partition probe: $*" >&2
         exit 1
       fi
@@ -601,7 +606,8 @@ if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/173
       exit 1
     fi
     if [[ -z "$range" ]]; then
-      printf '%s\n' '[{"total_count":1001,"workflow_runs":[]}]'
+      [[ "$probe" == true ]] || { echo "oversized unpartitioned inventory was fetched" >&2; exit 1; }
+      printf '%s\n' '{"total_count":1001,"workflow_runs":[]}'
       exit 0
     fi
     jq -c --arg after "${range%..*}" --arg before "${range#*..}" \
@@ -615,7 +621,14 @@ if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/173
       ' "$FAKE_COMPLETED_RUN_DATA"
     exit 0
   fi
-  if [[ "$*" != *"--method GET"* || "$*" != *"status=completed"* ||
+  if [[ "$*" == *per_page=1 ]]; then
+    if [[ "$*" != *"--method GET"* || "$*" != *"status=completed"* ||
+      "$*" == *"--paginate"* || "$*" == *"--slurp"* ||
+      "$*" == *"created="* || "$*" == *"head="* ]]; then
+      echo "invalid recent source history probe: $*" >&2
+      exit 1
+    fi
+  elif [[ "$*" != *"--method GET"* || "$*" != *"status=completed"* ||
     "$*" != *"per_page=100"* || "$*" != *"--paginate --slurp"* ||
     "$*" == *"created="* || "$*" == *"head="* ]]; then
     echo "recent source inventory must paginate without a creation-time cutoff: $*" >&2
@@ -641,7 +654,11 @@ if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/173
     exit 1
   fi
   [[ -n "$payload" ]] || payload='{"total_count":0,"workflow_runs":[]}'
-  jq -c 'if type == "array" then . else [.] end' <<<"$payload"
+  if [[ "$*" == *per_page=1 ]]; then
+    jq -c 'if type == "array" then .[0] else . end | {total_count,workflow_runs:(.workflow_runs[:1])}' <<<"$payload"
+  else
+    jq -c 'if type == "array" then . else [.] end' <<<"$payload"
+  fi
   exit 0
 fi
 if [[ "$1" == run && "$2" == download && "${FAKE_RETRY_RENDER_RECEIPT:-unavailable}" != unavailable ]]; then
@@ -654,7 +671,8 @@ if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/357
   if [[ -v FAKE_RETRY_CONSUMER_AT_CAP && "$*" == *"status=completed -f branch=develop"* ]]; then
     exact_consumer="$FAKE_RETRY_CONSUMER_AT_CAP"
     if [[ "$*" == *"created=>="* ]]; then
-      printf '%s\n' '[{"total_count":1000,"workflow_runs":[]}]'
+      [[ "$*" == *per_page=1 ]] || { echo "oversized consumer inventory was fetched" >&2; exit 1; }
+      printf '%s\n' '{"total_count":1000,"workflow_runs":[]}'
       exit 0
     fi
     [[ "$*" =~ created=([^[:space:]]+)\.\.([^[:space:]]+) ]]
@@ -677,9 +695,14 @@ if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/357
     exit 0
   fi
   if [[ -v FAKE_RETRY_TERMINAL_CONSUMER ]]; then
-    [[ "$*" == *"--method GET --paginate --slurp"* &&
+    [[ "$*" == *"--method GET"* &&
        "$*" == *"event=workflow_run -f status=completed -f branch=develop -f created=>="* ]]
-    printf '%s\n' "$FAKE_RETRY_TERMINAL_CONSUMER"
+    if [[ "$*" == *per_page=1 ]]; then
+      jq -c '.[0] | {total_count,workflow_runs:(.workflow_runs[:1])}' <<<"$FAKE_RETRY_TERMINAL_CONSUMER"
+    else
+      [[ "$*" == *"--paginate --slurp"* && "$*" == *per_page=100 ]]
+      printf '%s\n' "$FAKE_RETRY_TERMINAL_CONSUMER"
+    fi
     exit 0
   fi
   if [[ "$*" != *"--method GET"* || "$*" != *"event=workflow_run"* ||
@@ -963,6 +986,9 @@ case "$resource" in
     ;;
   */pulls/901)
     if [[ -n "${FAKE_RETRY_MERGE_STATE:-}" ]]; then
+      if [[ -n "${FAKE_PRUNE_QUERY_LOG:-}" ]]; then
+        printf '%s\n' "$resource" >> "$FAKE_PRUNE_QUERY_LOG"
+      fi
       jq -cn --arg result "$FAKE_RETRY_MERGE_STATE" '
         {number:901,state:"closed",merged:($result != "unmerged"),
          head:{repo:{full_name:"example/FireMUD"}},
@@ -2022,6 +2048,23 @@ run_proof_retry_contract() (
       test ! -e "$FAKE_RETRY_PATCH_LOG"
     fi
   done
+
+  # A failed runtime inventory must keep the overall cleanup unsuccessful and
+  # must not delete runtimes, while the independent exact-evidence retry sweep
+  # still retires a merged PR's record after confirming Namespace absence.
+  reset_case
+  seed_retry_holder 3
+  if FAKE_NAMESPACE_LIST_ERROR=true FAKE_NAMESPACE_ROWS='' \
+    FAKE_PR_901_NAMESPACE_ABSENT=true FAKE_RETRY_MERGE_STATE=merged \
+    bash "$PRUNER" --apply --retire-proof-retries >"$case_output" 2>&1; then
+    echo 'pruner suppressed runtime inventory failure when proof-retry retirement succeeded' >&2
+    exit 1
+  fi
+  grep -Fqx 'Unable to list current preview namespaces; refusing stale cleanup' "$case_output"
+  grep -Fq 'Retired the proof-retry record for merged PR #901' "$case_output"
+  test ! -e "$FAKE_DELETE_LOG"
+  jq -e '.data == {schemaVersion:"1"}' "$FAKE_RETRY_HOLDER" >/dev/null
+  grep -Fqx 'repos/example/FireMUD/pulls/901' "$FAKE_PRUNE_QUERY_LOG"
   echo 'Preview durable proof-retry contract passed.'
 )
 
@@ -4195,7 +4238,7 @@ for namespace_count_sequence in 2,1 2,2; do
   fi
 done
 
-for namespace_count_sequence in 2,1 2,2; do
+for namespace_count_sequence in 2,1 2,2 2,1,2; do
   reset_case
   reconciler_capacity_refresh_output="$TEMP_DIR/reconciler-final-capacity-refresh-${namespace_count_sequence//,/-}.out"
   export FAKE_NAMESPACE_COUNT_SEQUENCE="$namespace_count_sequence"
@@ -4210,7 +4253,11 @@ for namespace_count_sequence in 2,1 2,2; do
       bash "$RECONCILER_RUN"
   ) > "$reconciler_capacity_refresh_output"
   test "$(<"$FAKE_NAMESPACE_SNAPSHOT_CALLS")" -eq 2
-  test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 2
+  if [[ "$namespace_count_sequence" == 2,1,2 ]]; then
+    test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 3
+  else
+    test "$(<"$FAKE_NAMESPACE_LIST_CALLS")" -eq 2
+  fi
   test ! -e "$FAKE_ANNOTATE_LOG"
   if [[ "$namespace_count_sequence" == 2,1 ]]; then
     grep -Fq 'Dispatching preview render for PR #901' "$reconciler_capacity_refresh_output"
