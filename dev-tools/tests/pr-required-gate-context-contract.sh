@@ -482,11 +482,14 @@ def literal_format(pattern, *args):
 
 def selector_equal(left, right):
     # GitHub Actions compares like kinds directly and coerces unlike kinds
-    # to numbers. This model supports only the interpreter's scalar kinds.
+    # to numbers. Object values compare only with values of the same kind.
     if type(left) is type(right):
         if isinstance(left, str):
             return left.casefold() == right.casefold()
         return left == right
+    if type(left) not in (str, bool, int, float, type(None)) or \
+            type(right) not in (str, bool, int, float, type(None)):
+        return False
 
     def to_number(value):
         if value is None:
@@ -508,6 +511,8 @@ def selector_equal(left, right):
 def interpret_selector(node):
     if isinstance(node, ast.Constant) and type(node.value) in (str, int, bool, type(None)):
         return node.value
+    if isinstance(node, ast.Dict):
+        return {interpret_selector(key): interpret_selector(value) for key, value in zip(node.keys, node.values)}
     if isinstance(node, ast.BoolOp) and isinstance(node.op, (ast.And, ast.Or)):
         # GitHub's boolean operators return operands and short-circuit.
         value = interpret_selector(node.values[0])
@@ -759,7 +764,8 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
         condition = result_steps[0].get("if", "")
         if not condition or evaluate(condition, "edited", None):
             raise SystemExit(f"{workflow} {gate_name} substantive enforcement must skip metadata edits")
-        for action, base_ref in (("edited", "develop"), ("opened", None), ("synchronize", None), ("reopened", None)):
+        retarget_change = {"from": "main", "to": "develop"}
+        for action, base_ref in (("edited", retarget_change), ("opened", None), ("synchronize", None), ("reopened", None)):
             if not evaluate(condition, action, base_ref):
                 raise SystemExit(f"{workflow} {gate_name} must enforce failure for {action}")
         if not pr_only and not evaluate(condition, None, None, event="push"):
@@ -1031,7 +1037,7 @@ const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-$
 const cancellationInventoryBody = script.match(/const preExecutionCancelledJobNames = new Set\(\[([\s\S]*?)\]\);/)[1];
 const cancellationInventory = new Function(`return [${cancellationInventoryBody}];`)();
 const canonicalCancellationInventory = JSON.parse(require("node:fs").readFileSync(process.argv[2] + ".cancelled-job-names.json", "utf8"));
-assert.equal(cancellationInventory.length, 13);
+assert.equal(new Set(cancellationInventory).size, cancellationInventory.length);
 assert.deepEqual([...cancellationInventory].sort(), canonicalCancellationInventory.sort(),
   "bounded cancellation inventory must match all canonical runtime workflow job names");
 const context = { repo: { owner: "example", repo: "firemud" }, sha: merge,
@@ -1526,6 +1532,11 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
         status: kind.startsWith("pending-native") && !nativeFailed ? "queued" : "completed",
         conclusion: nativeFailed || rerunFailed ? "failure" : kind.startsWith("pending-native") ? null : "cancelled"}]}; return;
     }
+    if (kind === "pending-native-refresh-newer-fails" && input.event === "repository_dispatch") {
+      refreshInventoryReads += 1;
+      yield {data: refreshInventoryReads === 1 ? [source] : [{...dispatchPrimary, conclusion: "failure"}, source]};
+      return;
+    }
     if (kind.startsWith("pending-native-dual-") && input.event === "repository_dispatch") {
       refreshInventoryReads += 1;
       const failed = kind.endsWith("-fails") && refreshInventoryReads > 1;
@@ -1598,6 +1609,10 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   const intermediateFailure = await scenario("duplicate-intermediate-fails-during-acceptance");
   assert(intermediateFailure.warnings.some(line => line.includes("candidate ordering changed before accepting older success")));
   assert.equal(intermediateFailure.failures.length, 1, "pending newest runtime cannot hide an intermediate terminal failure");
+  const newRefreshFailed = await scenario("pending-native-refresh-newer-fails", "repository_dispatch");
+  assert(newRefreshFailed.refreshInventoryReads >= 2);
+  assert(newRefreshFailed.warnings.some(line => line.includes("Trusted refresh ordering changed before fallback proof")));
+  assert.equal(newRefreshFailed.failures.length, 1, "a newer failure must withhold the prior refresh while native remains pending");
   const dualPending = await scenario("pending-native-dual-stays", "repository_dispatch");
   assert(dualPending.refreshInventoryReads >= 2, "the pending refresh must receive a distinct final inventory read");
   assert.deepEqual(dualPending.failures, [], "older proof remains usable while both newer candidates are still pending");

@@ -18,7 +18,7 @@ kubectl() {
    if [[ $1 == --patch ]]; then patch=$2; shift; fi
    shift
  done
- test -n "$patch"
+ jq -e --arg path "/data/$ns" 'length == 3 and .[2].path == $path' <<<"$patch" >/dev/null || return 1
  printf '%s\n' "$patch" >>calls
  jq -c --argjson patch "$patch" --arg ns "$ns" '
   .metadata.resourceVersion="rv-2"
@@ -41,7 +41,10 @@ test "$(wc -l <calls)" = 1
 grep -F 'would exceed the Kubernetes 1 MiB data limit' diagnostic >/dev/null
 snapshot=$(holder 524287 | jq -c --arg rec "$record" '.data["pr-123"]=$rec')
 write_preview_retry_entry "$snapshot" "$ns" null > retired
-jq -e '.data["pr-123"]|not' retired >/dev/null
+printf '%s\n' "$snapshot" > before-retirement
+jq -e --slurpfile before before-retirement '
+  (.data["pr-123"] | not) and .data["pr-789"] == $before[0].data["pr-789"]
+' retired >/dev/null
 test "$(wc -l <calls)" = 2
 # Account for decoded binary bytes in addition to UTF-8 stored values.
 snapshot=$(holder 30 | jq -c '.binaryData={one:"YQ==",two:"YWI=",three:"YWJj"}')

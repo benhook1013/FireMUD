@@ -21,7 +21,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-source = Path(sys.argv[1]).read_text()
+workflow_path = Path(sys.argv[1])
+source = workflow_path.read_text()
 group = re.search(r"^  group: (runtime-images-.*)$", source, re.MULTILINE).group(1)
 workflow_concurrency = re.search(r"^concurrency:\n((?:^  .+\n)+)", source, re.MULTILINE).group(1)
 assert re.search(r"^  queue: max$", workflow_concurrency, re.MULTILINE)
@@ -42,7 +43,7 @@ import yaml
 
 jobs = yaml.load(source, Loader=yaml.BaseLoader)["jobs"]
 
-def admitted_branch_job(condition, event, branch, *, digests="", results=None):
+def admitted_branch_job(condition, event, branch, *, digests="", pinned="complete", results=None):
     assert condition.startswith("${{") and condition.endswith("}}"), condition
     expression = condition[3:-2].strip()
     expression = expression.replace("&&", " and ").replace("||", " or ")
@@ -51,6 +52,7 @@ def admitted_branch_job(condition, event, branch, *, digests="", results=None):
     expression = expression.replace("github.event_name", repr(event))
     expression = expression.replace("needs.image-meta.outputs.head_branch", repr(branch))
     expression = expression.replace("needs.select-protected-runtime-digests.outputs.runtime_digests", repr(digests))
+    expression = expression.replace("needs.pin-protected-runtime-digests.outputs.runtime_digests", repr(pinned))
     expression = re.sub(r"needs\.([a-z0-9-]+)\.result",
                         lambda match: repr((results or {}).get(match[1], "success")), expression)
     return bool(eval(expression, {"__builtins__": {}}))
@@ -65,15 +67,51 @@ for job in ("build-base-image", "build-runtime-images", "build-backup-verifier",
 
 for branch in ("develop", "main"):
     build = jobs["build-runtime-images"]["if"]
+    pin = jobs["pin-protected-runtime-digests"]["if"]
     assert not admitted_branch_job(build, "workflow_run", branch, digests="complete")
+    assert admitted_branch_job(pin, "workflow_run", branch)
+    assert admitted_branch_job(pin, "workflow_run", branch, digests="complete",
+                               results={"build-runtime-images": "skipped"})
+    assert not admitted_branch_job(pin, "workflow_run", branch,
+                                   results={"build-runtime-images": "skipped"})
+    assert not admitted_branch_job(pin, "workflow_run", branch, digests="complete",
+                                   results={"select-protected-runtime-digests": "failure"})
     for job in ("smoke-full", "publish-runtime-images"):
         guard = jobs[job]["if"]
-        assert admitted_branch_job(guard, "workflow_run", branch, digests="complete",
-                                   results={"build-runtime-images": "skipped"})
+        assert admitted_branch_job(guard, "workflow_run", branch)
+        assert not admitted_branch_job(guard, "workflow_run", branch, pinned="")
         assert not admitted_branch_job(guard, "workflow_run", branch,
-                                       results={"build-runtime-images": "skipped"})
-        assert not admitted_branch_job(guard, "workflow_run", branch, digests="complete",
-                                       results={"select-protected-runtime-digests": "failure", "build-runtime-images": "skipped"})
+                                       results={"pin-protected-runtime-digests": "failure"})
+    assert not admitted_branch_job(jobs["publish-runtime-images"]["if"], "workflow_run", branch,
+                                   results={"smoke-full": "failure"})
+
+pinned_digest_output = "${{ needs.pin-protected-runtime-digests.outputs.runtime_digests }}"
+assert jobs["smoke-full"]["with"]["runtime_digests"] == pinned_digest_output
+assert jobs["publish-runtime-images"]["env"]["RUNTIME_DIGESTS"] == pinned_digest_output
+assert "CANDIDATE_TAG" not in jobs["publish-runtime-images"]["env"]
+for job in ("select-protected-runtime-digests", "pin-protected-runtime-digests", "publish-runtime-images"):
+    steps = jobs[job]["steps"]
+    checkout = next(index for index, step in enumerate(steps) if step.get("uses", "").startswith("actions/checkout@"))
+    assert steps[checkout]["with"]["ref"] == "${{ github.workflow_sha }}"
+    assert steps[checkout + 1]["run"] == 'test "$(git rev-parse HEAD)" = "$GITHUB_WORKFLOW_SHA"'
+
+# The shell must override both an exported stale ref and a potential .env value.
+root = workflow_path.parents[2]
+override = (root / "docker/docker-compose.smoke-images.override.yml").read_text()
+ref_variables = set(re.findall(r"\$\{(SMOKE_IMAGE_REF_[A-Z_]+):-", override))
+assert len(ref_variables) == 11
+wrapper = (root / "dev-tools/verify-smoke-images.sh").read_text()
+local_guard = re.search(r'(?ms)^if \[\[ "\$\{SMOKE_IMAGE_LOCAL_ONLY:-false\}" == "true" \]\]; then\n.*?^fi$', wrapper).group()
+expected = {variable: "" for variable in ref_variables}
+for inherited in ({}, {variable: "ghcr.io/example/stale@sha256:" + "a" * 64 for variable in ref_variables}):
+    result = subprocess.run(
+        ["bash", "-euc", local_guard + "\nexec env"],
+        env={**os.environ, **inherited, "SMOKE_IMAGE_LOCAL_ONLY": "true"},
+        check=True, capture_output=True, text=True,
+    )
+    exported = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    assert {variable: exported.get(variable) for variable in ref_variables} == expected
+    assert exported["SMOKE_IMAGE_PULL_POLICY"] == "never"
 
 # Run the actual branch metadata step with current, obsolete and unverifiable branch heads.
 meta = re.search(r"^      - name: Derive image tags\n.*?^        run: \|\n((?:^          [^\n]*\n|^\n)+)",
@@ -311,6 +349,7 @@ smoke_scope_script="$fixture_dir/runtime-smoke-scope.js"
 refresh_selector_script="$fixture_dir/runtime-refresh-selector.js"
 
 python3 - "$WORKFLOW" "$RUNTIME_WORKFLOW" "$validation_script" "$publisher_script" "$runtime_script" "$resolver_script" "$dispatch_script" "$smoke_scope_script" "$refresh_selector_script" <<'PY'
+import json
 import re
 import sys
 from pathlib import Path
@@ -337,6 +376,16 @@ assert publisher_job["concurrency"] == {
 }
 publisher_steps = publisher_job["steps"]
 step_names = [step["name"] for step in publisher_steps]
+download_step, = (step for step in publisher_steps if step["name"] == "Download successful PR image artifacts")
+inputs = download_step["with"]
+assert inputs == {
+    "artifact-ids": "${{ needs.source.outputs.artifact_id }}",
+    "digest-mismatch": "error",
+    "path": "/tmp/pr-runtime-artifacts/${{ needs.source.outputs.artifact_name }}",
+    "github-token": "${{ github.token }}",
+    "run-id": "${{ fromJSON(needs.source.outputs.source).id }}",
+}
+validation_path.with_name("download-inputs.parsed.json").write_text(json.dumps(inputs), encoding="utf-8")
 fence = step_names.index("Fence current source attempt before registry login")
 assert step_names[fence - 1:fence + 2:2] == ["Load fixed-tag images", "Login to GHCR"]
 validation_path.with_name("attempt-fence.sh").write_text(publisher_steps[fence]["run"])
@@ -386,7 +435,7 @@ refresh_script = next(step["with"]["script"] for step in refresh_job["steps"] if
 selector_start = refresh_script.index("const runtimePrefixes = [")
 selector_end = refresh_script.index("const dependencyBotAuthors = new Set([", selector_start)
 Path(sys.argv[9]).write_text(refresh_script[selector_start:selector_end], encoding="utf-8")
-handoff = runtime_workflow.split("  dispatch-pr-runtime-publication:\n", 1)[1].split("  smoke-full:\n", 1)[0]
+handoff = re.split(r"\n  [a-z][a-z-]*:\n", runtime_workflow.split("  dispatch-pr-runtime-publication:\n", 1)[1], maxsplit=1)[0]
 for required in ["needs: [image-meta, pr-local-smoke, pr-controller-smoke]", "github.event_name == 'repository_dispatch'", "github.event.action == 'pr-runtime-base-refresh'", "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)", "needs.image-meta.result == 'success'", "needs.pr-local-smoke.result == 'success'", "needs.pr-controller-smoke.result == 'success'", "needs.image-meta.outputs.controller_smoke_required == 'false'", "needs.pr-controller-smoke.result == 'skipped'", "contents: write"]:
     if required not in handoff:
         raise SystemExit("trusted handoff prerequisite missing: " + required)
@@ -414,6 +463,7 @@ PY
 
 node - "$resolver_script" "$dispatch_script" "$RUNTIME_WORKFLOW" "$WORKFLOW" "$fixture_dir/download-inputs.json" "$smoke_scope_script" "$refresh_selector_script" <<'JS'
 const fs = require("fs");
+const path = require("node:path");
 const assert = require("assert/strict");
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const resolver = new AsyncFunction("github", "context", "core", "Date", "setTimeout", fs.readFileSync(process.argv[2], "utf8"));
@@ -558,22 +608,12 @@ for (const publishable of ["false", "", undefined]) {
   }
   const publisherWorkflow = fs.readFileSync(process.argv[5], "utf8");
   assert.ok(publisherWorkflow.includes("if: ${{ needs.source.outputs.source != '' }}"), "no source must skip privileged publication");
-  const download = publisherWorkflow.split("      - name: Download successful PR image artifacts\n")[1]
-    .split("      - name: Validate exact PR source and artifact before registry login\n")[0];
-  const downloadInputs = (step) => Object.fromEntries([...step.matchAll(/^          (artifact-ids|digest-mismatch|name|path|run-id): (.+)$/gm)]
-    .map(match => [match[1], match[2]]));
-  const inputs = downloadInputs(download);
-  assert.equal(downloadInputs(download + "\n          name: conflicting-name\n").name, "conflicting-name");
-  assert.equal(inputs["artifact-ids"], "${{ needs.source.outputs.artifact_id }}");
-  assert.equal(inputs["digest-mismatch"], "error");
-  assert.equal(inputs.name, undefined);
+  const inputs = JSON.parse(fs.readFileSync(path.join(path.dirname(process.argv[6]), "download-inputs.parsed.json"), "utf8"));
   for (const artifactOverride of [{expired:true}, {digest:"not-sha256"}, {id:0}, {workflow_run:{id:4243}}]) {
     await assert.rejects(resolve({artifactOverride}), /immutable exact-attempt artifact and SHA256/);
   }
   await assert.rejects(resolve({missingAttempt: true, legacyArchive: true}), /Start a fresh build for the exact current PR tuple/);
   await assert.rejects(resolve({missingAttempt: true}), /Re-run all jobs/);
-  assert.equal(inputs.path, "/tmp/pr-runtime-artifacts/${{ needs.source.outputs.artifact_name }}");
-  assert.equal(inputs["run-id"], "${{ fromJSON(needs.source.outputs.source).id }}");
   assert.ok(publisherWorkflow.includes("artifact_name: ${{ steps.resolve.outputs.artifact_name }}"));
   const upload = runtimeWorkflow.split("      - name: Upload preview image artifact\n")[1]
     .split("      - name: Summarize secure PR runtime artifact\n")[0];
@@ -1259,12 +1299,21 @@ done
 provenance="$artifact_dir/pr-runtime-provenance.json"
 cp "$provenance" "$fixture_dir/exact-provenance.json"
 for invalid_attempt in missing 1 '"2"' 2.0 true; do
-  jq --arg value "$invalid_attempt" \
-    'if $value == "missing" then del(.sourceRunAttempt) else .sourceRunAttempt = ($value | fromjson) end' \
-    "$fixture_dir/exact-provenance.json" > "$provenance"
-  # jq can normalize 2.0 to 2; preserve the non-integer JSON token in that case.
   if [[ "$invalid_attempt" == 2.0 ]]; then
-    sed 's/"sourceRunAttempt":2/"sourceRunAttempt":2.0/' "$fixture_dir/exact-provenance.json" > "$provenance"
+    # Python preserves 2.0 as a JSON floating-point token.
+    python3 - "$fixture_dir/exact-provenance.json" > "$provenance" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as fixture:
+    provenance = json.load(fixture)
+provenance["sourceRunAttempt"] = 2.0
+json.dump(provenance, sys.stdout)
+PY
+  else
+    jq --arg value "$invalid_attempt" \
+      'if $value == "missing" then del(.sourceRunAttempt) else .sourceRunAttempt = ($value | fromjson) end' \
+      "$fixture_dir/exact-provenance.json" > "$provenance"
   fi
   if run_validation 2>"$fixture_dir/attempt-error"; then
     echo "archive with invalid attempt was accepted: $invalid_attempt" >&2
@@ -1708,7 +1757,7 @@ if [[ -n "${RUNTIME_CURL_STATUS:-}" ]]; then
   exit 0
 fi
 case "${RUNTIME_TARGET_MODE:-}" in
-  missing) printf '404\n' ;;
+  missing|candidate-moved|source-digest-mismatch|target-digest-mismatch) printf '404\n' ;;
   matching|different|fixed-reuse|inspect-failure) printf '200\n' ;;
   late-fixed-conflict)
     if [[ "$*" == *world-management-service/manifests/"$HEAD_SHA" ]]; then
@@ -1740,6 +1789,11 @@ if [[ "${1:-}" == buildx && "${2:-}" == imagetools && "${3:-}" == inspect ]]; th
       digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
     fi
   fi
+  if [[ "${RUNTIME_TARGET_MODE:-}" == candidate-moved && "$tag" == candidate-* ]] ||
+      [[ "${RUNTIME_TARGET_MODE:-}" == source-digest-mismatch && "$image" == *@sha256:* ]] ||
+      [[ "${RUNTIME_TARGET_MODE:-}" == target-digest-mismatch && "$tag" == "$HEAD_SHA" ]]; then
+    digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  fi
   python3 - "$digest" <<'PY'
 import sys
 
@@ -1752,9 +1806,9 @@ PY
   exit 0
 fi
 if [[ "${1:-}" == buildx && "${2:-}" == imagetools && "${3:-}" == create ]]; then
-  [[ $# -eq 6 && "$4" == --tag ]] || exit 2
   printf '%s\n' "$*" >> "$RUNTIME_REGISTRY_MARKER"
-  if [[ -f "$RUNTIME_HEAD_MOVED_MARKER" && ( "$5" == *:develop || "$5" == *:latest ) ]]; then
+  [[ $# -eq 7 && "$4" == --prefer-index=false && "$5" == --tag && "$7" == *@sha256:* ]] || exit 2
+  if [[ -f "$RUNTIME_HEAD_MOVED_MARKER" && ( "$6" == *:develop || "$6" == *:latest ) ]]; then
     echo "runtime fixture refused a mutable alias write after observed branch movement" >&2
     exit 99
   fi
@@ -1768,7 +1822,7 @@ chmod +x "$fixture_dir/docker"
 runtime_common_env=(
   HEAD_SHA='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
   HEAD_BRANCH='develop'
-  CANDIDATE_TAG='candidate'
+  CANDIDATE_TAG="candidate-${head_sha}-101-1"
   GITHUB_REPOSITORY='benhook1013/FireMUD'
   GH_TOKEN='test-token'
   GHCR_USERNAME='test-user'
@@ -1781,8 +1835,21 @@ runtime_common_env=(
 run_runtime() {
   : > "$fixture_dir/runtime-head-reads"
   rm -f "$fixture_dir/runtime-head-moved"
-  (cd "$ROOT_DIR" && env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" RUNTIME_HEAD_MODE="${2:-unchanged}" RUNTIME_DIGESTS="${3:-}" bash "$runtime_script")
+  (cd "$ROOT_DIR" && env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" \
+    RUNTIME_HEAD_MODE="${2:-unchanged}" RUNTIME_DIGESTS="${3:-$candidate_map}" \
+    REUSING_FIXED_DIGESTS="${4:-false}" bash "$runtime_script")
 }
+pin_runtime() {
+  : > "$fixture_dir/runtime-pin"
+  env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" GITHUB_OUTPUT="$fixture_dir/runtime-pin" \
+    RUNTIME_DIGESTS="${2:-}" bash -euo pipefail -c 'source "$1"; pin_runtime_digests' bash "$RUNTIME_REGISTRY"
+}
+pin_runtime missing
+candidate_map=$(sed -n 's/^runtime_digests=//p' "$fixture_dir/runtime-pin")
+candidate_digest='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+jq -e --arg digest "$candidate_digest" 'length==11 and all(.[]; .==$digest)' <<<"$candidate_map" >/dev/null
+expected_account='ghcr.io/benhook1013/account-service'
+expected_create='buildx imagetools create --prefer-index=false --tag'
 
 # Unchanged A remains eligible for immutable A, develop and latest publication.
 rm -f "$fixture_dir/runtime-registry-marker"
@@ -1793,6 +1860,15 @@ if [[ "$(wc -l < "$fixture_dir/runtime-registry-marker")" -ne 33 ]]; then
 fi
 if grep -Fvxq "$head_sha" "$fixture_dir/runtime-head-reads"; then
   echo "unchanged-A publication observed an unexpected branch head" >&2
+  exit 1
+fi
+
+# A staging tag that moves after pinning cannot change the tested or promoted bytes.
+rm -f "$fixture_dir/runtime-registry-marker"
+run_runtime candidate-moved
+[[ $(grep -Fc "@$candidate_digest" "$fixture_dir/runtime-registry-marker") -eq 33 ]]
+if grep -Fq ':candidate-' "$fixture_dir/runtime-registry-marker"; then
+  echo "runtime publisher wrote aliases from a mutable staging tag" >&2
   exit 1
 fi
 
@@ -1814,7 +1890,7 @@ if [[ "$(cat "$fixture_dir/runtime-head-reads")" != "${head_sha}"$'\n'"${base_sh
   exit 1
 fi
 if [[ ! -f "$fixture_dir/runtime-registry-marker" || \
-      "$(cat "$fixture_dir/runtime-registry-marker")" != "buildx imagetools create --tag ghcr.io/benhook1013/account-service:${head_sha} ghcr.io/benhook1013/account-service:candidate" ]]; then
+      "$(cat "$fixture_dir/runtime-registry-marker")" != "$expected_create ${expected_account}:${head_sha} ${expected_account}@${candidate_digest}" ]]; then
   echo "runtime publisher must permit only the immutable A tag before rejecting movement, never develop/latest after it" >&2
   exit 1
 fi
@@ -1828,9 +1904,7 @@ run_runtime missing advance-before-latest >"$fixture_dir/runtime-head-movement.o
 grep -Fq "Refusing canonical runtime publication: develop moved from ${head_sha} to ${base_sha}." \
   "$fixture_dir/runtime-head-movement.error"
 [[ "$(cat "$fixture_dir/runtime-head-reads")" == "${head_sha}"$'\n'"${head_sha}"$'\n'"${base_sha}" ]]
-expected_account='ghcr.io/benhook1013/account-service'
-expected_create='buildx imagetools create --tag'
-[[ "$(cat "$fixture_dir/runtime-registry-marker")" == "$expected_create ${expected_account}:${head_sha} ${expected_account}:candidate"$'\n'"$expected_create ${expected_account}:develop ${expected_account}:candidate" ]]
+[[ "$(cat "$fixture_dir/runtime-registry-marker")" == "$expected_create ${expected_account}:${head_sha} ${expected_account}@${candidate_digest}"$'\n'"$expected_create ${expected_account}:develop ${expected_account}@${candidate_digest}" ]]
 
 rm -f "$fixture_dir/runtime-registry-marker"
 run_runtime matching
@@ -1869,17 +1943,34 @@ select_runtime fixed-reuse
 fixed_map=$(sed -n 's/^runtime_digests=//p' "$fixture_dir/runtime-selection")
 fixed_digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 jq -e --arg digest "$fixed_digest" 'length==11 and all(.[]; .==$digest)' <<<"$fixed_map" >/dev/null
-run_runtime fixed-reuse unchanged "$fixed_map"
+pin_runtime fixed-reuse "$fixed_map"
+[[ $(< "$fixture_dir/runtime-pin") == "runtime_digests=$fixed_map" ]]
+run_runtime fixed-reuse unchanged "$fixed_map" true
 [[ $(wc -l < "$fixture_dir/runtime-registry-marker") -eq 22 ]]
-! grep -Fq ":$head_sha " "$fixture_dir/runtime-registry-marker"
-! grep -Fq ':candidate' "$fixture_dir/runtime-registry-marker"
+if grep -Fq ":$head_sha " "$fixture_dir/runtime-registry-marker" ||
+    grep -Fq ':candidate' "$fixture_dir/runtime-registry-marker"; then
+  echo "fixed-set reuse overwrote a fixed tag or used a mutable staging tag" >&2
+  exit 1
+fi
 [[ $(grep -Fc "@$fixed_digest" "$fixture_dir/runtime-registry-marker") -eq 22 ]]
 rm -f "$fixture_dir/runtime-registry-marker"
-if run_runtime fixed-reuse unchanged "$(jq '.["account-service"]="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' <<<"$fixed_map")"; then
+if run_runtime fixed-reuse unchanged "$(jq '.["account-service"]="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' <<<"$fixed_map")" true; then
   echo "runtime publisher accepted a fixed set that changed after smoke" >&2
   exit 1
 fi
 [[ ! -e "$fixture_dir/runtime-registry-marker" ]]
+
+if run_runtime source-digest-mismatch; then
+  echo "runtime publisher accepted a source digest mismatch before writing tags" >&2
+  exit 1
+fi
+[[ ! -e "$fixture_dir/runtime-registry-marker" ]]
+
+if run_runtime target-digest-mismatch; then
+  echo "runtime publisher accepted a stored digest mismatch after the alias write" >&2
+  exit 1
+fi
+[[ $(wc -l < "$fixture_dir/runtime-registry-marker") -eq 1 ]]
 
 rm -f "$fixture_dir/runtime-registry-marker"
 inspect_status=0

@@ -592,7 +592,8 @@ async function assertAssociationSelection() {
   for (const associations of [[{number: 99}, {number: 42}], [{number: 42}, {number: 99}]]) {
     reset(); source.pull_requests = associations;
     await run(github, context, core);
-    if (calls.updated.length !== 1 || calls.paginate.some(({input}) => input.issue_number && input.issue_number !== 42)) {
+    const commentLookups = calls.paginate.filter(({method}) => method === commentsList);
+    if (calls.updated.length !== 1 || commentLookups.length !== 1 || commentLookups[0].input.issue_number !== 42) {
       throw new Error("unrelated associations must not hide or redirect canonical PR publication");
     }
   }

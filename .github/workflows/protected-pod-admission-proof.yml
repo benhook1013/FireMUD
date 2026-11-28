@@ -218,6 +218,10 @@ jobs:
             policy_deadline="$(( $(date +%s) + 90 ))"
             for policy in firemud-trust-runtime-namespace-boundary firemud-trust-runtime-binding-boundary firemud-trust-runtime-pod-boundary firemud-trust-runtime-pod-identity; do
               while true; do
+                if (( $(date +%s) >= policy_deadline )); then
+                  printf 'policy_readiness=timeout policy=%s boundary=before_request\n' "$policy" >&2
+                  return 1
+                fi
                 policy_json="$(kubectl --request-timeout=5s --kubeconfig "$KUBECONFIG" --context "$expected_context" get validatingadmissionpolicy "$policy" -o json)" || policy_json='{}'
                 if jq -e '
                   (.metadata.generation | type) == "number" and
@@ -226,6 +230,10 @@ jobs:
                   (.status.typeChecking.expressionWarnings // []) == [] and
                   .spec.failurePolicy == "Fail"
                 ' <<<"$policy_json" >/dev/null; then
+                  if (( $(date +%s) >= policy_deadline )); then
+                    printf 'policy_readiness=timeout policy=%s boundary=ready_response\n' "$policy" >&2
+                    return 1
+                  fi
                   break
                 fi
                 if (( $(date +%s) >= policy_deadline )); then
@@ -269,7 +277,7 @@ jobs:
                               "Account and Game Session require exactly their application container and no init/ephemeral containers or injected annotations"))
           '''
           adjusted = original.replace(match, overlap + match).replace(
-              check, "        elif any(re.search(candidate, result.stderr) for candidate in allowed_rejections):")
+              check, "        elif any(re.search(candidate, result.stderr) for candidate in allowed_rejections):\n            if not re.search(rejection, result.stderr):\n                print(\"UNPROVED: common Pod boundary independent enforcement for this probe; overlapping identity-policy denial was accepted\")")
           with qualified.open("x", encoding="utf-8") as output:
               output.write(adjusted)
           PY

@@ -91,7 +91,7 @@ function admissionFixture() {
         return {data: {id: 42, path: runtimePath}};
       },
       getWorkflowRun: async ({run_id}) => {
-        if (admissionRuns.has(run_id)) return {data: admissionRuns.get(run_id)};
+        if (admissionRuns.has(run_id)) return {data: {...admissionRuns.get(run_id)}};
         state.producerReads.push(run_id);
         const run = runs.find(run => run.id === run_id);
         return {data: state.refreshProducer ? state.refreshProducer(run) : run};
@@ -105,6 +105,8 @@ function admissionFixture() {
         return {status: 200, data: admissionAttempts.get(key)};
       },
       listJobsForWorkflowRunAttempt: async ({run_id, attempt_number}) => {
+        state.receiverJobReads ??= [];
+        state.receiverJobReads.push(`${run_id}:${attempt_number}`);
         const jobs = receiverJobs.get(`${run_id}:${attempt_number}`) || [];
         return {data: {total_count: jobs.length, jobs}};
       },
@@ -444,7 +446,11 @@ test('admission bounds waiting for merge computation and aborts immediately on d
   ]) {
     const f = admissionFixture();
     configure(f);
-    assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete', scenario);
+    if (scenario === 'persistent calculation') {
+      await assert.rejects(admitRuntimeRefresh(f.admission), /comparison is still unavailable/, scenario);
+    } else {
+      assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete', scenario);
+    }
     assert.deepEqual(f.sent, [], scenario);
     assert.deepEqual(f.state.lookups, [], scenario);
     assert.equal(f.state.waits.length, expectedWaits, scenario);
@@ -710,15 +716,16 @@ test('a comparison moving during the claim is never dispatched', async () => {
   assert.deepEqual(f.sent, []);
 });
 
-test('an ordinary claim can resume after final merge computation returns a local no-send', async () => {
+test('an ordinary claim can resume after the exact final merge computation becomes available', async () => {
   const f = admissionFixture();
   f.state.afterClaim = () => {
     f.state.pullObservations = Array(6).fill({mergeable: null, merge_commit_sha: null});
   };
-  assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
+  assert.equal(await admitRuntimeRefresh(f.admission), 'pre-send-unavailable');
   assert.deepEqual(f.sent, []);
-  assert.match(f.outputs.get('unsent_claim'), /^generation 1 run 600 attempt 1 tag [0-9a-f]{40}$/);
-  completeOwnerReceiptAttempt(f);
+  assert.match(f.outputs.get('pre-send-unavailable_claim'), /^generation 1 run 600 attempt 1 tag [0-9a-f]{40}$/);
+  assert.equal(f.outputs.has('unsent_claim'), false);
+  completeOwnerReceiptAttempt(f, 'pre-send-unavailable');
 
   assert.equal(await admitOrdinaryRefresh(f), 'dispatched-observed');
   assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim), ['2']);
@@ -1026,13 +1033,14 @@ test('a successful marker carried from another attempt cannot advance the claim'
   f.state.keepHidden = true;
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
   const [tag] = f.claimTags.values();
-  const run = {...f.state.newRun, status: 'completed', conclusion: 'failure', run_attempt: 2};
+  const run = {...f.state.newRun, created_at: new Date().toISOString(), status: 'completed', conclusion: 'failure', run_attempt: 2};
   f.runs.push(run);
   f.receiverJobs.set(`${run.id}:2`, [{id: 1, run_id: run.id, run_attempt: 2, head_sha: run.head_sha,
     name: 'Derive Runtime Image Metadata', status: 'completed', conclusion: 'success',
     steps: [{name: `Runtime refresh claim generation 1 attempt 1 tag ${tag.sha}`,
       status: 'completed', conclusion: 'success'}]}]);
   assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.ok(f.state.receiverJobReads.includes(`${run.id}:2`), 'attempt-2 receiver jobs must be read before the wrong marker holds the claim');
   assert.equal(f.sent.length, 1);
 });
 
@@ -1553,7 +1561,7 @@ test('observer waits for a pending test merge and rereads a formerly stale merge
   const stale = 'f'.repeat(40);
   f.pullHistory = [{...f.pr, mergeable: null, mergeable_state: 'unknown', merge_commit_sha: null},
     {...f.pr, merge_commit_sha: stale}];
-  f.pendingMerges = {[stale]: {sha: stale, parents: [{sha: D}, {sha: C}]}};
+  f.pendingMerges = {[stale]: {sha: stale, parents: [{sha: B}, {sha: D}]}};
   assert.equal((await execute(f)).length, 1);
   assert.deepEqual(f.mergeReads, [E, stale, A]);
   assert.equal(f.baseReads, 4);

@@ -133,7 +133,7 @@ module.exports = async function admitPrRuntimeRefresh({
       if (result !== null && observation === 5) throw result.error;
       if (observation < 5) await sleep(2000);
     }
-    return false;
+    throw new Error('Exact runtime comparison is still unavailable after bounded merge computation.');
   };
 
   if (!await currentIdentity()) {

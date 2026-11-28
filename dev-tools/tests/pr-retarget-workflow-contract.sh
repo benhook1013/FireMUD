@@ -653,6 +653,9 @@ steps = smoke["jobs"]["smoke-gate"]["steps"]
 classifier = next(step for step in steps if step.get("id") == "smoke_gate_context")
 failure = next(step for step in steps if step.get("name") == "Fail when smoke dependencies did not succeed")
 tracker = next(step for step in steps if step.get("id") == "track-runtime-smoke")
+classifier_index = steps.index(classifier)
+if classifier_index >= steps.index(failure) or classifier_index >= steps.index(tracker):
+    raise SystemExit("smoke_gate_context must run before both its failure and tracking consumers")
 expected_tracker_condition = "${{ steps.smoke_gate_context.outputs.execute == 'true' && needs.changes.outputs.run_smoke_full == 'true' }}"
 if tracker["if"] != expected_tracker_condition:
     raise SystemExit("full-stack smoke tracker must run exactly when execution and full smoke are required")
@@ -778,15 +781,16 @@ for branch in ("main", "develop"):
     next_head = callback_group(branch, 7101, 1, "push", "b" * 40)
     next_source = callback_group(branch, 7102, 1, "push")
     next_attempt = callback_group(branch, 7101, 2, "push")
-    assert len({publisher, next_head, next_source, next_attempt}) == 4, (
-        "distinct protected callbacks must retain their exact branch, head, source and attempt"
-    )
+    assert next_head != publisher, "a different protected commit needs a distinct publication group"
+    assert publisher == next_source == next_attempt, "the same protected commit must serialize across callbacks and reruns"
     for conclusion in ("failure", "cancelled", "timed_out", "skipped", ""):
         nonpublisher = callback_group(branch, 7101, 1, "push", conclusion=conclusion)
         assert nonpublisher != publisher, "a non-publishing callback must not displace an active or pending publisher"
         assert nonpublisher != callback_group(branch, 7101, 2, "push", conclusion=conclusion)
 assert callback_group("feature/parent", 7101, 1, "push") != callback_group("feature/parent", 7102, 1, "push")
-assert callback_group("main", 7101, 1, "push") != callback_group("develop", 7101, 1, "push"), "protected publication branches must remain separate when only the branch differs"
+# The workflow lock serializes immutable selection, smoke and publication for
+# one SHA. A separate promotion job lock serializes alias writes across SHAs.
+assert callback_group("main", 7101, 1, "push") == callback_group("develop", 7101, 1, "push"), "both protected branches must serialize publishing the same commit"
 
 PY
 

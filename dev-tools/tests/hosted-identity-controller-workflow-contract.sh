@@ -1708,6 +1708,16 @@ assert retry_rejection_step["name"] == (
 assert retry_rejection_step["if"] == (
     "${{ steps.target.outputs.action == 'none' && steps.target.outputs.stale_head_retry_nonce != '' }}"
 )
+comparison_rejection_step = next(
+    step for step in validate_job["steps"]
+    if step.get("name", "").startswith("Trusted preview retry rejected stale-comparison nonce-")
+)
+assert comparison_rejection_step["name"] == (
+    "Trusted preview retry rejected stale-comparison nonce-${{ steps.target.outputs.stale_comparison_retry_nonce }}"
+)
+assert comparison_rejection_step["if"] == (
+    "${{ steps.target.outputs.action == 'none' && steps.target.outputs.stale_comparison_retry_nonce != '' }}"
+)
 assert '"$ARTIFACT_DIRECTORY/preview-metadata.json"' in target_script
 assert '"$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml"' in target_script
 assert 'exposure-mode "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml"' in target_script
@@ -6947,6 +6957,44 @@ FAKE_FIXTURE_WORKFLOW_RUN_JSON="$retry_source_run_json" FAKE_METADATA_EVENT=repo
   run_deploy_target_fixture retry-stale-head 0 'Ignoring stale lifecycle event for an earlier PR head.'
 grep -Fxq 'action=none' "$TEMP_DIR/deploy-target-retry-stale-head.output"
 grep -Fxq "stale_head_retry_nonce=${retry_nonce}" "$TEMP_DIR/deploy-target-retry-stale-head.output"
+
+retry_old_base=dddddddddddddddddddddddddddddddddddddddd
+retry_old_merge=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+for comparison_case in base merge pending-merge stale-parents; do
+  artifact_base=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  if [[ "$comparison_case" == base ]]; then artifact_base="$retry_old_base"; fi
+  retry_old_comparison_run_json="$(jq -c --arg base "$artifact_base" --arg merge "$retry_old_merge" '
+    .display_title |= sub("-base-[0-9a-f]{40}"; "-base-" + $base)
+      | .display_title |= sub("-merge-[0-9a-f]{40}"; "-merge-" + $merge)
+  ' <<<"$retry_source_run_json")"
+  case "$comparison_case" in
+    base|merge)
+      expected_message="Ignoring render artifact bound to a stale or different pull-request ${comparison_case}."
+      ;;
+    pending-merge)
+      expected_message='Ignoring lifecycle event because pull-request mergeability is unavailable.'
+      ;;
+    stale-parents)
+      expected_message='Ignoring lifecycle event whose merge commit parents are stale or do not match the current base and head.'
+      ;;
+  esac
+  mergeable_state=clean
+  stale_parents=false
+  if [[ "$comparison_case" == pending-merge ]]; then mergeable_state=unknown; fi
+  if [[ "$comparison_case" == stale-parents ]]; then stale_parents=true; fi
+  FAKE_FIXTURE_WORKFLOW_RUN_JSON="$retry_old_comparison_run_json" FAKE_METADATA_EVENT=repository_dispatch \
+    FAKE_METADATA_ACTION=deploy FAKE_METADATA_RETRY_NONCE="$retry_nonce" \
+    FAKE_FIXTURE_METADATA_BASE_SHA="$artifact_base" FAKE_FIXTURE_METADATA_MERGE_SHA="$retry_old_merge" \
+    TEST_PR_MERGEABLE_STATE="$mergeable_state" FAKE_STALE_MERGE_PARENTS="$stale_parents" \
+    run_deploy_target_fixture "retry-comparison-${comparison_case}" 0 "$expected_message"
+  comparison_output="$TEMP_DIR/deploy-target-retry-comparison-${comparison_case}.output"
+  grep -Fxq 'action=none' "$comparison_output"
+  if [[ "$comparison_case" == base || "$comparison_case" == merge ]]; then
+    grep -Fxq "stale_comparison_retry_nonce=${retry_nonce}" "$comparison_output"
+  else
+    test "$(cat "$comparison_output")" = $'action=none\nretire_identity=false\ncleanup_state=none'
+  fi
+done
 
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$retry_source_run_json" FAKE_METADATA_EVENT=repository_dispatch \
   FAKE_METADATA_ACTION=deploy FAKE_METADATA_RETRY_NONCE="$retry_nonce" FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT=2 \

@@ -2048,8 +2048,11 @@ jobs:
       - name: Checkout trusted runtime selection source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c581273ba90b1 # v7
         with:
-          ref: ${{ needs.image-meta.outputs.checkout_ref }}
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
+
+      - name: Verify trusted runtime selection revision
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_WORKFLOW_SHA"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -2096,10 +2099,56 @@ jobs:
               client_payload: { source_run_id: String(context.runId) },
             });
 
-  smoke-full:
-    name: Published Runtime Full-Stack Smoke
+  pin-protected-runtime-digests:
+    name: Pin Runtime Digest Set for Smoke
     needs: [image-meta, build-runtime-images, select-protected-runtime-digests]
     if: ${{ always() && !cancelled() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.select-protected-runtime-digests.result == 'success' && ((needs.select-protected-runtime-digests.outputs.runtime_digests == '' && needs.build-runtime-images.result == 'success') || (needs.select-protected-runtime-digests.outputs.runtime_digests != '' && needs.build-runtime-images.result == 'skipped')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      runtime_digests: ${{ steps.pin.outputs.runtime_digests }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout trusted digest inventory source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Verify trusted digest inventory revision
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_WORKFLOW_SHA"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to GHCR with read access
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bind the complete smoke digest set
+        id: pin
+        env:
+          CANDIDATE_TAG: ${{ needs.image-meta.outputs.candidate_tag }}
+          RUNTIME_DIGESTS: ${{ needs.select-protected-runtime-digests.outputs.runtime_digests }}
+        run: |
+          set -euo pipefail
+          source ./dev-tools/hosted/shared/protected-runtime-image-registry.sh
+          pin_runtime_digests
+
+  smoke-full:
+    name: Published Runtime Full-Stack Smoke
+    needs: [image-meta, pin-protected-runtime-digests]
+    if: ${{ always() && !cancelled() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.pin-protected-runtime-digests.result == 'success' && needs.pin-protected-runtime-digests.outputs.runtime_digests != '' }}
     permissions:
       # The trusted branch smoke workflow only pulls the staged candidate images.
       contents: read
@@ -2110,13 +2159,13 @@ jobs:
       head_sha: ${{ needs.image-meta.outputs.head_sha }}
       checkout_ref: ${{ needs.image-meta.outputs.checkout_ref }}
       image_tag: ${{ needs.image-meta.outputs.candidate_tag }}
-      runtime_digests: ${{ needs.select-protected-runtime-digests.outputs.runtime_digests }}
+      runtime_digests: ${{ needs.pin-protected-runtime-digests.outputs.runtime_digests }}
     secrets: inherit
 
   publish-runtime-images:
     name: Promote Smoke-Tested Runtime Images
-    needs: [image-meta, build-runtime-images, select-protected-runtime-digests, smoke-full]
-    if: ${{ always() && !cancelled() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.select-protected-runtime-digests.result == 'success' && ((needs.select-protected-runtime-digests.outputs.runtime_digests == '' && needs.build-runtime-images.result == 'success') || (needs.select-protected-runtime-digests.outputs.runtime_digests != '' && needs.build-runtime-images.result == 'skipped')) && needs.smoke-full.result == 'success' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
+    needs: [image-meta, select-protected-runtime-digests, pin-protected-runtime-digests, smoke-full]
+    if: ${{ always() && !cancelled() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.select-protected-runtime-digests.result == 'success' && needs.pin-protected-runtime-digests.result == 'success' && needs.pin-protected-runtime-digests.outputs.runtime_digests != '' && needs.smoke-full.result == 'success' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:
@@ -2130,8 +2179,8 @@ jobs:
     env:
       HEAD_SHA: ${{ needs.image-meta.outputs.head_sha }}
       HEAD_BRANCH: ${{ needs.image-meta.outputs.head_branch }}
-      CANDIDATE_TAG: ${{ needs.image-meta.outputs.candidate_tag }}
-      RUNTIME_DIGESTS: ${{ needs.select-protected-runtime-digests.outputs.runtime_digests }}
+      RUNTIME_DIGESTS: ${{ needs.pin-protected-runtime-digests.outputs.runtime_digests }}
+      REUSING_FIXED_DIGESTS: ${{ needs.select-protected-runtime-digests.outputs.runtime_digests != '' }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
@@ -2141,8 +2190,11 @@ jobs:
       - name: Checkout trusted publication source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.image-meta.outputs.checkout_ref }}
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
+
+      - name: Verify trusted publication revision
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_WORKFLOW_SHA"
 
       - name: Set up canonical GitHub CLI
         uses: ./.github/actions/setup-gh
@@ -2169,19 +2221,18 @@ jobs:
 
           promote_alias() {
             local source="$1" target="$2" fixed="$3"
-            local source_digest existing_digest target_digest
-            source_digest="$(registry_digest "$source")"
+            local source_digest="${source##*@}" existing_digest target_digest
             local target_state
             if ! target_state="$(registry_manifest_state "$target")"; then
               echo "Immutable target preflight failed for $target; refusing to publish." >&2
               exit 1
             fi
             if [[ "$target_state" == missing ]]; then
-              if [[ "$fixed" == true && -n "${RUNTIME_DIGESTS:-}" ]]; then
+              if [[ "$fixed" == true && "$REUSING_FIXED_DIGESTS" == true ]]; then
                 echo "Fixed runtime tag $target disappeared after smoke qualification." >&2
                 exit 1
               fi
-              docker buildx imagetools create --tag "$target" "$source"
+              docker buildx imagetools create --prefer-index=false --tag "$target" "$source"
             else
               existing_digest="$(registry_digest "$target")"
               if [[ "$fixed" == true && "$existing_digest" != "$source_digest" ]]; then
@@ -2189,7 +2240,7 @@ jobs:
                 exit 1
               fi
               if [[ "$existing_digest" != "$source_digest" ]]; then
-                docker buildx imagetools create --tag "$target" "$source"
+                docker buildx imagetools create --prefer-index=false --tag "$target" "$source"
               fi
             fi
             target_digest="$(registry_digest "$target")"

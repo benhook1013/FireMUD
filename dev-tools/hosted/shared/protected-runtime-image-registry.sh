@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sourced by trusted branch runtime selection and promotion.
+# Sourced by trusted branch runtime selection, digest pinning, and promotion.
 
 services=(
   account-service
@@ -108,42 +108,66 @@ select_existing_fixed_digests() {
     digest="$(registry_digest "$image")" || return
     entries+=("$service=$digest")
   done
+  write_digest_inventory "${entries[@]}"
+}
+
+write_digest_inventory() {
   local manifest
-  manifest="$(printf '%s\n' "${entries[@]}" | jq -nRcS '[inputs | split("=") | {key:.[0],value:.[1]}] | from_entries')" || return
+  manifest="$(printf '%s\n' "$@" | jq -nRcS '[inputs | split("=") | {key:.[0],value:.[1]}] | from_entries')" || return
+  validate_digest_inventory "$manifest" || return
   printf 'runtime_digests=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
 }
 
-# Select only the source that this run's successful smoke job actually tested.
-# A complete existing SHA set is pinned to the digest map. A staged candidate
-# remains one whole set and must agree with all preexisting fixed tags.
+validate_digest_inventory() {
+  local manifest="$1" inventory
+  inventory="$(printf '%s\n' "${services[@]}" | jq -nRc '[inputs] | sort')" || return
+  jq -e --argjson services "$inventory" '
+    type == "object" and keys == $services and
+    all(.[]; type == "string" and test("^sha256:[0-9a-f]{64}$"))
+  ' <<<"$manifest" >/dev/null
+}
+
+pin_runtime_digests() {
+  local manifest="${RUNTIME_DIGESTS:-}" service digest
+  local -a entries=()
+  if [[ -n "$manifest" ]]; then
+    validate_digest_inventory "$manifest" || return
+    printf 'runtime_digests=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
+    return
+  fi
+  [[ "$CANDIDATE_TAG" =~ ^candidate-[0-9a-f]{40}-[0-9]+-[0-9]+$ ]] || return 1
+  for service in "${services[@]}"; do
+    digest="$(registry_digest "ghcr.io/benhook1013/$service:$CANDIDATE_TAG")" || return
+    entries+=("$service=$digest")
+  done
+  write_digest_inventory "${entries[@]}"
+}
+
+# Check the entire smoke-qualified set and every existing fixed tag before
+# writing an alias. A reused fixed tag must stay present and unchanged.
 declare -A smoke_sources=()
 preflight_fixed_digest_set() {
   local manifest="${RUNTIME_DIGESTS:-}"
-  local service repository fixed state expected actual inventory
-  if [[ -n "$manifest" ]]; then
-    inventory="$(printf '%s\n' "${services[@]}" | jq -nRc '[inputs] | sort')" || return
-    jq -e --argjson services "$inventory" '
-      type == "object" and keys == $services and
-      all(.[]; type == "string" and test("^sha256:[0-9a-f]{64}$"))
-    ' <<<"$manifest" >/dev/null || return
-  fi
+  local service repository fixed state expected actual
+  validate_digest_inventory "$manifest" || return
+  [[ "$REUSING_FIXED_DIGESTS" == true || "$REUSING_FIXED_DIGESTS" == false ]] || return 1
   for service in "${services[@]}"; do
     repository="ghcr.io/benhook1013/$service"
     fixed="$repository:$HEAD_SHA"
+    expected="$(jq -er --arg service "$service" '.[$service]' <<<"$manifest")" || return
+    smoke_sources[$service]="$repository@$expected"
+    actual="$(registry_digest "${smoke_sources[$service]}")" || return
+    if [[ "$actual" != "$expected" ]]; then
+      echo "Registry source for $service does not match tested digest $expected (got $actual)." >&2
+      return 1
+    fi
     state="$(registry_manifest_state "$fixed")" || return
-    if [[ -n "$manifest" ]]; then
-      expected="$(jq -er --arg service "$service" '.[$service]' <<<"$manifest")" || return
-      smoke_sources[$service]="$repository@$expected"
-      if [[ "$state" == missing ]]; then
+    if [[ "$state" == missing ]]; then
+      if [[ "$REUSING_FIXED_DIGESTS" == true ]]; then
         echo "Fixed runtime tag $fixed disappeared after smoke qualification." >&2
         return 1
       fi
-    else
-      smoke_sources[$service]="$repository:$CANDIDATE_TAG"
-      if [[ "$state" == missing ]]; then
-        continue
-      fi
-      expected="$(registry_digest "${smoke_sources[$service]}")" || return
+      continue
     fi
     actual="$(registry_digest "$fixed")" || return
     if [[ "$actual" != "$expected" ]]; then

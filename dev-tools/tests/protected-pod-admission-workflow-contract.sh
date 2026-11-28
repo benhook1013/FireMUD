@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix="firemud-policy-wait-") as directory:
         file = tmp / name
         file.write_text("#!/usr/bin/env python3\n" + source)
         file.chmod(0o700)
-    command("date", 'import os,pathlib\np=pathlib.Path(os.environ["CLOCK"]);n=int(p.read_text()) if p.exists() else 0;p.write_text(str(n+30));print(n)\n')
+    command("date", 'import os,pathlib\np=pathlib.Path(os.environ["CLOCK"]);print(int(p.read_text()) if p.exists() else 0)\n')
     command("sleep", 'pass\n')
     command("kubectl", '''import os,pathlib,json,sys
 assert "--request-timeout=5s" in sys.argv
@@ -43,16 +43,42 @@ n=len(calls)
 p.write_text("\\n".join([*calls, policy]) + "\\n")
 if os.environ["CASE"]=="api-error":sys.exit(1)
 case=os.environ["CASE"]
-ready=(case in ("ready", "warnings", "ignore") or (case=="late" and n>0)
-       or (case=="shared-deadline" and n==2 and policy=="firemud-trust-runtime-namespace-boundary"))
+if case == "timely-ready":pathlib.Path(os.environ["CLOCK"]).write_text("89")
+if case == "late-ready":pathlib.Path(os.environ["CLOCK"]).write_text("90")
+if case == "shared-deadline" and n == 0 and policy == "firemud-trust-runtime-namespace-boundary":
+    pathlib.Path(os.environ["CLOCK"]).write_text("89")
+ready=(case in ("ready", "timely-ready", "late-ready", "warnings", "ignore")
+       or (case=="shared-deadline" and n==0 and policy=="firemud-trust-runtime-namespace-boundary"))
 print(json.dumps({"metadata":{"generation":2},"spec":{"failurePolicy":"Ignore" if os.environ["CASE"]=="ignore" else "Fail"},"status":{"observedGeneration":2 if ready else 1,"typeChecking":{"expressionWarnings":["bad"] if os.environ["CASE"]=="warnings" else []}}}))
 ''')
-    for case, success in [("ready", True), ("late", True), ("stale", False), ("warnings", False), ("ignore", False), ("api-error", False), ("shared-deadline", False)]:
+    for case, success in [("ready", True), ("timely-ready", True), ("late-ready", False),
+                          ("expired-before-request", False), ("stale", False),
+                          ("warnings", False), ("ignore", False), ("api-error", False),
+                          ("shared-deadline", False)]:
         for name in ("clock", "calls"):
             (tmp/name).unlink(missing_ok=True)
         env = dict(os.environ, PATH=str(tmp)+":"+os.environ["PATH"], CASE=case,
                    CLOCK=str(tmp/"clock"), CALLS=str(tmp/"calls"),
+                   DATE_CALLS=str(tmp/"date-calls"),
                    KUBECONFIG="/not-a-live-config", expected_context="fixture")
+        date_command = tmp / "date"
+        if case == "expired-before-request":
+            date_command.write_text('#!/usr/bin/env python3\nimport os,pathlib\np=pathlib.Path(os.environ["CLOCK"]);n=int(p.read_text()) if p.exists() else 0\nif n == 0:p.write_text("90")\nprint(n)\n')
+            date_command.chmod(0o700)
+        elif case == "shared-deadline":
+            date_command.write_text('''#!/usr/bin/env python3
+import os,pathlib
+clock=pathlib.Path(os.environ["CLOCK"])
+calls=pathlib.Path(os.environ["DATE_CALLS"])
+n=int(calls.read_text()) if calls.exists() else 0
+calls.write_text(str(n+1))
+now=int(clock.read_text()) if clock.exists() else 0
+if n == 2:
+    now=89
+    clock.write_text("90")
+print(now)
+''')
+            date_command.chmod(0o700)
         result = subprocess.run(["bash", "-c", "set -euo pipefail\nrun_wait() {\n"+wait+"\n}\nrun_wait"], env=env, capture_output=True, text=True, timeout=10)
         assert (result.returncode == 0) == success, (case, result.stderr)
         if success:
@@ -61,14 +87,18 @@ print(json.dumps({"metadata":{"generation":2},"spec":{"failurePolicy":"Ignore" i
                 "firemud-trust-runtime-namespace-boundary", "firemud-trust-runtime-binding-boundary",
                 "firemud-trust-runtime-pod-boundary", "firemud-trust-runtime-pod-identity",
             }
-            assert len(calls) == (5 if case == "late" else 4)
+            assert len(calls) == 4
         else:
             assert "policy_readiness=timeout" in result.stderr
+            if case in ("late-ready", "expired-before-request"):
+                calls = (tmp/"calls").read_text().splitlines() if (tmp/"calls").exists() else []
+                assert len(calls) == (1 if case == "late-ready" else 0)
+                assert ("boundary=ready_response" in result.stderr) == (case == "late-ready")
             if case == "shared-deadline":
                 first = "firemud-trust-runtime-namespace-boundary"
                 second = "firemud-trust-runtime-binding-boundary"
-                assert (tmp/"calls").read_text().splitlines() == [first, first, first, second]
-                assert f"policy_readiness=timeout policy={second}" in result.stderr
+                assert (tmp/"calls").read_text().splitlines() == [first]
+                assert f"policy_readiness=timeout policy={second} boundary=before_request" in result.stderr
 
 qualifier_start = proof.index('python3 - "$pinned_probe" "$qualified_probe"')
 qualifier_end = proof.index("\nPY\n", qualifier_start) + len("\nPY\n")
@@ -92,6 +122,8 @@ with tempfile.TemporaryDirectory(prefix="firemud-policy-receipt-") as directory:
     )
     namespace = {}
     exec(compile(qualified.read_text(), str(qualified), "exec"), namespace)
+    from contextlib import redirect_stdout
+    from io import StringIO
     from types import SimpleNamespace
     boundary = "firemud-trust-runtime-pod-boundary"
     identity = "firemud-trust-runtime-pod-identity"
@@ -101,8 +133,15 @@ with tempfile.TemporaryDirectory(prefix="firemud-policy-receipt-") as directory:
         "Account and Game Session require exactly their application container and no init/ephemeral containers or injected annotations"
     )
     accepted = namespace["accepted"]
-    assert accepted(SimpleNamespace(returncode=1, stderr=denial), boundary, overlap, boundary, identity, "primary")
-    assert accepted(SimpleNamespace(returncode=1, stderr="primary"), boundary, overlap, boundary, identity, "primary")
+    overlap_result = SimpleNamespace(returncode=1, stderr=denial)
+    overlap_output = StringIO()
+    with redirect_stdout(overlap_output):
+        assert accepted(overlap_result, boundary, overlap, boundary, identity, "primary")
+    assert "UNPROVED: common Pod boundary independent enforcement" in overlap_output.getvalue()
+    primary_output = StringIO()
+    with redirect_stdout(primary_output):
+        assert accepted(SimpleNamespace(returncode=1, stderr="primary"), boundary, overlap, boundary, identity, "primary")
+    assert "UNPROVED:" not in primary_output.getvalue()
     assert not accepted(SimpleNamespace(returncode=0, stderr=denial), boundary, overlap, boundary, identity, "primary")
     assert not accepted(SimpleNamespace(returncode=1, stderr=denial), boundary, "other", boundary, identity, "primary")
     assert not accepted(SimpleNamespace(returncode=1, stderr=denial.replace("with binding '" + identity, "with binding 'unknown")), boundary, overlap, boundary, identity, "primary")

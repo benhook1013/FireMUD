@@ -213,7 +213,7 @@ case "${GH_FIXTURE:-}" in
         ;;
     esac
     ;;
-  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate|publisher_replacement_handoff*|publisher_producer_rerun_at_acceptance|publisher_stale_receipt*|publisher_exact_retry|publisher_expired_producer|publisher_missing_producer)
+  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate|source_failure_with_alternate_rerun|publisher_replacement_handoff*|publisher_producer_rerun_at_acceptance|publisher_stale_receipt*|publisher_exact_retry|publisher_expired_producer|publisher_missing_producer)
     source_title="Build Runtime Images secure-pr-artifact pr-7 base-${base_sha} head-${head_sha} merge-${merge_sha} mode-required"
     source_event=pull_request
     publisher_merge="$merge_sha"
@@ -344,7 +344,10 @@ PY_RECEIPT
         receipt_zip
         ;;
       *actions/runs/101)
-        if [[ "$GH_FIXTURE" == publisher_producer_rerun_at_acceptance && -e "$GH_FIXTURE_STATE" ]]; then
+        if [[ "$GH_FIXTURE" == source_failure_with_alternate_rerun ]]; then
+          : >"$GH_FIXTURE_STATE"
+          jq -c '.run_attempt=2 | .status="in_progress" | .conclusion=null' <<<"$source"
+        elif [[ "$GH_FIXTURE" == publisher_producer_rerun_at_acceptance && -e "$GH_FIXTURE_STATE" ]]; then
           jq -c '.run_attempt=2 | .status="in_progress" | .conclusion=null' <<<"$source"
         else
           printf '%s' "$source"
@@ -395,7 +398,13 @@ PY_RECEIPT
         printf '%s' '{"total_count":0,"workflow_runs":[]}'
         ;;
       *actions/workflows/runtime-images.yml/runs?*)
-        if [[ "$GH_FIXTURE" == publisher_replacement_handoff* ]]; then
+        if [[ "$GH_FIXTURE" == source_failure_with_alternate_rerun ]]; then
+          failed_source="$(jq -c '.id=105 | .created_at="2026-09-21T00:03:00Z" | .conclusion="failure"' <<<"$source")"
+          if [[ -e "$GH_FIXTURE_STATE" ]]; then
+            source="$(jq -c '.run_attempt=2 | .status="in_progress" | .conclusion=null' <<<"$source")"
+          fi
+          printf '[{"workflow_runs":[%s,%s]}]' "$failed_source" "$source"
+        elif [[ "$GH_FIXTURE" == publisher_replacement_handoff* ]]; then
           printf '%s\n' "$((reads + 1))" >"$GH_FIXTURE_STATE"
           if [[ "$GH_FIXTURE" == publisher_replacement_handoff_inventory_transient && "$reads" == 1 ]]; then
             echo 'gh: HTTP 503 Service Unavailable' >&2
@@ -509,6 +518,20 @@ alternate_output="$(
 )" || alternate_status=$?
 test "$alternate_status" = 1
 grep -Fq 'Another exact runtime-images producer is still active' <<<"$alternate_output"
+grep -Fq 'Timed out waiting for trusted PR image publisher' <<<"$alternate_output"
+
+# A stale success in the first list can turn into a rerun before its detail read.
+# That replacement is still active even while the newer exact producer stays red.
+alternate_rerun_status=0
+alternate_rerun_output="$(
+  GH_FIXTURE=source_failure_with_alternate_rerun GH_FIXTURE_STATE="$TEMP_DIR/source-alternate-rerun" \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" 2>&1
+)" || alternate_rerun_status=$?
+test "$alternate_rerun_status" = 1
+test -e "$TEMP_DIR/source-alternate-rerun"
+grep -Fq 'replacement is active' <<<"$alternate_rerun_output"
+grep -Fq 'Timed out waiting for runtime-images workflow' <<<"$alternate_rerun_output"
 
 for handoff_fixture in publisher_replacement_handoff publisher_replacement_handoff_unobserved \
   publisher_replacement_handoff_transient publisher_replacement_handoff_artifact_transient \

@@ -48,6 +48,7 @@ fetch_workflow_runs() {
   local payload
   local -a bound=()
   if [[ -n "$remaining_seconds" ]]; then
+    (( remaining_seconds > 0 )) || return 1
     bound=(timeout --signal=KILL "$remaining_seconds")
   fi
 
@@ -188,9 +189,11 @@ if branch_alternates and len(ranked) > limit:
 }
 
 fetch_publisher_runs() {
+  local remaining_seconds="${4:-}"
   local -a bound=()
-  if [[ -n "${4:-}" ]]; then
-    bound=(timeout --signal=KILL "$4")
+  if [[ -n "$remaining_seconds" ]]; then
+    (( remaining_seconds > 0 )) || return 1
+    bound=(timeout --signal=KILL "$remaining_seconds")
   fi
   "${bound[@]}" python3 - "${GITHUB_REPOSITORY}" "$1" "$2" "$3" <<'PY_PUBLISHERS'
 import json
@@ -990,18 +993,29 @@ while (( SECONDS < deadline )); do
   fi
 
   if [[ "${run_status}" == "completed" ]]; then
-    if [[ "$wait_mode" == "pull-request" && "$SECONDS" -lt "$deadline" ]] &&
-      active_alternates="$(read_run_state "$run_id" active-alternates <<<"$workflow_payload")" &&
-      [[ "$active_alternates" == found$'\t'* ]]; then
-      printf 'Another exact runtime-images producer is still active for %s; continuing bounded wait.\n' "$image_tag"
-      sleep "${sleep_seconds}"
-      continue
+    if [[ "$wait_mode" == "pull-request" ]] && (( SECONDS < deadline )); then
+      # A successful alternate can start a rerun during publication lookup.
+      # Only a fresh, complete inventory can justify a terminal decision.
+      if ! terminal_inventory="$(fetch_workflow_runs \
+        "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" \
+        "confirming terminal runtime-image failure" "$((deadline - SECONDS))")" ||
+        ! terminal_state="$(read_run_state <<<"$terminal_inventory")" ||
+        ! active_alternates="$(read_run_state "$run_id" active-alternates <<<"$terminal_inventory")"; then
+        sleep "${sleep_seconds}"
+        continue
+      fi
+      if [[ "$terminal_state" != "$run_state" || "$active_alternates" == found$'\t'* ]]; then
+        printf 'Exact runtime-images producer ordering changed or a replacement is active for %s; continuing bounded wait.\n' "$image_tag"
+        sleep "${sleep_seconds}"
+        continue
+      fi
     fi
     if (( alternate_status == 2 )); then
       printf 'Waiting for publication of an exact replacement producer for %s.\n' "$image_tag"
       sleep "${sleep_seconds}"
       continue
     fi
+    (( SECONDS < deadline )) || break
     printf 'Matching runtime-images workflow %s completed with %s for %s.\n' \
       "${run_id}" "${run_conclusion}" "${image_tag}" >&2
     if [[ -n "${run_url}" ]]; then

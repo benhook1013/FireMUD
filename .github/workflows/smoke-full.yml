@@ -80,6 +80,22 @@ jobs:
         with:
           requirements: smoke
 
+      - name: Checkout trusted smoke override source
+        if: ${{ inputs.runtime_digests != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .trusted-runtime-workflow
+          persist-credentials: false
+
+      - name: Install the trusted digest-aware smoke override
+        if: ${{ inputs.runtime_digests != '' }}
+        run: |
+          set -euo pipefail
+          test "$(git -C .trusted-runtime-workflow rev-parse HEAD)" = "$GITHUB_WORKFLOW_SHA"
+          install -T .trusted-runtime-workflow/docker/docker-compose.smoke-images.override.yml \
+            docker/docker-compose.smoke-images.override.yml
+
       - name: Validate exact runtime image digests
         if: ${{ inputs.runtime_digests != '' }}
         env:

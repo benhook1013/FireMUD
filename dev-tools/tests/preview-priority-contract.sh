@@ -274,6 +274,7 @@ if [[ "$1" == get && "$2" == namespace && "$3" == pr-901 &&
       proof_complete=true
     elif [[ "$count" -gt 2 ]]; then
       proof_complete=false
+      snapshot_resource_version=rv-proof-removed
     fi
     printf 'proof snapshot %s: %s\n' "$count" "$proof_complete" >> "$FAKE_NAMESPACE_SNAPSHOT_LOG"
   fi
@@ -412,9 +413,13 @@ if [[ "$1" == delete && "$2" == --raw && "$4" == -f && "$5" == - ]]; then
     exit 1
   fi
   delete_resource_version="$(jq -r '.preconditions.resourceVersion // ""' <<<"$delete_options")"
-  if [[ -n "${FAKE_RUNTIME_DELETE_CURRENT_VERSION:-}" && -n "$delete_resource_version" &&
-    "$delete_resource_version" != "$FAKE_RUNTIME_DELETE_CURRENT_VERSION" ]]; then
-    exit 1
+  if [[ "${3##*/}" == pr-* ]]; then
+    snapshot_delete_version="${FAKE_RUNTIME_NAMESPACE_RESOURCE_VERSION-rv-initial}"
+    if [[ "${3##*/}" == pr-901 ]]; then snapshot_delete_version=rv-901; fi
+    expected_delete_version="${FAKE_RUNTIME_DELETE_CURRENT_VERSION:-$snapshot_delete_version}"
+    if [[ -z "$delete_resource_version" || "$delete_resource_version" != "$expected_delete_version" ]]; then
+      exit 1
+    fi
   fi
   exit 0
 fi
@@ -646,6 +651,31 @@ if [[ "$1" == run && "$2" == download && "${FAKE_RETRY_RENDER_RECEIPT:-unavailab
   exit 0
 fi
 if [[ "$1" == api && "$resource" == 'repos/example/FireMUD/actions/workflows/357129350/runs' ]]; then
+  if [[ -v FAKE_RETRY_CONSUMER_AT_CAP && "$*" == *"status=completed -f branch=develop"* ]]; then
+    exact_consumer="$FAKE_RETRY_CONSUMER_AT_CAP"
+    if [[ "$*" == *"created=>="* ]]; then
+      printf '%s\n' '[{"total_count":1000,"workflow_runs":[]}]'
+      exit 0
+    fi
+    [[ "$*" =~ created=([^[:space:]]+)\.\.([^[:space:]]+) ]]
+    lower="${BASH_REMATCH[1]}"
+    upper="${BASH_REMATCH[2]}"
+    runs="$(jq -c --arg lower "$lower" --arg upper "$upper" '
+      . as $exact | [$exact, (range(10000;10999) | . as $id | $exact + {
+        id:$id,display_title:"Unrelated trusted consumer",created_at:"2026-01-01T00:00:00Z"
+      })]
+      | map(select(.created_at >= $lower and .created_at <= $upper))
+    ' <<<"$exact_consumer")"
+    if [[ "$*" == *per_page=1 ]]; then
+      jq -c '{total_count:length,workflow_runs:.[0:1]}' <<<"$runs"
+    else
+      jq -c '. as $runs | length as $count | [
+        range(0; $count; 100) as $start
+        | {total_count:$count,workflow_runs:$runs[$start:($start+100)]}
+      ]' <<<"$runs"
+    fi
+    exit 0
+  fi
   if [[ -v FAKE_RETRY_TERMINAL_CONSUMER ]]; then
     [[ "$*" == *"--method GET --paginate --slurp"* &&
        "$*" == *"event=workflow_run -f status=completed -f branch=develop -f created=>="* ]]
@@ -1510,7 +1540,10 @@ run_proof_retry_contract() (
   grep -Fqx 'proof snapshot 3: false' "$FAKE_NAMESPACE_SNAPSHOT_LOG"
   grep -Fq 'Refreshed Namespace resource-version fence' "$case_output"
   test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
-  jq -e '.data["pr-901"] | fromjson | .phase == "SEND_STARTED"' "$FAKE_RETRY_HOLDER" >/dev/null
+  jq -se 'length == 2
+    and (.[0][2].value | fromjson | .phase == "RESERVED" and .namespaceResourceVersion == "rv-proof-removed")
+    and (.[1][2].value | fromjson | .phase == "SEND_STARTED" and .namespaceResourceVersion == "rv-proof-removed")
+  ' "$FAKE_RETRY_PATCH_LOG" >/dev/null
 
   reset_case
   seed_reserved_holder_with_old_namespace_version
@@ -1765,7 +1798,7 @@ run_proof_retry_contract() (
   source_inventory="$(jq -c '.workflow_runs[0].created_at = .workflow_runs[0].updated_at' <<<"$source_inventory")"
   consumer="$(jq -c --arg title "$retry_title source-run-5255-attempt-1" '
     . + {id:5256,event:"workflow_run",workflow_id:357129350,path:".github/workflows/hosted-identity-request.yml",
-         name:"Trusted Hosted Identity Request",display_title:$title}
+         name:"Trusted Hosted Identity Request",display_title:$title,created_at:.updated_at}
   ' <<<"$source_latest")"
   consumer_jobs="$(jq -cn --arg head "$base" \
     --arg tuple "Trusted preview deploy tuple pr-901 base-${base} head-${head} merge-${merge}" '
@@ -1798,14 +1831,30 @@ run_proof_retry_contract() (
     fi
   done
 
+  # A complete split inventory can identify one exact consumer even when
+  # unrelated runs bring the unpartitioned creation window to GitHub's cap.
+  reset_case
+  seed_staged_holder
+  FAKE_PR_901_PROOF_COMPLETE=true FAKE_PREVIEW_DISPATCH_JOBS_JSON="$rendered_jobs" \
+    FAKE_PREVIEW_DISPATCH_LATEST_JSON="$source_latest" \
+    FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$(jq -c '.workflow_runs[0].created_at = "2026-01-01T00:00:00Z"' <<<"$source_inventory")" \
+    FAKE_TRUSTED_CONSUMER_LATEST_JSON="$consumer" FAKE_TRUSTED_CONSUMER_JOBS_JSON="$consumer_jobs" \
+    FAKE_RETRY_CONSUMER_AT_CAP="$consumer" FAKE_RETRY_RENDER_RECEIPT="$receipt" \
+    fixture_reconcile >"$case_output" 2>&1
+  test ! -e "$FAKE_DISPATCH_LOG"
+  jq -se --arg nonce "$old_nonce" 'length == 1 and
+    (.[0][2].value | fromjson | .count == 2 and .nonce == $nonce and (has("phase") | not))' \
+    "$FAKE_RETRY_PATCH_LOG" >/dev/null
+
   local rejection_case rejected_consumer_jobs
-  for rejection_case in stale-head wrong-nonce wrong-attempt skipped missing conflicting; do
+  for rejection_case in stale-head stale-comparison wrong-nonce wrong-attempt skipped missing conflicting; do
     reset_case
     seed_staged_holder
     rejected_consumer_jobs="$(jq -c --arg nonce "$old_nonce" --arg failure "$rejection_case" '
       {name:("Trusted preview retry rejected stale-head nonce-" + $nonce),
        status:"completed",conclusion:"success"} as $step
-      | if $failure == "conflicting" then .jobs[0].steps += [$step]
+      | if $failure == "stale-comparison" then .jobs[0].steps = [$step | .name |= sub("stale-head"; "stale-comparison")]
+        elif $failure == "conflicting" then .jobs[0].steps += [$step]
         elif $failure == "missing" then .jobs[0].steps = []
         elif $failure == "wrong-nonce" then .jobs[0].steps = [$step | .name += "-other"]
         elif $failure == "wrong-attempt" then .jobs[0].steps = [$step] | .jobs[0].run_attempt += 1
@@ -1818,7 +1867,7 @@ run_proof_retry_contract() (
       FAKE_RETRY_TERMINAL_CONSUMER="$(jq -c '[{total_count:1,workflow_runs:[.]}]' <<<"$consumer")" \
       FAKE_RETRY_RENDER_RECEIPT="$receipt" fixture_reconcile >"$case_output" 2>&1
     assert_retry_count 2
-    if [[ "$rejection_case" == stale-head ]]; then
+    if [[ "$rejection_case" == stale-head || "$rejection_case" == stale-comparison ]]; then
       jq -se --arg nonce "$old_nonce" 'length == 1 and
         (.[0][2].value | fromjson | .count == 2 and .nonce == $nonce and (has("phase") | not))' \
         "$FAKE_RETRY_PATCH_LOG" >/dev/null

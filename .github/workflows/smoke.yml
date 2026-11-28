@@ -628,7 +628,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "ccb8ba1300f052681c556b2834ea9b1eb0acae3091feb08a9160b798e3b7054e";
+            const canonicalRuntimeWorkflowSha256 = "90b3c3f064d7e2f6700dda14030765fb5b87dad4013fb5d1fdb5ecbcde2b958e";
             // The previous archive format does not change this definition's independently valid smoke proof.
             const canonicalMergeOnlyArtifactRuntimeWorkflowSha256 = "004af984d2aa7ab023758cbc38c6c20f92976b8f07040c9a4965bda6616d5dd5";
             const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -643,7 +643,7 @@ jobs:
             const canonicalLegacyRuntimeWorkflowSha256 = "db0acb4e51630b729eb92362ea3e748f3f96b06d8ef5ca466a718ded67725804";
             // Include held-admission proof, authenticated cleanup, and their executed inputs.
             const canonicalPlayClassifierSha256 = {
-              "dev-tools/verify-smoke-images.sh": "559e0713cc86ab533cc23214e56ece2e7cf4e069d1bb7541a1e09bff36ad4c67",
+              "dev-tools/verify-smoke-images.sh": "f245dae9a632c2a331bee84b581fc45476c508df2a564af9679cd2c4a1a96a75",
               "dev-tools/smoke/smoke_common.py": "a1e36948b500ac796295560cb8c22321ebe47eab78be9e1f4d58837053547534",
               "services/game-session-service/websocket-login-look-smoke.sh": "0a6fbc66f7bf16aaf065bf1228d5190be340ce25543112e39482b9325ad9a90b",
               "dev-tools/smoke/demo-smoke-defaults.sh": "8c9aae1abf005b47af3f313e0d635a666c74776733bcf5278a2e11ac9c8a18fb",
@@ -654,7 +654,7 @@ jobs:
               ".env.sample": "d19cecadde844c77b8e1d366b5a2ff8fae1a5c181fad450f3fc1c407be70752d",
               "docker/docker-compose.yml": "5a59a4d3baa8b61b7b1ab2c982a482cd648a9d044be2562205c80cb05efe8b00",
               "docker/docker-compose.override.yml": "acae1e8d947a5cab071a581873d2cc721f907a8d506bf59e875c5b069c38b126",
-              "docker/docker-compose.smoke-images.override.yml": "7717be8b49a1dc548a47fba852c181feeb4dbe9a21fc201a7f8e74b992801fd6",
+              "docker/docker-compose.smoke-images.override.yml": "5a2416129d90d3fc4baa1932af983e37d2296d1dbecfb58340d0cf42227f6f7f",
               "docker/docker-compose.pr-local-minio.override.yml": "d975ce211afcb73079a21c70fda358e3a8f3366b83fe0302907c9d7149ce965e",
               "docker/docker-compose.grpc-mtls.override.yml": "dcee047f1492392035d57153ba8dfd6d38de33ca932d327f377440d5813577f0"
             };
@@ -675,6 +675,8 @@ jobs:
               "Build Runtime Images ($" + "{{ matrix.service }})",
               "Build Trusted Hosted Identity Controller",
               "Publish Trusted Hosted Identity Controller",
+              "Pin Runtime Digest Set for Smoke",
+              "Select Existing Complete Runtime Digest Set",
               "Promote Smoke-Tested Runtime Images",
             ]);
 
@@ -1466,7 +1468,9 @@ jobs:
                     throw error;
                   }
                   try {
-                    if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) return;
+                    if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {
+                      return;
+                    }
                   } catch (error) {
                     if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary) && await retryExactSelection(
                       `Runtime alternative ${matching.id} PR identity is temporarily unavailable; retry exact primary selection.`
@@ -1781,6 +1785,30 @@ jobs:
                     if (await retryExactSelection(
                       "Native cancellation changed before accepting replacement proof; retry exact selection.",
                       { requirePendingPrimary: false }
+                    )) continue smokeGatePolling;
+                    break smokeGatePolling;
+                  }
+                }
+                if (selection.pendingPrimary?.event === "pull_request" && !selection.pendingRefresh &&
+                    matching.event === "repository_dispatch") {
+                  // The selected refresh may have been the newest visible one
+                  // when checked. A later refresh can fail during proof reads.
+                  let freshRefresh;
+                  try {
+                    freshRefresh = await findMatchingRuntimeImagesRun(
+                      "repository_dispatch", expectedDisplayTitle, currentIdentity,
+                      { allowCompletedFallback: false, fallbackFence: matching }
+                    );
+                  } catch (error) {
+                    if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary) && await retryExactSelection(
+                      "Trusted refresh ordering is unavailable before fallback proof; retry exact selection."
+                    )) continue smokeGatePolling;
+                    throw error;
+                  }
+                  if (freshRefresh?.id !== matching.id || freshRefresh.run_attempt !== matching.run_attempt ||
+                      freshRefresh.status !== "completed" || freshRefresh.conclusion !== "success") {
+                    if (await retryExactSelection(
+                      "Trusted refresh ordering changed before fallback proof; retry exact selection."
                     )) continue smokeGatePolling;
                     break smokeGatePolling;
                   }

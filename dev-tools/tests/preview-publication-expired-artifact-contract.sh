@@ -46,4 +46,6 @@ read_exact_run_artifact 30 "$run" "$name" true |
   jq -e '. == {id:null,digest:null}' >/dev/null
 
 artifact_state=unreadable
-if read_exact_run_artifact 30 "$run" "$name" true; then exit 1; fi
+unreadable_status=0
+read_exact_run_artifact 30 "$run" "$name" true || unreadable_status=$?
+test "$unreadable_status" -eq 2

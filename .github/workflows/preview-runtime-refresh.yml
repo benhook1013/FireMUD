@@ -185,12 +185,11 @@ jobs:
                   }
                 }
                 if (merge) {
-                  if (merge.sha !== pull.merge_commit_sha || merge.parents?.length !== 2 ||
-                      merge.parents[1]?.sha !== pull.head.sha) {
-                    core.info('Current merge does not prove the source head; no dispatch.');
+                  if (merge.sha !== pull.merge_commit_sha || !Array.isArray(merge.parents) || merge.parents.length !== 2) {
+                    core.info('Current merge metadata is malformed; no dispatch.');
                     return;
                   }
-                  if (merge.parents[0]?.sha === base.object.sha) {
+                  if (merge.parents[0]?.sha === base.object.sha && merge.parents[1]?.sha === pull.head.sha) {
                     current = {pr: pull, base, merge};
                     break;
                   }

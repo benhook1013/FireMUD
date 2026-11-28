@@ -782,27 +782,11 @@ settle_terminal_preview_retry() {
     fi
     rm -rf -- "$receipt_dir"
     consumer_title="${title} source-run-${run_id}-attempt-${attempt}"
-    if ! consumer_inventory="$(timeout 30s gh api --method GET --paginate --slurp \
-      "repos/${GITHUB_REPOSITORY}/actions/workflows/${consumer_workflow_id}/runs" \
-      -f event=workflow_run -f status=completed -f "branch=${DEFAULT_BRANCH}" -f "created=>=${source_created}" -f per_page=100)" ||
-      ! jq -e --argjson workflow_id "$consumer_workflow_id" '. as $pages
-        | [$pages[].workflow_runs[]] as $runs
-        | ($pages | type == "array" and length > 0)
-          and ($pages | all(.[]; type == "object"
-            and (.total_count | type == "number" and . >= 0 and . < 1000 and . == floor)
-            and (.workflow_runs | type == "array" and length <= 100)))
-          and ($pages | all(.total_count == $pages[0].total_count))
-          and ($pages[0].total_count == ($runs | length))
-          and all($runs[]; type == "object" and (.id | type == "number" and . > 0 and . == floor)
-            and (.run_attempt | type == "number" and . > 0 and . == floor)
-            and .workflow_id == $workflow_id and .event == "workflow_run" and .status == "completed"
-            and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
-            and (.display_title | type == "string") and (.head_branch | type == "string")
-            and (.path | type == "string") and (.repository.full_name | type == "string")
-            and (.head_repository.full_name | type == "string"))' <<<"$consumer_inventory" >/dev/null ||
+    if ! consumer_inventory="$(completed_preview_inventory workflow_run "branch=${DEFAULT_BRANCH}" \
+      "$consumer_workflow_id" "$source_created")" ||
       ! consumer_matches="$(jq -ce --arg title "$consumer_title" --arg repo "$GITHUB_REPOSITORY" --arg branch "$DEFAULT_BRANCH" \
-        --argjson workflow_id "$consumer_workflow_id" '
-          [.[].workflow_runs[] | select(.workflow_id == $workflow_id and .event == "workflow_run"
+        --argjson workflow_id "$consumer_workflow_id" --arg earliest "$source_created" '
+          [.workflow_runs[] | select(.workflow_id == $workflow_id and .event == "workflow_run"
             and .status == "completed" and .display_title == $title
             and .repository.full_name == $repo and .head_repository.full_name == $repo
             and .head_branch == $branch
@@ -810,6 +794,8 @@ settle_terminal_preview_retry() {
               ".github/workflows/hosted-identity-request.yml@" + $branch,
               ".github/workflows/hosted-identity-request.yml@refs/heads/" + $branch)))]
           | select(length == 1) | .[0]
+          | select(.created_at | type == "string" and
+              test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") and . >= $earliest)
         ' <<<"$consumer_inventory")"; then
       echo "No unique exact terminal trusted consumer is available for preview receiver ${run_id}/${attempt}; reservation stays charged." >&2
       return 1
@@ -877,8 +863,8 @@ settle_aligned_preview_retry() {
 }
 
 parse_completed_preview_pages() {
-  local event="$1"
-  jq -ce --argjson workflow_id "$preview_workflow_id" --arg event "$event" '
+  local event="$1" workflow_id="$2"
+  jq -ce --argjson workflow_id "$workflow_id" --arg event "$event" '
     select(type == "array" and length > 0 and length <= 10)
     | .[0].total_count as $count
     | select(($count | type) == "number" and $count >= 0 and $count < 1000
@@ -903,15 +889,17 @@ parse_completed_preview_pages() {
 }
 
 completed_preview_inventory() {
-  local event="$1" filter="$2" pages count
-  local workflow_runs_path="repos/${GITHUB_REPOSITORY}/actions/workflows/${preview_workflow_id}/runs"
+  local event="$1" filter="$2" workflow_id="${3:-$preview_workflow_id}" earliest="${4:-}" pages count
+  local workflow_runs_path="repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_id}/runs"
   local deadline=$((SECONDS + 30))
   local -a filters=(-f "event=${event}" -f status=completed -f "$filter")
+  local -a initial_range=()
+  if [[ -n "$earliest" ]]; then initial_range=(-f "created=>=${earliest}"); fi
   pages="$(timeout 30s gh api --method GET --paginate --slurp \
-    "$workflow_runs_path" "${filters[@]}" -f per_page=100)" || return 1
+    "$workflow_runs_path" "${filters[@]}" "${initial_range[@]}" -f per_page=100)" || return 1
   count="$(jq -er '.[0].total_count | select(type == "number" and . >= 0 and . <= 2147483647 and . == floor)' <<<"$pages")" || return 1
   if (( count < 1000 )); then
-    parse_completed_preview_pages "$event" <<<"$pages"
+    parse_completed_preview_pages "$event" "$workflow_id" <<<"$pages"
     return
   fi
 
@@ -919,8 +907,13 @@ completed_preview_inventory() {
   # history into disjoint ranges rather than equating creation with completion:
   # a run created long ago may have started a new attempt recently.
   local range first last midpoint created after before remaining page
-  local scanned=0 initial_count="$count"
-  local -a ranges=("0:$(date -u +%s)") inventories=()
+  local scanned=0 initial_count="$count" range_start=0 range_end
+  if [[ -n "$earliest" ]]; then
+    range_start="$(date -u -d "$earliest" +%s)" || return 1
+  fi
+  range_end="$(date -u +%s)" || return 1
+  (( range_start <= range_end )) || return 1
+  local -a ranges=("$range_start:$range_end") inventories=()
   while (("${#ranges[@]}")); do
     (( ++scanned <= 64 )) || return 1
     range="${ranges[-1]}"
@@ -948,7 +941,7 @@ completed_preview_inventory() {
       pages="$(timeout "${remaining}s" gh api --method GET --paginate --slurp \
         "$workflow_runs_path" "${filters[@]}" -f "$created" -f per_page=100)" || return 1
     fi
-    page="$(parse_completed_preview_pages "$event" <<<"$pages")" || return 1
+    page="$(parse_completed_preview_pages "$event" "$workflow_id" <<<"$pages")" || return 1
     # If the provider ignores the bounds or rows moved between reads, a
     # potentially incomplete inventory must never become authorization.
     jq -e --arg first "$after" --arg last "$before" --argjson count "$count" '
@@ -1204,8 +1197,9 @@ trusted_consumer_has_tuple() {
     | if ($rejected | length) == 0 and ($deploy | length) == 1
          and ($deploy[0] | .name == $tuple and successful) then "validated-deploy"
       elif $nonce != "" and ($rejected | length) == 1 and (any($deploy[]; successful) | not)
-         and $rejected[0].name == ("Trusted preview retry rejected stale-head nonce-" + $nonce)
-      then "stale-head"
+         and ($rejected[0].name | IN("Trusted preview retry rejected stale-head nonce-" + $nonce,
+           "Trusted preview retry rejected stale-comparison nonce-" + $nonce))
+      then "rejected-retry"
       else empty end
   ' <<<"$jobs")" || return 1
   [[ -n "$expected_title" ]] || return 0
@@ -1215,10 +1209,10 @@ trusted_consumer_has_tuple() {
     .id == $id and .run_attempt == $attempt and .head_sha == $head
     and (.status | IN("requested", "queued", "in_progress", "waiting", "pending", "completed"))
     and ($title == "" or .display_title == $title)
-    and ($evidence != "stale-head" or (.status == "completed" and .conclusion == "success"))
+    and ($evidence != "rejected-retry" or (.status == "completed" and .conclusion == "success"))
   ' <<<"$current" >/dev/null || return 2
   # A caller with a verified source receipt can use this terminal rejection for settlement.
-  if [[ "$evidence" == stale-head ]]; then return 4; fi
+  if [[ "$evidence" == rejected-retry ]]; then return 4; fi
   status="$(jq -r '.status' <<<"$current")"
   if [[ "$status" == completed ]]; then return 3; fi
   return 0
