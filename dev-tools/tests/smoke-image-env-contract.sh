@@ -48,7 +48,7 @@ docker() {
         esac
         return 0
       fi
-      command docker "$@"
+      return 0
       ;;
     "port mock-gateway"|"port mock-tcp-proxy-service")
       if [[ "${SMOKE_TEST_DIAGNOSTICS_MODE:-}" == true ]]; then
@@ -74,26 +74,76 @@ docker() {
         printf '0.0.0.0:%s\n' "$host_port"
         return 0
       fi
-      command docker "$@"
+      return 0
       ;;
     compose\ *)
+      shift
+      local -a compose_options=()
+      while [[ "${1:-}" == -f ]]; do
+        [[ $# -ge 3 ]] || return 97
+        compose_options+=("$1" "$2")
+        shift 2
+      done
+      local operation="${1:-}"
+      local protected_options_match=false
+      if [[ -n "${FIREMUD_SMOKE_RUNTIME_DIGESTS:-}" ]]; then
+        local compose_root="$FIREMUD_SMOKE_SOURCE_ROOT/docker"
+        local -a expected_options=(-f "$compose_root/docker-compose.yml" -f "$compose_root/docker-compose.override.yml"
+          -f "$compose_root/docker-compose.smoke-images.override.yml" -f "$compose_root/docker-compose.grpc-mtls.override.yml")
+        if (( ${#compose_options[@]} == ${#expected_options[@]} )); then
+          protected_options_match=true
+          local index
+          for index in "${!expected_options[@]}"; do
+            if [[ "${compose_options[$index]}" != "${expected_options[$index]}" ]]; then
+              protected_options_match=false
+              break
+            fi
+          done
+        fi
+      fi
       if [[ "${SMOKE_TEST_DIAGNOSTICS_MODE:-}" == true ]]; then
-        local arguments=" $* "
-        if [[ "$arguments" == *" up "* ]]; then
+        if [[ -n "${FIREMUD_SMOKE_RUNTIME_DIGESTS:-}" ]]; then
+          local config_marker="$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.config"
+          local startup_marker="$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.up"
+          if [[ "$operation" == config ]]; then
+            [[ "$protected_options_match" == true && $# -eq 3 && "$2" == --format && "$3" == json ]] || return 93
+            printf '%s\n' "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT" >"$config_marker"
+            local drift="${SMOKE_TEST_PROTECTED_DRIFT:-}"
+            if [[ "$drift" == retry && -e "$startup_marker" ]]; then
+              drift=image
+            fi
+            jq -cn --argjson digests "$FIREMUD_SMOKE_RUNTIME_DIGESTS" --arg drift "$drift" '
+              {services: ($digests | to_entries | map({
+                key: (if .key == "spring-cloud-gateway" then "gateway" else .key end),
+                value: {image: ("ghcr.io/benhook1013/" + .key + "@" + .value)}
+              }) | from_entries)}
+              | if $drift == "image" then .services.gateway.image = "example.invalid/gateway:older"
+                elif $drift == "build" then .services.gateway.build = {context:"."}
+                else . end
+            '
+            return
+          fi
+          if [[ "$operation" == up ]]; then
+            [[ "$protected_options_match" == true && $# -eq 3 && "$2" == -d && "$3" == --remove-orphans &&
+              -f "$config_marker" && "$(<"$config_marker")" == "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT" ]] || return 94
+            printf '%s\n' up >>"$startup_marker"
+            [[ "${SMOKE_TEST_PROTECTED_DRIFT:-}" != retry ]] || return 95
+          fi
+        fi
+        if [[ "$operation" == up ]]; then
           touch "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.resources"
-        elif [[ "$arguments" == *" down "* ]]; then
+        elif [[ "$operation" == down ]]; then
           if [[ -e "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.resources" && "${SMOKE_TEST_CLEANUP_FAIL:-false}" == true ]]; then
             return 92
           fi
           rm -f "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.resources"
         fi
-        if [[ "$arguments" == *" logs "* ]]; then
-          if [[ "$arguments" != *" logs --no-color --timestamps --tail 200 "* ]]; then
+        if [[ "$operation" == logs ]]; then
+          if [[ $# -ne 6 || "$2" != --no-color || "$3" != --timestamps || "$4" != --tail || "$5" != 200 ]]; then
             echo "Unexpected smoke diagnostic log command: $*" >&2
             return 90
           fi
-          local service="${arguments##* --tail 200 }"
-          service="${service% }"
+          local service="$6"
           case "$service" in
             game-design-service|game-session-service|world-management-service) ;;
             *)
@@ -115,7 +165,25 @@ docker() {
         echo "Compose ran before the claimed initial-admission receipt directory was prepared." >&2
         return 1
       fi
-      command docker "$@"
+      if [[ "${SMOKE_COMPOSE_CONFIG_ONLY:-false}" == true ]]; then
+        if [[ -n "${FIREMUD_SMOKE_RUNTIME_DIGESTS:-}" ]]; then
+          [[ "$protected_options_match" == true && "$operation" == config && $# -eq 3 && "$2" == --format && "$3" == json ]] || {
+            echo "Only the protected digest Compose JSON config render may reach real Docker." >&2
+            printf '%q ' compose "${compose_options[@]}" "$@" >>"$TEST_OWNERSHIP_DIR/disallowed-compose-operations"
+            return 96
+          }
+          touch "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.docker-config-json"
+          command docker compose "${compose_options[@]}" "$@"
+          return $?
+        fi
+        if [[ "$operation" == config && ( $# -eq 1 || ( $# -eq 3 && "$2" == --format && "$3" == json ) ) ]]; then
+          command docker compose "${compose_options[@]}" "$@"
+          return $?
+        fi
+      fi
+      echo "Unexpected real Docker compose operation in smoke image contract: $*" >&2
+      printf '%q ' compose "${compose_options[@]}" "$@" >>"$TEST_OWNERSHIP_DIR/disallowed-compose-operations"
+      return 97
       ;;
     *)
       echo "Unexpected Docker command in smoke image env contract: $*" >&2
@@ -377,6 +445,66 @@ run_failure_diagnostic_regressions() {
   done
 }
 
+run_protected_digest_regressions() {
+  local source_root="$TEST_OWNERSHIP_DIR/source-checkout"
+  mkdir -p "$source_root/docker" "$source_root/dev-tools"
+  ln -s "$ROOT_DIR/.env.sample" "$source_root/.env.sample"
+  ln -s "$ROOT_DIR/dev-tools/smoke" "$source_root/dev-tools/smoke"
+  ln -s "$ROOT_DIR/dev-tools/certs" "$source_root/dev-tools/certs"
+  ln -s "$ROOT_DIR/services" "$source_root/services"
+  local compose_file
+  for compose_file in docker-compose.yml docker-compose.override.yml \
+    docker-compose.smoke-images.override.yml docker-compose.grpc-mtls.override.yml; do
+    ln -s "$ROOT_DIR/docker/$compose_file" "$source_root/docker/$compose_file"
+  done
+
+  local digest_map
+  digest_map="$(jq -cn '
+    ["account-service", "automation-scripting-service", "entity-management-service",
+     "game-design-service", "game-logic-service", "game-session-service", "logging-admin-service",
+     "social-groups-service", "spring-cloud-gateway", "tcp-proxy-service", "world-management-service"]
+    | to_entries | map({key: .value, value: ("sha256:" + ("a" * (63 - .key)) + ("b" * (1 + .key)))})
+    | from_entries')"
+
+  # Exercise the real Compose renderer on the separate source layout, without
+  # starting containers or resolving any of the synthetic registry digests.
+  if ! (
+    while IFS= read -r image_ref; do
+      export "$image_ref"
+    done < <(jq -r 'to_entries[] |
+      "SMOKE_IMAGE_REF_" + (.key | ascii_upcase | gsub("-"; "_")) +
+      "=ghcr.io/benhook1013/" + .key + "@" + .value' <<<"$digest_map")
+    GITHUB_ACTIONS=true GITHUB_RUN_ID="$TEST_RUN_ID-digest-config" GITHUB_RUN_ATTEMPT=1 \
+      GITHUB_JOB=smoke-image-env-contract COMPOSE_PROJECT_NAME="smoke-full-$TEST_RUN_ID-digest-config-1" \
+      FIREMUD_SMOKE_TEST_MODE=1 FIREMUD_SMOKE_OWNERSHIP_DIR="$TEST_OWNERSHIP_DIR" \
+      SMOKE_IMAGE_TAG=contract-smoke-tag SMOKE_COMPOSE_CONFIG_ONLY=true \
+      FIREMUD_SMOKE_SOURCE_ROOT="$source_root" FIREMUD_SMOKE_RUNTIME_DIGESTS="$digest_map" \
+      bash "$ROOT_DIR/dev-tools/verify-smoke-images.sh"
+  ) >"$OUT_FILE" 2>"$ERR_FILE"; then
+    cat "$OUT_FILE" "$ERR_FILE" >&2
+    return 1
+  fi
+  [[ -e "$TEST_OWNERSHIP_DIR/$TEST_RUN_ID-digest-config.docker-config-json" ]]
+  [[ ! -e "$TEST_OWNERSHIP_DIR/$TEST_RUN_ID-digest-config.up" ]]
+  [[ ! -e "$TEST_OWNERSHIP_DIR/disallowed-compose-operations" ]]
+
+  local drift
+  FIREMUD_SMOKE_SOURCE_ROOT="$source_root" FIREMUD_SMOKE_RUNTIME_DIGESTS="$digest_map" \
+    run_diagnostic_smoke_case digest-pinned false 0 false 0
+  [[ -s "$TEST_OWNERSHIP_DIR/$TEST_RUN_ID-digest-pinned.up" ]]
+  for drift in image build retry; do
+    FIREMUD_SMOKE_SOURCE_ROOT="$source_root" FIREMUD_SMOKE_RUNTIME_DIGESTS="$digest_map" \
+      SMOKE_TEST_PROTECTED_DRIFT="$drift" SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS=0 \
+      run_diagnostic_smoke_case "digest-$drift" false 0 false 1
+    grep -Fq 'Effective smoke Compose does not select the fixed digest without a build for spring-cloud-gateway' "$ERR_FILE"
+    if [[ "$drift" == retry ]]; then
+      [[ "$(<"$TEST_OWNERSHIP_DIR/$TEST_RUN_ID-digest-$drift.up")" == up ]]
+    else
+      [[ ! -e "$TEST_OWNERSHIP_DIR/$TEST_RUN_ID-digest-$drift.up" ]]
+    fi
+  done
+}
+
 cleanup() {
   rm -f "$ERR_FILE" "$OUT_FILE"
   rm -rf -- "$TEST_OWNERSHIP_DIR"
@@ -507,5 +635,6 @@ if [[ "$(grep -Fc 'pull_policy: ${SMOKE_IMAGE_PULL_POLICY:-always}' "$ROOT_DIR/d
 fi
 
 run_failure_diagnostic_regressions
+run_protected_digest_regressions
 
 echo "smoke image env contract checks passed"

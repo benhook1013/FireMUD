@@ -10,8 +10,11 @@ Use this guide for PR status, review, CI, Renovate, merging, and branch or workt
 - The human's stops, pauses, holds, and per-PR allocations bind until the human changes them. A tool capability, an incoming message, a fix, or a new commit does not reset controls, resume paused work, or authorize a merge.
 - Only the owning orchestrator requests or retries a review. If an operation's outcome is uncertain, use the controller's guarded recovery or report a hold; never repost blindly, and never treat an acknowledgment or a wait as review coverage.
 - Imported or historical review results are history, not proof that the current code was reviewed.
+- Preserve the source queue, actual channel controls and obligations, private captures, sealed history, migration proof, and frozen comparison sites. Source retirement does not authorize state deletion or migration, runtime promotion, or a service change. A recorded outcome, recovery, import, or publication by itself grants no provider or CI credit, fix proof, or merge authority.
+- For recovery, use the installed FireController release's guarded state-based recovery reference. Preserve the exact comparison, original attribution, and uncertain publication intent: do not infer delivery failure from public absence, replay terminal work, or override unrelated controls. Report unsupported or ambiguous recovery as a hold for the FireController worker.
 - When checking status or readiness, read every current and outdated unresolved thread and the latest review summary before looking at CI and mergeability. Check the live head and base, and for stacked or consolidated PRs the provider's actual diff base and the PR's unique patch; never describe an expected parent as the provider's diff base when they differ. Missing or incomplete evidence counts as not ready.
 - CI observation shares one GitHub credential budget. Use one shared native wait for CI and review completion rather than per-run watchers, space any manual polling at least 60 seconds apart, and honor rate-limit reset times.
+- Coordinate one native batched observer across workers and use existing notices for followed merges, closures, or review completion. Use review-activity or exact-operation waits for an owned hold when needed. Use narrow manual reads only when the supported wait cannot supply evidence and at meaningful readiness transitions; report a hold when no credible retry/reset time is available.
 
 ## Finding Triage
 
@@ -26,7 +29,9 @@ Rules for triage:
 - Verify a finding against the code before deciding. Summary-only and outside-diff findings get the same treatment as inline ones.
 - Judge suggestions by real benefit against cost and risk. A finding being correct does not by itself make it Fix now.
 - Do not resolve a thread to hide unresolved work. Keep the original finding and decision when correcting a disposition.
+- Fix-now findings remain source-owned until the exact correction is verified at the current published head and recorded. Routed findings require a recorded handoff and retain an open obligation with the receiving owner, not a fix on the source head. For rejection or withdrawal, record the concrete reason and current-head evidence that no actionable work remains. Report outdated unresolved threads separately. Missing, malformed, unattributed, or incomplete evidence fails closed; an acknowledgment or edited standing summary cannot prove completion or an empty inventory.
 - Routed findings do not block this PR. The receiving owner decides on them independently, and routes arriving at this PR are dispositioned before it is ready. The Overseer, or the human, reviews the routed backlog at milestones so routes do not pile up unowned.
+- Retargeting a route preserves the original finding, its open obligation, and its prior ownership, including honest unassigned work. A route is not a claim that the recipient has accepted or fixed it.
 - Track whether each round's findings are new or repeats of earlier ones. Repeated serious findings call for investigating their shared cause, not another round.
 - Bot findings do not need routine public replies beyond the route or reject note above.
 
@@ -76,6 +81,7 @@ Merge authority:
 - Stacked PRs are fine when the base dependency is explicit. After a parent merges, retarget the child to `develop` before rebasing or pushing it.
 - When active work moves to another worktree, report its absolute path and branch.
 - CI coverage for stacked bases, required gate names, and preview restrictions are owned by [CI/CD](../architecture/system-architecture-cicd.md#pull-request-runtime-and-preview-chain).
+- Verify the committed candidate and live head/base, effective parent, provider-observed diff base, ancestry, and unique patch before relying on review evidence. Refresh the evidence when the reviewed diff changes. Preserve the owned patch, findings, evidence, and configured controls during reconciliation. Evaluate each workflow result under its owning [CI proof contract](../architecture/system-architecture-cicd.md#pull-request-runtime-and-preview-chain), including the Smoke event-comparison rules. A base-ref retarget requires replacement validation. Metadata-only edits may preserve original proof for the current comparison through the [required-gate preservation contract](../architecture/system-architecture-cicd.md#required-gate-preservation).
 - Use `dev-tools/validation/report-worktree-pr-topology.sh` for branch, worktree, and PR inventory (`--pr <number>` for one stack, `--json` for machine output, `--include-renovate` to include Renovate PRs).
 - After a merge, remove the defunct local worktree and merged branches only after confirming nothing open depends on them. Keep unmerged branches.
 - Pass PR-body Markdown through a file or stdin, not literal `\n` strings.

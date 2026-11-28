@@ -195,6 +195,7 @@ async function noWrites(config, reject = false) {
   }
   const metadataSplit = clone(jobs);
   for (const job of metadataSplit) { job.conclusion = 'skipped'; job.steps = []; }
+  metadataSplit.find(job => job.name === 'Validation Gate').conclusion = 'success';
   assert.equal((await noWrites({ jobs: metadataSplit })).comments.length, 0);
   // A later native run publishes first; a delayed older callback may neither rewrite it nor delete it as a duplicate.
   const newerSource = { ...clone(source), id: 71, run_number: 8 };

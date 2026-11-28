@@ -461,6 +461,28 @@ for mutation in auth wrong-origin wrong-artifact truncated-chain extra-coordinat
   assert_no_retry
 done
 
+# Gradle 9.9 can wrap compileClasspath Maven Central 429 downloads in the
+# JavaCompile.classpath configuration-cache serialization failure.
+write_compile_classpath_429_cause() {
+  cat > "$CASE_DIR/cause.log" <<'LOG'
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Configuration cache state could not be cached: field `classpath` of task `:account-service:compileJava` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type 'org.gradle.api.internal.artifacts.configurations.DefaultResolvableConfiguration'
+> Could not resolve all files for configuration ':account-service:compileClasspath'.
+   > Could not download spring-boot-4.2.0.jar (org.springframework.boot:spring-boot:4.2.0)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot/4.2.0/spring-boot-4.2.0.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot/4.2.0/spring-boot-4.2.0.jar'.
+            > Received status code 429 from server: Too Many Requests
+   > Could not download spring-data-commons-4.1.0.jar (org.springframework.data:spring-data-commons:4.1.0)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/org/springframework/data/spring-data-commons/4.1.0/spring-data-commons-4.1.0.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/springframework/data/spring-data-commons/4.1.0/spring-data-commons-4.1.0.jar'.
+            > Received status code 429 from server: Too Many Requests
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+}
+
 # The processor failure can surface an earlier Spring Boot metadata 429
 # while Gradle reports Maven Central as disabled for the Lombok lookup.
 write_disabled_processor_pom_429_cause() {
@@ -479,6 +501,82 @@ write_disabled_processor_pom_429_cause() {
 > Run with --stacktrace option to get the stack trace.
 LOG
 }
+
+new_case compile-classpath-429
+write_compile_classpath_429_cause
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-compile-classpath; exit 0'
+run_case account-service 0
+assert_call_count 2
+assert_rate_limit_delay
+assert_output_contains "refreshed-compile-classpath"
+
+for mutation in auth wrong-module compile-started; do
+  new_case "compile-classpath-429-$mutation"
+  write_compile_classpath_429_cause
+  case "$mutation" in
+    auth) sed -i '0,/429 from server: Too Many Requests/s//403 from server: Forbidden/' "$CASE_DIR/cause.log" ;;
+    wrong-module) sed -i 's/:account-service:compileClasspath/:common-platform-core:compileClasspath/' "$CASE_DIR/cause.log" ;;
+    compile-started) sed -i '1i > Task :account-service:compileJava FAILED' "$CASE_DIR/cause.log" ;;
+  esac
+  # shellcheck disable=SC2016
+  write_wrapper 'cat "$CASE_DIR/cause.log"; exit 1'
+  run_case account-service 1
+  assert_no_retry
+done
+
+write_compile_classpath_pom_429_cause() {
+  write_compile_classpath_429_cause
+  sed -i '/^   > Could not download/,$d; s/:account-service:/:hosted-environment-identity-controller:/g' "$CASE_DIR/cause.log"
+  cat >> "$CASE_DIR/cause.log" <<'LOG'
+   > Could not resolve io.javaoperatorsdk:operator-framework-spring-boot-starter:6.8.0.
+     Required by:
+         project ':hosted-environment-identity-controller'
+      > Could not resolve io.javaoperatorsdk:operator-framework-spring-boot-starter:6.8.0.
+         > Could not get resource 'https://repo.maven.apache.org/maven2/io/javaoperatorsdk/operator-framework-spring-boot-starter/6.8.0/operator-framework-spring-boot-starter-6.8.0.pom'.
+            > Could not GET 'https://repo.maven.apache.org/maven2/io/javaoperatorsdk/operator-framework-spring-boot-starter/6.8.0/operator-framework-spring-boot-starter-6.8.0.pom'.
+               > Received status code 429 from server: Too Many Requests
+   > Could not resolve io.fabric8:kubernetes-client:7.9.0.
+     Required by:
+         project ':hosted-environment-identity-controller'
+      > Could not resolve io.fabric8:kubernetes-client:7.9.0.
+         > Could not get resource 'https://repo.maven.apache.org/maven2/io/fabric8/kubernetes-client/7.9.0/kubernetes-client-7.9.0.pom'.
+            > Could not GET 'https://repo.maven.apache.org/maven2/io/fabric8/kubernetes-client/7.9.0/kubernetes-client-7.9.0.pom'.
+               > Received status code 429 from server: Too Many Requests
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+}
+
+new_case compile-classpath-pom-429
+write_compile_classpath_pom_429_cause
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; exit 0'
+run_case hosted-environment-identity-controller 0
+assert_call_count 2
+assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :hosted-environment-identity-controller:check -PfullCheck --profile --info --console=plain"
+assert_rate_limit_delay
+assert_output_contains "with cached dependency metadata"
+
+for mutation in auth wrong-project wrong-coordinate wrong-origin wrong-pom missing-get mixed-cause compile-started task-started; do
+  new_case "compile-classpath-pom-429-$mutation"
+  write_compile_classpath_pom_429_cause
+  case "$mutation" in
+    auth) sed -i '0,/429 from server: Too Many Requests/s//403 from server: Forbidden/' "$CASE_DIR/cause.log" ;;
+    wrong-project) sed -i '/Required by:/{n;s/identity-controller/identity-operator/;}' "$CASE_DIR/cause.log" ;;
+    wrong-coordinate) sed -i '/^      > Could not resolve/s/client:7.9.0/client:7.8.0/' "$CASE_DIR/cause.log" ;;
+    wrong-origin) sed -i 's/repo.maven.apache.org/repository.invalid/g' "$CASE_DIR/cause.log" ;;
+    wrong-pom) sed -i '/Could not GET/s/client-7.9.0.pom/client-7.8.0.pom/' "$CASE_DIR/cause.log" ;;
+    missing-get) sed -i '/Could not GET/d' "$CASE_DIR/cause.log" ;;
+    mixed-cause) sed -i '/^[*] Try:/i > A second unrelated failure.' "$CASE_DIR/cause.log" ;;
+    compile-started) sed -i '1i > Task :hosted-environment-identity-controller:compileJava FAILED' "$CASE_DIR/cause.log" ;;
+    task-started) sed -i '1i > Task :hosted-environment-identity-controller:processResources' "$CASE_DIR/cause.log" ;;
+  esac
+  # shellcheck disable=SC2016
+  write_wrapper 'cat "$CASE_DIR/cause.log"; exit 1'
+  run_case hosted-environment-identity-controller 1
+  assert_no_retry
+done
 
 new_case annotation-processor-disabled-repository-429
 write_disabled_processor_pom_429_cause
@@ -1476,6 +1574,75 @@ TEE
 chmod +x "$CASE_DIR/bin/tee"
 run_case common-web-support 125
 assert_no_retry
+
+prepare_jacoco_case() {
+  new_case "$1"
+  mkdir -p "$CASE_DIR/dev-tools/tests"
+  cp "$ROOT_DIR/dev-tools/tests/jacoco-combined-report-contract.sh" "$CASE_DIR/dev-tools/tests/"
+}
+
+# shellcheck disable=SC2030,SC2031
+run_jacoco_case() (
+  cd "$CASE_DIR"
+  export CASE_DIR
+  export FAKE_CALL_LOG="$CASE_DIR/calls"
+  export FAKE_DIAGNOSTIC_CALL_LOG="$CASE_DIR/diagnostic-calls"
+  export FAKE_LOCK_CALL_LOG="$CASE_DIR/locked-calls"
+  export FAKE_SLEEP_LOG="$CASE_DIR/sleeps"
+  export PATH="$CASE_DIR/bin:$PATH"
+  bash ./dev-tools/tests/jacoco-combined-report-contract.sh > "$CASE_DIR/output" 2>&1
+)
+
+# An eligible first graph gets one refresh. The real script then checks
+# all six graphs, including failures in the graph content itself.
+for report_result in valid invalid; do
+  prepare_jacoco_case "jacoco-task-graph-recovered-$report_result"
+  write_buildsrc_429_cause
+  # shellcheck disable=SC2016
+  write_wrapper 'if [[ "$call_count" -eq 1 ]]; then
+  cat "$CASE_DIR/buildsrc-cause.log"
+  exit 1
+fi
+if [[ "${1:-}" == --refresh-dependencies ]]; then shift; fi
+case "$1" in
+  :common-saga:test) echo ":common-saga:test SKIPPED" ;;
+  :common-saga:check|:common-saga:jacocoTestReport)
+    printf "%s\n" ":common-saga:integrationTest SKIPPED" ":common-saga:jacocoTestReport SKIPPED" ;;
+  :account-service:jacocoTestReport|:game-session-service:jacocoTestReport)
+    echo "$1 SKIPPED" ;;
+  :world-management-service:jacocoTestReport)
+    if [[ "${FAKE_JACOCO_REPORT_RESULT:?}" == invalid ]]; then
+      echo ":world-management-service:classes SKIPPED"
+    fi
+    echo "$1 SKIPPED" ;;
+  *) exit 99 ;;
+esac'
+  status=0
+  FAKE_JACOCO_REPORT_RESULT="$report_result" run_jacoco_case || status=$?
+  if [[ "$report_result" == valid ]]; then
+    [[ "$status" -eq 0 ]] || fail "JaCoCo graph did not recover from eligible bootstrapping failure"
+    assert_output_contains "JaCoCo combined and slow-service partition report task graph contracts passed"
+  else
+    [[ "$status" -eq 1 ]] || fail "JaCoCo accepted a malformed graph after recovery"
+    assert_output_contains "World coverage aggregation recompiled classes instead of using measured partition classes."
+  fi
+  assert_call_count 7
+  assert_call 1 ":common-saga:test -PfullCheck --dry-run --no-configuration-cache"
+  assert_call 2 "--refresh-dependencies :common-saga:test -PfullCheck --dry-run --no-configuration-cache"
+  [[ "$(grep -c '^--refresh-dependencies ' "$CASE_DIR/calls")" -eq 1 ]] || fail "JaCoCo repeated dependency refresh"
+  assert_rate_limit_delay
+  cmp "$CASE_DIR/calls" "$CASE_DIR/locked-calls" || fail "JaCoCo bypassed the existing locked runner"
+done
+
+# Preserve unrelated Gradle configuration failures without another attempt.
+prepare_jacoco_case jacoco-task-graph-semantic-failure
+write_wrapper 'printf "%s\n" "FAILURE: Build failed with an exception." "* What went wrong:" "Could not create task :common-saga:test." "* Try:" "BUILD FAILED"; exit 42'
+status=0
+run_jacoco_case || status=$?
+[[ "$status" -eq 42 ]] || fail "JaCoCo task-graph semantic failure did not retain exit code 42"
+assert_no_retry
+assert_output_contains "Could not create task :common-saga:test."
+cmp "$CASE_DIR/calls" "$CASE_DIR/locked-calls" || fail "JaCoCo bypassed the existing locked runner"
 
 echo "Gradle dependency-recovery contract passed."
 

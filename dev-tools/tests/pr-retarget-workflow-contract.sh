@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+python3 -c 'import sys; sys.exit(0 if __debug__ else "Run the retarget contract without Python optimization")'
 
 assert_job_condition() {
   local workflow="$1"
@@ -322,7 +323,7 @@ smoke_path="$ROOT_DIR/.github/workflows/smoke.yml"
 image_wait_path="$ROOT_DIR/dev-tools/hosted/shared/wait-for-runtime-images.sh"
 preview_path="$ROOT_DIR/.github/workflows/preview.yml"
 trusted_preview_path="$ROOT_DIR/.github/workflows/hosted-identity-request.yml"
-preview_reconciler_path="$ROOT_DIR/.github/workflows/preview-reconciler.yml"
+preview_reconciler_script="$ROOT_DIR/dev-tools/hosted/preview/reconcile-preview-deploys.sh"
 preview_comment_publisher_path="$ROOT_DIR/dev-tools/hosted/preview/publish-preview-comment.js"
 preview_comment_test_path="$ROOT_DIR/dev-tools/tests/publish-preview-comment.test.cjs"
 
@@ -552,9 +553,6 @@ PYTHON
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
 assert_job_contains security.yml security-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Security Summary)' || 'Security Summary' }}"
 assert_job_contains smoke.yml smoke-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Summary)' || 'Smoke Summary' }}"
-# A metadata-only edit must retain the required gate name. Its preservation
-# action verifies prior proof before reporting success for the unchanged tuple.
-assert_job_contains smoke.yml smoke-gate 'name: Smoke Gate'
 assert_job_contains smoke.yml smoke-summary-pending 'name: Smoke Summary (Pending)'
 assert_job_contains smoke.yml smoke-summary-pending 'tracked-by-smoke-gate'
 assert_job_contains smoke.yml smoke-summary 'needs: [changes, smoke-gate, smoke-summary-pending]'
@@ -645,6 +643,38 @@ smoke, runtime = [yaml.load(Path(path).read_text(), Loader=yaml.BaseLoader) for 
 assert set(smoke["on"]["pull_request"]) == {"types"}
 assert set(runtime["on"]["pull_request"]) == {"types", "paths"}
 assert "branches" not in runtime["on"]["workflow_run"]
+
+# Exercise the classifier and failure shell steps and bind their output to the tracker.
+import os
+import subprocess
+import tempfile
+
+steps = smoke["jobs"]["smoke-gate"]["steps"]
+classifier = next(step for step in steps if step.get("id") == "smoke_gate_context")
+failure = next(step for step in steps if step.get("name") == "Fail when smoke dependencies did not succeed")
+tracker = next(step for step in steps if step.get("id") == "track-runtime-smoke")
+classifier_index = steps.index(classifier)
+if classifier_index >= steps.index(failure) or classifier_index >= steps.index(tracker):
+    raise SystemExit("smoke_gate_context must run before both its failure and tracking consumers")
+expected_tracker_condition = "${{ steps.smoke_gate_context.outputs.execute == 'true' && needs.changes.outputs.run_smoke_full == 'true' }}"
+if tracker["if"] != expected_tracker_condition:
+    raise SystemExit("full-stack smoke tracker must run exactly when execution and full smoke are required")
+assert failure["if"] == "${{ steps.smoke_gate_context.outputs.required == 'true' && steps.smoke_gate_context.outputs.execute != 'true' }}"
+assert failure.get("continue-on-error") in (None, "false"), "dependency failure must fail the Smoke Gate job"
+assert tracker.get("continue-on-error") in (None, "false"), "tracker failure must fail the Smoke Gate job"
+with tempfile.TemporaryDirectory() as directory:
+    output = Path(directory) / "output"
+    for required, result, execute in (
+        ("true", "success", "true"), ("true", "failure", "false"),
+        ("false", "success", "false"), ("false", "skipped", "false"),
+    ):
+        output.write_text("")
+        env = {**os.environ, "GITHUB_OUTPUT": str(output), "CHANGES_RESULT": result, "SMOKE_GATE_REQUIRED": required}
+        subprocess.run(["bash", "-e", "-c", classifier["run"]], env=env, check=True)
+        assert output.read_text().splitlines() == [f"required={required}", f"execute={execute}"]
+        if required == "true" and result == "failure":
+            failed = subprocess.run(["bash", "-e", "-c", failure["run"]], env=env, capture_output=True, text=True)
+            assert failed.returncode != 0, "failed change detection must fail Smoke Gate"
 PYTHON
 
 # Reproduce the metadata-edit sequence structurally: the edit has its own
@@ -663,8 +693,7 @@ smoke_path, runtime_path = map(Path, sys.argv[1:])
 smoke = yaml.load(smoke_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 runtime = yaml.load(runtime_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
-if smoke["jobs"]["smoke-gate"].get("name") != "Smoke Gate":
-    raise SystemExit("metadata-only smoke must retain its required gate context")
+# Required gate names are asserted in pr-required-gate-context-contract.sh.
 
 runtime_jobs = runtime["jobs"]
 metadata_guard = "github.event.action != 'edited' || github.event.changes.base.ref != null"
@@ -698,11 +727,16 @@ if "format('repository-dispatch-run-{0}', github.run_id)" not in concurrency_gro
     raise SystemExit("incomplete typed refresh identity must receive a unique run namespace")
 if "github.sha" in concurrency_group.split("github.event_name == 'repository_dispatch'", 1)[-1].split("github.event_name == 'workflow_run'", 1)[0]:
     raise SystemExit("repository_dispatch concurrency must not use the default-branch github.sha")
-# Execute the workflow-level selector before its dispatcher can classify a CI
-# callback. A title/body CI completion must not evict substantive reconciliation.
-assert runtime["concurrency"]["cancel-in-progress"] == "true"
+# Keep the active run and queue further work without evicting pending runs.
+assert runtime["concurrency"]["cancel-in-progress"] == "false"
+assert runtime["concurrency"]["queue"] == "max"
+assert runtime_jobs["publish-runtime-images"]["concurrency"] == {
+    "group": "runtime-image-promotion-protected-branches",
+    "cancel-in-progress": "false",
+    "queue": "max",
+}, "promotion across protected branches must serialize without displacement"
 
-def callback_group(branch, source_id, source_attempt, source_event="pull_request", head="a" * 40):
+def callback_group(branch, source_id, source_attempt, source_event="pull_request", head="a" * 40, conclusion="success", selector=concurrency_group):
     values = {
         "github.workflow": "Build Runtime Images",
         "github.event_name": "workflow_run",
@@ -710,6 +744,7 @@ def callback_group(branch, source_id, source_attempt, source_event="pull_request
         "github.event.workflow_run.id": source_id,
         "github.event.workflow_run.run_attempt": source_attempt,
         "github.event.workflow_run.head_branch": branch,
+        "github.event.workflow_run.conclusion": conclusion,
         "github.event.workflow_run.head_sha": head,
         "github.ref": "refs/heads/develop",
         "github.run_id": 9000 + source_id,
@@ -721,15 +756,24 @@ def callback_group(branch, source_id, source_attempt, source_event="pull_request
         expression = expression.replace("&&", " and ").replace("||", " or ").replace("null", "None")
         return str(eval(expression, {"__builtins__": {}, "format": lambda pattern, *args: pattern.format(*args)}))
 
-    return re.sub(r"\$\{\{(.*?)\}\}", evaluate, concurrency_group)
+    return re.sub(r"\$\{\{(.*?)\}\}", evaluate, selector).casefold()
+
+case_only = "${{ github.event.workflow_run.conclusion == 'success' && 'publish' || 'PUBLISH' }}"
+distinct = "${{ github.event.workflow_run.conclusion == 'success' && 'publish' || 'publish-other' }}"
+assert callback_group("main", 7101, 1, "push", selector=case_only) == callback_group(
+    "main", 7101, 1, "push", conclusion="failure", selector=case_only
+), "case-only keys must collide in the same concurrency group"
+assert callback_group("main", 7101, 1, "push", selector=distinct) != callback_group(
+    "main", 7101, 1, "push", conclusion="failure", selector=distinct
+), "distinct keys must remain independently schedulable"
 
 for branch in ("main", "develop", "feature/parent"):
     substantive = callback_group(branch, 7001, 1)
     metadata = callback_group(branch, 7002, 1)
     subsequent_attempt = callback_group(branch, 7001, 2)
     active = {}
-    # With cancel-in-progress enabled, assigning the same group evicts its
-    # earlier run. Interleave both callback orders to retain substantive work.
+    # Distinct callbacks must remain independently schedulable, even while
+    # duplicate requests preserve the running producer. Test both arrival orders.
     for callbacks in (((substantive, "substantive"), (metadata, "metadata")),
                       ((metadata, "metadata"), (substantive, "substantive"))):
         active.clear()
@@ -741,8 +785,21 @@ for branch in ("main", "develop", "feature/parent"):
     assert callback_group(branch, 7003, 1, "push") not in (substantive, metadata), "PR callback must not cancel branch publication"
 
 for branch in ("main", "develop"):
-    assert callback_group(branch, 7101, 1, "push") == callback_group(branch, 7102, 2, "push", "b" * 40), "protected push publication must retain branch serialization"
-assert callback_group("main", 7101, 1, "push") != callback_group("develop", 7102, 1, "push"), "protected publication branches must remain separate"
+    publisher = callback_group(branch, 7101, 1, "push")
+    assert callback_group(branch, 7101, 1, "push") == publisher, "duplicate delivery retains the exact publisher group"
+    next_head = callback_group(branch, 7101, 1, "push", "b" * 40)
+    next_source = callback_group(branch, 7102, 1, "push")
+    next_attempt = callback_group(branch, 7101, 2, "push")
+    assert next_head != publisher, "a different protected commit needs a distinct publication group"
+    assert publisher == next_source == next_attempt, "the same protected commit must serialize across callbacks and reruns"
+    for conclusion in ("failure", "cancelled", "timed_out", "skipped", ""):
+        nonpublisher = callback_group(branch, 7101, 1, "push", conclusion=conclusion)
+        assert nonpublisher != publisher, "a non-publishing callback must not displace an active or pending publisher"
+        assert nonpublisher != callback_group(branch, 7101, 2, "push", conclusion=conclusion)
+assert callback_group("feature/parent", 7101, 1, "push") != callback_group("feature/parent", 7102, 1, "push")
+# The workflow lock serializes immutable selection, smoke and publication for
+# one SHA. A separate promotion job lock serializes alias writes across SHAs.
+assert callback_group("main", 7101, 1, "push") == callback_group("develop", 7101, 1, "push"), "both protected branches must serialize publishing the same commit"
 
 PY
 
@@ -855,48 +912,8 @@ const tupleFor = (number, headLetter, mergeLetter, base = baseSha) => ({
   headSha: sha(headLetter),
   mergeSha: sha(mergeLetter),
 });
-const titleFor = (tuple) =>
-  `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
-const producer = (tuple, event, status, conclusion = null, overrides = {}) => ({
-  id: Number(tuple.prNumber) * 100 + (event === "pull_request" ? 1 : 2),
-  name: "Build Runtime Images",
-  path: ".github/workflows/runtime-images.yml",
-  event,
-  display_title: titleFor(tuple),
-  repository: { full_name: repository },
-  head_repository: { full_name: repository },
-  head_sha: event === "pull_request" ? tuple.headSha : baseSha,
-  pull_requests: event === "pull_request"
-    ? [{ number: Number(tuple.prNumber), head: { sha: tuple.headSha } }]
-    : [],
-  status,
-  conclusion,
-  created_at: "2026-01-01T00:00:00Z",
-  ...overrides,
-});
-const runsDescending = (event, firstCreatedAt) => Array.from({ length: 100 }, (_, index) => ({
-  id: 30000 + index,
-  event,
-  display_title: `historical unrelated run ${index}`,
-  path: ".github/workflows/runtime-images.yml",
-  name: "Build Runtime Images",
-  repository: { full_name: repository },
-  head_repository: { full_name: repository },
-  created_at: new Date(Date.parse(firstCreatedAt) - index * 1000).toISOString(),
-}));
-const assertCompleteRefinementPreservesEligibleInitialRuns = (initialRuns, cutoff, refinedRuns, label) => {
-  const createdFloor = Date.parse(cutoff);
-  const eligibleIds = initialRuns
-    .filter((run) => typeof run?.created_at === "string" && Number.isFinite(Date.parse(run.created_at))
-      && Date.parse(run.created_at) >= createdFloor)
-    .map((run) => `${run.event}:${run.id}`);
-  const refinedIds = new Set(refinedRuns.map((run) => `${run.event}:${run.id}`));
-  assert(eligibleIds.every((id) => refinedIds.has(id)),
-    `${label} must retain every returned initial run at or after its refinement cutoff`);
-};
-
 async function runDispatcher({
-  tuples, inventories = {}, apiFailure = null, sourceTuples = [], callback = {},
+  tuples, sourceTuples = [], callback = {},
   branchHeads = {}, branchErrors = {}, pullOverrides = {}, mergeParents = {}, ciEvidence = {},
 }) {
   const dispatches = [];
@@ -904,7 +921,6 @@ async function runDispatcher({
   const infos = [];
   const warnings = [];
   const inventoryCalls = [];
-  const eventInventoryCalls = new Map();
   const currentBaseSha = tuples[0]?.baseSha ?? baseSha;
   const allTuples = [...tuples, ...sourceTuples];
   const tupleByNumber = new Map(allTuples.map((tuple) => [tuple.prNumber, tuple]));
@@ -992,34 +1008,7 @@ async function runDispatcher({
         },
         listWorkflowRuns: async (request) => {
           inventoryCalls.push(request);
-          if (apiFailure === request.event) throw new Error("fixture API unavailable");
-          const callNumber = (eventInventoryCalls.get(request.event) ?? 0) + 1;
-          eventInventoryCalls.set(request.event, callNumber);
-          const inventory = inventories[request.event] ?? [];
-          if (!Array.isArray(inventory) && inventory.malformed) {
-            return { data: { malformed: true } };
-          }
-          const refinement = callNumber > 1 && !Array.isArray(inventory) && Array.isArray(inventory.refined);
-          const runs = Array.isArray(inventory)
-            ? inventory
-            : refinement ? inventory.refined : inventory.initial ?? inventory.runs ?? [];
-          const createdMatch = /^(.+)\.\.\*$/.exec(request.created ?? "");
-          const createdFloor = createdMatch ? Date.parse(createdMatch[1]) : Number.NaN;
-          const filteredRuns = Number.isFinite(createdFloor)
-            ? runs.filter((run) => {
-              const runCreatedAt = run?.created_at;
-              const validTimestamp = typeof runCreatedAt === "string"
-                && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(runCreatedAt)
-                && Number.isFinite(Date.parse(runCreatedAt));
-              return !validTimestamp || Date.parse(runCreatedAt) >= createdFloor;
-            })
-            : runs;
-          const filteredTotalCount = Array.isArray(inventory)
-            ? filteredRuns.length
-            : refinement
-              ? inventory.refinedTotalCount ?? filteredRuns.length
-              : inventory.initialTotalCount ?? inventory.total_count ?? filteredRuns.length;
-          return { data: { total_count: filteredTotalCount, workflow_runs: filteredRuns.slice((request.page - 1) * 100, request.page * 100) } };
+          throw new Error("Runtime producer lookup belongs to serialized admission");
         },
       },
     },
@@ -1039,14 +1028,11 @@ async function runDispatcher({
       workflow_run: ciRun,
     },
   };
-  const originalDateNow = Date.now;
   const originalSetTimeout = global.setTimeout;
   global.setTimeout = (resolve) => { resolve(); };
-  Date.now = () => Date.parse("2026-01-08T00:00:00Z");
   try {
     await new AsyncFunction("github", "context", "core", dispatcherScript)(github, context, core);
   } finally {
-    Date.now = originalDateNow;
     global.setTimeout = originalSetTimeout;
   }
   return { dispatches, errors, infos, warnings, inventoryCalls, ciJobRequests, pullListRequests, refRequests };
@@ -1054,7 +1040,7 @@ async function runDispatcher({
 
 (async () => {
   const tuple = tupleFor(101, "a", "c");
-  const runtimeDispatches = (result) => result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh");
+  const runtimeDispatches = (result) => result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh-request");
   const previewDispatches = (result) => result.dispatches.filter((item) => item.event_type === "preview-deploy");
   const source = { ...tuple, headRef: "feature/parent" };
   const child = { ...tupleFor(102, "d", "e", source.headSha), baseRef: source.headRef };
@@ -1132,6 +1118,9 @@ async function runDispatcher({
     ["missing preservation", { gate: { steps: [enforcementStep] } }],
     ["ambiguous preservation", { gate: { steps: [preservationStep, preservationStep, enforcementStep] } }],
     ["skipped enforcement", { gate: { steps: [preservationStep, { ...enforcementStep, conclusion: "skipped" }] } }],
+    ["historical skipped-name edit", { gate: { name: "PR Metadata Edit (Validation Gate)", conclusion: "skipped", steps: [] } }],
+    ["missing enforcement", { gate: { steps: [preservationStep] } }],
+    ["ambiguous enforcement", { gate: { steps: [preservationStep, enforcementStep, enforcementStep] } }],
     ["old native attempt job", { gate: { run_attempt: 2 } }],
     ["wrong native job run", { gate: { run_id: 7002 } }],
     ["wrong native job head", { gate: { head_sha: sha("f") } }],
@@ -1199,357 +1188,31 @@ async function runDispatcher({
     assert.equal(runtimeDispatches(featureResult).length, 1, "feature and dependency-bot artifact refresh is independent of preview eligibility");
     assert.equal(previewDispatches(featureResult).length, expectedPreviews, "preview reconciliation retains canonical priority/bot/label policy");
   }
-  for (const [event, status] of [
-    ["pull_request", "queued"],
-    ["pull_request", "in_progress"],
-    ["repository_dispatch", "queued"],
-    ["repository_dispatch", "in_progress"],
-  ]) {
-    const result = await runDispatcher({
-      tuples: [tuple],
-      inventories: { [event]: [producer(tuple, event, status)] },
-    });
-    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
-      `${event} ${status} exact producer must suppress duplicate runtime dispatch`);
-    assert.equal(result.dispatches.filter((item) => item.event_type === "preview-deploy").length, 1,
-      "runtime deduplication must retain preview reconciliation");
-    assert.equal(result.inventoryCalls.length, 2, "complete initial inventories require one query per event kind");
-    assert(result.inventoryCalls.every((request) =>
-      request.workflow_id === "runtime-images.yml" &&
-      request.per_page === 100 &&
-      request.page === 1 &&
-      typeof request.created === "string" &&
-      !Number.isNaN(Date.parse(request.created.replace(/\.\.\*$/, "")) )
-    ), "the shared inventory must query only one bounded recent page per event");
+  // Both stacked refs point to the same SHA, so their producer titles
+  // match. Only serialized admission has authority to reuse the exact claim.
+  const oldBase = { ...source, baseRef: "stack/old" };
+  const newBase = { ...oldBase, baseRef: "stack/new" };
+  for (const current of [oldBase, newBase]) {
+    const wake = await runDispatcher({ tuples: [], sourceTuples: [current], callback: prCallback });
+    assert.deepEqual(runtimeDispatches(wake).map(request => request.client_payload), [{
+      pr_number: current.prNumber, base_ref: current.baseRef, base_sha: current.baseSha,
+      head_sha: current.headSha, merge_sha: current.mergeSha,
+    }], "the unlabeled source must wake admission with its exact base ref and unchanged SHAs");
+    assert.equal(wake.inventoryCalls.length, 0,
+      "the CI observer must leave producer and claim selection to admission");
+    assert.equal(previewDispatches(wake).length, 0,
+      "runtime repair for an unlabeled stacked PR does not grant preview eligibility");
   }
 
-  for (const event of ["pull_request", "repository_dispatch"]) {
-    const completedSuccess = await runDispatcher({
-      tuples: [tuple],
-      inventories: { [event]: [producer(tuple, event, "completed", "success")] },
-    });
-    assert.equal(completedSuccess.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-      `${event} completed source success must preserve recovery dispatch for missing or expired publication`);
-  }
+  const siblings = [tuple, tupleFor(102, "f", "d")];
+  const independentWakes = await runDispatcher({ tuples: siblings });
+  assert.deepEqual(runtimeDispatches(independentWakes).map(item => item.client_payload.pr_number),
+    siblings.map(candidate => candidate.prNumber), "every independently qualified sibling wakes admission");
+  assert.equal(independentWakes.inventoryCalls.length, 0);
+  assert.equal(previewDispatches(independentWakes).length, siblings.length,
+    "serializing runtime admission preserves independent preview reconciliation");
 
-  for (const validRef of [
-    "main",
-    "refs/heads/feature]/test",
-    "refs/heads/feature/@/test",
-    "refs/heads/feature./test",
-  ]) {
-    const refSuffixedPath = await runDispatcher({
-      tuples: [tuple],
-      inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
-        path: `.github/workflows/runtime-images.yml@${validRef}`,
-      })] },
-    });
-    assert.equal(refSuffixedPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
-      `the exact owning workflow path with valid Git ref ${validRef} must remain eligible`);
-  }
-  for (const invalidRef of ["@", "refs/heads/trailing.", "refs/heads/feature[/test"]) {
-    const invalidRefPath = await runDispatcher({
-      tuples: [tuple],
-      inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
-        path: `.github/workflows/runtime-images.yml@${invalidRef}`,
-      })] },
-    });
-    assert.equal(invalidRefPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-      `an invalid Git ref ${invalidRef} must not suppress the required dispatch`);
-  }
-  const wrongWorkflowPath = await runDispatcher({
-    tuples: [tuple],
-    inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
-      path: ".github/workflows/other.yml@refs/heads/develop",
-    })] },
-  });
-  assert.equal(wrongWorkflowPath.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-    "an unrelated workflow path must not suppress the required dispatch");
-  assert(wrongWorkflowPath.warnings.some((message) => message.includes("falling back to the required refresh dispatch")),
-    "an exact-tuple producer with an unrelated workflow path must emit a fallback warning");
-
-  for (const [status, conclusion] of [
-    ["completed", "failure"],
-    ["completed", "cancelled"],
-  ]) {
-    const result = await runDispatcher({
-      tuples: [tuple],
-      inventories: { pull_request: [producer(tuple, "pull_request", status, conclusion)] },
-    });
-    assert.equal(result.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-      `${conclusion} producer must allow an exact-tuple retry`);
-  }
-
-  const orderedProducerInventory = async (older, newer, newerConclusion = null) => runDispatcher({
-    tuples: [tuple],
-    inventories: { pull_request: [
-      producer(tuple, "pull_request", older[0], older[1], {
-        id: 10101,
-        created_at: "2026-01-01T00:00:00Z",
-      }),
-      producer(tuple, "pull_request", newer[0], newerConclusion, {
-        id: 10102,
-        created_at: "2026-01-02T00:00:00Z",
-      }),
-    ] },
-  });
-  for (const conclusion of ["failure", "cancelled"]) {
-    const newestFailure = await orderedProducerInventory(
-      ["completed", "success"], ["completed", conclusion], conclusion
-    );
-    assert.equal(newestFailure.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-      `newer ${conclusion} producer must allow refresh despite an older success`);
-  }
-  for (const [olderStatus, olderConclusion, newestStatus, newestConclusion, suppress] of [
-    ["completed", "failure", "in_progress", null, true],
-    ["completed", "success", "in_progress", null, true],
-    ["completed", "failure", "completed", "success", false],
-  ]) {
-    const newestUsable = await orderedProducerInventory(
-      [olderStatus, olderConclusion], [newestStatus, newestConclusion], newestConclusion
-    );
-    assert.equal(newestUsable.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length,
-      suppress ? 0 : 1,
-      `newer ${newestStatus}/${newestConclusion} producer must determine whether runtime recovery dispatches`);
-  }
-  const ambiguousNewest = await runDispatcher({
-    tuples: [tuple],
-    inventories: { pull_request: [
-      producer(tuple, "pull_request", "completed", "success", { id: 10103 }),
-      producer(tuple, "pull_request", "completed", "failure", { id: 10104 }),
-    ] },
-  });
-  assert.equal(ambiguousNewest.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-    "ambiguous equal-time exact producers must fall back to the required refresh dispatch");
-  assert(ambiguousNewest.warnings.some((message) => message.includes("ambiguous created_at timestamp")),
-    "ambiguous producer ordering must emit an explicit fallback diagnostic");
-
-  const staleTuple = tupleFor(101, "a", "c", sha("d"));
-  const stale = await runDispatcher({
-    tuples: [tuple],
-    inventories: { repository_dispatch: [producer(staleTuple, "repository_dispatch", "completed", "success")] },
-  });
-  assert.equal(stale.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-    "stale base tuple must not suppress a current runtime refresh");
-
-  const changedBaseTuple = tupleFor(101, "a", "c", sha("e"));
-  const changedBase = await runDispatcher({
-    tuples: [changedBaseTuple],
-    inventories: { pull_request: [producer(tuple, "pull_request", "completed", "success")] },
-  });
-  assert.equal(changedBase.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-    "a changed base requires a fresh exact tuple producer");
-
-  const sibling = tupleFor(102, "f", "d");
-  const independent = await runDispatcher({
-    tuples: [tuple, sibling],
-    inventories: {
-      pull_request: [null, { id: "malformed-unrelated-record", display_title: "historical unrelated record" },
-        producer(tuple, "pull_request", "in_progress")],
-      repository_dispatch: [],
-    },
-  });
-  const independentRefreshNumbers = independent.dispatches
-    .filter((item) => item.event_type === "pr-runtime-base-refresh")
-    .map((item) => item.client_payload.pr_number)
-    .sort();
-  assert.deepEqual(independentRefreshNumbers, ["102"],
-    "unrelated malformed history must not block an independent sibling refresh or prevent reuse of the valid active producer");
-  assert.equal(independent.inventoryCalls.length, 2, "multiple PRs must reuse one shared inventory");
-
-  const partialSibling = tupleFor(103, "7", "8");
-  const recentRuns = runsDescending("pull_request", "2026-01-02T00:00:00Z");
-  recentRuns[0] = producer(tuple, "pull_request", "in_progress", null, {
-    created_at: "2026-01-02T00:00:00Z",
-  });
-  const recentRefinedRuns = [producer(tuple, "pull_request", "in_progress", null, {
-    created_at: "2026-01-02T00:00:00Z",
-  })];
-  assertCompleteRefinementPreservesEligibleInitialRuns(recentRuns, "2026-01-02T00:00:00Z", recentRefinedRuns,
-    "truncated positive refinement");
-  const truncatedPositive = await runDispatcher({
-    tuples: [tuple, partialSibling],
-    inventories: {
-      pull_request: {
-        total_count: 101,
-        runs: recentRuns,
-        refined: recentRefinedRuns,
-        refinedTotalCount: 1,
-      },
-      repository_dispatch: [],
-    },
-  });
-  const truncatedRefreshNumbers = truncatedPositive.dispatches
-    .filter((item) => item.event_type === "pr-runtime-base-refresh")
-    .map((item) => item.client_payload.pr_number)
-    .sort();
-  assert.deepEqual(truncatedRefreshNumbers, ["103"],
-    "complete refinement must prove the exact candidate while an unmatched sibling uses required dispatch");
-  assert.equal(truncatedPositive.inventoryCalls.length, 4,
-    "truncated inventory must use at most one cached refinement pair for all siblings");
-  assert(truncatedPositive.inventoryCalls.slice(2).every((request) =>
-    request.created === "2026-01-02T00:00:00Z..*"
-  ), "the refinement pair must use the inclusive exact lower bound of returned in-flight candidates");
-
-  const refinedSiblings = [tupleFor(107, "5", "6"), tupleFor(108, "7", "9")];
-  const siblingPage = runsDescending("pull_request", "2026-01-04T00:00:00Z");
-  siblingPage[0] = producer(refinedSiblings[0], "pull_request", "in_progress", null, {
-    created_at: "2026-01-04T00:00:00Z",
-  });
-  siblingPage[1] = producer(refinedSiblings[1], "pull_request", "queued", null, {
-    created_at: "2026-01-03T23:59:59Z",
-  });
-  assertCompleteRefinementPreservesEligibleInitialRuns(siblingPage, "2026-01-03T23:59:59Z", siblingPage.slice(0, 2),
-    "shared sibling refinement");
-  const refinedSiblingReuse = await runDispatcher({
-    tuples: refinedSiblings,
-    inventories: {
-      pull_request: {
-        total_count: 101,
-        runs: siblingPage,
-        refined: siblingPage.slice(0, 2),
-        refinedTotalCount: 2,
-      },
-      repository_dispatch: [],
-    },
-  });
-  assert.equal(refinedSiblingReuse.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
-    "the shared refined inventory must cover each initially observed in-flight sibling");
-  assert.equal(refinedSiblingReuse.inventoryCalls.length, 4,
-    "all sibling decisions must reuse one refinement pair rather than scan per PR");
-  assert(refinedSiblingReuse.inventoryCalls.slice(2).every((request) =>
-    request.created === "2026-01-03T23:59:59Z..*"
-  ), "the shared sibling refinement must start at the earliest returned in-flight timestamp");
-
-  const truncatedRefinementTuple = tupleFor(109, "a", "e");
-  const truncatedRefinementPage = runsDescending("pull_request", "2026-01-05T00:03:00Z");
-  truncatedRefinementPage[0] = producer(truncatedRefinementTuple, "pull_request", "in_progress", null, {
-    created_at: "2026-01-05T00:00:00Z",
-  });
-  const truncatedRefinement = await runDispatcher({
-    tuples: [truncatedRefinementTuple],
-    inventories: {
-      pull_request: {
-        total_count: 101,
-        runs: truncatedRefinementPage,
-        refined: truncatedRefinementPage,
-        refinedTotalCount: 101,
-      },
-      repository_dispatch: [],
-    },
-  });
-  assert.equal(truncatedRefinement.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-    "a still-truncated refinement must use baseline dispatch");
-  assert(truncatedRefinement.warnings.some((message) => message.includes("falling back to the required refresh dispatch")),
-    "a truncated refinement must report its required-dispatch fallback");
-  assert.equal(truncatedRefinement.inventoryCalls.length, 4,
-    "a failed refinement must stop after the single bounded shared refinement pair");
-
-  const completedTruncatedTuple = tupleFor(110, "b", "f");
-  const completedTruncatedPage = runsDescending("pull_request", "2026-01-06T00:00:00Z");
-  completedTruncatedPage[0] = producer(completedTruncatedTuple, "pull_request", "completed", "success", {
-    created_at: "2026-01-06T00:00:00Z",
-  });
-  const completedTruncated = await runDispatcher({
-    tuples: [completedTruncatedTuple],
-    inventories: {
-      pull_request: { total_count: 101, runs: completedTruncatedPage },
-      repository_dispatch: [],
-    },
-  });
-  assert.equal(completedTruncated.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-    "completed source results must preserve required recovery dispatch");
-  assert.equal(completedTruncated.inventoryCalls.length, 2,
-    "completed-only truncated inventories need no refinement because they never suppress dispatch");
-
-  const hiddenNewerFailureTuple = tupleFor(105, "1", "2");
-  const crossEventHiddenNewer = await runDispatcher({
-    tuples: [hiddenNewerFailureTuple],
-    inventories: {
-      pull_request: [producer(hiddenNewerFailureTuple, "pull_request", "in_progress", null, {
-        created_at: "2026-01-01T10:00:00Z",
-      })],
-      // The initial dispatch page omits this newer exact terminal producer; bounded refinement must reveal it.
-      repository_dispatch: {
-        total_count: 101,
-        runs: runsDescending("repository_dispatch", "2026-01-01T09:00:00Z"),
-        refined: [producer(hiddenNewerFailureTuple, "repository_dispatch", "completed", "failure", {
-          created_at: "2026-01-01T10:30:00Z",
-        })],
-        refinedTotalCount: 1,
-      },
-    },
-  });
-  assert.equal(crossEventHiddenNewer.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-    "refinement must reveal the newer cross-event terminal producer and preserve required dispatch");
-  assert.equal(crossEventHiddenNewer.inventoryCalls.length, 4,
-    "one refinement pair must cover both event types when another event could contain a newer terminal run");
-
-  const safeOlderOmittedTuple = tupleFor(106, "3", "4");
-  const safelyOlderOmitted = await runDispatcher({
-    tuples: [safeOlderOmittedTuple],
-    inventories: {
-      pull_request: [producer(safeOlderOmittedTuple, "pull_request", "in_progress", null, {
-        created_at: "2026-01-03T10:00:00Z",
-      })],
-      repository_dispatch: {
-        total_count: 101,
-        runs: runsDescending("repository_dispatch", "2026-01-02T10:00:00Z"),
-        refined: [],
-        refinedTotalCount: 0,
-      },
-    },
-  });
-  assert.equal(safelyOlderOmitted.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 0,
-    "complete refinement from the candidate creation time proves apparently older omissions cannot mask it");
-  assert.equal(safelyOlderOmitted.inventoryCalls.length, 4,
-    "complete refinement must stay within the one additional shared pair");
-
-  const validSibling = tupleFor(104, "9", "0");
-  const relevantMalformed = await runDispatcher({
-    tuples: [tuple, validSibling],
-    inventories: {
-      pull_request: [
-        producer(tuple, "pull_request", "in_progress", null, { repository: { full_name: "other/repo" } }),
-        producer(validSibling, "pull_request", "in_progress"),
-      ],
-      repository_dispatch: [],
-    },
-  });
-  const relevantMalformedRefreshNumbers = relevantMalformed.dispatches
-    .filter((item) => item.event_type === "pr-runtime-base-refresh")
-    .map((item) => item.client_payload.pr_number)
-    .sort();
-  assert.deepEqual(relevantMalformedRefreshNumbers, ["101"],
-    "relevant malformed evidence must fall back for its own tuple while a valid active sibling producer remains reusable");
-
-  for (const uncertain of [
-    await runDispatcher({ tuples: [tuple], inventories: { pull_request: { total_count: 101, runs: [] } } }),
-    await runDispatcher({ tuples: [tuple], inventories: { pull_request: { total_count: 1, runs: [] } } }),
-    await runDispatcher({ tuples: [tuple], apiFailure: "pull_request" }),
-    await runDispatcher({ tuples: [tuple], inventories: { pull_request: { malformed: true } } }),
-    await runDispatcher({
-      tuples: [tuple],
-      inventories: { pull_request: [producer(tuple, "pull_request", "in_progress", null, {
-        repository: { full_name: "other/repo" },
-      })] },
-    }),
-    await runDispatcher({
-      tuples: [tuple],
-      inventories: { pull_request: [producer(tuple, "pull_request", "completed", "success", {
-        created_at: "not-a-workflow-run-timestamp",
-      })] },
-    }),
-  ]) {
-    assert.equal(uncertain.dispatches.filter((item) => item.event_type === "pr-runtime-base-refresh").length, 1,
-      "incomplete, unavailable, or relevant malformed evidence must fall back to required dispatch");
-    assert.equal(uncertain.dispatches.filter((item) => item.event_type === "preview-deploy").length, 1,
-      "inventory uncertainty must not block independent preview reconciliation");
-    assert(uncertain.warnings.some((message) => message.includes("falling back to the required refresh dispatch")),
-      "inventory uncertainty must produce a concrete fallback diagnostic");
-  }
-
-  process.stdout.write("runtime refresh deduplication fixtures passed\n");
+  process.stdout.write("runtime refresh admission wake fixtures passed\n");
 })().catch((error) => {
   process.stderr.write(`${error.stack || error}\n`);
   process.exitCode = 1;
@@ -1560,7 +1223,6 @@ require_contains "$runtime_images_path" 'types: [opened, synchronize, reopened, 
 require_contains "$runtime_images_path" 'types: [pr-runtime-base-refresh]'
 require_contains "$runtime_images_path" 'repository_dispatch:'
 require_contains "$runtime_images_path" "&& 'metadata' || 'required' }}"
-require_contains "$runtime_images_path" '  cancel-in-progress: true'
 require_contains "$runtime_images_path" 'run-name: Build Runtime Images '
 require_contains "$runtime_images_path" "format('secure-pr-artifact pr-{0}"
 require_contains "$runtime_images_path" 'github.event.pull_request.base.sha'
@@ -1587,17 +1249,13 @@ assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'contents: wri
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.git.getRef'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.pulls.list'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.repos.getCommit'
-assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'github.rest.actions.listWorkflowRuns'
+assert_job_excludes runtime-images.yml dispatch-pr-base-refreshes 'github.rest.actions.listWorkflowRuns'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'actions: read'
-assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'runtimeRunPageSize = 100'
-assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'runtimeRunLookbackMilliseconds'
-assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'falling back to the required refresh dispatch'
-assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'Skipping duplicate PR runtime refresh'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'currentBaseRef !== baseBranch'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents.length !== 2'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'parents[0] !== baseSha'
 assert_job_excludes runtime-images.yml dispatch-pr-base-refreshes '.base.sha'
-assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'event_type: "pr-runtime-base-refresh"'
+assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'event_type: "pr-runtime-base-refresh-request"'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'pr_number: tuple.prNumber'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'base_sha: tuple.baseSha'
 assert_job_contains runtime-images.yml dispatch-pr-base-refreshes 'head_sha: tuple.headSha'
@@ -1614,9 +1272,7 @@ assert_job_contains runtime-images.yml pr-local-smoke 'BASE_SHA="${{ needs.image
 assert_job_contains runtime-images.yml pr-local-smoke 'MERGE_SHA="${{ needs.image-meta.outputs.merge_sha }}"'
 assert_job_contains runtime-images.yml pr-controller-smoke 'github.event_name == '\''repository_dispatch'\'''
 require_contains "$image_wait_path" 'display_title = run.get("display_title", "")'
-require_contains "$image_wait_path" 'display_title.startswith("Build Runtime Images trusted-branch ")'
-require_contains "$image_wait_path" 'and f"sha-{head_sha}" in tokens'
-require_contains "$image_wait_path" 'and "branch-develop" in tokens'
+require_contains "$image_wait_path" 'run.get("display_title") == f"Build Runtime Images trusted-branch branch-develop sha-{head_sha}"'
 require_contains "$image_wait_path" 'and f"base-{base_sha}" in tokens'
 require_contains "$image_wait_path" 'and f"merge-{merge_sha}" in tokens'
 require_contains "$image_wait_path" 'run.get("event") == "workflow_run"'
@@ -1630,8 +1286,8 @@ if grep -Eq '^concurrency:' "$preview_path"; then
   echo "Preview workflow must not cancel an active lifecycle from workflow-level concurrency" >&2
   exit 1
 fi
-assert_job_contains preview.yml preview-plan "group: preview-plan-\${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}"
-assert_job_contains preview.yml preview-plan 'cancel-in-progress: true'
+assert_job_contains preview.yml preview-plan "group: preview-readonly-plan-\${{ (github.event_name == 'repository_dispatch' && github.event.client_payload.proof_retry_nonce != '') && format('retry-{0}', github.run_id) || github.event_name == 'pull_request' && github.event.pull_request.number || github.event.client_payload.pr_number || github.ref }}"
+assert_job_contains preview.yml preview-plan "cancel-in-progress: \${{ !(github.event_name == 'repository_dispatch' && github.event.client_payload.proof_retry_nonce != '') }}"
 assert_job_excludes preview.yml preview-plan 'Publish preview lifecycle state'
 assert_job_excludes preview.yml preview-plan 'firemud-preview-summary'
 assert_job_excludes preview.yml preview-plan 'publish-preview-comment.js'
@@ -1658,7 +1314,7 @@ require_contains "$preview_path" 'run-name: ${{ github.event_name == '
 require_contains "$preview_path" "format('Preview dispatch pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.client_payload.pr_number, github.event.client_payload.base_sha || 'unknown', github.event.client_payload.head_sha, github.event.client_payload.merge_sha || 'unknown')"
 require_contains "$preview_path" 'contents: read'
 require_contains "$preview_path" 'pull-requests: read'
-require_contains "$preview_path" 'pull_request_target:'
+require_contains "$preview_path" 'pull_request:'
 require_contains "$preview_path" 'types: [preview-deploy, preview-destroy]'
 require_contains "$preview_path" '      - opened'
 require_contains "$preview_path" '      - synchronize'
@@ -1682,7 +1338,7 @@ if grep -Eq '^      - closed$' "$preview_path"; then
 fi
 require_contains "$preview_path" 'Check out trusted default branch for preview plan'
 require_contains "$preview_path" 'ref: ${{ github.event.repository.default_branch }}'
-require_contains "$preview_path" "github.event_name == 'pull_request_target'"
+require_contains "$preview_path" "github.event_name == 'pull_request'"
 require_contains "$preview_path" "github.event_name == 'repository_dispatch'"
 require_contains "$preview_path" 'github.event.pull_request.head.repo.full_name == github.repository'
 require_contains "$preview_path" 'github.event.pull_request.base.repo.full_name == github.repository'
@@ -1712,7 +1368,7 @@ from pathlib import Path
 workflow_path = Path(sys.argv[1])
 workflow = workflow_path.read_text(encoding="utf-8")
 predicate_start = workflow.index(
-    '            if [[ "$EVENT_NAME" == pull_request_target && "$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop ]] ||'
+    '            if [[ "$EVENT_NAME" == pull_request && "$CURRENT_BASE_REF" != main && "$CURRENT_BASE_REF" != develop ]] ||'
 )
 predicate_end = workflow.index(
     '\n            if [[ "$ACTION" != deploy ]]; then',
@@ -1781,7 +1437,7 @@ for binding in manifestSha256 repository sourceRunId prNumber baseSha headSha me
   assert_job_contains preview.yml preview-render "$binding"
 done
 assert_job_contains preview.yml preview-render 'if $event == "repository_dispatch" then {action:$action}'
-assert_job_contains preview.yml preview-render 'name: preview-render-pr-${{ needs.preview-plan.outputs.pr_number }}-${{ needs.preview-plan.outputs.head_sha }}'
+assert_job_contains preview.yml preview-render 'name: preview-render-pr-${{ needs.preview-plan.outputs.pr_number }}-${{ needs.preview-plan.outputs.head_sha }}-attempt-${{ github.run_attempt }}'
 assert_job_contains preview.yml preview-destroy-intent 'runs-on: ubuntu-latest'
 assert_job_contains preview.yml preview-destroy-intent "github.event_name == 'repository_dispatch'"
 assert_job_contains preview.yml preview-destroy-intent "needs.preview-plan.outputs.action == 'destroy'"
@@ -1792,10 +1448,12 @@ assert_job_excludes preview.yml preview-destroy-intent "github.event_name == 'pu
 
 # The trusted default-branch workflow owns all runtime and identity mutations.
 require_contains "$trusted_preview_path" "github.event.workflow_run.head_repository.full_name == github.repository"
-require_contains "$trusted_preview_path" "github.event.workflow_run.event == 'pull_request_target' || github.event.workflow_run.event == 'repository_dispatch'"
+require_contains "$trusted_preview_path" "github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'repository_dispatch'"
 require_contains "$trusted_preview_path" "github.event_name == 'pull_request_target' && github.event.action == 'closed'"
 require_contains "$trusted_preview_path" 'require_source_field head-branch "$DEFAULT_BRANCH"'
-require_contains "$trusted_preview_path" 'preview-(render|intent)-pr-'
+require_contains "$trusted_preview_path" 'preview-render-pr-'
+require_contains "$trusted_preview_path" 'preview-intent-pr-'
+require_contains "$trusted_preview_path" 'expected_artifact_name+="-attempt-${SOURCE_RUN_ATTEMPT}"'
 require_contains "$trusted_preview_path" 'preview-${ARTIFACT_KIND}-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}'
 require_contains "$trusted_preview_path" 'metadata_event="$(jq -r'
 require_contains "$trusted_preview_path" 'metadata_action="$(jq -r'
@@ -1821,28 +1479,28 @@ for job in prepare-runtime deploy-runtime destroy-runtime retire-identity; do
   assert_job_contains hosted-identity-request.yml "$job" 'self-hosted'
   assert_job_contains hosted-identity-request.yml "$job" 'environment: trusted-hosted-cluster'
 done
-require_contains "$preview_reconciler_path" 'actions/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100'
-require_contains "$preview_reconciler_path" 'gh api --paginate --slurp'
-require_contains "$preview_reconciler_path" '.display_title == $run_name'
-require_contains "$preview_reconciler_path" '"Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"'
-require_contains "$preview_reconciler_path" '"repos/${GITHUB_REPOSITORY}/dispatches"'
-require_contains "$preview_reconciler_path" '-f event_type=preview-deploy'
-require_contains "$preview_reconciler_path" 'client_payload[head_sha]=${head_sha}'
-require_contains "$preview_reconciler_path" 'client_payload[base_ref]=${pr_base_ref}'
-require_contains "$preview_reconciler_path" 'client_payload[base_sha]=${base_sha}'
-require_contains "$preview_reconciler_path" 'client_payload[merge_sha]=${merge_sha}'
-require_contains "$preview_reconciler_path" 'client_payload[image_tag]=${image_tag}'
-require_contains "$preview_reconciler_path" 'client_payload[action]=deploy'
-require_contains "$preview_reconciler_path" 'dispatch_candidates() {'
-require_contains "$preview_reconciler_path" 'candidate_rows="$('
-require_contains "$preview_reconciler_path" 'dispatch_candidates <<<"$candidate_rows"'
-if python3 - "$preview_reconciler_path" <<'PY'
+require_contains "$preview_reconciler_script" 'actions/workflows/${preview_workflow_id}/runs?branch=${DEFAULT_BRANCH}&status=${active_status}&per_page=100'
+require_contains "$preview_reconciler_script" 'gh api --paginate --slurp'
+require_contains "$preview_reconciler_script" '.display_title == $run_name'
+require_contains "$preview_reconciler_script" '"Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}"'
+require_contains "$preview_reconciler_script" '"repos/${GITHUB_REPOSITORY}/dispatches"'
+require_contains "$preview_reconciler_script" '-f event_type=preview-deploy'
+require_contains "$preview_reconciler_script" 'client_payload[head_sha]=${head_sha}'
+require_contains "$preview_reconciler_script" 'client_payload[base_ref]=${pr_base_ref}'
+require_contains "$preview_reconciler_script" 'client_payload[base_sha]=${base_sha}'
+require_contains "$preview_reconciler_script" 'client_payload[merge_sha]=${merge_sha}'
+require_contains "$preview_reconciler_script" 'client_payload[image_tag]=${image_tag}'
+require_contains "$preview_reconciler_script" 'client_payload[action]=deploy'
+require_contains "$preview_reconciler_script" 'dispatch_candidates() {'
+require_contains "$preview_reconciler_script" 'candidate_rows="$('
+require_contains "$preview_reconciler_script" 'dispatch_candidates <<<"$candidate_rows"'
+if python3 - "$preview_reconciler_script" <<'PY'
 import re
 import sys
 from pathlib import Path
 
-workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
-if any(re.search(r"\|\s*(?:IFS=[^;]+\s+)?while\b", line) for line in workflow.splitlines()):
+script = Path(sys.argv[1]).read_text(encoding="utf-8")
+if any(re.search(r"\|\s*(?:IFS=[^;]+\s+)?while\b", line) for line in script.splitlines()):
     raise SystemExit("preview reconciler must not pipe candidate rows directly into while")
 PY
 then
@@ -1852,11 +1510,11 @@ else
   exit 1
 fi
 
-if grep -Fq 'desired_image_tag=' "$preview_reconciler_path"; then
+if grep -Fq 'desired_image_tag=' "$preview_reconciler_script"; then
   echo "Preview reconciler must not retain an unused desired image tag" >&2
   exit 1
 fi
-require_contains "$preview_reconciler_path" 'resolve-preview-image-tag.sh'
+require_contains "$preview_reconciler_script" 'resolve-preview-image-tag.sh'
 for annotation in \
   'firemud.dev/last-preview-base-sha' \
   'firemud.dev/last-preview-head-sha' \
@@ -1866,12 +1524,12 @@ for annotation in \
   'firemud.dev/requested-preview-head-sha' \
   'firemud.dev/requested-preview-merge-sha' \
   'firemud.dev/requested-preview-image-tag'; do
-  require_contains "$preview_reconciler_path" "$annotation"
+  require_contains "$preview_reconciler_script" "$annotation"
 done
-require_contains "$preview_reconciler_path" 'mergeable_state'
+require_contains "$preview_reconciler_script" 'mergeable_state'
 require_contains "$ROOT_DIR/dev-tools/hosted/preview/revalidate-preview-source-binding.sh" '.mergeable == true'
-if grep -Fq 'actions/workflows/preview.yml/dispatches' "$preview_reconciler_path" ||
-  grep -Fq 'inputs[ref]=' "$preview_reconciler_path"; then
+if grep -Fq 'actions/workflows/preview.yml/dispatches' "$preview_reconciler_script" ||
+  grep -Fq 'inputs[ref]=' "$preview_reconciler_script"; then
   echo "Preview reconciler must use typed repository_dispatch from the default branch" >&2
   exit 1
 fi
@@ -1929,8 +1587,9 @@ done
 
 require_contains "$pr_image_publisher_path" 'workflow_run:'
 require_exact_line "$pr_image_publisher_path" 'permissions: {}'
-# shellcheck disable=SC2016 # This assertion intentionally matches a literal GitHub expression.
-require_contains "$pr_image_publisher_path" "run-name: Publish PR Runtime Images \${{ github.event.workflow_run.display_title || format('source-run-{0}', github.event.client_payload.source_run_id) }}"
+# shellcheck disable=SC2016 # This assertion intentionally matches the typed callback source ID binding.
+require_contains "$pr_image_publisher_path" "run-name: Publish PR Runtime Images \${{ github.event.workflow_run.event == 'repository_dispatch' && format('{0} source-run-{1}',"
+require_contains "$pr_image_publisher_path" "github.event.workflow_run.id) || github.event.workflow_run.display_title || format('source-run-{0}', github.event.client_payload.source_run_id) }}"
 require_contains "$pr_image_publisher_path" "github.event.workflow_run.event == 'pull_request'"
 require_contains "$pr_image_publisher_path" "github.event.workflow_run.conclusion == 'success'"
 require_contains "$pr_image_publisher_path" 'github.event.workflow_run.head_repository.full_name == github.repository'
@@ -1945,7 +1604,7 @@ require_contains "$pr_image_publisher_path" 'from html import escape'
 require_contains "$pr_image_publisher_path" '<code>{markdown_code(os.environ['
 assert_job_contains publish-pr-runtime-images.yml publish 'contents: read'
 # shellcheck disable=SC2016 # These are literal GitHub expression and shell source contracts.
-require_contains "$pr_image_publisher_path" 'pr-runtime-images-{image_tag}'
+require_contains "$pr_image_publisher_path" 'pr-runtime-images-{image_tag}-attempt-{source_run_attempt}'
 # shellcheck disable=SC2016 # This assertion intentionally matches the unevaluated publisher script.
 require_contains "$pr_image_publisher_path" 'docker push "$image"'
 # shellcheck disable=SC2016 # These assertions intentionally match unevaluated publisher shell.
@@ -1960,24 +1619,33 @@ assert_publish_checkout_configuration "$pr_image_publisher_path"
 
 python3 - "$pr_image_publisher_path" <<'PY'
 import os
-import re
 import sys
 import tempfile
-import textwrap
 from pathlib import Path
+
+import yaml
 
 if len(sys.argv) != 2:
     raise SystemExit("trusted PR image publisher contract requires one workflow path")
-workflow_text = Path(sys.argv[1]).read_text(encoding="utf-8")
-matches = list(re.finditer(r"python3 - <<'PY'\n(?P<script>.*?)\n          PY", workflow_text, re.DOTALL))
-if len(matches) != 2:
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+summary_steps = [
+    step for step in workflow["jobs"]["publish"]["steps"]
+    if step.get("name") == "Summarize trusted publication source"
+]
+if len(summary_steps) != 1:
+    raise SystemExit("trusted PR image publisher must have exactly one source summary step")
+run = summary_steps[0].get("run")
+if not isinstance(run, str):
+    raise SystemExit("trusted PR image publisher summary step must run a script")
+command, *lines = run.rstrip("\n").splitlines()
+if command != "python3 - <<'PY'" or not lines or lines[-1] != "PY":
     raise SystemExit("trusted PR image publisher summary script was not found")
-
-script = textwrap.dedent(matches[1].group("script"))
+script = "\n".join(lines[:-1])
 with tempfile.NamedTemporaryFile(mode="r+", encoding="utf-8") as summary_file:
     test_environment = {
         "GITHUB_STEP_SUMMARY": summary_file.name,
         "SOURCE_RUN_ID": "123",
+        "SOURCE_RUN_ATTEMPT": "2",
         "SOURCE_RUN_URL": "https://github.example/runs/123",
         "SOURCE_RUN_TITLE": "build `title` <script>&\nnext",
         "SOURCE_HEAD_BRANCH": "feature/`branch` <b>&",
@@ -2006,11 +1674,12 @@ PY
 
 require_contains "$image_wait_path" 'publish-pr-runtime-images.yml/runs?event={event}&created={lower_text}..{upper_text}&per_page=100'
 require_contains "$image_wait_path" '"Publish", "PR", "Runtime", "Images", "Build", "Runtime", "Images"'
-require_contains "$image_wait_path" 're.fullmatch(r"pr-[1-9][0-9]{0,50}", tokens[8])'
+require_contains "$image_wait_path" 're.fullmatch(r"pr-[1-9][0-9]{0,50}", tokens[8] if len(tokens) > 8 else "")'
 require_contains "$image_wait_path" 'tokens[9] == f"base-{base_sha}"'
 require_contains "$image_wait_path" 'tokens[10] == f"head-{head_sha}"'
 require_contains "$image_wait_path" 'tokens[11] == f"merge-{merge_sha}"'
 require_contains "$image_wait_path" 'tokens[12] == "mode-required"'
+require_contains "$image_wait_path" 'tokens[13:] == [f"source-run-{source_run_id}"]'
 require_contains "$image_wait_path" 'wait_for_pr_publisher'
 # shellcheck disable=SC2016 # This assertion intentionally matches a literal shell default expression.
 require_contains "$image_wait_path" 'publisher_timeout_seconds="${HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS:-${timeout_seconds}}"'
@@ -2138,9 +1807,69 @@ if (require_branch_return "$contract_fixture_dir/branch-non-return.js" examplePr
   echo "require_branch_return must match return as a complete token" >&2
   exit 1
 fi
+# Give the positive waiter fixtures historic server-authored receipts. A
+# receipt belongs to the fixture's original producing run, not whichever run
+# the waiter happens to ask about.
+cat >"$contract_fixture_dir/publication-artifacts.py" <<'PY_ARTIFACTS'
+import hashlib
+import io
+import json
+import os
+import re
+import sys
+import zipfile
+
+endpoint = sys.argv[1]
+repo = "example/FireMUD"
+image = "pr-merge-" + "c" * 40
+workflow_id = 50
+producer_digests = {run: "sha256:" + str(run)[-1] * 64 for run in (101, 104)}
+publisher_sources = {201: 104 if os.environ.get("CONTRACT_DUPLICATE_DIR") else 101, 202: 101}
+
+def artifact(run, name, artifact_id, digest):
+    return {"total_count": 1, "artifacts": [{
+        "id": artifact_id, "name": name, "expired": False,
+        "workflow_run": {"id": run}, "digest": digest,
+    }]}
+
+def receipt_zip(publisher):
+    producer = publisher_sources[publisher]
+    receipt = {
+        "schema": 1, "repository": repo, "prNumber": 1,
+        "baseSha": "b" * 40, "headSha": "a" * 40, "mergeSha": "c" * 40,
+        "imageTag": image, "producerWorkflowId": workflow_id, "producerRunId": producer,
+        "producerAttempt": 1, "producerArtifactId": 300 + producer,
+        "producerArtifactDigest": producer_digests[producer],
+        "publisherWorkflowRef": repo + "/.github/workflows/publish-pr-runtime-images.yml@refs/heads/develop",
+        "publisherRunId": publisher, "publisherAttempt": 2,
+        "publishJob": "Publish Fixed PR Merge Image Tags", "publishStep": "Publish fixed PR image tags",
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(zipfile.ZipInfo("exact-pr-runtime-publication.json"), json.dumps(receipt))
+    return buffer.getvalue()
+
+if match := re.fullmatch(r".*/runs/(\d+)/artifacts\?name=([^&]+)&per_page=100", endpoint):
+    run, name = int(match[1]), match[2]
+    if run in producer_digests and name == f"pr-runtime-images-{image}-attempt-1":
+        print(json.dumps(artifact(run, name, 300 + run, producer_digests[run])))
+    elif run in publisher_sources and name == f"pr-runtime-publication-{run}-attempt-2":
+        digest = "sha256:" + hashlib.sha256(receipt_zip(run)).hexdigest()
+        print(json.dumps(artifact(run, name, 400 + run, digest)))
+    else:
+        print('{"total_count":0,"artifacts":[]}')
+elif match := re.fullmatch(r".*/artifacts/(\d+)/zip", endpoint):
+    publisher = int(match[1]) - 400
+    if publisher not in publisher_sources:
+        sys.exit(1)
+    sys.stdout.buffer.write(receipt_zip(publisher))
+else:
+    sys.exit(1)
+PY_ARTIFACTS
 cat >"$contract_fixture_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+fixture_dir="${PATH%%:*}"
 
 if [[ -n "${CONTRACT_GH_STATE_FILE:-}" ]]; then
   invocation=0
@@ -2152,16 +1881,202 @@ if [[ -n "${CONTRACT_GH_STATE_FILE:-}" ]]; then
   fi
 fi
 
+case "$*" in
+  *actions/workflows/runtime-images.yml)
+    printf '%s\n' '{"id":50,"name":"Build Runtime Images","path":".github/workflows/runtime-images.yml"}'
+    exit 0 ;;
+  *actions/runs/*/artifacts\?*|*actions/artifacts/*/zip)
+    exec python3 "$fixture_dir/publication-artifacts.py" "$2" ;;
+esac
+
+if [[ -n "${CONTRACT_DUPLICATE_DIR:-}" ]]; then
+  case "$*" in
+    *actions/runs/201/attempts/2/jobs?per_page=100)
+      if [[ -n "${CONTRACT_DIRECT_JOB_MARKER:-}" ]]; then
+        : >"$CONTRACT_DIRECT_JOB_MARKER"
+      fi
+      if [[ "${CONTRACT_DUPLICATE_DIRECT_JOB:-success}" == "skipped" ]]; then
+        cat "$CONTRACT_DUPLICATE_DIR/duplicate-jobs-201-skipped.json"
+      else
+        cat "$CONTRACT_DUPLICATE_DIR/duplicate-jobs-201.json"
+      fi
+      exit 0 ;;
+    *actions/runs/202/attempts/2/jobs?per_page=100)
+      if [[ -n "${CONTRACT_PUBLISHER_LOOKUP_LOG:-}" ]]; then
+        printf '%s\n' 202 >>"$CONTRACT_PUBLISHER_LOOKUP_LOG"
+      fi
+      if [[ -n "${CONTRACT_STALLED_LOOKUP_MARKER:-}" ]]; then
+        : >"$CONTRACT_STALLED_LOOKUP_MARKER"
+        # A gh API request is a single process. Keep the blocked fixture so
+        # the inner timeout does not depend on cleanup of a shell's descendants.
+        exec sleep 12
+      fi
+      cat "$CONTRACT_DUPLICATE_DIR/duplicate-jobs-${CONTRACT_DUPLICATE_JOB:-success}.json"; exit 0 ;;
+    *actions/runs/203/attempts/3/jobs?per_page=100)
+      if [[ -n "${CONTRACT_PUBLISHER_LOOKUP_LOG:-}" ]]; then
+        printf '%s\n' 203 >>"$CONTRACT_PUBLISHER_LOOKUP_LOG"
+      fi
+      cat "$CONTRACT_DUPLICATE_DIR/duplicate-jobs-203.json"; exit 0 ;;
+    *actions/runs/203)
+      cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher-203.json"; exit 0 ;;
+    *actions/runs/104) cat "$CONTRACT_DUPLICATE_DIR/duplicate-source-104-${CONTRACT_DUPLICATE_DIRECT_EVENT:-native}.json"; exit 0 ;;
+    *actions/runs/101)
+      if [[ -n "${CONTRACT_RERUN_PUBLISHER_ON_SOURCE_RECHECK:-}" ]]; then
+        invocation=0
+        [[ ! -f "$CONTRACT_SOURCE_READ_STATE" ]] || invocation="$(cat "$CONTRACT_SOURCE_READ_STATE")"
+        printf '%s\n' "$((invocation + 1))" >"$CONTRACT_SOURCE_READ_STATE"
+        if (( invocation >= 1 )); then
+          : >"$CONTRACT_RERUN_PUBLISHER_ON_SOURCE_RECHECK"
+        fi
+      fi
+      cat "$CONTRACT_DUPLICATE_DIR/duplicate-source-${CONTRACT_DUPLICATE_EVENT:-typed}.json"
+      exit 0 ;;
+    "api repos/example/FireMUD") printf '%s\n' '{"full_name":"example/FireMUD","default_branch":"develop"}'; exit 0 ;;
+    *actions/runs/202)
+      if [[ -n "${CONTRACT_PUBLISHER_LOOKUP_MARKER:-}" ]]; then
+        : >"$CONTRACT_PUBLISHER_LOOKUP_MARKER"
+      fi
+      if [[ -n "${CONTRACT_RERUN_PUBLISHER_ON_SOURCE_RECHECK:-}" && -f "$CONTRACT_RERUN_PUBLISHER_ON_SOURCE_RECHECK" ]]; then
+        cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher-rerun.json"
+        exit 0
+      fi
+      if [[ "${CONTRACT_DUPLICATE_EVENT:-typed}" == "native" ]]; then
+        cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher-native.json"
+      elif [[ "${CONTRACT_DUPLICATE_TYPED_NATIVE:-false}" == "true" ]]; then
+        cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher-typed-native.json"
+      else
+        cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher-${CONTRACT_DUPLICATE_PATH:-bare}.json"
+      fi
+      exit 0
+      ;;
+    *actions/runs/201)
+      case "${CONTRACT_DUPLICATE_DIRECT_PUBLISHER:-native}" in
+        typed) cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher-201-typed.json" ;;
+        typed-native) cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher-201-typed-native.json" ;;
+        typed-native-old) cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher-201-typed-native-old.json" ;;
+        *) cat "$CONTRACT_DUPLICATE_DIR/duplicate-publisher-201.json" ;;
+      esac
+      exit 0 ;;
+  esac
+fi
+
+if [[ -z "${CONTRACT_DUPLICATE_DIR:-}" ]]; then
+  case "$*" in
+    *actions/runs/202/attempts/2/jobs?per_page=100)
+      cat <<'JSON'
+{"total_count":1,"jobs":[{"name":"Publish Fixed PR Merge Image Tags","run_id":202,"run_attempt":2,"status":"completed","conclusion":"success","steps":[{"name":"Publish fixed PR image tags","status":"completed","conclusion":"success"}]}]}
+JSON
+      exit 0 ;;
+    *actions/runs/202)
+      if [[ -n "${CONTRACT_PUBLISHER_PAYLOAD:-}" ]]; then
+        python3 - "$CONTRACT_PUBLISHER_PAYLOAD" <<'PY_PUBLISHER_DETAIL'
+import json
+import sys
+payload = json.load(open(sys.argv[1]))
+pages = payload if isinstance(payload, list) else [payload]
+runs = [run for page in pages for run in page.get("workflow_runs", [])]
+run = next((run for run in runs if run.get("id") == 202), None)
+if run is None:
+    raise SystemExit(1)
+run.update({"run_attempt": 2, "path": ".github/workflows/publish-pr-runtime-images.yml",
+            "head_branch": "develop", "repository": {"full_name": "example/FireMUD"},
+            "head_repository": {"full_name": "example/FireMUD"}})
+print(json.dumps(run))
+PY_PUBLISHER_DETAIL
+      else
+        exit 1
+      fi
+      exit 0 ;;
+    *actions/runs/201/attempts/2/jobs?per_page=100)
+      cat <<'JSON'
+{"total_count":1,"jobs":[{"name":"Publish Fixed PR Merge Image Tags","run_id":201,"run_attempt":2,"status":"completed","conclusion":"success","steps":[{"name":"Publish fixed PR image tags","status":"completed","conclusion":"success"}]}]}
+JSON
+      exit 0 ;;
+    *actions/runs/101)
+      if [[ -n "${CONTRACT_SOURCE_PAYLOAD:-}" ]]; then
+        python3 - "$CONTRACT_SOURCE_PAYLOAD" <<'PY_SOURCE_DETAIL'
+import json
+import sys
+payload = json.load(open(sys.argv[1]))
+pages = payload if isinstance(payload, list) else [payload]
+runs = [run for page in pages for run in page.get("workflow_runs", [])]
+run = next((run for run in runs if run.get("id") == 101), None)
+if run is None:
+    raise SystemExit(1)
+run.update({"run_attempt": 1, "workflow_id": 50, "path": ".github/workflows/runtime-images.yml", "repository": {"full_name": "example/FireMUD"},
+            "head_repository": {"full_name": "example/FireMUD"}})
+print(json.dumps(run))
+PY_SOURCE_DETAIL
+      else
+        cat <<'JSON'
+{"id":101,"event":"pull_request","status":"completed","conclusion":"success","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","html_url":"https://example.test/runtime/101","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z","run_attempt":1,"workflow_id":50,"path":".github/workflows/runtime-images.yml","repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"}}
+JSON
+      fi
+      exit 0 ;;
+    *actions/runs/201)
+      cat <<'JSON'
+{"id":201,"run_attempt":2,"event":"workflow_run","status":"completed","conclusion":"success","display_title":"Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","path":".github/workflows/publish-pr-runtime-images.yml","head_branch":"develop","repository":{"full_name":"example/FireMUD"},"head_repository":{"full_name":"example/FireMUD"}}
+JSON
+      exit 0 ;;
+    "api repos/example/FireMUD") printf '%s\n' '{"full_name":"example/FireMUD","default_branch":"develop"}'; exit 0 ;;
+  esac
+fi
+
+print_source_inventory() {
+  jq -c '[. + {total_count: (.workflow_runs | length)}]' "$1"
+}
+
+if [[ -n "${CONTRACT_REFRESH_SOURCE_PAYLOAD:-}" && "$*" == *"actions/workflows/runtime-images.yml/runs"* ]]; then
+  invocation=0
+  [[ ! -f "$CONTRACT_REFRESH_SOURCE_STATE" ]] || invocation="$(cat "$CONTRACT_REFRESH_SOURCE_STATE")"
+  printf '%s\n' "$((invocation + 1))" >"$CONTRACT_REFRESH_SOURCE_STATE"
+  if (( invocation > 0 )) && [[ -n "${CONTRACT_REFRESH_SOURCE_STALL_SECONDS:-}" ]]; then
+    python3 -c 'import sys, time; time.sleep(float(sys.argv[1]))' "$CONTRACT_REFRESH_SOURCE_STALL_SECONDS"
+    echo 'controlled runtime-image source refresh outage' >&2
+    exit 1
+  fi
+  if (( invocation == 0 )); then
+    print_source_inventory "$CONTRACT_SOURCE_PAYLOAD"
+  else
+    print_source_inventory "$CONTRACT_REFRESH_SOURCE_PAYLOAD"
+  fi
+  exit 0
+fi
+
 if [[ "$*" == *"publish-pr-runtime-images.yml"* ]]; then
   [[ "$*" != *"--paginate"* ]] || { echo 'publisher inventory must be bounded' >&2; exit 1; }
   if [[ -n "${CONTRACT_PUBLISHER_PAYLOAD:-}" ]]; then
-    python3 - "$CONTRACT_PUBLISHER_PAYLOAD" "$*" <<'PY_PAGE'
+    if [[ -n "${CONTRACT_LATE_PUBLISHER_MARKER:-}" ]]; then
+      if [[ "$*" == *created=2026-07-24T00:05:00Z..* ]]; then
+        : >"$CONTRACT_LATE_PUBLISHER_MARKER"
+        printf '%s\n' '{"total_count":0,"workflow_runs":[]}'
+        exit 0
+      elif [[ ! -f "$CONTRACT_LATE_PUBLISHER_MARKER" ]]; then
+        python3 - "$CONTRACT_PUBLISHER_PAYLOAD" <<'PY_QUEUED'
+import json
+import sys
+payload = json.load(open(sys.argv[1]))
+print(json.dumps({"total_count": 1, "workflow_runs": [
+    {**payload["workflow_runs"][0], "status": "queued", "conclusion": None}
+]}))
+PY_QUEUED
+        exit 0
+      fi
+    fi
+    local_rc=0
+    python3 - "$CONTRACT_PUBLISHER_PAYLOAD" "$*" <<'PY_PAGE' || local_rc=$?
 import json
 import re
 import sys
 payload = json.load(open(sys.argv[1]))
 event = re.search(r"event=([^&]+)", sys.argv[2]).group(1)
 page_number = int(re.search(r"&page=([0-9]+)", sys.argv[2]).group(1))
+if isinstance(payload, dict) and "fixture_events" in payload:
+    payload = payload["fixture_events"].get(event, {"total_count": 0, "workflow_runs": []})
+    if payload is None:
+        print("controlled publisher inventory API outage", file=sys.stderr)
+        sys.exit(1)
+    payload["fixture_event"] = event
 pages = payload if isinstance(payload, list) else [payload]
 page = pages[min(page_number - 1, len(pages) - 1)]
 if page.get("fixture_event", "repository_dispatch") != event:
@@ -2170,7 +2085,7 @@ else:
     page = {key: value for key, value in page.items() if key != "fixture_event"}
 print(json.dumps(page))
 PY_PAGE
-    exit 0
+    exit "$local_rc"
   fi
   if [[ "$*" == *event=repository_dispatch* ]]; then
     printf '%s' '{"total_count":0,"workflow_runs":[]}'
@@ -2181,40 +2096,59 @@ PY_PAGE
 JSON
 else
   if [[ -n "${CONTRACT_SOURCE_PAYLOAD:-}" ]]; then
-    cat "$CONTRACT_SOURCE_PAYLOAD"
+    print_source_inventory "$CONTRACT_SOURCE_PAYLOAD"
     exit 0
   fi
   cat <<'JSON'
-[{"workflow_runs":[{"id":102,"status":"completed","conclusion":"skipped","html_url":"https://example.test/runtime/102","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-metadata","created_at":"2026-07-24T00:02:00Z"}]},{"workflow_runs":[{"id":101,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}]}]
+[{"total_count":2,"workflow_runs":[{"id":102,"status":"completed","conclusion":"skipped","html_url":"https://example.test/runtime/102","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-metadata","created_at":"2026-07-24T00:02:00Z"},{"id":101,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}]}]
 JSON
 fi
 EOF
 chmod +x "$contract_fixture_dir/gh"
+# Advance the fixture clock at poll sleeps so API fixture speed cannot govern
+# success or timeout. The outer timeout still bounds a broken fixture.
+cat >"$contract_fixture_dir/publisher-clock.sh" <<'EOF'
+if [[ "${0##*/}" == "wait-for-runtime-images.sh" ]]; then
+  unset SECONDS
+  SECONDS=0
+  sleep() {
+    # The actual blocked API call runs in a command substitution. Use its
+    # shared marker to advance the parent shell's clock after it returns.
+    if [[ -n "${CONTRACT_STALLED_LOOKUP_MARKER:-}" && -f "$CONTRACT_STALLED_LOOKUP_MARKER" ]]; then
+      SECONDS=$((SECONDS + HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS))
+    else
+      SECONDS=$((SECONDS + 1))
+    fi
+  }
+fi
+EOF
+BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
 PATH="$contract_fixture_dir:$PATH" \
 GH_TOKEN=contract-token \
 GITHUB_REPOSITORY=example/FireMUD \
 HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 \
 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
-bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
   >"$contract_fixture_dir/output"
 require_contains "$contract_fixture_dir/output" 'Matching runtime-images workflow 101 succeeded'
 require_contains "$contract_fixture_dir/output" 'Trusted PR image publisher 201 succeeded'
 
+BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
 CONTRACT_GH_STATE_FILE="$contract_fixture_dir/gh-state" \
 PATH="$contract_fixture_dir:$PATH" \
 GH_TOKEN=contract-token \
 GITHUB_REPOSITORY=example/FireMUD \
 HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 \
 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
-bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
   >"$contract_fixture_dir/retry-output" \
   2>"$contract_fixture_dir/retry-error"
 require_contains "$contract_fixture_dir/retry-error" \
-  'GitHub API response was empty or invalid while waiting for the runtime-images workflow; retrying.'
+  'GitHub runtime-image producer inventory is incomplete or inconsistent while waiting for the runtime-images workflow.'
 require_contains "$contract_fixture_dir/retry-output" 'Matching runtime-images workflow 101 succeeded'
 require_contains "$contract_fixture_dir/retry-output" 'Trusted PR image publisher 201 succeeded'
 
@@ -2236,6 +2170,20 @@ for created_at in [source["created_at"], "2026-02-31T00:01:00Z", "2026-07-24T00:
 def parse_source(run):
     return subprocess.run([sys.executable, "-c", source_parser, "pull-request", "pr-merge-" + "c" * 40, "c" * 40, "b" * 40, "a" * 40], input=json.dumps({"workflow_runs": [run]}), capture_output=True, text=True)
 
+pending_duplicate = {**source, "id": 104, "status": "in_progress",
+                     "conclusion": None, "created_at": "2026-07-24T00:05:00Z"}
+source_argv = [sys.executable, "-c", source_parser, "pull-request", "pr-merge-" + "c" * 40,
+               "c" * 40, "b" * 40, "a" * 40]
+def parse_duplicates(*duplicate_runs, completed_alternative=False):
+    return subprocess.run(source_argv + (["104"] if completed_alternative else []),
+                          input=json.dumps({"workflow_runs": list(duplicate_runs)}),
+                          capture_output=True, text=True, check=True).stdout.split("\t")
+
+assert parse_duplicates(pending_duplicate, source)[1] == "104"
+assert parse_duplicates(pending_duplicate, source, completed_alternative=True)[1] == "101"
+wrong_tuple = {**source, "display_title": source["display_title"].replace("merge-" + "c" * 40, "merge-" + "d" * 40)}
+assert parse_duplicates(pending_duplicate, wrong_tuple, completed_alternative=True) == ["missing\n"]
+
 for field, values in {"id": [None, 0, True, "101"], "status": [None, "", "completed\t"], "html_url": [None, "", "https://example.test/\t101"], "conclusion": [None, "", "success\n"]}.items():
     for value in values:
         assert parse_source({**source, field: value}).returncode != 0, f"malformed source {field} must be rejected"
@@ -2249,8 +2197,174 @@ for conclusion in [None, ""]:
     assert split.stdout.splitlines() == ["found", "101", "in_progress", "pending", source["html_url"], source["event"], source["created_at"]], "optional conclusion must preserve Bash field positions"
 
 base = {"id": 202, "event": "repository_dispatch", "status": "completed", "conclusion": "success", "html_url": "https://example.test/publisher/202", "display_title": "Publish PR Runtime Images source-run-101", "created_at": "2026-07-24T00:04:00Z"}
+repository = {"full_name": "example/FireMUD"}
+typed_source = {**source, "event": "repository_dispatch", "head_branch": "develop", "head_sha": "d" * 40}
+(root / "duplicate-inventory.json").write_text(json.dumps({"workflow_runs": [pending_duplicate, typed_source]}))
+(root / "typed-source-inventory.json").write_text(json.dumps({"workflow_runs": [typed_source]}))
+(root / "duplicate-native.json").write_text(json.dumps({"workflow_runs": [pending_duplicate, source]}))
+(root / "duplicate-late-publisher.json").write_text(json.dumps({"workflow_runs": [
+    {**pending_duplicate, "status": "completed", "conclusion": "success"}, typed_source]}))
+initial_alternate_wait = {**pending_duplicate, "event": "repository_dispatch", "head_branch": "develop",
+    "head_sha": "d" * 40, "status": "completed", "conclusion": "success"}
+pending_alternate = {**typed_source, "status": "in_progress", "conclusion": None}
+completed_alternate = {**typed_source, "status": "completed", "conclusion": "success"}
+(root / "refresh-alternates-initial.json").write_text(json.dumps({"workflow_runs": [initial_alternate_wait, pending_alternate]}))
+(root / "refresh-alternates-completed.json").write_text(json.dumps({"workflow_runs": [initial_alternate_wait, completed_alternate]}))
+terminal_duplicate = {**pending_duplicate, "status": "completed", "conclusion": "failure"}
+intermediate_duplicate = {**typed_source, "id": 103, "created_at": "2026-07-24T00:04:30Z"}
+for name, runs in {
+    "terminal": [terminal_duplicate, typed_source],
+    "multi": [pending_duplicate, intermediate_duplicate, typed_source],
+    "terminal-no-proof": [terminal_duplicate, intermediate_duplicate],
+}.items():
+    (root / f"duplicate-{name}.json").write_text(json.dumps({"workflow_runs": runs}))
+
+for event, run in {"typed": typed_source, "native": source}.items():
+    (root / f"duplicate-source-{event}.json").write_text(json.dumps({**run, "run_attempt": 1,
+        "workflow_id": 50, "path": ".github/workflows/runtime-images.yml", "repository": repository, "head_repository": repository}))
+publisher_path = ".github/workflows/publish-pr-runtime-images.yml"
+publisher = {**base, "run_attempt": 2, "path": publisher_path, "head_branch": "develop", "repository": repository,
+    "head_repository": repository}
+native_publisher = {**publisher, "event": "workflow_run", "display_title": "Publish PR Runtime Images " + source["display_title"]}
+(root / "duplicate-publisher-native.json").write_text(json.dumps(native_publisher))
+direct_source = {**pending_duplicate, "status": "completed", "conclusion": "success"}
+direct_publisher = {**native_publisher, "id": 201, "run_attempt": 2,
+    "created_at": "2026-07-24T00:07:00Z"}
+alternate_publisher = {**native_publisher, "id": 202, "run_attempt": 2,
+    "created_at": "2026-07-24T00:06:00Z"}
+(root / "direct-success-sources.json").write_text(json.dumps({"workflow_runs": [direct_source, source]}))
+(root / "duplicate-publisher-201.json").write_text(json.dumps(direct_publisher))
+for event, source_run in {
+    "native": {**direct_source, "run_attempt": 1},
+    "typed": {**typed_source, "id": 104, "status": "completed", "conclusion": "success",
+              "created_at": "2026-07-24T00:05:00Z", "run_attempt": 1},
+}.items():
+    (root / f"duplicate-source-104-{event}.json").write_text(json.dumps({
+        **source_run, "workflow_id": 50, "path": ".github/workflows/runtime-images.yml",
+        "repository": repository, "head_repository": repository,
+    }))
+direct_typed_source = {**typed_source, "id": 104, "status": "completed", "conclusion": "success",
+                       "created_at": "2026-07-24T00:05:00Z"}
+(root / "direct-typed-success-sources.json").write_text(json.dumps({
+    "workflow_runs": [direct_typed_source, typed_source],
+}))
+direct_typed_publisher = {**direct_publisher, "event": "repository_dispatch",
+    "display_title": "Publish PR Runtime Images source-run-104"}
+(root / "duplicate-publisher-201-typed.json").write_text(json.dumps(direct_typed_publisher))
+native_typed_direct_publisher = {**direct_publisher, "event": "workflow_run",
+    "display_title": "Publish PR Runtime Images " + typed_source["display_title"] + " source-run-104"}
+native_typed_alternate_publisher = {**alternate_publisher, "event": "workflow_run",
+    "display_title": "Publish PR Runtime Images " + typed_source["display_title"] + " source-run-101"}
+old_native_typed_publisher = {**native_typed_direct_publisher,
+    "display_title": "Publish PR Runtime Images " + typed_source["display_title"]}
+(root / "duplicate-publisher-201-typed-native.json").write_text(json.dumps(native_typed_direct_publisher))
+(root / "duplicate-publisher-201-typed-native-old.json").write_text(json.dumps(old_native_typed_publisher))
+(root / "duplicate-publisher-typed-native.json").write_text(json.dumps(native_typed_alternate_publisher))
+(root / "typed-failed-after-native.json").write_text(json.dumps({"fixture_events": {
+    "workflow_run": {"total_count": 1, "workflow_runs": [native_typed_direct_publisher]},
+    "repository_dispatch": {"total_count": 1, "workflow_runs": [
+        {**direct_typed_publisher, "id": 205, "conclusion": "failure", "created_at": "2026-07-24T00:08:00Z"},
+    ]},
+}}))
+for name, events in {
+    "typed-active-before-failed-callback": {
+        "workflow_run": {"total_count": 1, "workflow_runs": [
+            {**native_typed_direct_publisher, "id": 205, "conclusion": "failure",
+             "created_at": "2026-07-24T00:08:00Z"},
+        ]},
+        "repository_dispatch": {"total_count": 1, "workflow_runs": [
+            {**direct_typed_publisher, "status": "in_progress", "conclusion": None},
+        ]},
+    },
+    "typed-queued-after-native": {
+        "workflow_run": {"total_count": 1, "workflow_runs": [native_typed_direct_publisher]},
+        "repository_dispatch": {"total_count": 1, "workflow_runs": [
+            {**direct_typed_publisher, "id": 205, "status": "queued", "conclusion": None,
+             "created_at": "2026-07-24T00:08:00Z"},
+        ]},
+    },
+    "typed-native-with-unavailable-dispatch": {
+        "workflow_run": {"total_count": 1, "workflow_runs": [native_typed_direct_publisher]},
+        "repository_dispatch": None,
+    },
+    "typed-failed-with-unavailable-dispatch": {
+        "workflow_run": {"total_count": 1, "workflow_runs": [
+            {**native_typed_direct_publisher, "conclusion": "failure"},
+        ]},
+        "repository_dispatch": None,
+    },
+    "typed-explicit-with-unavailable-callback": {
+        "workflow_run": None,
+        "repository_dispatch": {"total_count": 1, "workflow_runs": [direct_typed_publisher]},
+    },
+}.items():
+    (root / f"{name}.json").write_text(json.dumps({"fixture_events": events}))
+for event, publisher_run, fixture_event in [
+    ("native", direct_publisher, "workflow_run"),
+    ("typed", direct_typed_publisher, "repository_dispatch"),
+    ("typed-native", native_typed_direct_publisher, "workflow_run"),
+    ("typed-native-old", old_native_typed_publisher, "workflow_run"),
+]:
+    (root / f"direct-publisher-only-{event}.json").write_text(json.dumps({
+        "total_count": 1, "fixture_event": fixture_event, "workflow_runs": [publisher_run],
+    }))
+for conclusion in ["success", "skipped"]:
+    (root / f"duplicate-jobs-201{'-skipped' if conclusion == 'skipped' else ''}.json").write_text(json.dumps({
+        "total_count": 1, "jobs": [{
+            "name": "Publish Fixed PR Merge Image Tags", "run_id": 201, "run_attempt": 2,
+            "status": "completed", "conclusion": "success", "steps": [{
+                "name": "Publish fixed PR image tags", "status": "completed", "conclusion": conclusion,
+            }],
+        }],
+    }))
+direct_only_native = {**direct_source, "created_at": "2026-07-24T00:05:00Z"}
+cached_typed_alternate = {**typed_source, "status": "completed", "conclusion": "success"}
+(root / "cached-alternate-sources.json").write_text(json.dumps({
+    "workflow_runs": [direct_only_native, cached_typed_alternate],
+}))
+(root / "duplicate-publisher-rerun.json").write_text(json.dumps({
+    **alternate_publisher, "run_attempt": 3, "status": "in_progress", "conclusion": None,
+}))
+for variant, change in {
+    "bare": {},
+    "qualified": {"path": publisher_path + "@develop"},
+    "wrong-ref": {"path": publisher_path + "@other", "head_branch": "develop"},
+    "wrong-head": {"path": publisher_path + "@develop", "head_branch": "other"},
+    "full-ref": {"path": publisher_path + "@refs/heads/develop"},
+    "wrong-workflow": {"path": ".github/workflows/other.yml@develop"},
+    "fork": {"path": publisher_path + "@develop", "head_repository": {"full_name": "fork/FireMUD"}},
+}.items():
+    (root / f"duplicate-publisher-{variant}.json").write_text(json.dumps({**publisher, **change}))
+for conclusion in ["success", "skipped"]:
+    (root / f"duplicate-jobs-{conclusion}.json").write_text(json.dumps({"total_count": 1, "jobs": [
+        {"name": "Publish Fixed PR Merge Image Tags", "run_id": 202, "run_attempt": 2,
+         "status": "completed", "conclusion": "success", "steps": [
+             {"name": "Publish fixed PR image tags", "status": "completed", "conclusion": conclusion}
+         ]}
+    ]}))
+(root / "duplicate-publisher-203.json").write_text(json.dumps({**publisher, "id": 203, "run_attempt": 3,
+    "created_at": "2026-07-24T00:04:30Z"}))
+(root / "duplicate-jobs-203.json").write_text(json.dumps({"total_count": 1, "jobs": [
+    {"name": "Publish Fixed PR Merge Image Tags", "run_id": 203, "run_attempt": 3,
+     "status": "completed", "conclusion": "success", "steps": [
+         {"name": "Publish fixed PR image tags", "status": "completed", "conclusion": "skipped"}
+     ]}
+]}))
+(root / "duplicate-jobs-success-absent.json").write_text(json.dumps({"total_count": 1, "jobs": [
+    {"name": "Publish Fixed PR Merge Image Tags", "run_id": 202,
+     "status": "completed", "conclusion": "success", "steps": [
+         {"name": "Publish fixed PR image tags", "status": "completed", "conclusion": "success"}
+     ]}
+]}))
+(root / "duplicate-jobs-success-null.json").write_text(json.dumps({"total_count": 1, "jobs": [
+    {"name": "Publish Fixed PR Merge Image Tags", "run_id": 202, "run_attempt": None,
+     "status": "completed", "conclusion": "success", "steps": [
+         {"name": "Publish fixed PR image tags", "status": "completed", "conclusion": "success"}
+     ]}
+]}))
 fixtures = {
     "dispatch-success": base,
+    "callback-success": native_publisher,
     "dispatch-wrong-source": {**base, "display_title": "Publish PR Runtime Images source-run-999"},
     "dispatch-wrong-event": {**base, "event": "push"},
     "dispatch-malformed-title": {**base, "display_title": "Publish PR Runtime Images source-run-101 extra"},
@@ -2258,7 +2372,16 @@ fixtures = {
     "callback-wrong-tuple": {**base, "event": "workflow_run", "display_title": "Publish PR Runtime Images Build Runtime Images secure-pr-artifact pr-1 base-" + "d" * 40 + " head-" + "a" * 40 + " merge-" + "c" * 40 + " mode-required"},
 }
 for name, run in fixtures.items():
-    (root / (name + ".json")).write_text(json.dumps({"total_count": 1, "fixture_event": "workflow_run" if name == "callback-wrong-tuple" else "repository_dispatch", "workflow_runs": [run]}))
+    (root / (name + ".json")).write_text(json.dumps({"total_count": 1, "fixture_event": "workflow_run" if name.startswith("callback-") else "repository_dispatch", "workflow_runs": [run]}))
+multiple_publishers = [
+    {**base, "id": 202, "created_at": "2026-07-24T00:04:00Z"},
+    {**base, "id": 203, "created_at": "2026-07-24T00:04:30Z"},
+]
+(root / "dispatch-multiple-publishers.json").write_text(json.dumps({"total_count": 2,
+    "fixture_event": "repository_dispatch", "workflow_runs": multiple_publishers}))
+direct_and_alternate = [alternate_publisher, direct_publisher]
+(root / "direct-and-alt-publishers.json").write_text(json.dumps({"total_count": 2,
+    "fixture_event": "workflow_run", "workflow_runs": direct_and_alternate}))
 # Matching publication remains discoverable beyond the first page.
 many = [{**base, "id": 300 + index, "display_title": f"Publish PR Runtime Images source-run-{500 + index}"} for index in range(100)] + [base]
 (root / "dispatch-second-page.json").write_text(json.dumps([{"total_count": 101, "workflow_runs": many[:100]}, {"total_count": 101, "workflow_runs": many[100:]}]))
@@ -2268,28 +2391,374 @@ many = [{**base, "id": 300 + index, "display_title": f"Publish PR Runtime Images
 (root / "dispatch-outside-window.json").write_text(json.dumps({"total_count": 1, "workflow_runs": [{**base, "created_at": "2026-07-23T00:00:00Z"}]}))
 (root / "dispatch-invalid-date.json").write_text(json.dumps({"total_count": 1, "workflow_runs": [{**base, "created_at": "2026-02-31T00:00:00Z"}]}))
 PY_FIXTURES
-for fixture in missing-url empty-url; do
-  if CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/$fixture.json" \
+for event in typed native; do
+  source_inventory="duplicate-inventory"
+  publisher_inventory="dispatch-success"
+  if [[ "$event" == "native" ]]; then
+    source_inventory="duplicate-native"
+    publisher_inventory="callback-success"
+  fi
+  for conclusion in success skipped; do
+    if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT="$event" \
+      CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB="$conclusion" \
+      CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/$source_inventory.json" \
+      CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/$publisher_inventory.json" \
+      PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+      HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+      timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+        >"$contract_fixture_dir/duplicate-$event-$conclusion.output" 2>"$contract_fixture_dir/duplicate-$event-$conclusion.error"; then
+      [[ "$conclusion" == "success" ]] || { echo "Skipped publication step bypassed duplicate wait" >&2; exit 1; }
+      require_contains "$contract_fixture_dir/duplicate-$event-$conclusion.output" 'Trusted PR image publisher 202 succeeded'
+    else
+      [[ "$conclusion" == "skipped" ]] || { cat "$contract_fixture_dir/duplicate-$event-$conclusion.error" >&2; exit 1; }
+      require_contains "$contract_fixture_dir/duplicate-$event-$conclusion.output" 'Waiting for runtime-images workflow 104'
+      require_contains "$contract_fixture_dir/duplicate-$event-$conclusion.error" 'Timed out waiting for runtime-images workflow'
+    fi
+  done
+done
+for job_fixture in success-absent success-null; do
+  if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
+    CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB="$job_fixture" \
+    CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/duplicate-inventory.json" \
+    CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/job-run-attempt-$job_fixture.output" 2>"$contract_fixture_dir/job-run-attempt-$job_fixture.error"; then
+    [[ "$job_fixture" == "success-absent" ]] || { echo "Present null run_attempt must be rejected" >&2; exit 1; }
+    require_contains "$contract_fixture_dir/job-run-attempt-$job_fixture.output" 'Trusted PR image publisher 202 succeeded'
+  else
+    [[ "$job_fixture" == "success-null" ]] || { cat "$contract_fixture_dir/job-run-attempt-$job_fixture.error" >&2; exit 1; }
+    require_contains "$contract_fixture_dir/job-run-attempt-$job_fixture.error" 'Timed out waiting for runtime-images workflow'
+  fi
+done
+
+if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
+  CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success \
+  CONTRACT_PUBLISHER_LOOKUP_LOG="$contract_fixture_dir/publisher-candidate-lookups" \
+  CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/duplicate-inventory.json" \
+  CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-multiple-publishers.json" \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/multiple-publishers.output" 2>"$contract_fixture_dir/multiple-publishers.error"; then
+  require_contains "$contract_fixture_dir/multiple-publishers.output" 'Trusted PR image publisher 202 succeeded'
+else
+  cat "$contract_fixture_dir/multiple-publishers.error" >&2
+  exit 1
+fi
+[[ "$(cat "$contract_fixture_dir/publisher-candidate-lookups")" == $'203\n202' ]] || {
+  echo "Publisher verification must try the newer incumbent and then its older matching candidate" >&2
+  exit 1
+}
+
+for variant in terminal multi terminal-no-proof; do
+  if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
+    CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success \
+    CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/duplicate-$variant.json" \
+    CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=6 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/competing-$variant.output" 2>"$contract_fixture_dir/competing-$variant.error"; then
+    [[ "$variant" != "terminal-no-proof" ]]
+    require_contains "$contract_fixture_dir/competing-$variant.output" 'Trusted PR image publisher 202 succeeded'
+  else
+    [[ "$variant" == "terminal-no-proof" ]] || { cat "$contract_fixture_dir/competing-$variant.error" >&2; exit 1; }
+    require_contains "$contract_fixture_dir/competing-$variant.error" 'completed with failure'
+  fi
+done
+BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
+  CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success \
+  CONTRACT_LATE_PUBLISHER_MARKER="$contract_fixture_dir/late-publisher.lookup" \
+  CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/duplicate-late-publisher.json" \
+  CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/late-publisher.output"
+require_contains "$contract_fixture_dir/late-publisher.output" 'Matching runtime-images workflow 104 succeeded'
+require_contains "$contract_fixture_dir/late-publisher.output" 'Trusted PR image publisher 202 succeeded'
+
+BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
+  CONTRACT_DUPLICATE_EVENT=native CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success \
+  CONTRACT_STALLED_LOOKUP_MARKER="$contract_fixture_dir/direct-before-alternate.lookup" \
+  CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/direct-success-sources.json" \
+  CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/direct-and-alt-publishers.json" \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/direct-before-alternate.output"
+require_contains "$contract_fixture_dir/direct-before-alternate.output" 'Trusted PR image publisher 201 succeeded'
+[[ ! -e "$contract_fixture_dir/direct-before-alternate.lookup" ]] || {
+  echo "A positive direct publisher must be checked before querying alternate publisher jobs" >&2
+  exit 1
+}
+
+for direct_variant in native typed typed-native; do
+  direct_event="$direct_variant"
+  source_inventory="direct-success-sources"
+  direct_publisher_variant="$direct_variant"
+  if [[ "$direct_variant" != "native" ]]; then
+    direct_event=typed
+    source_inventory="direct-typed-success-sources"
+  fi
+  if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT="$direct_event" \
+    CONTRACT_DUPLICATE_DIRECT_EVENT="$direct_event" CONTRACT_DUPLICATE_DIRECT_JOB=skipped \
+    CONTRACT_DUPLICATE_DIRECT_PUBLISHER="$direct_publisher_variant" \
+    CONTRACT_DIRECT_JOB_MARKER="$contract_fixture_dir/direct-skipped-$direct_variant.checked" \
+    CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" \
+    CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/$source_inventory.json" \
+    CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/direct-publisher-only-$direct_variant.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/direct-skipped-$direct_variant.output" \
+      2>"$contract_fixture_dir/direct-skipped-$direct_variant.error"; then
+    echo "A successful direct $direct_variant publisher workflow with a skipped image step must not be accepted" >&2
+    exit 1
+  fi
+  [[ -f "$contract_fixture_dir/direct-skipped-$direct_variant.checked" ]] || {
+    echo "The skipped-step fixture did not reach the exact publisher job for $direct_variant" >&2
+    exit 1
+  }
+  if ! grep -Eq 'Timed out waiting for trusted PR image publisher|Publisher coverage unavailable at the wait deadline' \
+    "$contract_fixture_dir/direct-skipped-$direct_variant.error"; then
+    cat "$contract_fixture_dir/direct-skipped-$direct_variant.output" \
+      "$contract_fixture_dir/direct-skipped-$direct_variant.error" >&2
+    exit 1
+  fi
+  if grep -Eq 'Trusted PR image publisher .* succeeded' "$contract_fixture_dir/direct-skipped-$direct_variant.output"; then
+    echo "A direct publisher with a skipped image step was accepted for $direct_variant" >&2
+    exit 1
+  fi
+done
+
+for publisher_fixture in direct-publisher-only-typed-native typed-failed-after-native \
+  typed-queued-after-native typed-native-with-unavailable-dispatch typed-explicit-with-unavailable-callback; do
+  publisher_variant=typed-native
+  if [[ "$publisher_fixture" == typed-explicit-with-unavailable-callback ]]; then
+    publisher_variant=typed
+  fi
+  BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
+    CONTRACT_DUPLICATE_DIRECT_EVENT=typed CONTRACT_DUPLICATE_DIRECT_PUBLISHER="$publisher_variant" \
+    CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_DIRECT_JOB=success \
+    CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/direct-typed-success-sources.json" \
+    CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/$publisher_fixture.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/typed-native-direct.output" 2>"$contract_fixture_dir/typed-native-direct.error" || {
+        cat "$contract_fixture_dir/typed-native-direct.output" "$contract_fixture_dir/typed-native-direct.error" >&2
+        exit 1
+      }
+  require_contains "$contract_fixture_dir/typed-native-direct.output" \
+    'Trusted PR image publisher 201 succeeded for pr-merge-'
+  require_contains "$contract_fixture_dir/typed-native-direct.output" 'as the direct source'
+done
+
+for publisher_fixture in typed-active-before-failed-callback typed-failed-with-unavailable-dispatch; do
+  wait_status=0
+  BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
+    CONTRACT_DUPLICATE_DIRECT_EVENT=typed CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" \
+    CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/direct-typed-success-sources.json" \
+    CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/$publisher_fixture.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=3 \
+    HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/$publisher_fixture.output" \
+      2>"$contract_fixture_dir/$publisher_fixture.error" || wait_status=$?
+  if [[ "$wait_status" != 1 ]] || grep -Eq 'completed with failure|No trusted PR image publisher appeared' \
+    "$contract_fixture_dir/$publisher_fixture.error"; then
+    cat "$contract_fixture_dir/$publisher_fixture.output" "$contract_fixture_dir/$publisher_fixture.error" >&2
+    exit 1
+  fi
+  if [[ "$publisher_fixture" == typed-active-before-failed-callback ]]; then
+    require_contains "$contract_fixture_dir/$publisher_fixture.output" 'Waiting for trusted PR image publisher 201'
+    if ! grep -Eq 'Timed out waiting for trusted PR image publisher|Publisher coverage unavailable at the wait deadline' \
+      "$contract_fixture_dir/$publisher_fixture.error"; then
+      cat "$contract_fixture_dir/$publisher_fixture.error" >&2
+      exit 1
+    fi
+  else
+    require_contains "$contract_fixture_dir/$publisher_fixture.error" 'Publisher coverage unavailable at the wait deadline'
+  fi
+done
+
+if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
+  CONTRACT_DUPLICATE_DIRECT_EVENT=typed CONTRACT_DUPLICATE_DIRECT_PUBLISHER=typed-native-old \
+  CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" \
+  CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/direct-typed-success-sources.json" \
+  CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/direct-publisher-only-typed-native-old.json" \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/typed-native-old.output" 2>"$contract_fixture_dir/typed-native-old.error"; then
+  echo "A typed native publisher title without its source run ID must not be accepted" >&2
+  exit 1
+fi
+if ! grep -Eq '^(Timed out waiting for trusted PR image publisher|No trusted PR image publisher appeared)' \
+  "$contract_fixture_dir/typed-native-old.error"; then
+  cat "$contract_fixture_dir/typed-native-old.output" >&2
+  cat "$contract_fixture_dir/typed-native-old.error" >&2
+  echo "Expected a refusal because no publisher proved the typed source run" >&2
+  exit 1
+fi
+
+BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
+  CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" \
+  CONTRACT_REFRESH_SOURCE_STATE="$contract_fixture_dir/cached-refresh-state" \
+  CONTRACT_REFRESH_SOURCE_PAYLOAD="$contract_fixture_dir/refresh-alternates-completed.json" \
+  CONTRACT_REFRESH_SOURCE_STALL_SECONDS=1 \
+  CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/cached-alternate-sources.json" \
+  CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=5 \
+  HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 10s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/cached-refresh.output" 2>"$contract_fixture_dir/cached-refresh.error" || {
+      cat "$contract_fixture_dir/cached-refresh.output" "$contract_fixture_dir/cached-refresh.error" >&2
+      exit 1
+    }
+# The first source inventory seeded the cached candidates; skip a second read
+# when the targeted proof already verifies a publisher.
+if [[ "$(cat "$contract_fixture_dir/cached-refresh-state")" != 1 ]] ||
+  grep -Fq 'refreshing alternate runtime-image sources' "$contract_fixture_dir/cached-refresh.error"; then
+  echo "a proven cached publisher must not trigger an alternate inventory refresh" >&2
+  exit 1
+fi
+require_contains "$contract_fixture_dir/cached-refresh.output" \
+  'Trusted PR image publisher 202 succeeded for pr-merge-'
+require_contains "$contract_fixture_dir/cached-refresh.output" 'via an alternate producer'
+
+publisher_rerun_status=0
+CONTRACT_DUPLICATE_EVENT=typed CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" \
+  CONTRACT_RERUN_PUBLISHER_ON_SOURCE_RECHECK="$contract_fixture_dir/publisher-rerun-marker" \
+  CONTRACT_SOURCE_READ_STATE="$contract_fixture_dir/source-read-state" \
+  CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/cached-alternate-sources.json" \
+  CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
+  timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/publisher-rerun.output" 2>"$contract_fixture_dir/publisher-rerun.error" || publisher_rerun_status=$?
+[[ "$publisher_rerun_status" == 1 ]] || {
+  echo "Expected the runtime waiter to exit 1 after rejecting the superseded attempt, got $publisher_rerun_status" >&2
+  exit 1
+}
+[[ -f "$contract_fixture_dir/publisher-rerun-marker" ]] || {
+  echo "The fixture did not rerun the publisher during source revalidation" >&2
+  exit 1
+}
+if grep -Eq 'Trusted PR image publisher .* succeeded' "$contract_fixture_dir/publisher-rerun.output"; then
+  echo "A rerun publisher attempt was accepted using the predecessor attempt's job proof" >&2
+  exit 1
+fi
+if ! grep -Eq 'Timed out waiting for trusted PR image publisher|Publisher coverage unavailable at the wait deadline' \
+  "$contract_fixture_dir/publisher-rerun.error"; then
+  cat "$contract_fixture_dir/publisher-rerun.error" >&2
+  exit 1
+fi
+
+BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_DUPLICATE_EVENT=typed \
+  CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success \
+  CONTRACT_REFRESH_SOURCE_STATE="$contract_fixture_dir/refresh-source-state" \
+  CONTRACT_REFRESH_SOURCE_PAYLOAD="$contract_fixture_dir/refresh-alternates-completed.json" \
+  CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/refresh-alternates-initial.json" \
+  CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=5 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/refreshed-alternate.output" 2>"$contract_fixture_dir/refreshed-alternate.error" || {
+      cat "$contract_fixture_dir/refreshed-alternate.output" "$contract_fixture_dir/refreshed-alternate.error" >&2
+      exit 1
+    }
+require_contains "$contract_fixture_dir/refreshed-alternate.output" 'Matching runtime-images workflow 104 succeeded'
+require_contains "$contract_fixture_dir/refreshed-alternate.output" 'Trusted PR image publisher 202 succeeded'
+
+stalled_status=0
+BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
+  CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success \
+  CONTRACT_STALLED_LOOKUP_MARKER="$contract_fixture_dir/stalled-publisher.lookup" \
+  CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/duplicate-inventory.json" \
+  CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
+  PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=4 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 9s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    >"$contract_fixture_dir/stalled-publisher.output" 2>"$contract_fixture_dir/stalled-publisher.error" || stalled_status=$?
+if [[ ! -f "$contract_fixture_dir/stalled-publisher.lookup" || "$stalled_status" != "1" ]]; then
+  echo "Expected a real blocked publisher lookup and waiter exit 1, got $stalled_status" >&2
+  cat "$contract_fixture_dir/stalled-publisher.output" "$contract_fixture_dir/stalled-publisher.error" >&2
+  exit 1
+fi
+require_contains "$contract_fixture_dir/stalled-publisher.error" 'Timed out waiting for runtime-images workflow'
+
+for variant in qualified wrong-ref wrong-head full-ref wrong-workflow fork; do
+  lookup_marker="$contract_fixture_dir/publisher-$variant.lookup"
+  if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" \
+    CONTRACT_PUBLISHER_LOOKUP_MARKER="$lookup_marker" \
+    CONTRACT_DUPLICATE_DIR="$contract_fixture_dir" CONTRACT_DUPLICATE_JOB=success CONTRACT_DUPLICATE_PATH="$variant" \
+    CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/duplicate-inventory.json" \
+    CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/dispatch-success.json" \
     PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
-    bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+      >"$contract_fixture_dir/publisher-$variant.output" 2>"$contract_fixture_dir/publisher-$variant.error"; then
+    [[ "$variant" == "qualified" || "$variant" == "full-ref" ]] || { echo "Untrusted publisher path bypassed: $variant" >&2; exit 1; }
+    require_contains "$contract_fixture_dir/publisher-$variant.output" 'Trusted PR image publisher 202 succeeded'
+  else
+    [[ "$variant" != "qualified" && "$variant" != "full-ref" ]] || { cat "$contract_fixture_dir/publisher-$variant.error" >&2; exit 1; }
+    require_contains "$contract_fixture_dir/publisher-$variant.error" 'Timed out waiting for runtime-images workflow'
+  fi
+  [[ -f "$lookup_marker" ]] || { echo "Publisher lookup was not reached: $variant" >&2; exit 1; }
+done
+for fixture in missing-url empty-url; do
+  missing_status=0
+  if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_SOURCE_PAYLOAD="$contract_fixture_dir/$fixture.json" \
+    PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
       >"$contract_fixture_dir/$fixture.output" 2>"$contract_fixture_dir/$fixture.error"; then
     echo "$fixture unexpectedly verified publication" >&2
     exit 1
-  fi
+  else missing_status=$?; fi
+  [[ "$missing_status" -eq 1 ]] || { echo "$fixture returned harness/timeout status $missing_status" >&2; exit 1; }
   require_contains "$contract_fixture_dir/$fixture.error" 'GitHub API response was empty or invalid while waiting for the runtime-images workflow; retrying.'
+  require_contains "$contract_fixture_dir/$fixture.error" 'Timed out waiting for runtime-images workflow'
   if [[ -s "$contract_fixture_dir/$fixture.output" ]]; then
     echo "$fixture must not report source or publisher success" >&2
     exit 1
   fi
 done
 for fixture in dispatch-success dispatch-wrong-source dispatch-wrong-event dispatch-malformed-title dispatch-failure callback-wrong-tuple dispatch-second-page dispatch-overflow dispatch-incomplete dispatch-unstable dispatch-outside-window dispatch-invalid-date; do
-  if CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/$fixture.json" \
+  if [[ "$fixture" == dispatch-* ]]; then
+    source_inventory="$contract_fixture_dir/typed-source-inventory.json"
+  else
+    source_inventory=""
+  fi
+  if BASH_ENV="$contract_fixture_dir/publisher-clock.sh" CONTRACT_PUBLISHER_PAYLOAD="$contract_fixture_dir/$fixture.json" \
+    CONTRACT_SOURCE_PAYLOAD="$source_inventory" \
     PATH="$contract_fixture_dir:$PATH" GH_TOKEN=contract-token GITHUB_REPOSITORY=example/FireMUD \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
     HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
-    bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
+    timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
       >"$contract_fixture_dir/$fixture.output" 2>"$contract_fixture_dir/$fixture.error"; then
     [[ "$fixture" == "dispatch-success" || "$fixture" == "dispatch-second-page" ]] || { echo "$fixture unexpectedly admitted publisher" >&2; exit 1; }
@@ -2368,8 +2837,8 @@ require_contains "$smoke_path" 'workflowRunQuery.head_sha = identity.headSha;'
 require_contains "$smoke_path" 'matching.conclusion === "cancelled"'
 require_contains "$smoke_path" 'waiting for an exact repository_dispatch replacement'
 require_contains "$smoke_path" 'const cancelledReplacementTimeoutMs = 5 * 60 * 1000;'
-require_contains "$smoke_path" 'Cancelled runtime-images run ${cancelledRunId} has no exact repository_dispatch replacement '
-require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
+require_contains "$smoke_path" 'Cancelled runtime-images run ${matching.id} has no exact repository_dispatch replacement '
+require_contains "$smoke_path" 'attempt_number: matching.run_attempt,'
 require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
 require_contains "$smoke_path" 'step.name === "Run credential-free full-stack smoke"'
 require_contains "$smoke_path" 'fullSmokeJob?.status === "completed"'
@@ -2405,7 +2874,9 @@ require_contains "$smoke_path" 'Stopping obsolete completed smoke gate for'
 require_contains "$smoke_path" 'Stopping obsolete stale-snapshot smoke gate for'
 require_ordered_sequence \
   "$smoke_path" \
-  'github.rest.actions.listJobsForWorkflowRun,' \
+  '"runtime-images job lookup",' \
+  '"GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",' \
+  'attempt_number: matching.run_attempt,' \
   'if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {'
 require_branch_return "$smoke_path" 'if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {'
 require_ordered_sequence \
@@ -2724,6 +3195,65 @@ script_path.write_text(textwrap.dedent("\n".join(body)) + "\n", encoding="utf-8"
 PY
 
 # Exercise the checked-in retry/cache functions without live GitHub requests.
+node - "$smoke_gate_script" <<'NODE_DUPLICATE_SMOKE'
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const script = fs.readFileSync(process.argv[2], "utf8");
+const start = script.indexOf("async function verifyCompletedCanonicalRuntime(");
+const end = script.indexOf("async function resolveCurrentIdentity(", start);
+assert.ok(start >= 0 && end > start);
+const source = script.slice(start, end);
+const identity = {baseSha: "a".repeat(40), headSha: "b".repeat(40), mergeSha: "c".repeat(40)};
+const title = "exact runtime producer";
+const name = "PR Full-Stack Smoke (runtime-required=true)";
+const pending = {id: 10, event: "pull_request", head_sha: identity.headSha, display_title: title,
+  status: "in_progress", run_attempt: 1, created_at: "2026-07-24T00:10:00Z"};
+const older = id => ({...pending, id, status: "completed", conclusion: "success",
+  created_at: "2026-07-24T00:01:00Z"});
+async function choose(runs, verifiedId, smokeConclusion = "success") {
+  const lookedUp = [];
+  const paginate = async (route, args) => {
+    assert.match(route, /\/attempts\/\{attempt_number\}\/jobs$/);
+    assert.equal(args.attempt_number, 1);
+    lookedUp.push(args.run_id);
+    return [{id: args.run_id, name, steps: [{name: "Run credential-free full-stack smoke",
+      status: "completed", conclusion: smokeConclusion}]}];
+  };
+  paginate.iterator = async function* (_method, query) {
+    assert.equal(query.head_sha, identity.headSha);
+    yield {data: runs};
+  };
+  const github = {paginate, rest: {actions: {listWorkflowRuns() {}}}};
+  const execute = new Function("owner", "repo", "prNumber", "github", "context", "core",
+    "withTransientGitHubRetry", "positiveInteger", "isPreExecutionCancelledAttempt",
+    "canonicalSmokeJobName", "verifyCanonicalSmokeProducer", "TerminalGitHubRequestError",
+    "identity", "title", source + "\nreturn findMatchingRuntimeImagesRun('pull_request', title, identity);");
+  const selected = await execute("example", "repo", "7", github, {}, {info() {}},
+    (_label, run) => run(), n => Number.isInteger(n) && n > 0, async () => false, name,
+    async (run, job, tuple) => {
+      assert.equal(job.id, run.id);
+      assert.equal(tuple, identity);
+      return run.id === verifiedId;
+    }, class extends Error {}, identity, title);
+  return {id: selected.id, lookedUp};
+}
+(async () => {
+  assert.deepEqual(await choose([pending, older(3)], 3), {id: 3, lookedUp: [3]});
+  assert.deepEqual(await choose([pending, older(3)], 9), {id: 10, lookedUp: [3]});
+  assert.deepEqual(await choose([pending, older(3)], 3, "skipped"), {id: 10, lookedUp: [3]});
+  assert.deepEqual(await choose([pending, {...older(3), display_title: "wrong tuple"}], 3),
+    {id: 10, lookedUp: []});
+  // Shuffle completed rows and put the newest pending run last. Creation time
+  // outranks even the largest ID; equal-time candidates retain descending IDs.
+  const boundedCandidates = [older(2), {...older(99), created_at: "2026-07-24T00:00:00Z"},
+    older(3), older(4), pending];
+  assert.deepEqual(await choose(boundedCandidates, 2), {id: 2, lookedUp: [4, 3, 2]},
+    "completed fallback must select verified proof at the third lookup in native chronology order");
+  assert.deepEqual(await choose(boundedCandidates, 99), {id: 10, lookedUp: [4, 3, 2]},
+    "completed fallback must retain pending when verified proof lies beyond the three-candidate cap");
+})().catch(error => { console.error(error); process.exitCode = 1; });
+NODE_DUPLICATE_SMOKE
+
 node - "$smoke_gate_script" <<'NODE'
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -2857,6 +3387,7 @@ const quota = (reset, remaining = "0") => ({ status: 403, response: { headers: {
 NODE
 
 node - "$smoke_gate_script" <<'NODE'
+const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const script = fs.readFileSync(process.argv[2], "utf8");
 const headSha = "a".repeat(40);
@@ -2887,9 +3418,11 @@ function runtimeTitle(base, head, merge) {
   return `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
 }
 
+const knownRuns = new Map();
 function runtimeRun(id, title) {
   return {
     id,
+    run_attempt: 1,
     event: "pull_request",
     head_sha: headSha,
     display_title: title,
@@ -2966,10 +3499,20 @@ const github = {
         };
       },
     },
-    actions: { listWorkflowRuns, listJobsForWorkflowRun },
+    actions: { listWorkflowRuns, listJobsForWorkflowRun,
+      getWorkflowRun: async ({run_id}) => {
+        const source = availableRuns.find(run => run.id === run_id) ?? knownRuns.get(run_id);
+        if (!source) throw new Error(`unbound native run lookup ${run_id}`);
+        return {data: source};
+      },
+    },
   },
   paginate: async (method, input) => {
-    if (method === listJobsForWorkflowRun) {
+    if (method === "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs") {
+      const source = availableRuns.find(run => run.id === input.run_id) ?? knownRuns.get(input.run_id);
+      if (!source) throw new Error(`unbound attempt jobs lookup ${input.run_id}`);
+      if (input.attempt_number !== source.run_attempt) throw new Error("jobs must bind to selected native attempt");
+      if (source.conclusion === "cancelled") return []; // No complete cancellation inventory is supplied by this fixture.
       jobQueries.push(input);
       return [{
         name: "PR Full-Stack Smoke",
@@ -2995,6 +3538,7 @@ github.paginate.iterator = (method, input) => {
     onRepositoryDispatchQuery?.(repositoryDispatchQueryCount);
   }
   return (async function* workflowRunPages() {
+    for (const source of availableRuns) knownRuns.set(source.id, {...source});
     yield { data: availableRuns };
   })();
 };
@@ -3033,7 +3577,9 @@ async function checkPartialPaginationRetry() {
     workflowRunQueries.push(input);
     return (async function* partialPages() {
       attempts++;
-      yield { data: [attempts === 1 ? stale : fresh] };
+      const source = attempts === 1 ? stale : fresh;
+      knownRuns.set(source.id, {...source});
+      yield { data: [source] };
       if (attempts === 1) throw { status: 503, message: "controlled pagination interruption" };
     })();
   };
@@ -3138,6 +3684,98 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
       }
     });
   })
+  .then(async () => {
+    const native = {
+      ...runtimeRun(671, runtimeTitle(baseSha, headSha, mergeSha)),
+      status: "completed", conclusion: "cancelled",
+    };
+    const earlierRefresh = dispatchRun(672, baseSha, headSha, mergeSha);
+    const nextBase = "d".repeat(40);
+    const nextMerge = "e".repeat(40);
+    const currentRefresh = dispatchRun(673, nextBase, headSha, nextMerge);
+    const actions = github.rest.actions;
+    const originalRun = actions.getWorkflowRun;
+    const jobStart = jobQueries.length;
+    let advancedDuringOrdering = false;
+    availableRuns = [native, earlierRefresh];
+    actions.getWorkflowRun = async (input) => {
+      const run = await originalRun(input);
+      if (input.run_id === native.id && jobQueries.length > jobStart && !advancedDuringOrdering) {
+        advancedDuringOrdering = true;
+        currentBaseSha = liveBaseSha = nextBase;
+        currentMergeSha = nextMerge;
+        currentMergeParents = [{ sha: nextBase }, { sha: headSha }];
+        availableRuns.push(currentRefresh);
+      }
+      return run;
+    };
+    try {
+      await check("success", false);
+      assert.ok(advancedDuringOrdering, "the comparison should advance during the cancelled native ordering read");
+      assert.deepEqual(jobQueries.slice(jobStart).map((job) => job.run_id), [672, 673],
+        "after ordering exposes a move, only the current replacement may satisfy smoke");
+    } finally {
+      actions.getWorkflowRun = originalRun;
+      currentBaseSha = liveBaseSha = baseSha;
+      currentMergeSha = mergeSha;
+      currentMergeParents = eventMergeParents;
+    }
+  })
+  .then(async () => {
+    const native = {
+      ...runtimeRun(651, runtimeTitle(baseSha, headSha, mergeSha)),
+      status: "completed", conclusion: "cancelled",
+    };
+    const replacement = dispatchRun(652, baseSha, headSha, mergeSha);
+    const beforeLiveReads = forbiddenCurrentBaseLookups;
+    availableRuns = [replacement, native];
+    currentBaseSha = liveBaseSha = "d".repeat(40);
+    currentMergeSha = "e".repeat(40);
+    currentMergeParents = [{ sha: liveBaseSha }, { sha: headSha }];
+    onSmokeSleep = () => {
+      native.status = "completed";
+      native.conclusion = "success";
+      native.run_attempt = 2;
+    };
+    try {
+      await check("success", false);
+      if (forbiddenCurrentBaseLookups <= beforeLiveReads || jobQueries.at(-1).run_id !== native.id) {
+        throw new Error("a dispatch with an advanced live base must fall back to independently qualified native event proof");
+      }
+      if (jobQueries.at(-1).attempt_number !== 2) {
+        throw new Error("native fallback must read the successful rerun attempt rather than reuse cancelled attempt evidence");
+      }
+    } finally {
+      onSmokeSleep = null;
+      currentBaseSha = liveBaseSha = baseSha;
+      currentMergeSha = mergeSha;
+      currentMergeParents = eventMergeParents;
+    }
+  })
+  .then(async () => {
+    const native = {
+      ...runtimeRun(653, runtimeTitle(baseSha, headSha, mergeSha)),
+      status: "completed", conclusion: "cancelled",
+    };
+    const replacement = dispatchRun(654, baseSha, headSha, mergeSha);
+    const latest = {
+      ...dispatchRun(655, baseSha, headSha, mergeSha),
+      created_at: "2026-09-21T00:00:00Z", conclusion: "failure",
+    };
+    const firstQuery = repositoryDispatchQueryCount;
+    availableRuns = [replacement, native];
+    onRepositoryDispatchQuery = (queryCount) => {
+      if (queryCount > firstQuery + 1) availableRuns = [latest, replacement, native];
+    };
+    try {
+      await check("success", true, `Runtime images run ${latest.id} did not complete successfully`);
+      if (jobQueries.at(-1).run_id !== replacement.id) {
+        throw new Error("the newer terminal failure must be observed after checking the original replacement proof");
+      }
+    } finally {
+      onRepositoryDispatchQuery = null;
+    }
+  })
   .then(() => {
     const eventRun = {
       ...runtimeRun(603, runtimeTitle(baseSha, headSha, mergeSha)),
@@ -3203,6 +3841,7 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
     eventMergeParents = [{ sha: baseSha }, { sha: headSha }];
     const queryStart = workflowRunQueries.length;
     const jobStart = jobQueries.length;
+    const beforeLiveReads = forbiddenCurrentBaseLookups;
     availableRuns = [
       runtimeRun(303, runtimeTitle(currentBaseSha, headSha, currentMergeSha)),
       runtimeRun(304, `Build Runtime Images secure-pr-artifact pr-42 head-${headSha} mode-required`),
@@ -3222,7 +3861,7 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
       if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 202) {
         throw new Error("Smoke Gate must select the exact successful event base/head/merge tuple");
       }
-      if (forbiddenCurrentBaseLookups !== 0) {
+      if (forbiddenCurrentBaseLookups !== beforeLiveReads) {
         throw new Error("Smoke Gate must not require the live base SHA to accept event-tuple smoke");
       }
     });

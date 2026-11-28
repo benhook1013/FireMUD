@@ -1,6 +1,6 @@
 name: Trusted Hosted Identity Request
 
-run-name: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.display_title || format('Trusted Hosted Identity Request pr-{0}', github.event.pull_request.number) }}
+run-name: ${{ github.event_name == 'workflow_run' && (startsWith(github.event.workflow_run.display_title, 'Preview retry ') && format('{0} source-run-{1}-attempt-{2}', github.event.workflow_run.display_title, github.event.workflow_run.id, github.event.workflow_run.run_attempt) || github.event.workflow_run.display_title) || format('Trusted Hosted Identity Request pr-{0}', github.event.pull_request.number) }}
 
 on:
   workflow_run:
@@ -16,7 +16,7 @@ permissions:
 jobs:
   validate-target:
     name: Validate Trusted Preview Target
-    if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.name == 'PR Preview Environment' && (github.event.workflow_run.event == 'pull_request_target' || github.event.workflow_run.event == 'repository_dispatch')) || (github.event_name == 'pull_request_target' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'repository_dispatch')) || (github.event_name == 'pull_request_target' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
@@ -34,9 +34,11 @@ jobs:
       hostname: ${{ steps.target.outputs.hostname }}
       certificate_identity_mode: ${{ steps.certificate-identity.outputs.mode }}
       exposure_mode: ${{ steps.target.outputs.exposure_mode }}
+      proof_retry_namespace_uid: ${{ steps.target.outputs.proof_retry_namespace_uid }}
       v2_schema_migration_change: ${{ steps.target.outputs.v2_schema_migration_change }}
       render_run_id: ${{ steps.target.outputs.render_run_id }}
-      artifact_name: ${{ steps.target.outputs.artifact_name }}
+      render_run_attempt: ${{ steps.target.outputs.render_run_attempt }}
+      artifact_id: ${{ steps.target.outputs.artifact_id }}
       retire_identity: ${{ steps.target.outputs.retire_identity }}
       cleanup_state: ${{ steps.target.outputs.cleanup_state }}
     steps:
@@ -53,6 +55,9 @@ jobs:
       - name: Set up canonical GitHub CLI
         uses: ./.github/actions/setup-gh
 
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
+
       - name: Resolve certificate identity mode
         id: certificate-identity
         uses: ./.github/actions/resolve-certificate-identity-mode
@@ -65,6 +70,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id || '' }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
           WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha || '' }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           ARTIFACT_DIRECTORY: ${{ runner.temp }}/trusted-preview-source-artifact
@@ -89,19 +95,39 @@ jobs:
               exit 1
             }
           }
+          require_current_source_attempt() {
+            [[ "${WORKFLOW_RUN_ATTEMPT:-}" =~ ^[1-9][0-9]*$ &&
+              "$SOURCE_RUN_ATTEMPT" == "$WORKFLOW_RUN_ATTEMPT" ]] ||
+              emit_no_action "Ignoring render callback not bound to the current source attempt."
+          }
           normalize_sha() {
             local value="$1"
             [[ "$value" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
             printf '%s' "${value,,}"
           }
           download_source_artifact() {
-            local artifact_name="$1"
+            local artifact_id="$1" kind="$2" archive
             rm -rf -- "$ARTIFACT_DIRECTORY"
             mkdir -p -- "$ARTIFACT_DIRECTORY"
-            gh run download "$SOURCE_RUN_ID" \
-              --repo "$GITHUB_REPOSITORY" \
-              --name "$artifact_name" \
-              --dir "$ARTIFACT_DIRECTORY" >/dev/null
+            archive="$(mktemp "${ARTIFACT_DIRECTORY}/.source.XXXXXXXX")"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" >"$archive"
+            python3 - "$archive" "$ARTIFACT_DIRECTORY" "$kind" <<'PY'
+          import shutil
+          import sys
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          source, directory, kind = sys.argv[1:]
+          expected = (["preview-metadata.json", "preview-rendered-sanitized.yaml"]
+                      if kind == "render" else ["preview-intent.json"])
+          with ZipFile(source) as archive:
+              if sorted(archive.namelist()) != expected:
+                  sys.exit("Unexpected preview artifact contents.")
+              for name in expected:
+                  with archive.open(name) as member, (Path(directory) / name).open("xb") as output:
+                      shutil.copyfileobj(member, output)
+          PY
+            rm -f -- "$archive"
           }
           require_exact_files() {
             local expected="$1"
@@ -120,6 +146,7 @@ jobs:
           ARTIFACT_BASE_SHA=""
           ARTIFACT_MERGE_SHA=""
           ARTIFACT_NAME=""
+          ARTIFACT_ID=""
           ARTIFACT_KIND=""
           V2_SCHEMA_MIGRATION_CHANGE=false
           RETIRE_IDENTITY=false
@@ -131,29 +158,64 @@ jobs:
             }
             SOURCE_RUN_ID="$WORKFLOW_RUN_ID"
             workflow_run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}")"
-            require_source_field path '.github/workflows/preview.yml' "$(jq -r '.path // empty' <<<"$workflow_run_json")"
+            SOURCE_RUN_ATTEMPT="$(jq -r '.run_attempt | select(type == "number" and . > 0 and . == floor)' <<<"$workflow_run_json")"
+            SOURCE_DISPLAY_TITLE="$(jq -r '.display_title | select(type == "string")' <<<"$workflow_run_json")"
+            if [[ "$SOURCE_DISPLAY_TITLE" =~ ^Preview\ retry\ ([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\ pr-([1-9][0-9]*)-base-([a-f0-9]{40})-head-([a-f0-9]{40})-merge-([a-f0-9]{40})$ ]]; then
+              SOURCE_RETRY_NONCE="${BASH_REMATCH[1]}"
+              SOURCE_RETRY_PR="${BASH_REMATCH[2]}"
+              SOURCE_RETRY_BASE="${BASH_REMATCH[3]}"
+              SOURCE_RETRY_HEAD="${BASH_REMATCH[4]}"
+              SOURCE_RETRY_MERGE="${BASH_REMATCH[5]}"
+            else
+              SOURCE_RETRY_NONCE=""
+            fi
+            SOURCE_EVENT="$(jq -r '.event // empty' <<<"$workflow_run_json")"
+            source_path="$(jq -r '.path // empty' <<<"$workflow_run_json")"
+            source_path_pr=""
+            if [[ "$SOURCE_EVENT" == pull_request &&
+                "$source_path" =~ ^[.]github/workflows/preview[.]yml@refs/pull/([1-9][0-9]{0,50})/merge$ ]]; then
+              source_path_pr="${BASH_REMATCH[1]}"
+            elif [[ "$SOURCE_EVENT" != repository_dispatch || -z "${DEFAULT_BRANCH:-}" ||
+                ( "$source_path" != ".github/workflows/preview.yml@$DEFAULT_BRANCH" &&
+                  "$source_path" != ".github/workflows/preview.yml@refs/heads/$DEFAULT_BRANCH" ) ]]; then
+              require_source_field path '.github/workflows/preview.yml' "$source_path"
+            fi
             require_source_field conclusion success "$(jq -r '.conclusion // empty' <<<"$workflow_run_json")"
             require_source_field repository "$GITHUB_REPOSITORY" \
               "$(jq -r '.repository.full_name // empty' <<<"$workflow_run_json")"
             require_source_field head "$WORKFLOW_RUN_HEAD_SHA" \
               "$(jq -r '.head_sha // empty' <<<"$workflow_run_json")"
-            SOURCE_EVENT="$(jq -r '.event // empty' <<<"$workflow_run_json")"
-            [[ "$SOURCE_EVENT" == pull_request_target || "$SOURCE_EVENT" == repository_dispatch ]] ||
+            [[ "$SOURCE_EVENT" == pull_request || "$SOURCE_EVENT" == repository_dispatch ]] ||
               emit_no_action "Ignoring source run with unsupported event ${SOURCE_EVENT}."
+            if [[ "$SOURCE_EVENT" == pull_request ]]; then
+              jq -e --arg qualified "$source_path_pr" '
+                (.pull_requests | type) == "array" and
+                ((.pull_requests | length) > 0 or $qualified != "")
+              ' <<<"$workflow_run_json" >/dev/null ||
+                emit_no_action "Ignoring source run without a bound pull request association."
+            fi
             if [[ "$SOURCE_EVENT" == repository_dispatch ]]; then
               require_source_field head-branch "$DEFAULT_BRANCH" \
                 "$(jq -r '.head_branch // empty' <<<"$workflow_run_json")"
+            fi
+            if [[ "$SOURCE_EVENT" == pull_request || -n "$SOURCE_RETRY_NONCE" ]]; then
+              require_current_source_attempt
             fi
             if ! artifacts_json="$(gh api --paginate --slurp \
               "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?per_page=100")"; then
               emit_no_action "Ignoring source run because its artifacts could not be verified."
             fi
-            canonical_artifacts="$(jq -c \
-              '[.[].artifacts[] | select(.expired == false) | select(.name | test("^preview-(render|intent)-pr-[1-9][0-9]{0,50}-[0-9a-fA-F]{40}$"))]' \
-              <<<"$artifacts_json")"
+            canonical_artifacts="$(jq -c --arg attempt "$SOURCE_RUN_ATTEMPT" '
+              [.[].artifacts[] | select(.expired == false) | select(.name |
+                test("^preview-intent-pr-[1-9][0-9]{0,50}-[0-9a-fA-F]{40}$") or
+                (test("^preview-render-pr-[1-9][0-9]{0,50}-[0-9a-fA-F]{40}-attempt-[1-9][0-9]*$")
+                 and endswith("-attempt-" + $attempt)))]
+            ' <<<"$artifacts_json")"
             [[ "$(jq 'length' <<<"$canonical_artifacts")" == 1 ]] ||
               emit_no_action "Ignoring source run without exactly one canonical preview artifact."
             ARTIFACT_NAME="$(jq -er '.[0].name' <<<"$canonical_artifacts")"
+            ARTIFACT_ID="$(jq -er '.[0].id | select(type == "number" and . > 0 and . == floor)' <<<"$canonical_artifacts")" ||
+              emit_no_action "Ignoring source run without an immutable preview artifact ID."
             if [[ "$ARTIFACT_NAME" == preview-render-pr-* ]]; then
               ARTIFACT_KIND=render
               ACTION=deploy
@@ -161,10 +223,13 @@ jobs:
               ARTIFACT_KIND=intent
               ACTION=destroy
             fi
-            if [[ "$SOURCE_EVENT" == pull_request_target && "$ARTIFACT_KIND" != render ]]; then
-              emit_no_action "Ignoring pull_request_target source without a render artifact."
+            if [[ "$SOURCE_EVENT" == pull_request && "$ARTIFACT_KIND" != render ]]; then
+              emit_no_action "Ignoring pull_request source without a render artifact."
             fi
-            download_source_artifact "$ARTIFACT_NAME"
+            if [[ "$ARTIFACT_KIND" == render && "$SOURCE_EVENT" == repository_dispatch && -z "$SOURCE_RETRY_NONCE" ]]; then
+              require_current_source_attempt
+            fi
+            download_source_artifact "$ARTIFACT_ID" "$ARTIFACT_KIND"
             if [[ "$ARTIFACT_KIND" == render ]]; then
               require_exact_files "preview-metadata.json,preview-rendered-sanitized.yaml"
               metadata_event="$(jq -r '.event // empty' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
@@ -179,6 +244,40 @@ jobs:
               EXPECTED_HEAD_SHA="$(jq -er '.headSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
               ARTIFACT_BASE_SHA="$(jq -er '.baseSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
               ARTIFACT_MERGE_SHA="$(jq -er '.mergeSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+              if [[ "$SOURCE_EVENT" == pull_request ]]; then
+                [[ -z "$source_path_pr" || "$source_path_pr" == "$PR_NUMBER" ]] ||
+                  emit_no_action "Ignoring artifact not bound to the qualified source path pull request."
+                # The callback and REST agree on the native run SHA. A qualified
+                # refs/pull path with a merge SHA can bind an empty association,
+                # but only after the live exact merge and ordered parents below.
+                jq -e --argjson pr "$PR_NUMBER" --arg head "$EXPECTED_HEAD_SHA" \
+                  --arg merge "$ARTIFACT_MERGE_SHA" --arg qualified "$source_path_pr" '
+                    [.pull_requests[] | select(.number == $pr)] as $selected |
+                    if (.pull_requests | length) == 0 then
+                      $qualified == ($pr | tostring) and .head_sha == $merge and $head != $merge
+                    else
+                      ($selected | length) == 1 and $selected[0].head.sha == $head
+                      and (.head_sha == $head or .head_sha == $merge)
+                    end
+                  ' <<<"$workflow_run_json" >/dev/null ||
+                  emit_no_action "Ignoring artifact not bound to the source run pull request and head."
+              fi
+              metadata_source_attempt="$(jq -r '.sourceRunAttempt | select(type == "number" and . > 0 and . == floor)' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+              [[ "$metadata_source_attempt" == "$SOURCE_RUN_ATTEMPT" ]] || emit_no_action \
+                "Ignoring render metadata not bound to the current source attempt."
+
+              if [[ "$SOURCE_EVENT" == repository_dispatch && -n "$SOURCE_RETRY_NONCE" ]]; then
+                metadata_retry_nonce="$(jq -er '.proofRetryNonce | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+                metadata_retry_uid="$(jq -er '.proofRetryNamespaceUid | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
+                [[ "$metadata_retry_nonce" == "$SOURCE_RETRY_NONCE" && -n "$metadata_retry_uid" &&
+                  "$PR_NUMBER" == "$SOURCE_RETRY_PR" && "$ARTIFACT_BASE_SHA" == "$SOURCE_RETRY_BASE" &&
+                  "$EXPECTED_HEAD_SHA" == "$SOURCE_RETRY_HEAD" && "$ARTIFACT_MERGE_SHA" == "$SOURCE_RETRY_MERGE" ]] || emit_no_action \
+                  "Ignoring retry render not bound to its exact reservation nonce and Namespace UID."
+              elif [[ "$SOURCE_EVENT" == repository_dispatch ]]; then
+                if jq -e 'has("proofRetryNonce")' "$ARTIFACT_DIRECTORY/preview-metadata.json" >/dev/null; then
+                  emit_no_action "Ignoring retry nonce without a nonce-bound source title."
+                fi
+              fi
             else
               require_exact_files "preview-intent.json"
               intent_output="$(python3 ./dev-tools/hosted/preview/validate-preview-intent.py \
@@ -226,6 +325,36 @@ jobs:
             "Ignoring pull request metadata because its head repository is not trusted."
           [[ "$base_repository" == "$GITHUB_REPOSITORY" ]] || emit_no_action \
             "Ignoring pull request metadata because its base repository is not trusted."
+          record_retry_rejection() {
+            local output_key="$1" retry_image
+            if [[ -n "${SOURCE_RETRY_NONCE:-}" && "$ARTIFACT_KIND" == render &&
+              "$ARTIFACT_NAME" == "preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}-attempt-${SOURCE_RUN_ATTEMPT}" ]] &&
+              retry_image="$(jq -er '.imageTag | strings | select(test("\\A[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\\z"))' \
+                "$ARTIFACT_DIRECTORY/preview-metadata.json")" &&
+              [[ "$metadata_retry_uid" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]] &&
+              python3 ./dev-tools/hosted/preview/validate-preview-artifact.py retry-receipt \
+                "$ARTIFACT_DIRECTORY/preview-metadata.json" "$GITHUB_REPOSITORY" \
+                "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT" "$PR_NUMBER" "$ARTIFACT_BASE_SHA" \
+                "$EXPECTED_HEAD_SHA" "$ARTIFACT_MERGE_SHA" "$retry_image" \
+                "$metadata_retry_uid" "$SOURCE_RETRY_NONCE" &&
+              bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+                --run-attempt "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT" "before recording retry rejection"; then
+              printf '%s=%s\n' "$output_key" "$SOURCE_RETRY_NONCE" >> "$GITHUB_OUTPUT"
+            fi
+          }
+          if [[ -n "${SOURCE_RETRY_NONCE:-}" && "$ARTIFACT_KIND" == render &&
+            "$current_head_sha" != "$EXPECTED_HEAD_SHA" ]]; then
+            record_retry_rejection stale_head_retry_nonce
+            emit_no_action "Ignoring stale lifecycle event for an earlier PR head."
+          fi
+          if [[ "$EVENT_NAME" == workflow_run && "$ARTIFACT_KIND" == render ]]; then
+            if ! ARTIFACT_BASE_SHA="$(normalize_sha "$ARTIFACT_BASE_SHA")"; then
+              emit_no_action "Ignoring render artifact with an invalid base SHA."
+            fi
+            if ! ARTIFACT_MERGE_SHA="$(normalize_sha "$ARTIFACT_MERGE_SHA")"; then
+              emit_no_action "Ignoring render artifact with an invalid merge SHA."
+            fi
+          fi
           if [[ "$ACTION" == deploy ]]; then
             [[ "$base_ref" =~ ^[A-Za-z0-9._/-]+$ ]] || emit_no_action \
               "Ignoring lifecycle event with an invalid current base ref."
@@ -235,6 +364,18 @@ jobs:
             if ! base_sha="$(jq -er '.object.sha | select(type == "string")' <<<"$current_base_ref_json")" ||
               ! base_sha="$(normalize_sha "$base_sha")"; then
               emit_no_action "Ignoring lifecycle event with an invalid current base branch ref SHA."
+            fi
+            if [[ -n "${SOURCE_RETRY_NONCE:-}" && "$ARTIFACT_KIND" == render ]]; then
+              jq -e --argjson pr "$PR_NUMBER" '.number == $pr' <<<"$pull_request_json" >/dev/null ||
+                emit_no_action "Ignoring retry render because the current PR identity is unavailable."
+              jq -e --arg ref "refs/heads/$base_ref" '.ref == $ref' <<<"$current_base_ref_json" >/dev/null ||
+                emit_no_action "Ignoring retry render because the current base branch ref identity is unavailable."
+              # A verified live base change can reject this exact receipt while
+              # GitHub still reports the previous test merge.
+              if [[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" && "$base_sha" != "$ARTIFACT_BASE_SHA" ]]; then
+                record_retry_rejection stale_comparison_retry_nonce
+                emit_no_action "Ignoring retry render bound to a stale or different pull-request base."
+              fi
             fi
             [[ "$merge_sha" =~ ^[0-9a-fA-F]{40}$ ]] || emit_no_action \
               "Ignoring lifecycle event without the current pull-request test-merge SHA."
@@ -266,16 +407,14 @@ jobs:
               "Ignoring lifecycle event because pull-request mergeability is unavailable."
           fi
           if [[ "$EVENT_NAME" == workflow_run && "$ARTIFACT_KIND" == render ]]; then
-            if ! ARTIFACT_BASE_SHA="$(normalize_sha "$ARTIFACT_BASE_SHA")"; then
-              emit_no_action "Ignoring render artifact with an invalid base SHA."
+            if [[ "$base_sha" != "$ARTIFACT_BASE_SHA" ]]; then
+              record_retry_rejection stale_comparison_retry_nonce
+              emit_no_action "Ignoring render artifact bound to a stale or different pull-request base."
             fi
-            if ! ARTIFACT_MERGE_SHA="$(normalize_sha "$ARTIFACT_MERGE_SHA")"; then
-              emit_no_action "Ignoring render artifact with an invalid merge SHA."
+            if [[ "$merge_sha" != "$ARTIFACT_MERGE_SHA" ]]; then
+              record_retry_rejection stale_comparison_retry_nonce
+              emit_no_action "Ignoring render artifact bound to a stale or different pull-request merge."
             fi
-            [[ "$base_sha" == "$ARTIFACT_BASE_SHA" ]] || emit_no_action \
-              "Ignoring render artifact bound to a stale or different pull-request base."
-            [[ "$merge_sha" == "$ARTIFACT_MERGE_SHA" ]] || emit_no_action \
-              "Ignoring render artifact bound to a stale or different pull-request merge."
           fi
           effective_image_tag="$current_head_sha"
           if [[ "$ACTION" == deploy ]]; then
@@ -298,10 +437,17 @@ jobs:
               --author "$(jq -r '.user.login // empty' <<<"$pull_request_json")" \
               --labels-json "$labels_json")" || emit_no_action \
                 "Refusing hosted preview lifecycle action: PR is not preview-eligible."
-            [[ "$(sed -n 's/^reason=//p' <<<"$label_metadata")" != malformed-label-metadata ]] || emit_no_action \
+            eligibility_reason="$(sed -n 's/^reason=//p' <<<"$label_metadata")"
+            [[ "$eligibility_reason" != malformed-label-metadata ]] || emit_no_action \
               "Refusing hosted preview lifecycle action: PR label metadata is missing or malformed."
-            [[ "$(sed -n 's/^eligible=//p' <<<"$label_metadata")" == true ]] || emit_no_action \
-              "Refusing hosted preview lifecycle action: PR is not preview-eligible."
+            preview_eligible="$(sed -n 's/^eligible=//p' <<<"$label_metadata")"
+            if [[ "$preview_eligible" != true ]]; then
+              if [[ "$preview_eligible" == false && "$eligibility_reason" == unsupported-base-branch ]] &&
+                jq -e '.user.login | type == "string" and length > 0' <<<"$pull_request_json" >/dev/null; then
+                record_retry_rejection ineligible_retry_nonce
+              fi
+              emit_no_action "Refusing hosted preview lifecycle action: PR is not preview-eligible."
+            fi
           elif [[ "$EVENT_NAME" == workflow_run && "$ACTION" == destroy ]]; then
             [[ "$state" == open ]] || emit_no_action \
               "Ignoring manual destroy because the target pull request is not open."
@@ -347,9 +493,13 @@ jobs:
           fi
           if [[ "$EVENT_NAME" == workflow_run ]]; then
             expected_artifact_name="preview-${ARTIFACT_KIND}-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"
+            if [[ "$ARTIFACT_KIND" == render ]]; then
+              expected_artifact_name+="-attempt-${SOURCE_RUN_ATTEMPT}"
+            fi
             [[ "$ARTIFACT_NAME" == "$expected_artifact_name" ]] || emit_no_action \
               "Ignoring source artifact whose name is not bound to its canonical PR head."
           fi
+          proof_retry_namespace_uid=""
           if [[ "$ACTION" == deploy ]]; then
             metadata_pr_number="$(jq -er '.prNumber | select(type == "number" and floor == .)' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
             metadata_head_sha="$(jq -er '.headSha | select(type == "string")' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
@@ -364,6 +514,7 @@ jobs:
               "$current_head_sha" "$merge_sha" "$effective_image_tag" \
               "pr-${PR_NUMBER}.preview.firedevops.net" \
               "${{ steps.certificate-identity.outputs.mode }}"
+            proof_retry_namespace_uid="$(jq -r '.proofRetryNamespaceUid // empty' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
             exposure_mode="$(python3 ./dev-tools/hosted/preview/validate-preview-artifact.py \
               exposure-mode "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml" \
               "${{ steps.certificate-identity.outputs.mode }}")"
@@ -378,6 +529,9 @@ jobs:
               echo "::error title=Unsupported private preview identity::Private bridge proof requires hosted-controller identity." >&2
               exit 1
             fi
+            bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+              --run-attempt "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT" "after validating the pinned render artifact" ||
+              emit_no_action "Ignoring render whose source attempt is no longer a current completed success."
           elif [[ "$ACTION" == destroy && "$EVENT_NAME" == workflow_run ]]; then
             [[ "$ARTIFACT_KIND" == intent ]] || emit_no_action \
               "Ignoring repository dispatch destroy without a canonical destroy intent artifact."
@@ -394,12 +548,30 @@ jobs:
             echo "hostname=pr-${PR_NUMBER}.preview.firedevops.net"
             if [[ "$ACTION" == deploy ]]; then
               echo "exposure_mode=${exposure_mode}"
+              echo "proof_retry_namespace_uid=${proof_retry_namespace_uid}"
+              echo "render_run_attempt=${SOURCE_RUN_ATTEMPT}"
             fi
             echo "render_run_id=${SOURCE_RUN_ID}"
-            echo "artifact_name=${ARTIFACT_NAME}"
+            echo "artifact_id=${ARTIFACT_ID}"
             echo "retire_identity=${RETIRE_IDENTITY}"
             echo "cleanup_state=${CLEANUP_STATE}"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Trusted preview deploy tuple pr-${{ steps.target.outputs.pr_number }} base-${{ steps.target.outputs.base_sha }} head-${{ steps.target.outputs.head_sha }} merge-${{ steps.target.outputs.merge_sha }}
+        if: ${{ steps.target.outputs.action == 'deploy' }}
+        run: echo 'Validated the exact preview deployment target.'
+
+      - name: Trusted preview retry rejected stale-head nonce-${{ steps.target.outputs.stale_head_retry_nonce }}
+        if: ${{ steps.target.outputs.action == 'none' && steps.target.outputs.stale_head_retry_nonce != '' }}
+        run: echo 'Rejected the exact preview retry source attempt before deployment.'
+
+      - name: Trusted preview retry rejected stale-comparison nonce-${{ steps.target.outputs.stale_comparison_retry_nonce }}
+        if: ${{ steps.target.outputs.action == 'none' && steps.target.outputs.stale_comparison_retry_nonce != '' }}
+        run: echo 'Rejected the exact preview retry source attempt for a stale comparison before deployment.'
+
+      - name: Trusted preview retry rejected ineligible nonce-${{ steps.target.outputs.ineligible_retry_nonce }}
+        if: ${{ steps.target.outputs.action == 'none' && steps.target.outputs.ineligible_retry_nonce != '' }}
+        run: echo 'Rejected the exact preview retry source attempt because the current base requires the priority label.'
 
   prepare-runtime:
     name: Prepare Validated Preview Inputs
@@ -416,7 +588,6 @@ jobs:
       actions: read # Download the validated source workflow artifact.
       contents: read # Check out the trusted default-branch preparation implementation.
       pull-requests: read # Revalidate the current pull-request target before preparation.
-      issues: write # Publish the required preparation failure state.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -430,7 +601,7 @@ jobs:
         uses: ./.github/actions/download-validated-preview-artifact
         with:
           artifact-directory: ${{ runner.temp }}/preview-artifact
-          artifact-name: ${{ needs.validate-target.outputs.artifact_name }}
+          artifact-id: ${{ needs.validate-target.outputs.artifact_id }}
           source-run-id: ${{ needs.validate-target.outputs.render_run_id }}
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
@@ -498,8 +669,79 @@ jobs:
           bash ./dev-tools/hosted/preview/wait-for-base-images.sh \
             "${{ needs.validate-target.outputs.base_sha }}"
 
+  publish-preparation-failure:
+    name: Publish Preview Preparation Failure
+    timeout-minutes: 10
+    runs-on:
+      - self-hosted
+      - preview
+      - linux
+      - x64
+    needs: [validate-target, prepare-runtime]
+    if: ${{ !cancelled() && needs.validate-target.outputs.action == 'deploy' && needs.prepare-runtime.result == 'failure' }}
+    environment: trusted-hosted-cluster
+    concurrency:
+      group: preview-allocation-lifecycle
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read # Check out the trusted comment publisher and proof guard.
+      pull-requests: read # Revalidate the current pull-request target before reporting.
+      issues: write # Publish the preparation failure state.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up kubectl for preparation failure proof check
+        uses: ./.github/actions/setup-kubectl
+
+      - name: Write namespace-manager kubeconfig for preparation failure proof check
+        uses: ./.github/actions/write-kubeconfig
+        with:
+          content: ${{ secrets.TRUSTED_HOSTED_PREVIEW_NAMESPACE_MANAGER_KUBECONFIG }}
+          path: ${{ runner.temp }}/preview-preparation-failure.kubeconfig
+          export-to-github-env: 'false'
+
+      - name: Recheck proof retry before publishing preparation failure
+        id: recheck-preparation-failure
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-preparation-failure.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          RETRY_NAMESPACE_UID: ${{ needs.validate-target.outputs.proof_retry_namespace_uid }}
+          BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+          IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          namespace_uid="$RETRY_NAMESPACE_UID"
+          if [[ -z "$namespace_uid" ]]; then
+            snapshot="$(kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json --request-timeout=10s)"
+            if [[ -z "$snapshot" ]]; then
+              echo 'proceed=true' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            namespace_uid="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' <<<"$snapshot")"
+          fi
+
+          result="$(bash ./dev-tools/hosted/preview/check-preview-proof-retry.sh \
+            "$RUNTIME_NAMESPACE" "$namespace_uid" "$BASE_SHA" "$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG")"
+          case "$result" in
+            proof-missing) echo 'proceed=true' >> "$GITHUB_OUTPUT" ;;
+            proof-complete|namespace-changed)
+              if [[ "$result" == namespace-changed && -z "$RETRY_NAMESPACE_UID" ]]; then
+                echo 'proceed=true' >> "$GITHUB_OUTPUT"
+              else
+                echo "::notice::Preview preparation failure publication skipped: $result."
+              fi
+              ;;
+            *) exit 1 ;;
+          esac
+
       - name: Publish trusted preview preparation failure
-        if: ${{ !cancelled() && failure() }}
+        if: ${{ steps.recheck-preparation-failure.outputs.proceed == 'true' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
@@ -525,6 +767,10 @@ jobs:
               failureStage: "prepare-runtime",
               staleDescription: "trusted preview preparation failure",
             });
+
+      - name: Remove preparation failure kubeconfig
+        if: ${{ always() }}
+        run: rm -f -- "$RUNNER_TEMP/preview-preparation-failure.kubeconfig"
 
   deploy-runtime:
     name: Prepare Validated Preview Runtime
@@ -568,7 +814,7 @@ jobs:
         uses: ./.github/actions/download-validated-preview-artifact
         with:
           artifact-directory: ${{ runner.temp }}/preview-artifact
-          artifact-name: ${{ needs.validate-target.outputs.artifact_name }}
+          artifact-id: ${{ needs.validate-target.outputs.artifact_id }}
           source-run-id: ${{ needs.validate-target.outputs.render_run_id }}
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
@@ -601,9 +847,39 @@ jobs:
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
 
+      - name: Recheck proof retry under the preview allocation lock
+        id: recheck-proof-retry
+        env:
+          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
+          RETRY_NAMESPACE_UID: ${{ needs.validate-target.outputs.proof_retry_namespace_uid }}
+          BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
+          HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
+          MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
+          IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$RETRY_NAMESPACE_UID" ]]; then
+            echo 'proceed=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          result="$(bash ./dev-tools/hosted/preview/check-preview-proof-retry.sh \
+            "$RUNTIME_NAMESPACE" "$RETRY_NAMESPACE_UID" "$BASE_SHA" "$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG")"
+          case "$result" in
+            proof-missing) echo 'proceed=true' >> "$GITHUB_OUTPUT" ;;
+            proof-complete|namespace-changed)
+              echo "::notice::Preview proof retry skipped: $result."
+              echo 'proceed=false' >> "$GITHUB_OUTPUT"
+              ;;
+            *) exit 1 ;;
+          esac
+
       - name: Revalidate exact PR source binding before privileged mutations
+        if: ${{ steps.recheck-proof-retry.outputs.proceed == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ needs.validate-target.outputs.render_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.validate-target.outputs.render_run_attempt }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
@@ -613,17 +889,22 @@ jobs:
           set -euo pipefail
           bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
-            "before privileged runtime mutation"
+            "before privileged runtime mutation" \
+            "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"
 
       - name: Prune stale runtime namespaces
+        if: ${{ steps.recheck-proof-retry.outputs.proceed == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
         run: bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh --apply
 
       - name: Revalidate exact PR source binding before capacity reclaim
+        if: ${{ steps.recheck-proof-retry.outputs.proceed == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ needs.validate-target.outputs.render_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.validate-target.outputs.render_run_attempt }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
@@ -632,10 +913,12 @@ jobs:
           set -euo pipefail
           bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
-            "before capacity reclaim"
+            "before capacity reclaim" \
+            "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"
 
       - name: Enforce priority-aware preview capacity
         id: allocate-capacity
+        if: ${{ steps.recheck-proof-retry.outputs.proceed == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
@@ -709,6 +992,8 @@ jobs:
         if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ needs.validate-target.outputs.render_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.validate-target.outputs.render_run_attempt }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
@@ -719,91 +1004,14 @@ jobs:
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
           bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
-            "before clean runtime redeploy"
-
-      - name: Capture exact proof-retry record before namespace recreation
-        id: capture-proof-retry
-        if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
-        env:
-          KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
-          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
-          PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
-          EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
-          EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
-          EXPECTED_MERGE_SHA: ${{ needs.validate-target.outputs.merge_sha }}
-          EXPECTED_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
-        run: |
-          set -euo pipefail
-          namespace_json="$(kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json)"
-          [[ -n "$namespace_json" ]] || exit 0
-          retry_snapshot="$(jq -er '
-            (.metadata.annotations // {}) as $annotations
-            | [
-                "firemud.dev/proof-retry-count",
-                "firemud.dev/proof-retry-base-sha",
-                "firemud.dev/proof-retry-head-sha",
-                "firemud.dev/proof-retry-merge-sha",
-                "firemud.dev/proof-retry-image-tag"
-              ] as $keys
-            | {
-                present: ([$keys[] | . as $key | select($annotations | has($key))] | length),
-                values: [
-                  $keys[]
-                  | . as $key
-                  | if ($annotations | has($key)) then
-                      ($annotations[$key] | if type == "string" then . else "__invalid:type__" end)
-                    else ""
-                    end
-                ]
-              }
-            | [.present, .values[]]
-            | @tsv
-          ' <<<"$namespace_json")" || {
-            echo "::error title=Malformed proof-retry annotations::Unable to inspect the existing runtime Namespace retry record." >&2
-            exit 1
-          }
-          IFS=$'\t' read -r present_count retry_count retry_base_sha retry_head_sha retry_merge_sha retry_image_tag <<<"$retry_snapshot"
-          if [[ "$present_count" == 0 ]]; then
-            exit 0
-          fi
-          if [[ "$present_count" != 5 || "$retry_count" == "__invalid:type__" || \
-            "$retry_base_sha" == "__invalid:type__" || "$retry_head_sha" == "__invalid:type__" || \
-            "$retry_merge_sha" == "__invalid:type__" || "$retry_image_tag" == "__invalid:type__" ]]; then
-            echo "::error title=Malformed proof-retry annotations::Retry annotations must be a complete string record before namespace recreation." >&2
-            exit 1
-          fi
-          [[ "$retry_count" =~ ^[1-3]$ ]] || {
-            echo "::error title=Invalid proof-retry count::Expected a retry count from 1 through 3." >&2
-            exit 1
-          }
-          [[ "$retry_base_sha" =~ ^[0-9a-f]{40}$ && "$retry_head_sha" =~ ^[0-9a-f]{40}$ && \
-            "$retry_merge_sha" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "::error title=Invalid proof-retry tuple::Retry tuple SHAs must be exactly 40 lowercase hexadecimal characters." >&2
-            exit 1
-          }
-          [[ "$retry_image_tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || {
-            echo "::error title=Invalid proof-retry image tag::Expected a canonical immutable image tag." >&2
-            exit 1
-          }
-          if [[ "$retry_base_sha" != "$EXPECTED_BASE_SHA" || \
-            "$retry_head_sha" != "$EXPECTED_HEAD_SHA" || \
-            "$retry_merge_sha" != "$EXPECTED_MERGE_SHA" || \
-            "$retry_image_tag" != "$EXPECTED_IMAGE_TAG" ]]; then
-            echo "Existing proof-retry record belongs to another tuple; resetting its budget." >&2
-            exit 0
-          fi
-          {
-            echo "proof_retry_count=$retry_count"
-            echo "proof_retry_base_sha=$retry_base_sha"
-            echo "proof_retry_head_sha=$retry_head_sha"
-            echo "proof_retry_merge_sha=$retry_merge_sha"
-            echo "proof_retry_image_tag=$retry_image_tag"
-          } >> "$GITHUB_OUTPUT"
+            "before clean runtime redeploy" \
+            "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"
 
       - name: Delete exact preview runtime namespace before recreate
         if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          PREVIEW_EXPECTED_NAMESPACE_UID: ${{ needs.validate-target.outputs.proof_retry_namespace_uid }}
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
         run: |
@@ -819,6 +1027,9 @@ jobs:
         if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           KUBECONFIG: ${{ runner.temp }}/preview-namespace-manager.kubeconfig
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ needs.validate-target.outputs.render_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.validate-target.outputs.render_run_attempt }}
           RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
@@ -840,15 +1051,13 @@ jobs:
             echo "::error title=Invalid allocation timestamp::Expected a UTC timestamp ending in Z without whitespace." >&2
             exit 1
           }
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$HEAD_SHA" "$BASE_SHA" "$MERGE_SHA" \
+            "before recreating the preview namespace" "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"
           kubectl create namespace "$RUNTIME_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
           bash ./dev-tools/hosted/preview/annotate-preview-namespace.sh \
             "$RUNTIME_NAMESPACE" "$PR_NUMBER" "$BASE_SHA" "$HEAD_SHA" "$MERGE_SHA" "$IMAGE_TAG" \
-            "$EXPOSURE_MODE" "$TELNET_PORT" "$ALLOCATION_TIMESTAMP" \
-            "${{ steps.capture-proof-retry.outputs.proof_retry_count }}" \
-            "${{ steps.capture-proof-retry.outputs.proof_retry_base_sha }}" \
-            "${{ steps.capture-proof-retry.outputs.proof_retry_head_sha }}" \
-            "${{ steps.capture-proof-retry.outputs.proof_retry_merge_sha }}" \
-            "${{ steps.capture-proof-retry.outputs.proof_retry_image_tag }}"
+            "$EXPOSURE_MODE" "$TELNET_PORT" "$ALLOCATION_TIMESTAMP"
 
       - name: Bind scoped runtime and certificate roles
         if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
@@ -1002,6 +1211,8 @@ jobs:
         if: ${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ needs.validate-target.outputs.render_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ needs.validate-target.outputs.render_run_attempt }}
           PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}
           EXPECTED_HEAD_SHA: ${{ needs.validate-target.outputs.head_sha }}
           EXPECTED_BASE_SHA: ${{ needs.validate-target.outputs.base_sha }}
@@ -1024,10 +1235,11 @@ jobs:
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
           kubectl apply --dry-run=server --server-side --field-manager=trusted-hosted-preview -n "$RUNTIME_NAMESPACE" -f "$ARTIFACT_PATH"
-          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
-            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA"
           bash ./dev-tools/hosted/preview/revalidate-preview-deploy.sh \
             "$PR_NUMBER" "$EXPECTED_HEAD_SHA"
+          bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+            "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" \
+            "before applying the preview runtime" "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"
           kubectl apply --server-side --field-manager=trusted-hosted-preview -n "$RUNTIME_NAMESPACE" -f "$ARTIFACT_PATH"
 
       - name: Record exact deployed preview tuple
@@ -1134,7 +1346,7 @@ jobs:
           echo "uid=$runtime_uid" >> "$GITHUB_OUTPUT"
 
       - name: Publish trusted preview deployment failure
-        if: ${{ !cancelled() && failure() && (steps.allocate-capacity.outputs.allocation_status != 'unavailable' || steps.publish-capacity-unavailable.outcome == 'failure') }}
+        if: ${{ !cancelled() && failure() && steps.recheck-proof-retry.outputs.proceed != 'false' && (steps.allocate-capacity.outputs.allocation_status != 'unavailable' || steps.publish-capacity-unavailable.outcome == 'failure') }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           PREVIEW_PR_NUMBER: ${{ needs.validate-target.outputs.pr_number }}

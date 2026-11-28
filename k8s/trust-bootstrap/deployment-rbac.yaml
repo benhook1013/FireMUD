@@ -172,3 +172,37 @@ subjects:
   - kind: ServiceAccount
     name: firemud-preview-namespace-manager
     namespace: firemud-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: firemud-preview-proof-retries
+  namespace: firemud-system
+data:
+  # Installation owns only this field. The manager patches pr-N fields.
+  schemaVersion: "1"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: firemud-preview-proof-retries
+  namespace: firemud-system
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["firemud-preview-proof-retries"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: firemud-preview-proof-retries
+  namespace: firemud-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: firemud-preview-proof-retries
+subjects:
+  - kind: ServiceAccount
+    name: firemud-preview-namespace-manager
+    namespace: firemud-system

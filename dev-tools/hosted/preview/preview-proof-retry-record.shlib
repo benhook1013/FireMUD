@@ -1,0 +1,305 @@
+# shellcheck shell=bash
+# The installed holder survives a clean preview Namespace recreation.
+readonly preview_retry_holder_namespace=firemud-system
+readonly preview_retry_holder_name=firemud-preview-proof-retries
+
+validate_preview_retry_holder() {
+  jq -ces --arg namespace "$preview_retry_holder_namespace" --arg name "$preview_retry_holder_name" '
+    select(length == 1) | .[0]
+    | select(.apiVersion == "v1" and .kind == "ConfigMap"
+        and .metadata.namespace == $namespace and .metadata.name == $name
+        and (.metadata.uid | type == "string" and length > 0)
+        and (.metadata.resourceVersion | type == "string" and length > 0)
+        and .metadata.deletionTimestamp == null and ((.metadata.ownerReferences // []) == [])
+        and (.data | type == "object" and .schemaVersion == "1"
+          and all(keys[]; . == "schemaVersion" or test("^pr-[1-9][0-9]{0,50}$"))))
+  ' <<<"$1"
+}
+
+# The API marshals ConfigMap binaryData values as padded standard base64.
+# Count decoded octets without decoding them as text (jq strings are UTF-8).
+readonly preview_retry_binary_size_jq='
+  def binarybytes:
+    if (has("binaryData") | not) or .binaryData == null then 0
+    elif (.binaryData | type) != "object" then error("invalid ConfigMap binaryData")
+    else [.binaryData[] |
+      if type == "string" and (length % 4 == 0) and test("\\A[A-Za-z0-9+/]*={0,2}\\z")
+      then (length / 4 * 3) - (if endswith("==") then 2 elif endswith("=") then 1 else 0 end)
+      else error("invalid ConfigMap binaryData value") end] | (add // 0)
+    end;
+'
+
+# Local snapshot diagnostic only: never authorizes retirement or a write.
+preview_retry_holder_headroom() {
+  local snapshot
+  snapshot="$(validate_preview_retry_holder "$1")" || return 1
+  jq -ce "$preview_retry_binary_size_jq"'
+    select(.data | all(.[]; type == "string"))
+    | ((.data | map(utf8bytelength) | add) + binarybytes) as $used
+    | select($used >= 0 and $used <= 1048576)
+    | {usedBytes:$used, hardLimitBytes:1048576, remainingBytes:(1048576 - $used)}
+  ' <<<"$snapshot"
+}
+
+report_preview_retry_holder_headroom() {
+  local expected_uid="$1" snapshot headroom used hard_limit remaining
+  if ! snapshot="$(read_preview_retry_holder 2>/dev/null)" ||
+    ! jq -e --arg uid "$expected_uid" '.metadata.uid == $uid' <<<"$snapshot" >/dev/null ||
+    ! headroom="$(preview_retry_holder_headroom "$snapshot" 2>/dev/null)"; then
+    echo "Preview proof-retry holder headroom: unknown (fresh holder read or stored data validation failed)."
+    return 0
+  fi
+  used="$(jq -er '.usedBytes' <<<"$headroom")" || return 1
+  hard_limit="$(jq -er '.hardLimitBytes' <<<"$headroom")" || return 1
+  remaining="$(jq -er '.remainingBytes' <<<"$headroom")" || return 1
+  if (( used * 4 >= hard_limit * 3 )); then
+    echo "Warning: preview proof-retry holder uses ${used}/${hard_limit} stored-value bytes (${remaining} remaining; at least 75% used). Preserve reopenable rows; recover capacity through verified terminal retirement or planned storage expansion."
+  else
+    echo "Preview proof-retry holder uses ${used}/${hard_limit} stored-value bytes (${remaining} remaining)."
+  fi
+}
+
+read_preview_retry_holder() {
+  local snapshot
+  snapshot="$(kubectl -n "$preview_retry_holder_namespace" get configmap "$preview_retry_holder_name" \
+    -o json --request-timeout=10s)" || return 1
+  validate_preview_retry_holder "$snapshot"
+}
+
+preview_retry_entry() {
+  local snapshot="$1" namespace="$2"
+  jq -c --arg namespace "$namespace" --arg repo "$GITHUB_REPOSITORY" '
+    def ordinary($repository; $ns):
+      keys == ["base","count","head","image","merge","namespace","namespaceUid","nonce","repository"]
+      and .repository == $repository and .namespace == $ns
+      and (.count | type == "number" and . == floor and . >= 1 and . <= 3)
+      and all(.base,.head,.merge; type == "string" and test("\\A[a-f0-9]{40}\\z"))
+      and (.image | type == "string" and test("\\A[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\\z"))
+      and (.namespaceUid | type == "string" and test("\\A([A-Za-z0-9][A-Za-z0-9._:-]{0,127})?\\z"))
+      and (.nonce | type == "string" and test("\\A([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})?\\z"));
+    def tuple: [.base,.head,.merge,.image];
+    def staged($repository; $ns; $uid; $rv):
+      keys == ["base","count","head","holderResourceVersion","holderUid","image","merge","namespace","namespaceResourceVersion","namespaceUid",
+                 "nonce","phase","predecessor","repository","stageVersion"]
+        and .stageVersion == 2 and (.phase == "RESERVED" or .phase == "SEND_STARTED")
+        and (.nonce != "") and .holderUid == $uid and .holderResourceVersion != $rv
+        and (.holderResourceVersion | type == "string" and test("\\A[A-Za-z0-9._:-]{1,128}\\z"))
+        and (del(.holderResourceVersion,.holderUid,.namespaceResourceVersion,.phase,.predecessor,.stageVersion) | ordinary($repository; $ns))
+        and (.namespaceResourceVersion | type == "string" and test("\\A[A-Za-z0-9._:-]{0,128}\\z"))
+        and ((.namespaceUid == "") == (.namespaceResourceVersion == ""))
+        and (if .predecessor == null then .count == 1
+             else (.predecessor | ordinary($repository; $ns))
+               and (if (.predecessor | tuple) == tuple then .count == (.predecessor.count + 1) else .count == 1 end)
+             end);
+    .metadata as $holder
+    | if (.data | has($namespace) | not) then null
+    else .data[$namespace] | fromjson
+      | if ordinary($repo; $namespace) or staged($repo; $namespace; $holder.uid; $holder.resourceVersion)
+        then . else error("invalid preview proof-retry record") end
+    end
+  ' <<<"$snapshot"
+}
+
+write_preview_retry_entry() {
+  local snapshot="$1" namespace="$2" replacement="$3" require_ack="${4:-false}"
+  local patch response entry uid version
+  [[ "$namespace" =~ ^pr-[1-9][0-9]{0,50}$ ]] || return 1
+  uid="$(jq -er '.metadata.uid' <<<"$snapshot")" || return 1
+  version="$(jq -er '.metadata.resourceVersion' <<<"$snapshot")" || return 1
+  # Kubernetes counts stored value bytes, not JSON-over-the-wire length. Detect a
+  # definitely oversized update without deleting or retargeting retained rows.
+  # Include the decoded binaryData lengths; provider validation remains authoritative.
+  patch="$(jq -c --arg namespace "$namespace" --argjson replacement "$replacement" "$preview_retry_binary_size_jq"'
+    ($replacement | tojson) as $serialized
+    | if $replacement == null then .
+      else binarybytes as $binary
+      | ((.data | .[$namespace] = $serialized | map(utf8bytelength) | add) + $binary) as $prospective
+      | if $prospective > 1048576 then
+          ((try ((.data | map(utf8bytelength) | add) + $binary) catch null)) as $used
+          | (if $used == null then "unknown" else ([0, 1048576 - $used] | max | tostring) end) as $remaining
+          | error("preview proof-retry holder would exceed the Kubernetes 1 MiB data limit (current stored-value headroom: \($remaining) bytes; prospective stored values: \($prospective) bytes); retained records were not changed")
+        else . end
+      end
+    | ("/data/" + $namespace) as $key
+    | [
+      {op:"test",path:"/metadata/uid",value:.metadata.uid},
+      {op:"test",path:"/metadata/resourceVersion",value:.metadata.resourceVersion},
+      (if $replacement == null then {op:"remove",path:$key}
+       else {op:"add",path:$key,value:$serialized} end)
+    ]
+  ' <<<"$snapshot")" || return 1
+  if response="$(kubectl -n "$preview_retry_holder_namespace" patch configmap "$preview_retry_holder_name" \
+      --type=json --patch "$patch" -o json --request-timeout=10s)"; then
+    response="$(validate_preview_retry_holder "$response")" || return 1
+  else
+    # Recovered readback may establish custody for a reservation, never
+    # authorship of SEND_STARTED. A successor cannot authorize a POST.
+    [[ "$require_ack" == false ]] || return 1
+    # A response can be lost after the server commits. Prove the exact row
+    # and holder identity with one bounded reread before authorizing a send.
+    response="$(read_preview_retry_holder)" || return 1
+  fi
+  jq -e --arg uid "$uid" --arg version "$version" '
+    .metadata.uid == $uid and .metadata.resourceVersion != $version
+  ' <<<"$response" >/dev/null || return 1
+  entry="$(preview_retry_entry "$response" "$namespace")" || return 1
+  jq -en --argjson actual "$entry" --argjson expected "$replacement" '$actual == $expected' >/dev/null || return 1
+  printf '%s\n' "$response"
+}
+
+legacy_preview_retry_entry() {
+  local snapshot="$1" namespace="$2"
+  jq -c --arg repo "${GITHUB_REPOSITORY:-}" --arg namespace "$namespace" '
+    (.metadata.annotations // {}) as $annotations
+    | (["count","base-sha","head-sha","merge-sha","image-tag","reservation-id"]
+      | map("firemud.dev/proof-retry-" + .)) as $keys
+    | if any($keys[]; . as $key | $annotations | has($key)) then
+        .metadata.uid as $uid
+        | if (
+            ($repo | test("\\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\z"))
+            and .metadata.name == $namespace
+            and .metadata.labels["firemud.dev/preview"] == "true"
+            and .metadata.labels["firemud.dev/pr-number"] == ($namespace | ltrimstr("pr-"))
+            and ($uid | type == "string" and test("\\A[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\\z"))
+            and ($annotations[$keys[0]] | type == "string" and test("\\A[1-3]\\z"))
+            and all($keys[1:4][]; $annotations[.] | type == "string" and test("\\A[a-f0-9]{40}\\z"))
+            and ($annotations[$keys[4]] | type == "string" and test("\\A[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\\z"))
+            and (if $annotations | has($keys[5]) then
+                $annotations[$keys[5]] | type == "string"
+                  and test("\\A[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\\z")
+              else true end)
+          ) then {repository:$repo,namespace:$namespace,namespaceUid:$uid,
+                  count:($annotations[$keys[0]] | tonumber),base:$annotations[$keys[1]],
+                  head:$annotations[$keys[2]],merge:$annotations[$keys[3]],image:$annotations[$keys[4]],
+                  nonce:($annotations[$keys[5]] // "")}
+          else error("malformed legacy preview proof-retry annotations") end
+      else null end
+  ' <<<"$snapshot"
+}
+
+preserve_legacy_preview_retry_entry() {
+  local legacy="$1" namespace="$2" stored holder disposition
+  holder="$(read_preview_retry_holder)" || return 1
+  stored="$(preview_retry_entry "$holder" "$namespace")" || return 1
+  disposition="$(jq -ner --argjson legacy "$legacy" --argjson stored "$stored" '
+    def identity: [.namespaceUid,.base,.head,.merge,.image];
+    def covers:
+      identity == ($legacy | identity) and
+      (.count > $legacy.count or
+        (.count == $legacy.count and (.nonce == $legacy.nonce or $legacy.nonce == "")));
+    if $stored == null then "retain-legacy"
+    elif $stored | has("phase") then
+      if $stored.predecessor != null and ($stored.predecessor | covers)
+      then "already-retained" else "held" end
+    elif $stored | covers then "already-retained"
+    elif ($stored | identity) == ($legacy | identity) and $stored.count < $legacy.count
+    then "retain-legacy"
+    else "held" end
+  ')" || return 1
+  case "$disposition" in
+    retain-legacy) write_preview_retry_entry "$holder" "$namespace" "$legacy" >/dev/null ;;
+    already-retained) return 0 ;;
+    held)
+      echo "Legacy retry budget for ${namespace} conflicts with the retained holder row; reconcile exact namespace, tuple and charge custody before deletion." >&2
+      return 1
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+readonly preview_retry_retirement_cursor=firemud.dev/proof-retry-retirement-cursor
+readonly preview_retry_retirement_batch_size=12
+
+write_preview_retry_retirement_cursor() {
+  local snapshot="$1" holder_uid="$2" old_cursor="$3" next_cursor="$4"
+  local version patch response
+  version="$(jq -er --arg uid "$holder_uid" --arg k "$preview_retry_retirement_cursor" \
+    --argjson old "$old_cursor" '
+    select(.metadata.uid == $uid and (.metadata.annotations[$k] // null) == $old)
+    | .metadata.resourceVersion
+  ' <<<"$snapshot")" || return 1
+  patch="$(jq -c --arg k "$preview_retry_retirement_cursor" --arg next "$next_cursor" '
+    [
+      {op:"test",path:"/metadata/uid",value:.metadata.uid},
+      {op:"test",path:"/metadata/resourceVersion",value:.metadata.resourceVersion},
+      (if .metadata.annotations == null
+       then {op:"add",path:"/metadata/annotations",value:{($k):$next}}
+       else {op:"add",path:("/metadata/annotations/" + ($k | gsub("~";"~0") | gsub("/";"~1"))),value:$next}
+       end)
+    ]
+  ' <<<"$snapshot")" || return 1
+  if response="$(kubectl -n "$preview_retry_holder_namespace" patch configmap "$preview_retry_holder_name" \
+      --type=json --patch "$patch" -o json --request-timeout=10s)"; then
+    response="$(validate_preview_retry_holder "$response")" || return 1
+  else
+    response="$(read_preview_retry_holder)" || return 1
+  fi
+  jq -e --arg uid "$holder_uid" --arg version "$version" --arg k "$preview_retry_retirement_cursor" \
+    --arg next "$next_cursor" '
+    .metadata.uid == $uid and .metadata.resourceVersion != $version and .metadata.annotations[$k] == $next
+  ' <<<"$response" >/dev/null
+}
+
+retire_merged_preview_retry_entries() {
+  local verify_terminal="${1:-}" holder initial holder_uid entries cursor after last namespace pr_number pr runtime row old_row phase
+  [[ "$GITHUB_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+  holder="$(read_preview_retry_holder)" || return 1
+  holder_uid="$(jq -er '.metadata.uid' <<<"$holder")" || return 1
+  initial="$holder"
+  cursor="$(jq -c --arg k "$preview_retry_retirement_cursor" --arg repo "$GITHUB_REPOSITORY:" '
+    (.metadata.annotations // {}) as $annotations
+    | if ($annotations | type) != "object" then error("invalid holder annotations")
+      elif ($annotations | has($k) | not) then null
+      else $annotations[$k]
+        | if type == "string" and startswith($repo) and
+            (ltrimstr($repo) | test("^pr-[1-9][0-9]{0,50}$"))
+          then . else error("invalid preview retry retirement cursor") end
+      end
+  ' <<<"$initial")" || return 1
+  after="$(jq -r --arg repo "$GITHUB_REPOSITORY:" '. // "" | ltrimstr($repo)' <<<"$cursor")" || return 1
+  entries="$(jq -c --arg after "$after" --argjson size "$preview_retry_retirement_batch_size" '
+    (.data | keys - ["schemaVersion"]) as $keys
+    | ([ $keys[] | select(. > $after) ] + [ $keys[] | select(. <= $after) ]) as $ring
+    | {partial:($ring | length > $size), keys:$ring[:$size]}
+  ' <<<"$initial")" || return 1
+  last=""
+  while IFS= read -r namespace; do
+    [[ -n "$namespace" ]] || continue
+    last="$namespace"
+    old_row="$(preview_retry_entry "$initial" "$namespace")" || continue
+    [[ "$old_row" != null ]] || continue
+    phase="$(jq -r '.phase // empty' <<<"$old_row")" || continue
+    [[ "$phase" != SEND_STARTED || -n "$verify_terminal" ]] || continue
+    pr_number="${namespace#pr-}"
+    # A closed, unmerged pull request can reopen with the same tuple. Only
+    # positive, same-repository merge evidence permits automatic retirement.
+    pr="$(timeout 10s gh api "repos/${GITHUB_REPOSITORY}/pulls/$pr_number")" || continue
+    jq -es --arg number "$pr_number" --arg repo "$GITHUB_REPOSITORY" '
+      select(length == 1) | .[0]
+      | (.number | tostring) == $number and .state == "closed" and .merged == true
+      and .head.repo.full_name == $repo and .base.repo.full_name == $repo
+    ' <<<"$pr" >/dev/null || continue
+    runtime="$(kubectl get namespace "$namespace" --ignore-not-found -o json --request-timeout=10s)" || continue
+    [[ -z "$runtime" ]] || continue
+    if [[ "$phase" == SEND_STARTED ]] && ! "$verify_terminal" "$pr_number" "$old_row"; then
+      echo "Keeping preview proof-retry send-start for merged PR #${pr_number}: terminal receiver evidence could not be verified." >&2
+      continue
+    fi
+    holder="$(read_preview_retry_holder)" || return 1
+    jq -e --arg uid "$holder_uid" '.metadata.uid == $uid' <<<"$holder" >/dev/null || return 1
+    row="$(preview_retry_entry "$holder" "$namespace")" || continue
+    [[ "$row" == "$old_row" ]] || continue
+    # Retirement needs an absence observation after the fresh holder and row
+    # comparison for both reservation phases. A RESERVED row can be reclaimed
+    # only while this exact canonical row remains unchanged under the holder CAS.
+    runtime="$(kubectl get namespace "$namespace" --ignore-not-found -o json --request-timeout=10s)" || continue
+    [[ -z "$runtime" ]] || continue
+    write_preview_retry_entry "$holder" "$namespace" null >/dev/null || return 1
+    echo "Retired the proof-retry record for merged PR #$pr_number."
+  done < <(jq -r '.keys[]' <<<"$entries")
+  if [[ -n "$last" ]] && jq -e '.partial' <<<"$entries" >/dev/null; then
+    holder="$(read_preview_retry_holder)" || return 1
+    write_preview_retry_retirement_cursor "$holder" "$holder_uid" "$cursor" "$GITHUB_REPOSITORY:$last" || return 1
+  fi
+  report_preview_retry_holder_headroom "$holder_uid"
+}

@@ -5,6 +5,314 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKFLOW="$ROOT_DIR/.github/workflows/publish-pr-runtime-images.yml"
 RUNTIME_WORKFLOW="$ROOT_DIR/.github/workflows/runtime-images.yml"
+RUNTIME_REGISTRY="$ROOT_DIR/dev-tools/hosted/shared/protected-runtime-image-registry.sh"
+
+# The contract intentionally uses Python assertions; never report success when disabled.
+python3 -c 'import sys; sys.exit(0 if __debug__ else "Runtime image publication contract requires Python assertions; unset PYTHONOPTIMIZE.")'
+
+# Evaluate the workflow's actual string/boolean concurrency expression against fixed event fixtures.
+# This bounded expression uses only property reads, equality, boolean operators and format.
+python3 - "$RUNTIME_WORKFLOW" <<'PY_CONCURRENCY'
+import copy
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+workflow_path = Path(sys.argv[1])
+source = workflow_path.read_text()
+group = re.search(r"^  group: (runtime-images-.*)$", source, re.MULTILINE).group(1)
+workflow_concurrency = re.search(r"^concurrency:\n((?:^  .+\n)+)", source, re.MULTILINE).group(1)
+assert re.search(r"^  queue: max$", workflow_concurrency, re.MULTILINE)
+cancel = re.search(r"^  cancel-in-progress: (.*)$", workflow_concurrency, re.MULTILINE).group(1)
+assert cancel == "false"
+promotion = re.search(r"^  publish-runtime-images:\n((?:^    .*\n|^\n)+)", source, re.MULTILINE).group(1)
+assert re.search(
+    r"^    concurrency:\n"
+    r"(?:      # [^\n]*\n)*"
+    r"      group: runtime-image-promotion-protected-branches\n"
+    r"      cancel-in-progress: false\n"
+    r"      queue: max$", promotion, re.MULTILINE
+)
+assert re.search(r'assert_current_branch_head\n\s+promote_alias "\$candidate" "\$branch_tag"', promotion)
+
+# Exercise each complete parsed job guard rather than matching one branch clause.
+import yaml
+
+jobs = yaml.load(source, Loader=yaml.BaseLoader)["jobs"]
+
+def admitted_branch_job(condition, event, branch, *, missing='["account-service"]', pinned="complete",
+                        results=None, dependencies=(), cancelled=False):
+    assert condition.startswith("${{") and condition.endswith("}}"), condition
+    expression = condition[3:-2].strip()
+    expression = expression.replace("&&", " and ").replace("||", " or ")
+    expression = expression.replace("always()", "True")
+    expression = expression.replace("!cancelled()", "True" if not cancelled else "False")
+    expression = expression.replace("github.event_name", repr(event))
+    expression = expression.replace("needs.image-meta.outputs.head_branch", repr(branch))
+    expression = expression.replace("needs.select-protected-runtime-digests.outputs.missing_services", repr(missing))
+    expression = expression.replace("needs.pin-protected-runtime-digests.outputs.runtime_digests", repr(pinned))
+    expression = re.sub(r"needs\.([a-z0-9-]+)\.result",
+                        lambda match: repr((results or {}).get(match[1], "success")), expression)
+    admitted = bool(eval(expression, {"__builtins__": {}}))
+    has_status_check = bool(re.search(r"\b(?:success|failure|cancelled|always)\(\)", condition))
+    if admitted and not has_status_check:
+        admitted = not cancelled and all((results or {}).get(dependency, "success") == "success"
+                                         for dependency in dependencies)
+    return admitted
+
+for job in ("build-base-image", "build-runtime-images", "build-backup-verifier", "publish-backup-verifier",
+            "select-protected-runtime-digests",
+            "build-hosted-identity-controller", "publish-hosted-identity-controller", "publish-runtime-images"):
+    guard = jobs[job]["if"]
+    assert not admitted_branch_job(guard, "workflow_run", "", dependencies=jobs[job].get("needs", [])), (job, guard)
+    for branch in ("develop", "main"):
+        assert admitted_branch_job(guard, "workflow_run", branch, dependencies=jobs[job].get("needs", [])), (job, guard, branch)
+
+for job, definition in jobs.items():
+    condition = definition.get("if", "")
+    if condition and not re.search(r"\b(?:success|failure|cancelled|always)\(\)", condition):
+        dependencies = definition.get("needs", [])
+        dependencies = [dependencies] if isinstance(dependencies, str) else dependencies
+        for dependency in dependencies:
+            assert not admitted_branch_job(condition, "workflow_run", "develop",
+                                           dependencies=dependencies, results={dependency: "failure"}), job
+            assert not admitted_branch_job(condition, "workflow_run", "develop",
+                                           dependencies=dependencies, results={dependency: "skipped"}), job
+
+for branch in ("develop", "main"):
+    build = jobs["build-runtime-images"]["if"]
+    pin = jobs["pin-protected-runtime-digests"]["if"]
+    assert not admitted_branch_job(build, "workflow_run", branch, missing="[]")
+    assert admitted_branch_job(pin, "workflow_run", branch)
+    assert admitted_branch_job(pin, "workflow_run", branch, missing="[]",
+                               results={"build-runtime-images": "skipped"})
+    assert not admitted_branch_job(pin, "workflow_run", branch,
+                                   results={"build-runtime-images": "skipped"})
+    assert not admitted_branch_job(pin, "workflow_run", branch, missing="[]",
+                                   results={"select-protected-runtime-digests": "failure"})
+    for job in ("smoke-full", "publish-runtime-images"):
+        guard = jobs[job]["if"]
+        assert admitted_branch_job(guard, "workflow_run", branch)
+        assert not admitted_branch_job(guard, "workflow_run", branch, pinned="")
+        assert not admitted_branch_job(guard, "workflow_run", branch,
+                                       results={"pin-protected-runtime-digests": "failure"})
+        assert not admitted_branch_job(guard, "workflow_run", branch, cancelled=True)
+    assert not admitted_branch_job(jobs["publish-runtime-images"]["if"], "workflow_run", branch,
+                                   results={"smoke-full": "failure"})
+
+assert jobs["build-runtime-images"]["strategy"]["matrix"]["service"] == (
+    "${{ fromJSON(needs.select-protected-runtime-digests.outputs.missing_services) }}"
+)
+fixed_digest_output = "${{ needs.select-protected-runtime-digests.outputs.fixed_digests }}"
+pin_step = next(step for step in jobs["pin-protected-runtime-digests"]["steps"] if step.get("id") == "pin")
+assert pin_step["env"]["FIXED_RUNTIME_DIGESTS"] == fixed_digest_output
+assert jobs["publish-runtime-images"]["env"]["FIXED_RUNTIME_DIGESTS"] == fixed_digest_output
+pinned_digest_output = "${{ needs.pin-protected-runtime-digests.outputs.runtime_digests }}"
+assert jobs["smoke-full"]["with"]["runtime_digests"] == pinned_digest_output
+assert jobs["publish-runtime-images"]["env"]["RUNTIME_DIGESTS"] == pinned_digest_output
+assert "CANDIDATE_TAG" not in jobs["publish-runtime-images"]["env"]
+for job_id, definition in jobs.items():
+    needs = definition.get("needs", [])
+    needs = [needs] if isinstance(needs, str) else needs
+    for expression in re.findall(r"needs\.([A-Za-z0-9_-]+)\.", json.dumps(definition)):
+        assert expression in needs, (job_id, expression, needs)
+    digest_uses = []
+
+    def find_digest_uses(value, path=()):
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                find_digest_uses(nested, (*path, key))
+        elif isinstance(value, list):
+            for index, nested in enumerate(value):
+                find_digest_uses(nested, (*path, index))
+        elif isinstance(value, str) and "needs.pin-protected-runtime-digests.outputs.runtime_digests" in value:
+            digest_uses.append((path, value))
+
+    find_digest_uses(definition)
+    if digest_uses:
+        assert "pin-protected-runtime-digests" in needs, (job_id, digest_uses)
+for job in ("select-protected-runtime-digests", "pin-protected-runtime-digests", "publish-runtime-images"):
+    steps = jobs[job]["steps"]
+    checkout = next(index for index, step in enumerate(steps) if step.get("uses", "").startswith("actions/checkout@"))
+    assert steps[checkout]["with"]["ref"] == "${{ github.workflow_sha }}"
+    assert steps[checkout + 1]["run"] == 'test "$(git rev-parse HEAD)" = "$GITHUB_WORKFLOW_SHA"'
+
+# The shell must override both an exported stale ref and a potential .env value.
+root = workflow_path.parents[2]
+override = (root / "docker/docker-compose.smoke-images.override.yml").read_text()
+ref_variables = set(re.findall(r"\$\{(SMOKE_IMAGE_REF_[A-Z_]+):-", override))
+assert len(ref_variables) == 11
+wrapper = (root / "dev-tools/verify-smoke-images.sh").read_text()
+local_guard = re.search(r'(?ms)^if \[\[ "\$\{SMOKE_IMAGE_LOCAL_ONLY:-false\}" == "true" \]\]; then\n.*?^fi$', wrapper).group()
+expected = {variable: "" for variable in ref_variables}
+for inherited in ({}, {variable: "ghcr.io/example/stale@sha256:" + "a" * 64 for variable in ref_variables}):
+    result = subprocess.run(
+        ["bash", "-euc", local_guard + "\nexec env"],
+        env={**os.environ, **inherited, "SMOKE_IMAGE_LOCAL_ONLY": "true"},
+        check=True, capture_output=True, text=True,
+    )
+    exported = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    assert {variable: exported.get(variable) for variable in ref_variables} == expected
+    assert exported["SMOKE_IMAGE_PULL_POLICY"] == "never"
+
+# Run the actual branch metadata step with current, obsolete and unverifiable branch heads.
+meta = re.search(r"^      - name: Derive image tags\n.*?^        run: \|\n((?:^          [^\n]*\n|^\n)+)",
+                 source, re.MULTILINE | re.DOTALL).group(1)
+meta = re.sub(r"(?m)^          ", "", meta)
+branch_head = "a" * 40
+with tempfile.TemporaryDirectory() as temporary:
+    output = Path(temporary) / "output"
+    stub = Path(temporary) / "gh"
+    stub.write_text('#!/usr/bin/env bash\n'
+                    '[[ "$*" == "api repos/owner/repo/git/ref/heads/develop --jq .object.sha" ]] || exit 2\n'
+                    'printf "%s\\n" "$FIXTURE_LIVE_HEAD"\n')
+    stub.chmod(0o755)
+    for event in ("workflow_run", "workflow_dispatch"):
+        event_sha = "c" * 40 if event == "workflow_run" else branch_head
+        script = meta
+        for expression, value in {
+            "github.event_name": event, "github.event.workflow_run.event": "push",
+            "github.event.workflow_run.conclusion": "success", "github.event.workflow_run.head_sha": branch_head,
+        }.items():
+            script = script.replace("${{ " + expression + " }}", value)
+        for live_head, admitted, status in [(branch_head, True, 0), ("b" * 40, False, 0), ("unknown", False, 1)]:
+            output.write_text("")
+            environment = {
+                **os.environ, "PATH": temporary + ":" + os.environ["PATH"],
+                "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": event_sha,
+                "GITHUB_REF_NAME": "develop", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1",
+                "GITHUB_OUTPUT": str(output), "FIXTURE_LIVE_HEAD": live_head,
+                "EVENT_HEAD_BRANCH": "develop", "EVENT_HEAD_SHA": "",
+            }
+            result = subprocess.run(["bash", "-c", script], env=environment, capture_output=True, text=True)
+            assert result.returncode == status, result.stderr
+            if admitted:
+                assert f"head_sha={branch_head}\n" in output.read_text()
+                assert "head_branch=develop\n" in output.read_text()
+            else:
+                assert not output.read_text(), output.read_text()
+assert "github.event_name == 'workflow_dispatch' && steps.meta.outputs.head_sha != ''" in source
+
+class Context:
+    def __init__(self, value=None):
+        self.value = value
+    def __getattr__(self, key):
+        value = self.value.get(key) if isinstance(self.value, dict) else None
+        return Context(value)
+    def __bool__(self):
+        return bool(self.value)
+    def __eq__(self, other):
+        other = other.value if isinstance(other, Context) else other
+        left = self.value
+        if type(left) is type(other):
+            return left.lower() == other.lower() if isinstance(left, str) else left == other
+        def number(value):
+            if value is None or value == "": return 0
+            if isinstance(value, bool): return int(value)
+            try: return float(value)
+            except (ValueError, TypeError): return float("nan")
+        return number(left) == number(other)
+    def __str__(self):
+        return "" if self.value is None else str(self.value).lower() if isinstance(self.value, bool) else str(self.value)
+    def __format__(self, spec):
+        return format(str(self), spec)
+
+base = {
+    "event_name": "pull_request", "workflow": "Build Runtime Images",
+    "repository": "owner/repo", "run_id": 100, "sha": "merge1", "ref": "refs/pull/7/merge",
+    "event": {"action": "synchronize", "pull_request": {
+        "number": 7, "base": {"sha": "base1"},
+        "head": {"sha": "head1", "repo": {"full_name": "owner/repo"}}}},
+}
+
+def evaluate(event, expression_source=group):
+    def expression(match):
+        code = match.group(1).replace("&&", " and ").replace("||", " or ")
+        code = re.sub(r"\bnull\b", "None", code)
+        # Only the checked-in expression is code; event values remain data.
+        return str(eval(code, {"__builtins__": {}}, {
+            "github": Context(event), "format": lambda template, *args: template.format(*args)}))
+    return re.sub(r"\$\{\{(.*?)\}\}", expression, expression_source)
+
+def check(event, suffix):
+    expected = "runtime-images-Build Runtime Images-" + suffix
+    assert evaluate(event) == expected, (evaluate(event), expected)
+
+check(base, "pr-7-base-base1-head-head1-merge-merge1-required")
+new = copy.deepcopy(base)
+new["event"]["pull_request"]["head"]["sha"] = "head2"
+new["event"]["pull_request"]["base"]["sha"] = "base2"
+new["sha"] = "merge2"
+check(new, "pr-7-base-base2-head-head2-merge-merge2-required")
+new["event"]["pull_request"]["number"] = 8
+check(new, "pr-8-base-base2-head-head2-merge-merge2-required")
+for action in ["opened", "reopened", "ready_for_review", "synchronize"]:
+    event = copy.deepcopy(base)
+    event["event"]["action"] = action
+    check(event, "pr-7-base-base1-head-head1-merge-merge1-required")
+metadata = copy.deepcopy(base)
+metadata["event"]["action"] = "edited"
+check(metadata, "pr-7-base-base1-head-head1-merge-merge1-metadata")
+metadata["event"]["changes"] = {"base": {"ref": {"from": "old-base"}}}
+check(metadata, "pr-7-base-base1-head-head1-merge-merge1-required")
+for repository in ["fork/repo", None]:
+    fork = copy.deepcopy(base)
+    fork["event"]["pull_request"]["head"]["repo"] = {"full_name": repository}
+    check(fork, "pr-7-base-base1-head-head1-merge-merge1-required")
+    fork["event"]["pull_request"]["head"]["sha"] = "head2"
+    check(fork, "pr-7-base-base1-head-head2-merge-merge1-required")
+dispatch = {**base, "event_name": "repository_dispatch", "event": {
+    "action": "pr-runtime-base-refresh", "client_payload": {
+        "pr_number": 7, "base_sha": "base1", "head_sha": "head1", "merge_sha": "merge1"}}}
+check(dispatch, "pr-7-base-base1-head-head1-merge-merge1-required")
+def push_callback(branch, conclusion, run_id, attempt, head_sha="older"):
+    return {**base, "event_name": "workflow_run", "event": {"workflow_run": {
+        "event": "push", "head_branch": branch, "head_sha": head_sha, "conclusion": conclusion,
+        "id": run_id, "run_attempt": attempt}}}
+
+for branch in ("main", "develop"):
+    event = push_callback(branch, "success", 91, 2)
+    check(event, "protected-sha-older-required")
+    check(push_callback(branch, "success", 97, 1, "newer"),
+          "protected-sha-newer-required")
+    check({**base, "event_name": "workflow_dispatch", "ref": f"refs/heads/{branch}", "sha": "older"},
+          "protected-sha-older-required")
+    for conclusion, run_id, attempt in (("failure", 92, 1), ("cancelled", 93, 2),
+                                       ("timed_out", 94, 3), (None, 95, 1)):
+        event = push_callback(branch, conclusion, run_id, attempt)
+        check(event, f"ci-push-run-{run_id}-attempt-{attempt}-required")
+
+nonprotected = push_callback("feature/x", "success", 96, 2)
+check(nonprotected, "ci-push-run-96-attempt-2-required")
+assert evaluate(push_callback("Develop", "success", 98, 1)).lower() == \
+       evaluate(push_callback("develop", "success", 97, 1)).lower()
+assert evaluate(push_callback("develop", "success", 91, 2)).lower() == \
+       evaluate(push_callback("main", "success", 91, 2)).lower()
+
+for value in [0, False, "", None]:
+    invalid = copy.deepcopy(dispatch)
+    invalid["event"]["client_payload"]["pr_number"] = value
+    check(invalid, "repository-dispatch-run-100-required")
+assert Context(1) != ""
+assert Context(0) == ""
+assert Context(False) == ""
+for missing in ["pr_number", "base_sha", "head_sha", "merge_sha"]:
+    invalid = copy.deepcopy(dispatch)
+    del invalid["event"]["client_payload"][missing]
+    check(invalid, "repository-dispatch-run-100-required")
+dispatch["event"]["client_payload"]["head_sha"] = "head2"
+check(dispatch, "pr-7-base-base1-head-head2-merge-merge1-required")
+callback = {**base, "event_name": "workflow_run", "event": {
+    "workflow_run": {"event": "pull_request", "id": 90, "run_attempt": 2}}}
+check(callback, "ci-pr-run-90-attempt-2-required")
+check({**base, "event_name": "push", "event": {}, "ref": "refs/heads/develop"},
+      "refs/heads/develop-required")
+print("Runtime concurrency: non-replacing exact PR/dispatch queue and branch isolation passed")
+PY_CONCURRENCY
 
 require_contains() {
   local expected="$1"
@@ -14,7 +322,9 @@ require_contains() {
   }
 }
 
-require_contains 'run-name: Publish PR Runtime Images ${{ github.event.workflow_run.display_title ||'
+require_contains "run-name: Publish PR Runtime Images \${{ github.event.workflow_run.event == 'repository_dispatch' && format('{0} source-run-{1}',"
+require_contains 'github.event.workflow_run.display_title || format'
+require_contains 'github.event.client_payload.source_run_id'
 require_contains 'pr-merge-'
 require_contains 'pr-runtime-provenance.json'
 require_contains 'source run title does not contain exact PR/base/head/merge/mode metadata'
@@ -55,7 +365,7 @@ fi
 
 runtime_require_contains() {
   local expected="$1"
-  grep -Fq -- "$expected" "$RUNTIME_WORKFLOW" || {
+  grep -Fq -- "$expected" "$RUNTIME_WORKFLOW" "$RUNTIME_REGISTRY" || {
     echo "runtime publisher workflow must contain: $expected" >&2
     exit 1
   }
@@ -64,7 +374,7 @@ runtime_require_contains() {
 runtime_require_contains 'registry_manifest_state()'
 runtime_require_contains '--head'
 runtime_require_contains '--connect-timeout 10 --max-time 30'
-if grep -Fq -- '--request HEAD' "$RUNTIME_WORKFLOW"; then
+if grep -Fq -- '--request HEAD' "$RUNTIME_WORKFLOW" "$RUNTIME_REGISTRY"; then
   echo "runtime manifest probe must use curl --head" >&2
   exit 1
 fi
@@ -85,6 +395,7 @@ smoke_scope_script="$fixture_dir/runtime-smoke-scope.js"
 refresh_selector_script="$fixture_dir/runtime-refresh-selector.js"
 
 python3 - "$WORKFLOW" "$RUNTIME_WORKFLOW" "$validation_script" "$publisher_script" "$runtime_script" "$resolver_script" "$dispatch_script" "$smoke_scope_script" "$refresh_selector_script" <<'PY'
+import json
 import re
 import sys
 from pathlib import Path
@@ -103,6 +414,27 @@ login = workflow.index("- name: Login to GHCR")
 publish = workflow.index("- name: Publish fixed PR image tags")
 if not download < validate < login < publish:
     raise SystemExit("source/artifact validation must precede registry login and publication")
+publisher_job = yaml.load(workflow, Loader=yaml.BaseLoader)["jobs"]["publish"]
+assert publisher_job["concurrency"] == {
+    "group": "publish-pr-merge-images-${{ needs.source.outputs.title }}",
+    "cancel-in-progress": "false",
+    "queue": "max",
+}
+publisher_steps = publisher_job["steps"]
+step_names = [step["name"] for step in publisher_steps]
+download_step, = (step for step in publisher_steps if step["name"] == "Download successful PR image artifacts")
+inputs = download_step["with"]
+assert inputs == {
+    "artifact-ids": "${{ needs.source.outputs.artifact_id }}",
+    "digest-mismatch": "error",
+    "path": "/tmp/pr-runtime-artifacts/${{ needs.source.outputs.artifact_name }}",
+    "github-token": "${{ github.token }}",
+    "run-id": "${{ fromJSON(needs.source.outputs.source).id }}",
+}
+validation_path.with_name("download-inputs.parsed.json").write_text(json.dumps(inputs), encoding="utf-8")
+fence = step_names.index("Fence current source attempt before registry login")
+assert step_names[fence - 1:fence + 2:2] == ["Load fixed-tag images", "Login to GHCR"]
+validation_path.with_name("attempt-fence.sh").write_text(publisher_steps[fence]["run"])
 if "github.event.workflow_run.head_repository.full_name == github.repository" not in workflow:
     raise SystemExit("publisher must reject fork-owned source runs")
 validation_section = workflow[validate:login]
@@ -114,14 +446,16 @@ validation_path.write_text(
     "\n".join(line[10:] if line.startswith("          ") else line for line in script.splitlines()) + "\n",
     encoding="utf-8",
 )
-publish_start = workflow.index("      - name: Publish fixed PR image tags")
-publish_run = workflow.index("        run: |\n", publish_start) + len("        run: |\n")
-publish_end = len(workflow)
-publish_script = workflow[publish_run:publish_end]
-publisher_path.write_text(
-    "\n".join(line[10:] if line.startswith("          ") else line for line in publish_script.splitlines()) + "\n",
-    encoding="utf-8",
-)
+publish = step_names.index("Publish fixed PR image tags")
+receipt = step_names.index("Record exact fixed-tag publication receipt")
+retain = step_names.index("Retain exact fixed-tag publication receipt")
+assert publish < receipt < retain
+receipt_artifact = publisher_steps[retain]["with"]
+assert receipt_artifact["name"] == "pr-runtime-publication-${{ github.run_id }}-attempt-${{ github.run_attempt }}"
+assert receipt_artifact["path"] == "${{ runner.temp }}/exact-pr-runtime-publication.json"
+assert receipt_artifact["path"].endswith("exact-pr-runtime-publication.json")
+publisher_path.write_text(publisher_steps[publish]["run"], encoding="utf-8")
+validation_path.with_name("publication-receipt.sh").write_text(publisher_steps[receipt]["run"], encoding="utf-8")
 def javascript_step(text, name):
     section = text.split("      - name: " + name + "\n", 1)[1]
     section = section.split("          script: |\n", 1)[1]
@@ -136,6 +470,11 @@ Path(sys.argv[6]).write_text(javascript_step(workflow, "Resolve successful exact
 runtime_workflow = runtime_workflow_path.read_text(encoding="utf-8")
 Path(sys.argv[7]).write_text(javascript_step(runtime_workflow, "Dispatch exact runtime publication source"))
 runtime_definition = yaml.load(runtime_workflow, Loader=yaml.BaseLoader)
+producer_steps = {step["name"]: step for step in runtime_definition["jobs"]["pr-local-smoke"]["steps"]}
+export_script = producer_steps["Export fixed-tag preview image artifact"]["run"]
+assert 'SOURCE_RUN_ID="${{ github.run_id }}"' in export_script
+validation_path.with_name("producer-provenance.py").write_text(export_script.split("python3 - <<'PY'\n", 1)[1].split("\nPY\n", 1)[0])
+assert producer_steps["Summarize secure PR runtime artifact"]["env"]["ARTIFACT_NAME"] == producer_steps["Upload preview image artifact"]["with"]["name"]
 image_meta = runtime_definition["jobs"]["image-meta"]
 smoke_scope = next(step for step in image_meta["steps"] if step.get("name") == "Detect PR smoke scopes")
 Path(sys.argv[8]).write_text(smoke_scope["with"]["script"], encoding="utf-8")
@@ -144,7 +483,7 @@ refresh_script = next(step["with"]["script"] for step in refresh_job["steps"] if
 selector_start = refresh_script.index("const runtimePrefixes = [")
 selector_end = refresh_script.index("const dependencyBotAuthors = new Set([", selector_start)
 Path(sys.argv[9]).write_text(refresh_script[selector_start:selector_end], encoding="utf-8")
-handoff = runtime_workflow.split("  dispatch-pr-runtime-publication:\n", 1)[1].split("  smoke-full:\n", 1)[0]
+handoff = re.split(r"\n  [a-z][a-z-]*:\n", runtime_workflow.split("  dispatch-pr-runtime-publication:\n", 1)[1], maxsplit=1)[0]
 for required in ["needs: [image-meta, pr-local-smoke, pr-controller-smoke]", "github.event_name == 'repository_dispatch'", "github.event.action == 'pr-runtime-base-refresh'", "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)", "needs.image-meta.result == 'success'", "needs.pr-local-smoke.result == 'success'", "needs.pr-controller-smoke.result == 'success'", "needs.image-meta.outputs.controller_smoke_required == 'false'", "needs.pr-controller-smoke.result == 'skipped'", "contents: write"]:
     if required not in handoff:
         raise SystemExit("trusted handoff prerequisite missing: " + required)
@@ -159,6 +498,8 @@ for job in ["pr-local-smoke", "pr-controller-smoke"]:
     section = re.split(r"\n  [a-z][a-z-]*:", runtime_workflow.split("  " + job + ":\n", 1)[1], maxsplit=1)[0]
     if "contents: read" not in section or "contents: write" in section or "packages: write" in section:
         raise SystemExit("PR source jobs must remain read-only")
+    if not re.search(r"(?m)^    cache-mode: read$", section) or "cache-to:" in section:
+        raise SystemExit("PR source jobs must use provider-enforced read-only caches without exports")
 runtime_start = runtime_workflow.index("- name: Promote smoke-tested service digests")
 runtime_run = runtime_workflow.index("        run: |\n", runtime_start) + len("        run: |\n")
 runtime_script = runtime_workflow[runtime_run:]
@@ -170,6 +511,7 @@ PY
 
 node - "$resolver_script" "$dispatch_script" "$RUNTIME_WORKFLOW" "$WORKFLOW" "$fixture_dir/download-inputs.json" "$smoke_scope_script" "$refresh_selector_script" <<'JS'
 const fs = require("fs");
+const path = require("node:path");
 const assert = require("assert/strict");
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const resolver = new AsyncFunction("github", "context", "core", "Date", "setTimeout", fs.readFileSync(process.argv[2], "utf8"));
@@ -179,23 +521,48 @@ const refreshSelector = new AsyncFunction("github", "context", "core", `${fs.rea
 const sha = character => character.repeat(40);
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${sha("b")} head-${sha("a")} merge-${sha("c")} mode-required`;
 const repository = { full_name: "benhook1013/FireMUD", default_branch: "develop" };
-const source = { id: 4242, workflow_id: 777, path: ".github/workflows/runtime-images.yml", name: title, display_title: title, event: "repository_dispatch", repository, head_repository: repository, head_branch: "develop", head_sha: sha("b"), status: "completed", conclusion: "success" };
+const source = { id: 4242, run_attempt: 2, workflow_id: 777, path: ".github/workflows/runtime-images.yml", name: title, display_title: title, event: "repository_dispatch", repository, head_repository: repository, head_branch: "develop", head_sha: sha("b"), status: "completed", conclusion: "success" };
 const baseContext = { eventName: "repository_dispatch", ref: "refs/heads/develop", repo: {owner: "benhook1013", repo: "FireMUD"}, runId: 4242, payload: { repository, action: "pr-runtime-image-publication", client_payload: { source_run_id: "4242" } } };
-async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path }, error = false, jobs = [] } = {}) {
+const producer = run => ({id: 8, run_id: run.id, run_attempt: run.run_attempt, head_sha: run.head_sha,
+  name: "PR Full-Stack Smoke (runtime-required=true)", status: "completed", conclusion: "success"});
+async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path }, error = false, jobs, artifactOverride = {}, missingAttempt = false, legacyArchive = false } = {}) {
   let reads = 0, clock = 0;
   const output = {};
-  const github = { paginate: async () => jobs, rest: { actions: {
+  const lastRead = () => runs[Math.min(reads - 1, runs.length - 1)];
+  const github = { paginate: async (route, params) => {
+    assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
+    assert.deepEqual(params, {...baseContext.repo, run_id: 4242, attempt_number: lastRead().run_attempt, per_page: 100});
+    return jobs ?? [producer(lastRead())];
+  }, rest: { actions: {
     getWorkflow: async () => ({data: workflow}),
+    listWorkflowRunArtifacts: async ({run_id, name, per_page}) => {
+      assert.equal(run_id, 4242);
+      assert.equal(per_page, 100);
+      const legacyName = `pr-runtime-images-pr-merge-${sha("c")}`;
+      if (name === legacyName) {
+        assert.ok(missingAttempt);
+        return {data: legacyArchive
+          ? {total_count: 1, artifacts: [{id: 73, name, workflow_run: {id: run_id}}]}
+          : {total_count: 0, artifacts: []}};
+      }
+      assert.equal(name, `${legacyName}-attempt-${lastRead().run_attempt}`);
+      if (missingAttempt) return {data: {total_count: 0, artifacts: []}};
+      return {data: {total_count: 1, artifacts: [{id: 71, name, expired: false,
+        workflow_run: {id: run_id}, digest: "sha256:" + "a".repeat(64), ...artifactOverride}]}};
+    },
     getWorkflowRun: async request => { assert.equal(request.run_id, 4242); reads++; if (error) throw Error("API unavailable"); return {data: runs[Math.min(reads - 1, runs.length - 1)]}; },
   } } };
   await resolver(github, context, {notice: () => {}, setOutput: (key, value) => {output[key] = value;}}, {now: () => {clock += 60000; return clock;}}, fn => fn());
-  if (jobs.some(job => (job.steps ?? []).some(step => step.conclusion === "success"))) {
+  if (jobs?.some(job => (job.steps ?? []).some(step => step.conclusion === "success"))) {
     assert.deepEqual(output, {}, "exception attempts must expose no publication source");
     return {reads, output};
   }
   assert.equal(output.title, title);
-  assert.equal(output.artifact_name, `pr-runtime-images-pr-merge-${sha("c")}`);
+  assert.equal(output.artifact_name, `pr-runtime-images-pr-merge-${sha("c")}-attempt-${lastRead().run_attempt}`);
+  assert.equal(output.artifact_id, "71");
+  assert.equal(output.artifact_digest, "sha256:" + "a".repeat(64));
   assert.equal(JSON.parse(output.source).status, "completed");
+  assert.equal(JSON.parse(output.source).run_attempt, lastRead().run_attempt);
   return {reads, output};
 }
 const runtimeWorkflow = fs.readFileSync(process.argv[4], "utf8");
@@ -259,11 +626,17 @@ for (const publishable of ["false", "", undefined]) {
   await dispatch({rest: {repos: {createDispatchEvent: async payload => {dispatched = payload;}}}}, baseContext);
   assert.deepEqual(dispatched, {...baseContext.repo, event_type: "pr-runtime-image-publication", client_payload: {source_run_id: "4242"}});
   const direct = await resolve();
-  const exceptionJob = {name: "PR Full-Stack Smoke (runtime-required=true)", steps: [{
+  const exceptionJob = {...producer(source), steps: [{
     name: "Known canonical transition PLAY failure with successful authenticated cleanup",
     status: "completed", conclusion: "success"}]};
   assert.deepEqual((await resolve({jobs: [exceptionJob]})).output, {});
   assert.equal((await resolve({jobs: [{...exceptionJob, steps: [{...exceptionJob.steps[0], conclusion: "skipped"}]}]})).output.title, title);
+  assert.equal((await resolve({jobs: [{...producer(source), name: "PR Full-Stack Smoke (runtime-required=false)"}]})).output.title, title);
+  for (const jobs of [[], [producer(source), producer(source)], [{...producer(source), run_attempt: 1}],
+      [{...producer(source), run_id: 4241}], [{...producer(source), head_sha: sha("a")}],
+      [{...producer(source), conclusion: "failure"}], [{...producer(source), status: "in_progress"}]]) {
+    await assert.rejects(resolve({jobs}), /successful runtime image job from the exact source attempt/);
+  }
   const pending = {...source, status: "in_progress", conclusion: null};
   assert.equal((await resolve({runs: [pending, source]})).reads, 2);
   const callbackContext = {...baseContext, eventName: "workflow_run", payload: {repository, workflow_run: source}};
@@ -274,20 +647,42 @@ for (const publishable of ["false", "", undefined]) {
   const prCallback = {...callbackContext, payload: {repository, workflow_run: prSource}};
   assert.equal((await resolve({runs: [prSource]})).output.artifact_name, direct.output.artifact_name);
   assert.equal((await resolve({runs: [prSource], context: prCallback})).output.artifact_name, direct.output.artifact_name);
+  const attemptOne = {...source, run_attempt: 1};
+  await assert.rejects(resolve({context: {...callbackContext, payload: {repository, workflow_run: attemptOne}}}), /current publication source attempt differs/);
+  await assert.rejects(resolve({runs: [{...pending, run_attempt: 1}, source]}), /current publication source attempt differs/);
+  for (const run_attempt of [undefined, "2", 0, 2.5]) {
+    await assert.rejects(resolve({runs: [{...source, run_attempt}]}), /provenance/);
+    await assert.rejects(resolve({context: {...callbackContext, payload: {repository, workflow_run: {...source, run_attempt}}}}), /callback source attempt/);
+  }
   const publisherWorkflow = fs.readFileSync(process.argv[5], "utf8");
   assert.ok(publisherWorkflow.includes("if: ${{ needs.source.outputs.source != '' }}"), "no source must skip privileged publication");
-  const download = publisherWorkflow.split("      - name: Download successful PR image artifacts\n")[1]
-    .split("      - name: Validate exact PR source and artifact before registry login\n")[0];
-  const inputs = Object.fromEntries([...download.matchAll(/^          (name|path|run-id): (.+)$/gm)]
-    .map(match => [match[1], match[2]]));
-  assert.equal(inputs.name, "${{ needs.source.outputs.artifact_name }}");
-  assert.equal(inputs.path, "/tmp/pr-runtime-artifacts/${{ needs.source.outputs.artifact_name }}");
-  assert.equal(inputs["run-id"], "${{ fromJSON(needs.source.outputs.source).id }}");
+  const inputs = JSON.parse(fs.readFileSync(path.join(path.dirname(process.argv[6]), "download-inputs.parsed.json"), "utf8"));
+  for (const artifactOverride of [{expired:true}, {digest:"not-sha256"}, {id:0}, {workflow_run:{id:4243}}]) {
+    await assert.rejects(resolve({artifactOverride}), /immutable exact-attempt artifact and SHA256/);
+  }
+  await assert.rejects(resolve({missingAttempt: true, legacyArchive: true}), /Start a fresh build for the exact current PR tuple/);
+  await assert.rejects(resolve({missingAttempt: true}), /Re-run all jobs/);
   assert.ok(publisherWorkflow.includes("artifact_name: ${{ steps.resolve.outputs.artifact_name }}"));
   const upload = runtimeWorkflow.split("      - name: Upload preview image artifact\n")[1]
     .split("      - name: Summarize secure PR runtime artifact\n")[0];
   assert.ok(upload.includes("actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"));
   assert.equal(upload.includes("overwrite: true"), false);
+  const uploadName = upload.match(/^          name: (.+)$/m)[1];
+  const uploaded = run_attempt => ({run_id: source.id, name: uploadName
+    .replace("${{ needs.image-meta.outputs.image_tag }}", `pr-merge-${sha("c")}`)
+    .replace("${{ github.run_attempt }}", String(run_attempt))});
+  // Model the pinned action's run-scoped exact-name match, not an attempt-aware API.
+  for (const {output} of [direct, callback, await resolve({runs: [prSource], context: prCallback})]) {
+    const select = artifacts => artifacts.filter(artifact => artifact.run_id === JSON.parse(output.source).id &&
+      artifact.name === output.artifact_name);
+    const old = uploaded(1), exact = uploaded(2);
+    const legacy = {...old, name: `pr-runtime-images-pr-merge-${sha("c")}`};
+    assert.equal(old.name, `${legacy.name}-attempt-1`);
+    assert.equal(exact.name, `${legacy.name}-attempt-2`);
+    assert.deepEqual(select([old]), [], "attempt 1 alone must not satisfy attempt 2");
+    assert.deepEqual(select([legacy]), [], "merge-name-only archive must not satisfy attempt 2");
+    assert.deepEqual(select([old, exact]), [exact]);
+  }
   fs.writeFileSync(process.argv[6], JSON.stringify({inputs, output: direct.output}));
   for (const suffix of ["refs/heads/develop", "refs/pull/42/merge", sha("b")]) {
     const suffixed = {...source, path: `${source.path}@${suffix}`};
@@ -323,6 +718,7 @@ mkdir -p "$fake_bin"
 
 repository='benhook1013/FireMUD'
 source_run_id='4242'
+source_run_attempt='2'
 workflow_id='777'
 pr_number='42'
 base_sha='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
@@ -360,12 +756,13 @@ world-management-service
 backup-verifier
 EOF
 printf 'placeholder archive\n' > "$artifact_dir/pr-runtime-images.tar.gz"
-cat > "$artifact_dir/pr-runtime-provenance.json" <<EOF
-{"repository":"${repository}","prNumber":${pr_number},"baseSha":"${base_sha}","headSha":"${head_sha}","mergeSha":"${merge_sha}","imageTag":"pr-merge-${merge_sha}","sourceRunId":${source_run_id},"services":["account-service","automation-scripting-service","entity-management-service","game-design-service","game-logic-service","game-session-service","logging-admin-service","social-groups-service","spring-cloud-gateway","tcp-proxy-service","world-management-service","backup-verifier"]}
-EOF
+REPOSITORY="$repository" PR_NUMBER="$pr_number" BASE_SHA="$base_sha" HEAD_SHA="$head_sha" \
+  MERGE_SHA="$merge_sha" IMAGE_TAG="pr-merge-$merge_sha" SOURCE_RUN_ID="$source_run_id" \
+  GITHUB_RUN_ATTEMPT="$source_run_attempt" PROVENANCE_PATH="$artifact_dir/pr-runtime-provenance.json" \
+  python3 "$fixture_dir/producer-provenance.py"
 
 cat > "$fixture_dir/source-run.json" <<EOF
-{"id":${source_run_id},"workflow_id":${workflow_id},"name":"Build Runtime Images","path":".github/workflows/runtime-images.yml","event":"pull_request","status":"completed","conclusion":"success","display_title":"${source_title}","head_sha":"${head_sha}","head_branch":"feature/ci","repository":{"full_name":"${repository}"},"head_repository":{"full_name":"${repository}"}}
+{"id":${source_run_id},"run_attempt":${source_run_attempt},"workflow_id":${workflow_id},"name":"Build Runtime Images","path":".github/workflows/runtime-images.yml","event":"pull_request","status":"completed","conclusion":"success","display_title":"${source_title}","head_sha":"${head_sha}","head_branch":"feature/ci","repository":{"full_name":"${repository}"},"head_repository":{"full_name":"${repository}"}}
 EOF
 cat > "$fixture_dir/pull-request.json" <<EOF
 {"number":${pr_number},"state":"open","user":{"login":"human"},"labels":[],"mergeable":true,"mergeable_state":"clean","head":{"sha":"${head_sha}","ref":"feature/ci","repo":{"full_name":"${repository}"}},"base":{"sha":"${base_sha}","ref":"develop","repo":{"full_name":"${repository}"}},"merge_commit_sha":"${merge_sha}"}
@@ -381,6 +778,11 @@ cat > "$fake_bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "${1:-}" == api ]] || exit 2
+include_claim_headers=false
+if [[ "${2:-}" == --include && "${3:-}" == --method && "${4:-}" == GET ]]; then
+  include_claim_headers=true
+  set -- api "$5"
+fi
 case "${2:-}" in
   repos/benhook1013/FireMUD/actions/runs/4242) cat "$FIXTURE_DIR/source-run.json" ;;
   repos/benhook1013/FireMUD/pulls/42)
@@ -410,6 +812,34 @@ case "${2:-}" in
     fi
     cat "$FIXTURE_DIR/base-ref.json"
     ;;
+  repos/benhook1013/FireMUD/git/ref/tags/firemud-runtime-refresh-intent/*)
+    if [[ -n "${RUNTIME_CLAIM_LOOKUPS:-}" ]]; then
+      printf '%s\n' "$2" >> "$RUNTIME_CLAIM_LOOKUPS"
+    fi
+    [[ "$2" == "${EXPECTED_RUNTIME_CLAIM_REF:-}" ]] || exit 2
+    if [[ -n "${MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS:-}" ]] &&
+      { [[ "${MOCK_RUNTIME_CLAIM_REF_PERSISTENT:-}" == true ]] ||
+        [[ "$(wc -l < "$RUNTIME_CLAIM_LOOKUPS")" -eq 1 ]]; }; then
+      if [[ "$include_claim_headers" == true ]]; then
+        printf 'HTTP/2 %s\r\n' "$MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS"
+        if [[ -n "${MOCK_RUNTIME_CLAIM_REF_RATE_HEADERS:-}" ]]; then
+          printf '%b\r\n' "$MOCK_RUNTIME_CLAIM_REF_RATE_HEADERS"
+        else
+          printf 'Retry-After: %s\r\n' "${MOCK_RUNTIME_CLAIM_REF_RETRY_AFTER:-0}"
+        fi
+        printf '\r\n{}\n'
+      fi
+      echo "gh: Test claim lookup response (HTTP $MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS)" >&2
+      exit 1
+    fi
+    [[ "$include_claim_headers" != true ]] || printf 'HTTP/2 200\r\n\r\n'
+    cat "$FIXTURE_DIR/runtime-claim-ref.json"
+    ;;
+  repos/benhook1013/FireMUD/git/tags/*)
+    [[ "$2" == "${EXPECTED_RUNTIME_CLAIM_TAG:-}" ]] || exit 2
+    [[ "$include_claim_headers" != true ]] || printf 'HTTP/2 200\r\n\r\n'
+    cat "$FIXTURE_DIR/runtime-claim-tag.json"
+    ;;
   repos/benhook1013/FireMUD/commits/cccccccccccccccccccccccccccccccccccccccc) cat "$FIXTURE_DIR/merge-commit.json" ;;
   *) echo "unexpected endpoint: ${2:-}" >&2; exit 2 ;;
 esac
@@ -425,19 +855,26 @@ chmod +x "$fake_bin/docker"
 # Execute the real credential-free metadata admission for a feature-base bot PR.
 # Preview admission is a separate privileged boundary; exact tuple checks remain.
 PATH="$fake_bin:$PATH" FIXTURE_DIR="$fixture_dir" python3 - "$RUNTIME_WORKFLOW" <<'PY'
+import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 from urllib.parse import quote
 
 fixture = Path(os.environ["FIXTURE_DIR"])
 workflow = Path(sys.argv[1]).read_text()
-section = workflow.split("      - name: Derive image tags\n", 1)[1].split("      - name: Verify successful CI push for manual publication\n", 1)[0]
-script = section.split("        run: |\n", 1)[1]
-script = "\n".join(line[10:] if line.startswith("          ") else line for line in script.splitlines())
-script_template = script
+def read_step(name):
+    section = workflow.split(f"      - name: {name}\n", 1)[1].split("\n      - name:", 1)[0]
+    script = section.split("        run: |\n", 1)[1]
+    return "\n".join(line[10:] if line.startswith("          ") else line for line in script.splitlines())
+
+script_template = read_step("Derive image tags")
+claim_script = read_step("Verify runtime refresh claim")
+assert workflow.index("      - name: Verify runtime refresh claim") < workflow.index(
+    "      - name: Runtime refresh claim generation") < workflow.index("      - name: Derive image tags")
 paths = [fixture / name for name in ("pull-request.json", "merge-commit.json", "base-ref.json")]
 originals = [path.read_text() for path in paths]
 request, merge, branch = map(json.loads, originals)
@@ -469,25 +906,155 @@ def admit(current_request, current_merge, current_branch, overrides=None, event_
     calls = fixture / "runtime-meta-ref-calls"
     calls.write_text("")
     current_env = {**env, **(overrides or {})}
+    event_path = fixture / "runtime-meta-event.json"
+    event_path.write_text(json.dumps({"client_payload": {
+        "runtime_refresh_claim_witness": current_env.get("TEST_RUNTIME_CLAIM_WITNESS", ""),
+    }}))
+    current_env["GITHUB_EVENT_PATH"] = str(event_path)
     current_env.update({
         "BASE_REF_CALLS": str(calls),
         "EXPECTED_BASE_REF_ENDPOINT": "repos/benhook1013/FireMUD/git/ref/heads/" + quote(current_env["EVENT_BASE_REF"], safe="/"),
     })
+    if event_name == "repository_dispatch":
+        receipt = subprocess.run(["bash", "-c", claim_script], env=current_env, text=True, capture_output=True)
+        if receipt.returncode != 0:
+            return receipt
     script = script_template.replace("${{ github.event_name }}", event_name)
     return subprocess.run(["bash", "-c", script], env=current_env, text=True, capture_output=True)
 
+claim_sha = "d" * 40
+claim_witness = "f" * 64
+admission_revision = "9" * 40
+claim_tag_file = fixture / "runtime-claim-tag.json"
+
+def install_claim(request, merge, branch, owner_revision=admission_revision):
+    base_ref_hash = hashlib.sha256(request["base"]["ref"].encode()).hexdigest()
+    claim = f"firemud-runtime-refresh-intent/v1/pr-{request['number']}/{merge['sha']}/{base_ref_hash}/g1"
+    claim_ref = {"ref": f"refs/tags/{claim}", "object": {"type": "tag", "sha": claim_sha}}
+    annotation = {"pr_number": str(request["number"]), "base_ref": request["base"]["ref"],
+                  "base_sha": branch["object"]["sha"], "head_sha": request["head"]["sha"],
+                  "merge_sha": merge["sha"], "generation": "1",
+                  "witness_sha256": hashlib.sha256(claim_witness.encode()).hexdigest()}
+    if owner_revision is not None:
+        annotation["owner_revision"] = owner_revision
+    claim_tag = {"sha": claim_sha, "tag": claim,
+                 "object": {"type": "commit", "sha": owner_revision if owner_revision is not None else merge["sha"]},
+                 "message": json.dumps(annotation, ensure_ascii=False, separators=(",", ":")) + "\n"}
+    claim_tag_file = fixture / "runtime-claim-tag.json"
+    (fixture / "runtime-claim-ref.json").write_text(json.dumps(claim_ref))
+    claim_tag_file.write_text(json.dumps(claim_tag))
+    return {
+        "EVENT_RUNTIME_REFRESH_CLAIM": "1",
+        "TEST_RUNTIME_CLAIM_WITNESS": claim_witness,
+        "EXPECTED_RUNTIME_CLAIM_REF": f"repos/benhook1013/FireMUD/git/ref/tags/{claim}",
+        "EXPECTED_RUNTIME_CLAIM_TAG": f"repos/benhook1013/FireMUD/git/tags/{claim_sha}",
+    }
+
 try:
-    accepted = admit(request, merge, branch)
-    assert accepted.returncode == 0, accepted.stderr
+    missing_claim = admit(request, merge, branch)
+    assert missing_claim.returncode != 0
+    assert not Path(env["GITHUB_OUTPUT"]).read_text()
+    legacy_request = install_claim(request, merge, branch, owner_revision=None)
+    legacy_result = admit(request, merge, branch, legacy_request)
+    assert legacy_result.returncode == 0, legacy_result.stderr
+    assert f"runtime_refresh_claim_tag={claim_sha}\n" in Path(env["GITHUB_OUTPUT"]).read_text()
+    claim_request = install_claim(request, merge, branch)
+    claim_ref = json.loads((fixture / "runtime-claim-ref.json").read_text())
+    claim_tag = json.loads(claim_tag_file.read_text())
+    claim = claim_tag["tag"]
+    accepted_claim = admit(request, merge, branch, claim_request)
+    assert accepted_claim.returncode == 0, accepted_claim.stderr
     output = Path(env["GITHUB_OUTPUT"]).read_text()
     assert f"merge_sha={merge['sha']}\n" in output
     assert f"base_ref={request['base']['ref']}\n" in output
     assert f"image_tag=pr-merge-{merge['sha']}\n" in output
     assert f"base_image=ghcr.io/benhook1013/firemud-base:{merge['sha']}\n" in output
     assert "canonical_play_transition=false\n" in output
+    assert "runtime_refresh_claim=1\n" in output
+    assert "runtime_refresh_claim_attempt=1\n" in output
+    assert f"runtime_refresh_claim_tag={claim_sha}\n" in output
+    assert claim_witness not in output
+    claim_lookups = fixture / "claim-read-retry-lookups"
+    for http_status, persistent, count, succeeds, retry_after in [
+        (503, False, 2, True, 0),
+        (503, True, 3, False, 0),
+        (404, True, 1, False, 0),
+        (429, False, 2, True, 1),
+        (429, True, 1, False, 120),
+    ]:
+        claim_lookups.unlink(missing_ok=True)
+        retried_claim = admit(request, merge, branch, {
+            **claim_request, "RUNTIME_CLAIM_LOOKUPS": str(claim_lookups),
+            "MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS": str(http_status),
+            "MOCK_RUNTIME_CLAIM_REF_PERSISTENT": str(persistent).lower(),
+            "MOCK_RUNTIME_CLAIM_REF_RETRY_AFTER": str(retry_after),
+        })
+        assert (retried_claim.returncode == 0) == succeeds, retried_claim.stderr
+        assert claim_lookups.read_text().splitlines() == [claim_request["EXPECTED_RUNTIME_CLAIM_REF"]] * count
+        claim_output = Path(env["GITHUB_OUTPUT"]).read_text()
+        assert ("runtime_refresh_claim_attempt=1" in claim_output) == succeeds, claim_output
+        if not succeeds:
+            assert "positively identified as the original receiver" in retried_claim.stderr, retried_claim.stderr
+    rate_reset = str(int(time.time()) + 3)
+    for headers, count, succeeds in [
+        (f"X-RateLimit-Remaining: 0\\nX-RateLimit-Reset: {rate_reset}", 2, True),
+        ("Retry-After: 1", 2, True),
+        ("Retry-After: 1\\nX-RateLimit-Remaining: 1\\nX-RateLimit-Reset: 9999999999", 2, True),
+        ("Retry-After: 1.5", 1, False),
+        ("Retry-After: 1\\nRetry-After: 2", 1, False),
+        ("X-RateLimit-Remaining: 1\\nX-RateLimit-Reset: 9999999999", 1, False),
+    ]:
+        claim_lookups.unlink(missing_ok=True)
+        retried_claim = admit(request, merge, branch, {
+            **claim_request, "RUNTIME_CLAIM_LOOKUPS": str(claim_lookups),
+            "MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS": "403",
+            "MOCK_RUNTIME_CLAIM_REF_RATE_HEADERS": headers,
+        })
+        assert (retried_claim.returncode == 0) == succeeds, retried_claim.stderr
+        assert claim_lookups.read_text().splitlines() == [claim_request["EXPECTED_RUNTIME_CLAIM_REF"]] * count
+        assert ("runtime_refresh_claim_attempt=1" in Path(env["GITHUB_OUTPUT"]).read_text()) == succeeds
+    unavailable_base = admit(request, merge, branch, {**claim_request, "MOCK_BASE_REF_MISSING": "true"})
+    assert unavailable_base.returncode != 0
+    assert Path(env["GITHUB_OUTPUT"]).read_text().splitlines() == [
+        "runtime_refresh_claim=1", f"runtime_refresh_claim_tag={claim_sha}", "runtime_refresh_claim_attempt=1",
+    ]
+    assert admit(request, merge, branch, {**claim_request, "TEST_RUNTIME_CLAIM_WITNESS": "b" * 64}).returncode != 0
+    assert admit(request, merge, branch, {**claim_request, "TEST_RUNTIME_CLAIM_WITNESS": ""}).returncode != 0
+    assert admit(request, merge, branch, {**claim_request, "EVENT_RUNTIME_REFRESH_CLAIM": ""}).returncode != 0
+    malformed_owner = admission_revision + "\n"
+    malformed_annotation = {**json.loads(claim_tag["message"]), "owner_revision": malformed_owner}
+    for invalid_tag in [
+        {**claim_tag, "object": {"type": "commit", "sha": merge["sha"]}},
+        {**claim_tag, "message": claim_tag["message"] + "\n"},
+        {**claim_tag, "object": {"type": "commit", "sha": malformed_owner},
+         "message": json.dumps(malformed_annotation, separators=(",", ":")) + "\n"},
+    ]:
+        claim_tag_file.write_text(json.dumps(invalid_tag))
+        assert admit(request, merge, branch, claim_request).returncode != 0
+        assert "runtime_refresh_claim=1\n" not in Path(env["GITHUB_OUTPUT"]).read_text()
+    oversized_generation = "9007199254740992"
+    oversized_claim = claim.removesuffix("/g1") + f"/g{oversized_generation}"
+    oversized_lookup = fixture / "oversized-claim-lookup"
+    oversized_lookup.unlink(missing_ok=True)
+    (fixture / "runtime-claim-ref.json").write_text(json.dumps({**claim_ref, "ref": f"refs/tags/{oversized_claim}"}))
+    claim_body = {**json.loads(claim_tag["message"]), "generation": oversized_generation}
+    claim_tag_file.write_text(json.dumps({**claim_tag, "tag": oversized_claim,
+                                        "message": json.dumps(claim_body) + "\n"}))
+    oversized_result = admit(request, merge, branch, {
+        **claim_request, "EVENT_RUNTIME_REFRESH_CLAIM": oversized_generation,
+        "EXPECTED_RUNTIME_CLAIM_REF": f"repos/benhook1013/FireMUD/git/ref/tags/{oversized_claim}",
+        "RUNTIME_CLAIM_LOOKUPS": str(oversized_lookup),
+    })
+    assert oversized_result.returncode != 0, oversized_result
+    assert "Runtime PR refresh claim identity is invalid." in oversized_result.stderr, oversized_result.stderr
+    assert not oversized_lookup.exists(), "invalid generation reached claim-ref lookup"
+    (fixture / "runtime-claim-ref.json").write_text(json.dumps(claim_ref))
+    claim_tag_file.write_text(json.dumps(claim_tag))
+    assert admit(request, merge, branch, claim_request, event_name="pull_request").returncode == 0
+    assert "runtime_refresh_claim=" not in Path(env["GITHUB_OUTPUT"]).read_text()
     labeled_request = json.loads(json.dumps(request))
     labeled_request["labels"] = [{"name": "canonical-play-transition"}]
-    assert admit(labeled_request, merge, branch).returncode == 0
+    assert admit(labeled_request, merge, branch, claim_request).returncode == 0
     assert "canonical_play_transition=true\n" in Path(env["GITHUB_OUTPUT"]).read_text()
     # Event labels are a separate marker path; only typed-refresh admission may
     # export verified live-label authority through this metadata output.
@@ -495,7 +1062,7 @@ try:
     assert "canonical_play_transition=false\n" in Path(env["GITHUB_OUTPUT"]).read_text()
     for labels in (None, [], [{"name": "other"}], "canonical-play-transition"):
         unlabeled_request = {**request, "labels": labels}
-        assert admit(unlabeled_request, merge, branch).returncode == 0
+        assert admit(unlabeled_request, merge, branch, claim_request).returncode == 0
         assert "canonical_play_transition=false\n" in Path(env["GITHUB_OUTPUT"]).read_text()
     assert admit(labeled_request, merge, branch, {"EVENT_ACTION": "other"}).returncode != 0
     assert branch["object"]["sha"] not in dict(line.split("=", 1) for line in output.splitlines())["base_image"]
@@ -506,7 +1073,8 @@ try:
         ref_request, ref_branch = json.loads(json.dumps(request)), json.loads(json.dumps(branch))
         ref_request["base"]["ref"] = base_ref
         ref_branch["ref"] = "refs/heads/" + base_ref
-        accepted_ref = admit(ref_request, merge, ref_branch, {"EVENT_BASE_REF": base_ref})
+        ref_claim = install_claim(ref_request, merge, ref_branch)
+        accepted_ref = admit(ref_request, merge, ref_branch, {**ref_claim, "EVENT_BASE_REF": base_ref})
         assert accepted_ref.returncode == 0, (base_ref, accepted_ref.stderr)
         assert f"base_ref={base_ref}\n" in Path(env["GITHUB_OUTPUT"]).read_text()
         direct_pr = admit(ref_request, merge, ref_branch, {"EVENT_BASE_REF": base_ref}, event_name="pull_request")
@@ -711,6 +1279,7 @@ run_validation() {
   PR_RUNTIME_ARTIFACT_ROOT="$artifact_root" \
   CURRENT_REPOSITORY="$repository" \
   SOURCE_RUN_ID="$source_run_id" \
+  SOURCE_RUN_ATTEMPT="$source_run_attempt" \
   SOURCE_RUN_URL="https://example.test/runs/$source_run_id" \
   SOURCE_RUN_TITLE="$source_title" \
   SOURCE_RUN_EVENT="$source_event" \
@@ -803,6 +1372,64 @@ run_validation
 grep -Fxq "IMAGE_TAG=pr-merge-$merge_sha" "$fixture_dir/github-env"
 grep -Fxq "PR_RUNTIME_ARTIFACT_DIR=$artifact_dir" "$fixture_dir/github-env"
 artifact_name="${artifact_dir##*/}"
+for old_name in "pr-runtime-images-pr-merge-${merge_sha}" "pr-runtime-images-pr-merge-${merge_sha}-attempt-1"; do
+  mv "$artifact_dir" "$artifact_root/$old_name"
+  if run_validation 2>"$fixture_dir/attempt-error"; then
+    echo "older artifact directory was accepted for attempt 2: $old_name" >&2
+    exit 1
+  fi
+  grep -Fq 'downloaded artifacts do not contain exactly the expected runtime image artifact' "$fixture_dir/attempt-error"
+  mv "$artifact_root/$old_name" "$artifact_dir"
+done
+
+provenance="$artifact_dir/pr-runtime-provenance.json"
+cp "$provenance" "$fixture_dir/exact-provenance.json"
+for invalid_attempt in missing 1 '"2"' 2.0 true; do
+  if [[ "$invalid_attempt" == 2.0 ]]; then
+    # Python preserves 2.0 as a JSON floating-point token.
+    python3 - "$fixture_dir/exact-provenance.json" > "$provenance" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as fixture:
+    provenance = json.load(fixture)
+provenance["sourceRunAttempt"] = 2.0
+json.dump(provenance, sys.stdout)
+PY
+  else
+    jq --arg value "$invalid_attempt" \
+      'if $value == "missing" then del(.sourceRunAttempt) else .sourceRunAttempt = ($value | fromjson) end' \
+      "$fixture_dir/exact-provenance.json" > "$provenance"
+  fi
+  if run_validation 2>"$fixture_dir/attempt-error"; then
+    echo "archive with invalid attempt was accepted: $invalid_attempt" >&2
+    exit 1
+  fi
+  grep -Eq 'schema contains missing or extra keys|runtime provenance attempt differs' "$fixture_dir/attempt-error"
+done
+cp "$fixture_dir/exact-provenance.json" "$provenance"
+run_validation
+
+run_attempt_fence() {
+  PATH="$fake_bin:$PATH" FIXTURE_DIR="$fixture_dir" CURRENT_REPOSITORY="$repository" \
+    SOURCE_RUN_ID="$source_run_id" SOURCE_RUN_ATTEMPT="$source_run_attempt" GH_TOKEN='test-token' \
+    bash "$fixture_dir/attempt-fence.sh"
+}
+run_attempt_fence
+cp "$fixture_dir/source-run.json" "$fixture_dir/exact-source-run.json"
+jq '.run_attempt += 1' "$fixture_dir/exact-source-run.json" > "$fixture_dir/source-run.json"
+if run_validation 2>"$fixture_dir/attempt-error"; then
+  echo "publisher accepted an attempt superseded before artifact validation" >&2
+  exit 1
+fi
+grep -Fq 'current workflow run attempt differs from the pinned source attempt' "$fixture_dir/attempt-error"
+if run_attempt_fence 2>"$fixture_dir/attempt-error"; then
+  echo "publisher accepted an attempt superseded after artifact validation" >&2
+  exit 1
+fi
+grep -Fq 'The pinned source attempt is no longer a current completed success' "$fixture_dir/attempt-error"
+cp "$fixture_dir/exact-source-run.json" "$fixture_dir/source-run.json"
+
 mv "$artifact_dir" "$artifact_root/pr-runtime-images-pr-merge-dddddddddddddddddddddddddddddddddddddddd"
 if run_validation; then
   echo "wrong merge artifact directory was accepted" >&2
@@ -1006,6 +1633,7 @@ Path(sys.argv[1]).write_text(json.dumps({
     "mergeSha": "cccccccccccccccccccccccccccccccccccccccc",
     "imageTag": "pr-merge-cccccccccccccccccccccccccccccccccccccccc",
     "sourceRunId": 4242,
+    "sourceRunAttempt": 2,
     "services": ["account-service", "backup-verifier"],
 }), encoding="utf-8")
 PY
@@ -1027,7 +1655,7 @@ case "${1:-}" in
     image="${5:-}"
     service="${image##*/}"
     service="${service%%:*}"
-    if [[ "${PUBLISH_TARGET_MODE:-}" != later-existing && "$service" == account-service && -f "$PULL_STATE" ]]; then
+    if [[ -z "${PUBLISH_TARGET_MODE:-}" && "$service" == account-service && -f "$PULL_STATE" ]]; then
       printf 'sha256:target-account-service\n'
     else
       printf 'sha256:source-%s\n' "$service"
@@ -1044,16 +1672,37 @@ case "${1:-}" in
     image="${2:-}"
     service="${image##*/}"
     service="${service%%:*}"
-    if [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$service" == social-groups-service ]]; then
+    if [[ "${PUBLISH_POST_PUSH_FAILURE:-}" == verification-pull && "$service" == automation-scripting-service ]]; then
+      : > "$FIXTURE_DIR/failed-verification-pull"
+      exit 1
+    elif [[ "${PUBLISH_TARGET_MODE:-}" == all-existing ]]; then
+      printf '%s\n' "$service" >> "$FIXTURE_DIR/verified-services"
+      if [[ "${ADVANCE_DURING_PUBLICATION:-}" == final-verification && "$service" == backup-verifier ]]; then
+        jq '.run_attempt += 1' "$FIXTURE_DIR/exact-source-run.json" > "$FIXTURE_DIR/source-run.json"
+        : > "$FIXTURE_DIR/advance-marker"
+      fi
+    elif [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$service" == social-groups-service ]]; then
       : > "$PULL_STATE"
+      if [[ "${ADVANCE_DURING_PUBLICATION:-}" == preflight ]]; then
+        jq '.run_attempt += 1' "$FIXTURE_DIR/exact-source-run.json" > "$FIXTURE_DIR/source-run.json"
+        : > "$FIXTURE_DIR/advance-marker"
+      fi
     elif [[ "$service" == account-service ]]; then
+      if [[ "${ADVANCE_DURING_PUBLICATION:-}" == between-tags ]]; then
+        jq '.run_attempt += 1' "$FIXTURE_DIR/exact-source-run.json" > "$FIXTURE_DIR/source-run.json"
+        : > "$FIXTURE_DIR/advance-marker"
+      fi
       : > "$PULL_STATE"
     else
       exit 2
     fi
     ;;
   push)
-    if [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$*" == *"automation-scripting-service"* ]]; then
+    if [[ -n "${PUSH_ATTEMPT_LOG:-}" ]]; then
+      printf '%s\n' "${2%%:*}" >> "$PUSH_ATTEMPT_LOG"
+    fi
+    if [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$*" == *"automation-scripting-service"* &&
+      "${PUBLISH_POST_PUSH_FAILURE:-}" != verification-pull ]]; then
       exit 1
     fi
     printf '%s\n' "$*" >> "$REGISTRY_MARKER"
@@ -1073,12 +1722,25 @@ if [[ "$*" == *"https://ghcr.io/token"* ]]; then
   printf '{"token":"mock-registry-token"}\n'
   exit 0
 fi
+if [[ "${*: -1}" == https://ghcr.io/v2/*/tags/list?n=1 ]]; then
+  repository="${*: -1}"
+  repository="${repository#https://ghcr.io/v2/}"
+  repository="${repository%/tags/list?n=1}"
+  jq -n --arg name "$repository" '{name:$name,tags:[]}'
+  exit 0
+fi
 if [[ -n "${CURL_STATUS:-}" ]]; then
   printf '%s\n' "$CURL_STATUS"
   exit 0
 fi
 image_url="${*: -1}"
-if [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$image_url" == *"/social-groups-service/manifests/"* ]]; then
+if [[ "${PUBLISH_POST_PUSH_FAILURE:-}" == manifest-lookup && "$image_url" == *"/automation-scripting-service/manifests/"* &&
+  -f "$PUSH_ATTEMPT_LOG" ]] && grep -Fxq 'ghcr.io/benhook1013/automation-scripting-service' "$PUSH_ATTEMPT_LOG"; then
+  exit 28
+fi
+if [[ "${PUBLISH_TARGET_MODE:-}" == all-existing ]]; then
+  printf '200\n'
+elif [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$image_url" == *"/social-groups-service/manifests/"* ]]; then
   printf '200\n'
 elif [[ "${PUBLISH_TARGET_MODE:-}" != later-existing && "$image_url" == *"/account-service/manifests/"* ]]; then
   printf '200\n'
@@ -1089,7 +1751,11 @@ EOF
 chmod +x "$fake_bin/curl"
 cat > "$fake_bin/sleep" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+set -euo pipefail
+if [[ "${ADVANCE_DURING_PUBLICATION:-}" == retry ]]; then
+  jq '.run_attempt += 1' "$FIXTURE_DIR/exact-source-run.json" > "$FIXTURE_DIR/source-run.json"
+  : > "$FIXTURE_DIR/advance-marker"
+fi
 EOF
 chmod +x "$fake_bin/sleep"
 rm -f "$fixture_dir/registry-marker" "$fixture_dir/pull-state"
@@ -1118,45 +1784,181 @@ if [[ -e "$fixture_dir/registry-marker" ]]; then
   exit 1
 fi
 
-rm -f "$fixture_dir/registry-marker" "$fixture_dir/pull-state" "$fixture_dir/summary"
-if PUBLISH_TARGET_MODE=later-existing PR_RUNTIME_ARTIFACT_DIR="$artifact_dir" IMAGE_TAG="pr-merge-$merge_sha" \
-   GHCR_USERNAME='test-user' GHCR_TOKEN='test-token' GITHUB_STEP_SUMMARY="$fixture_dir/summary" \
-   PULL_STATE="$fixture_dir/pull-state" REGISTRY_MARKER="$fixture_dir/registry-marker" \
-   PATH="$fake_bin:$PATH" bash "$publisher_script"; then
+run_publication_fixture() {
+  local advance_during_publication="$1"
+  cp "$fixture_dir/exact-source-run.json" "$fixture_dir/source-run.json"
+  rm -f "$fixture_dir/registry-marker" "$fixture_dir/pull-state" "$fixture_dir/summary" \
+    "$fixture_dir/advance-marker" "$fixture_dir/push-attempt-log"
+  ADVANCE_DURING_PUBLICATION="$advance_during_publication" PUBLISH_TARGET_MODE=later-existing \
+    PR_RUNTIME_ARTIFACT_DIR="$artifact_dir" IMAGE_TAG="pr-merge-$merge_sha" \
+    FIXTURE_DIR="$fixture_dir" CURRENT_REPOSITORY="$repository" SOURCE_RUN_ID="$source_run_id" SOURCE_RUN_ATTEMPT="$source_run_attempt" \
+    GHCR_USERNAME='test-user' GHCR_TOKEN='test-token' GITHUB_STEP_SUMMARY="$fixture_dir/summary" \
+    PULL_STATE="$fixture_dir/pull-state" REGISTRY_MARKER="$fixture_dir/registry-marker" \
+    PUSH_ATTEMPT_LOG="$fixture_dir/push-attempt-log" PATH="$fake_bin:$PATH" bash "$publisher_script"
+}
+
+for publication_stage in preflight between-tags retry; do
+  if run_publication_fixture "$publication_stage" 2>"$fixture_dir/attempt-error"; then
+    echo "publisher accepted an attempt superseded during $publication_stage" >&2
+    exit 1
+  fi
+  grep -Fq 'The pinned source attempt is no longer a verified current success before pushing' "$fixture_dir/attempt-error"
+  test -e "$fixture_dir/advance-marker"
+  case "$publication_stage" in
+    preflight)
+      test ! -e "$fixture_dir/push-attempt-log"
+      test ! -e "$fixture_dir/registry-marker"
+      ;;
+    between-tags)
+      test "$(wc -l < "$fixture_dir/push-attempt-log")" -eq 1
+      grep -Fxq 'ghcr.io/benhook1013/account-service' "$fixture_dir/push-attempt-log"
+      sed '/Fixed tags not verified available at stop:/,$d' "$fixture_dir/summary" |
+        grep -Fx -- "- \`ghcr.io/benhook1013/account-service:pr-merge-$merge_sha\`" >/dev/null
+      ;;
+    retry)
+      test "$(wc -l < "$fixture_dir/push-attempt-log")" -eq 2
+      grep -Fxq 'ghcr.io/benhook1013/automation-scripting-service' "$fixture_dir/push-attempt-log"
+      ;;
+  esac
+done
+
+if run_publication_fixture unchanged; then
   echo "publisher accepted a failed push in the later-existing-service fixture" >&2
   exit 1
 fi
-python3 - "$fixture_dir/summary" <<'PY'
+test ! -e "$fixture_dir/advance-marker"
+grep -Fxq 'ghcr.io/benhook1013/account-service' "$fixture_dir/push-attempt-log"
+test "$(grep -Fxc 'ghcr.io/benhook1013/automation-scripting-service' "$fixture_dir/push-attempt-log")" -eq 3
+assert_partial_publication_summary() {
+  python3 - "$fixture_dir/summary" "$merge_sha" <<'PY'
 import sys
 from pathlib import Path
 
 summary = Path(sys.argv[1]).read_text(encoding="utf-8")
-unpublished = summary.split("Unpublished fixed tags (not rechecked after the failed push):", 1)[1]
-if "`social-groups-service`" in unpublished:
-    raise SystemExit("already-available later service was incorrectly reported unpublished")
+verified, unverified = summary.split("Fixed tags not verified available at stop:", 1)
+def tag(service):
+    return f"`ghcr.io/benhook1013/{service}:pr-merge-{sys.argv[2]}`"
+
+for service in ("account-service", "social-groups-service"):
+    assert tag(service) in verified and tag(service) not in unverified, summary
+assert tag("automation-scripting-service") in unverified, summary
+assert tag("automation-scripting-service") not in verified, summary
 PY
+}
+assert_partial_publication_summary
+
+for post_push_failure in manifest-lookup verification-pull; do
+  if PUBLISH_POST_PUSH_FAILURE="$post_push_failure" run_publication_fixture unchanged 2>"$fixture_dir/post-push-error"; then
+    echo "publisher accepted unverified post-push state after $post_push_failure" >&2
+    exit 1
+  fi
+  test "$(grep -Fxc 'ghcr.io/benhook1013/automation-scripting-service' "$fixture_dir/push-attempt-log")" -eq 1
+  assert_partial_publication_summary
+  case "$post_push_failure" in
+    manifest-lookup) grep -Fq 'Unable to classify' "$fixture_dir/post-push-error" ;;
+    verification-pull)
+      test -e "$fixture_dir/failed-verification-pull"
+      grep -Fq 'could not be pulled for immutable comparison' "$fixture_dir/post-push-error"
+      ;;
+  esac
+done
+
+for receipt_case in unchanged final-verification; do
+  cp "$fixture_dir/exact-source-run.json" "$fixture_dir/source-run.json"
+  rm -f "$fixture_dir/registry-marker" "$fixture_dir/advance-marker" "$fixture_dir/verified-services" \
+    "$fixture_dir/exact-pr-runtime-publication.json" "$fixture_dir/summary"
+  receipt_env=(
+    "PATH=$fake_bin:$PATH" "FIXTURE_DIR=$fixture_dir" "GITHUB_REPOSITORY=$repository"
+    "SOURCE_RUN_ID=$source_run_id" "SOURCE_RUN_ATTEMPT=$source_run_attempt"
+    "PR_RUNTIME_ARTIFACT_DIR=$artifact_dir" "IMAGE_TAG=pr-merge-$merge_sha"
+    "GITHUB_STEP_SUMMARY=$fixture_dir/summary" "RUNNER_TEMP=$fixture_dir"
+  )
+  env "${receipt_env[@]}" PUBLISH_TARGET_MODE=all-existing ADVANCE_DURING_PUBLICATION="$receipt_case" \
+    GHCR_USERNAME=test-user GHCR_TOKEN=test-token PULL_STATE="$fixture_dir/pull-state" \
+    REGISTRY_MARKER="$fixture_dir/registry-marker" bash "$publisher_script"
+  diff -u "$artifact_dir/pr-runtime-services.txt" "$fixture_dir/verified-services"
+  test ! -e "$fixture_dir/registry-marker"
+  receipt_status=0
+  env "${receipt_env[@]}" PR_NUMBER="$pr_number" BASE_SHA="$base_sha" HEAD_SHA="$head_sha" MERGE_SHA="$merge_sha" \
+    SOURCE_WORKFLOW_ID=7 SOURCE_ARTIFACT_ID=900 SOURCE_ARTIFACT_DIGEST="sha256:$(printf '%064d' 1)" \
+    GITHUB_WORKFLOW_REF="$repository/.github/workflows/publish-pr-runtime-images.yml@refs/heads/develop" \
+    GITHUB_RUN_ID=800 GITHUB_RUN_ATTEMPT=1 bash "$fixture_dir/publication-receipt.sh" \
+    2>"$fixture_dir/receipt-error" || receipt_status=$?
+  if [[ "$receipt_case" == unchanged ]]; then
+    [[ "$receipt_status" == 0 ]]
+    jq -e --argjson run "$source_run_id" --argjson attempt "$source_run_attempt" \
+      '.producerRunId == $run and .producerAttempt == $attempt and .producerArtifactId == 900' \
+      "$fixture_dir/exact-pr-runtime-publication.json" >/dev/null
+  else
+    [[ "$receipt_status" == 1 ]]
+    test -e "$fixture_dir/advance-marker"
+    test ! -e "$fixture_dir/exact-pr-runtime-publication.json"
+    grep -Fq 'withholding the publication receipt' "$fixture_dir/receipt-error"
+    while IFS= read -r service; do
+      grep -Fxq -- "- \`ghcr.io/benhook1013/$service:pr-merge-$merge_sha\`" "$fixture_dir/summary"
+    done < "$fixture_dir/verified-services"
+  fi
+done
 
 cat > "$fixture_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${1:-}" == api ]] || exit 2
-printf '%s\n' "$HEAD_SHA"
+[[ "$*" == "api repos/benhook1013/FireMUD/git/ref/heads/develop --jq .object.sha" ]] || exit 2
+current_sha="$HEAD_SHA"
+prior_reads="$(wc -l < "$RUNTIME_HEAD_READ_LOG")"
+if [[ "$RUNTIME_HEAD_MODE" == advance && "$prior_reads" -ge 1 ]] ||
+   [[ "$RUNTIME_HEAD_MODE" == advance-before-latest && "$prior_reads" -ge 2 ]]; then
+  current_sha='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  : > "$RUNTIME_HEAD_MOVED_MARKER"
+fi
+printf '%s\n' "$current_sha" >> "$RUNTIME_HEAD_READ_LOG"
+printf '%s\n' "$current_sha"
 EOF
 chmod +x "$fixture_dir/gh"
 cat > "$fixture_dir/curl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$*" == *"https://ghcr.io/token"* ]]; then
+  for arg in "$@"; do
+    if [[ "$arg" == scope=repository:*:pull ]]; then
+      printf '%s\n' "$arg" >> "$RUNTIME_TOKEN_LOG"
+    fi
+  done
   printf '{"token":"mock-registry-token"}\n'
   exit 0
 fi
+if [[ "${*: -1}" == https://ghcr.io/v2/*/tags/list?n=1 ]]; then
+  [[ "${RUNTIME_TARGET_MODE:-}" != denied-package ]] || exit 22
+  repository="${*: -1}"
+  repository="${repository#https://ghcr.io/v2/}"
+  repository="${repository%/tags/list?n=1}"
+  jq -n --arg name "$repository" '{name:$name,tags:[]}'
+  exit 0
+fi
+[[ "$*" == *" --head "* ]]
+image_url="${*: -1}"
+printf '%s\n' "${image_url#https://ghcr.io/v2/}" >> "$RUNTIME_MANIFEST_LOG"
 if [[ -n "${RUNTIME_CURL_STATUS:-}" ]]; then
   printf '%s\n' "$RUNTIME_CURL_STATUS"
   exit 0
 fi
 case "${RUNTIME_TARGET_MODE:-}" in
-  missing) printf '404\n' ;;
-  matching|different) printf '200\n' ;;
+  missing|denied-package|candidate-moved|source-digest-mismatch|target-digest-mismatch|partial-retained-missing) printf '404\n' ;;
+  matching|different|fixed-reuse|inspect-failure) printf '200\n' ;;
+  late-fixed-conflict)
+    if [[ "$*" == *world-management-service/manifests/"$HEAD_SHA" ]]; then
+      printf '200\n'
+    else
+      printf '404\n'
+    fi
+    ;;
+  partial|partial-retained-drift)
+    if [[ "$image_url" == */account-service/manifests/"$HEAD_SHA" ]]; then
+      printf '200\n'
+    else
+      printf '404\n'
+    fi
+    ;;
   non404) printf '503\n' ;;
   *) echo "unexpected runtime target mode" >&2; exit 2 ;;
 esac
@@ -1168,25 +1970,60 @@ set -euo pipefail
 if [[ "${1:-}" == buildx && "${2:-}" == imagetools && "${3:-}" == inspect ]]; then
   image="${4:-}"
   service="${image##*/}"
-  tag="${service##*:}"
-  service="${service%%:*}"
-  digest='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-  if [[ "${RUNTIME_TARGET_MODE:-}" == different && "$tag" == "$HEAD_SHA" ]]; then
-    digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  service="${service%%[@:]*}"
+  tag="${image##*:}"
+  printf '%s\n' "$image" >> "$RUNTIME_INSPECT_LOG"
+  candidate="$(jq -er --arg service "$service" '.[$service]' "$RUNTIME_CANDIDATE_DIGESTS")"
+  fixed="$(jq -er --arg service "$service" '.[$service]' "$RUNTIME_FIXED_DIGESTS")"
+  mode="${RUNTIME_TARGET_MODE:-}"
+  digest="$candidate"
+  if [[ "$image" == *@sha256:* ]]; then
+    digest="${image##*@}"
+    [[ "$digest" == "$candidate" || "$digest" == "$fixed" ]] || exit 90
+    if [[ "$mode" == source-digest-mismatch ]]; then digest="$fixed"; fi
+  elif [[ "$tag" == candidate-* ]]; then
+    if [[ "$mode" == fixed-reuse || "$mode" == partial && "$service" == account-service ]]; then
+      echo "unexpected staged lookup for retained $service" >&2
+      exit 91
+    fi
+    if [[ "$mode" == candidate-moved ]]; then digest="$fixed"; fi
+  else
+    if [[ -f "$RUNTIME_REGISTRY_MARKER" ]]; then
+      written="$(awk -v target="$image" '$6 == target { print $7 }' "$RUNTIME_REGISTRY_MARKER" | tail -n 1)"
+      if [[ -n "$written" ]]; then digest="${written##*@}"; fi
+    fi
+    if [[ "$tag" == "$HEAD_SHA" ]]; then
+      case "$mode" in
+        different|late-fixed-conflict|target-digest-mismatch|fixed-reuse) digest="$fixed" ;;
+        partial)
+          if [[ "$service" == account-service ]]; then digest="$fixed"; fi
+          ;;
+      esac
+    fi
   fi
-  python3 - "$digest" <<'PY'
+  python3 - "$digest" "$mode" <<'PY_DIGEST'
 import sys
 
-print(f"Digest: {sys.argv[1]}")
+digest, mode = sys.argv[1:]
+print(f"Digest: {digest[:-1] if mode == 'inspect-short' else digest}")
+if mode == "inspect-ambiguous":
+    print(f"Digest: {digest}")
+if mode == "inspect-nested":
+    print(f"  Digest: {digest}")
 print("manifest detail " * 8192)
-PY
-  if [[ "${RUNTIME_TARGET_MODE:-}" == inspect-failure ]]; then
+PY_DIGEST
+  if [[ "$mode" == inspect-failure ]]; then
     exit 42
   fi
   exit 0
 fi
 if [[ "${1:-}" == buildx && "${2:-}" == imagetools && "${3:-}" == create ]]; then
   printf '%s\n' "$*" >> "$RUNTIME_REGISTRY_MARKER"
+  [[ $# -eq 7 && "$4" == --prefer-index=false && "$5" == --tag && "$7" == *@sha256:* ]] || exit 2
+  if [[ -f "$RUNTIME_HEAD_MOVED_MARKER" && ( "$6" == *:develop || "$6" == *:latest ) ]]; then
+    echo "runtime fixture refused a mutable alias write after observed branch movement" >&2
+    exit 99
+  fi
   exit 0
 fi
 echo "unexpected runtime docker command: $*" >&2
@@ -1194,27 +2031,156 @@ exit 2
 EOF
 chmod +x "$fixture_dir/docker"
 
+python3 - "$artifact_dir/pr-runtime-services.txt" "$fixture_dir" <<'PY_RUNTIME_DIGESTS'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+# The PR publication manifest also carries the independently published backup verifier.
+services = [service for service in Path(sys.argv[1]).read_text().splitlines() if service != "backup-verifier"]
+root = Path(sys.argv[2])
+for mode in ("candidate", "fixed"):
+    inventory = {service: "sha256:" + hashlib.sha256(f"{mode}:{service}".encode()).hexdigest() for service in services}
+    assert len(set(inventory.values())) == len(services) == 11
+    (root / f"{mode}-digests.json").write_text(json.dumps(inventory, separators=(",", ":"), sort_keys=True))
+PY_RUNTIME_DIGESTS
+
 runtime_common_env=(
   HEAD_SHA='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
   HEAD_BRANCH='develop'
-  CANDIDATE_TAG='candidate'
+  CANDIDATE_TAG="candidate-${head_sha}-101-1"
   GITHUB_REPOSITORY='benhook1013/FireMUD'
   GH_TOKEN='test-token'
   GHCR_USERNAME='test-user'
   GHCR_TOKEN='test-token'
   RUNTIME_REGISTRY_MARKER="$fixture_dir/runtime-registry-marker"
+  RUNTIME_HEAD_READ_LOG="$fixture_dir/runtime-head-reads"
+  RUNTIME_HEAD_MOVED_MARKER="$fixture_dir/runtime-head-moved"
+  RUNTIME_CANDIDATE_DIGESTS="$fixture_dir/candidate-digests.json"
+  RUNTIME_FIXED_DIGESTS="$fixture_dir/fixed-digests.json"
+  RUNTIME_TOKEN_LOG="$fixture_dir/runtime-token-log"
+  RUNTIME_MANIFEST_LOG="$fixture_dir/runtime-manifest-log"
+  RUNTIME_INSPECT_LOG="$fixture_dir/runtime-inspect-log"
   PATH="$fixture_dir:$PATH"
 )
+empty_fixed_map='{}'
 run_runtime() {
-  env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" bash "$runtime_script"
+  : > "$fixture_dir/runtime-head-reads"
+  : > "$fixture_dir/runtime-token-log"
+  : > "$fixture_dir/runtime-manifest-log"
+  : > "$fixture_dir/runtime-inspect-log"
+  rm -f "$fixture_dir/runtime-head-moved"
+  (cd "$ROOT_DIR" && env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" \
+    RUNTIME_HEAD_MODE="${2:-unchanged}" RUNTIME_DIGESTS="${3:-$candidate_map}" \
+    FIXED_RUNTIME_DIGESTS="${4-$empty_fixed_map}" bash "$runtime_script")
 }
+pin_runtime() {
+  : > "$fixture_dir/runtime-pin"
+  : > "$fixture_dir/runtime-inspect-log"
+  env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" GITHUB_OUTPUT="$fixture_dir/runtime-pin" \
+    FIXED_RUNTIME_DIGESTS="${2-$empty_fixed_map}" bash -euo pipefail -c 'source "$1"; pin_runtime_digests' bash "$RUNTIME_REGISTRY"
+}
+pin_runtime missing
+candidate_map=$(sed -n 's/^runtime_digests=//p' "$fixture_dir/runtime-pin")
+[[ "$candidate_map" == "$(<"$fixture_dir/candidate-digests.json")" ]]
+candidate_digest="$(jq -er '."account-service"' <<<"$candidate_map")"
 
+assert_runtime_aliases() {
+  local digest_map="$1" retained="$2"
+  python3 - "$fixture_dir/runtime-registry-marker" "$head_sha" "$digest_map" "$retained" <<'PY_ALIASES'
+import json
+from pathlib import Path
+import sys
+
+writes, head, digests, retained = sys.argv[1:]
+expected = []
+retained = json.loads(retained)
+for service, digest in json.loads(digests).items():
+    repository = f"ghcr.io/benhook1013/{service}"
+    tags = ["develop", "latest"] if service in retained else [head, "develop", "latest"]
+    expected += [f"buildx imagetools create --prefer-index=false --tag {repository}:{tag} {repository}@{digest}" for tag in tags]
+assert Path(writes).read_text().splitlines() == expected
+PY_ALIASES
+}
+expected_account='ghcr.io/benhook1013/account-service'
+expected_create='buildx imagetools create --prefer-index=false --tag'
+
+# A manifest 404 with no positive package read must leave immutable tags untouched.
 rm -f "$fixture_dir/runtime-registry-marker"
-run_runtime missing
-if [[ "$(wc -l < "$fixture_dir/runtime-registry-marker")" -ne 33 ]]; then
-  echo "runtime publisher did not create every explicitly absent alias" >&2
+if run_runtime denied-package; then
+  echo "Protected publication treated unreadable package evidence as tag absence." >&2
   exit 1
 fi
+[[ ! -e "$fixture_dir/runtime-registry-marker" ]]
+
+# Unchanged A remains eligible for immutable A, develop and latest publication.
+rm -f "$fixture_dir/runtime-registry-marker"
+run_runtime missing
+assert_runtime_aliases "$candidate_map" '{}'
+python3 - "$fixture_dir" "$head_sha" "$candidate_map" <<'PY_TOKEN_CACHE'
+from collections import Counter
+import json
+from pathlib import Path
+import sys
+
+root, head, digest_map = sys.argv[1:]
+paths = [f"benhook1013/{service}" for service in json.loads(digest_map)]
+root = Path(root)
+assert Counter((root / "runtime-token-log").read_text().splitlines()) == Counter(
+    f"scope=repository:{path}:pull" for path in paths
+)
+assert Counter((root / "runtime-manifest-log").read_text().splitlines()) == Counter(
+    f"{path}/manifests/{tag}" for path in paths for tag in [head, head, "develop", "latest"]
+)
+PY_TOKEN_CACHE
+if grep -Fvxq "$head_sha" "$fixture_dir/runtime-head-reads"; then
+  echo "unchanged-A publication observed an unexpected branch head" >&2
+  exit 1
+fi
+
+# A staging tag that moves after pinning cannot change the tested or promoted bytes.
+rm -f "$fixture_dir/runtime-registry-marker"
+run_runtime candidate-moved
+assert_runtime_aliases "$candidate_map" '{}'
+if grep -Fq ':candidate-' "$fixture_dir/runtime-registry-marker"; then
+  echo "runtime publisher wrote aliases from a mutable staging tag" >&2
+  exit 1
+fi
+
+# Admit A at the first promotion read, allow its immutable tag, then observe B
+# at the fence immediately before develop/latest. The sink logs even refused
+# alias attempts, so its safety guard cannot hide a missing production fence.
+rm -f "$fixture_dir/runtime-registry-marker"
+movement_status=0
+run_runtime missing advance >"$fixture_dir/runtime-head-movement.output" \
+  2>"$fixture_dir/runtime-head-movement.error" || movement_status=$?
+if [[ "$movement_status" -ne 1 || ! -f "$fixture_dir/runtime-head-moved" ]]; then
+  echo "runtime publisher did not reject observed A-to-B branch movement at its publication fence" >&2
+  exit 1
+fi
+grep -Fq "Refusing canonical runtime publication: develop moved from ${head_sha} to ${base_sha}." \
+  "$fixture_dir/runtime-head-movement.error"
+if [[ "$(cat "$fixture_dir/runtime-head-reads")" != "${head_sha}"$'\n'"${base_sha}" ]]; then
+  echo "runtime branch movement fixture must expose A first and B before mutable alias promotion" >&2
+  exit 1
+fi
+if [[ ! -f "$fixture_dir/runtime-registry-marker" || \
+      "$(cat "$fixture_dir/runtime-registry-marker")" != "$expected_create ${expected_account}:${head_sha} ${expected_account}@${candidate_digest}" ]]; then
+  echo "runtime publisher must permit only the immutable A tag before rejecting movement, never develop/latest after it" >&2
+  exit 1
+fi
+
+# A third-read movement must independently fence the latest alias.
+rm -f "$fixture_dir/runtime-registry-marker"
+movement_status=0
+run_runtime missing advance-before-latest >"$fixture_dir/runtime-head-movement.output" \
+  2>"$fixture_dir/runtime-head-movement.error" || movement_status=$?
+[[ "$movement_status" -eq 1 && -f "$fixture_dir/runtime-head-moved" ]]
+grep -Fq "Refusing canonical runtime publication: develop moved from ${head_sha} to ${base_sha}." \
+  "$fixture_dir/runtime-head-movement.error"
+[[ "$(cat "$fixture_dir/runtime-head-reads")" == "${head_sha}"$'\n'"${head_sha}"$'\n'"${base_sha}" ]]
+[[ "$(cat "$fixture_dir/runtime-registry-marker")" == "$expected_create ${expected_account}:${head_sha} ${expected_account}@${candidate_digest}"$'\n'"$expected_create ${expected_account}:develop ${expected_account}@${candidate_digest}" ]]
 
 rm -f "$fixture_dir/runtime-registry-marker"
 run_runtime matching
@@ -1232,6 +2198,90 @@ if [[ -e "$fixture_dir/runtime-registry-marker" ]]; then
   echo "runtime publisher overwrote a differing immutable SHA tag" >&2
   exit 1
 fi
+
+rm -f "$fixture_dir/runtime-registry-marker"
+if run_runtime late-fixed-conflict; then
+  echo "runtime publisher accepted a differing fixed tag on the last service" >&2
+  exit 1
+fi
+[[ ! -e "$fixture_dir/runtime-registry-marker" ]]
+
+# The branch must smoke a complete fixed digest set and keep using exactly those
+# bytes even when the branch's own staging tag points to a different candidate.
+select_runtime() {
+  : > "$fixture_dir/runtime-selection"
+  env "${runtime_common_env[@]}" RUNTIME_TARGET_MODE="$1" GITHUB_OUTPUT="$fixture_dir/runtime-selection" \
+    bash -euo pipefail -c 'source "$1"; select_existing_fixed_digests' bash "$RUNTIME_REGISTRY"
+}
+select_runtime late-fixed-conflict
+expected_late_fixed="$(jq -cS 'with_entries(select(.key == "world-management-service"))' "$fixture_dir/fixed-digests.json")"
+[[ "$(sed -n 's/^fixed_digests=//p' "$fixture_dir/runtime-selection")" == "$expected_late_fixed" ]]
+select_runtime fixed-reuse
+fixed_map="$(sed -n 's/^fixed_digests=//p' "$fixture_dir/runtime-selection")"
+[[ "$fixed_map" == "$(<"$fixture_dir/fixed-digests.json")" ]]
+[[ "$(sed -n 's/^missing_services=//p' "$fixture_dir/runtime-selection")" == '[]' ]]
+pin_runtime fixed-reuse "$fixed_map"
+[[ $(< "$fixture_dir/runtime-pin") == "runtime_digests=$fixed_map" ]]
+[[ ! -s "$fixture_dir/runtime-inspect-log" ]]
+run_runtime fixed-reuse unchanged "$fixed_map" "$fixed_map"
+assert_runtime_aliases "$fixed_map" "$fixed_map"
+rm -f "$fixture_dir/runtime-registry-marker"
+if run_runtime fixed-reuse unchanged "$(jq -c --arg digest "$candidate_digest" '."account-service" = $digest' <<<"$fixed_map")" "$fixed_map"; then
+  echo "runtime publisher accepted a smoke set differing from a retained fixed digest" >&2
+  exit 1
+fi
+[[ ! -e "$fixture_dir/runtime-registry-marker" ]]
+
+# Continue a partial set with one fixed member and only its missing staged members.
+select_runtime partial
+partial_map="$(sed -n 's/^fixed_digests=//p' "$fixture_dir/runtime-selection")"
+[[ "$partial_map" == "$(jq -cS 'with_entries(select(.key == "account-service"))' <<<"$fixed_map")" ]]
+missing_services="$(sed -n 's/^missing_services=//p' "$fixture_dir/runtime-selection")"
+[[ "$missing_services" == "$(jq -c 'keys - ["account-service"]' <<<"$candidate_map")" ]]
+pin_runtime partial "$partial_map"
+mixed_map="$(sed -n 's/^runtime_digests=//p' "$fixture_dir/runtime-pin")"
+[[ "$mixed_map" == "$(jq -cS --argjson fixed "$partial_map" '. + $fixed' <<<"$candidate_map")" ]]
+mapfile -t staged_lookups < "$fixture_dir/runtime-inspect-log"
+mapfile -t expected_lookups < <(jq -r --arg tag "candidate-${head_sha}-101-1" '.[] | "ghcr.io/benhook1013/\(.):\($tag)"' <<<"$missing_services")
+diff -u <(printf '%s\n' "${expected_lookups[@]}") <(printf '%s\n' "${staged_lookups[@]}")
+run_runtime partial unchanged "$mixed_map" "$partial_map"
+assert_runtime_aliases "$mixed_map" "$partial_map"
+rm -f "$fixture_dir/runtime-registry-marker"
+for mode in partial-retained-missing partial-retained-drift; do
+  if run_runtime "$mode" unchanged "$mixed_map" "$partial_map" 2>"$fixture_dir/runtime-retained-error"; then
+    echo "runtime publisher accepted missing or changed retained fixed evidence ($mode)" >&2
+    exit 1
+  fi
+  [[ ! -e "$fixture_dir/runtime-registry-marker" ]]
+  if [[ "$mode" == partial-retained-missing ]]; then
+    grep -Fq 'disappeared after smoke qualification' "$fixture_dir/runtime-retained-error"
+  else
+    grep -Fq 'Refusing to overwrite fixed runtime tag' "$fixture_dir/runtime-retained-error"
+  fi
+done
+
+for mode in inspect-short inspect-ambiguous; do
+  if pin_runtime "$mode" '{}' 2>"$fixture_dir/runtime-digest-error"; then
+    echo "runtime digest reader accepted malformed top-level digest metadata ($mode)" >&2
+    exit 1
+  fi
+  [[ ! -s "$fixture_dir/runtime-pin" ]]
+  grep -Fq 'malformed or ambiguous digest metadata' "$fixture_dir/runtime-digest-error"
+done
+pin_runtime inspect-nested '{}'
+[[ $(< "$fixture_dir/runtime-pin") == "runtime_digests=$candidate_map" ]]
+
+if run_runtime source-digest-mismatch; then
+  echo "runtime publisher accepted a source digest mismatch before writing tags" >&2
+  exit 1
+fi
+[[ ! -e "$fixture_dir/runtime-registry-marker" ]]
+
+if run_runtime target-digest-mismatch; then
+  echo "runtime publisher accepted a stored digest mismatch after the alias write" >&2
+  exit 1
+fi
+[[ $(wc -l < "$fixture_dir/runtime-registry-marker") -eq 1 ]]
 
 rm -f "$fixture_dir/runtime-registry-marker"
 inspect_status=0

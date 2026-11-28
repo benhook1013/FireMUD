@@ -175,11 +175,48 @@ classify_failure_body() {
         cause_lines[10] == "> Received status code 429 from server: Too Many Requests" &&
         cause_lines[11] == "> There is 1 more failure with an identical cause."
     }
+    # Observe this narrow POM failure independently of the older cases.
+    function observe_pom_429(line,   coordinate, pom_coordinate, pom_url) {
+      if (pom_candidate && line == "> Received status code 429 from server: Too Many Requests") {
+        pom_candidate_429 = 1
+      }
+      if (pom_download_step) {
+        if (line != pom_chain[pom_download_step]) {
+          pom_mismatch = 1
+          pom_download_step = 0
+        } else if (pom_download_step == 6) {
+          pom_downloads++
+          pom_download_step = 0
+        } else {
+          pom_download_step++
+        }
+        return
+      }
+      if (compile_classpath_wrapper == 1 && resolved_configuration == expected_compile_configuration &&
+          line ~ /^> Could not resolve [[:alnum:]_-]+(\.[[:alnum:]_-]+)*:[[:alnum:]_-][[:alnum:]_.-]*:[0-9][[:alnum:]_.-]*\.$/) {
+        coordinate = line
+        sub(/^> Could not resolve /, "", coordinate)
+        sub(/\.$/, "", coordinate)
+        split(coordinate, pom_coordinate, ":")
+        gsub(/\./, "/", pom_coordinate[1])
+        pom_url = "https://repo.maven.apache.org/maven2/" pom_coordinate[1] "/" pom_coordinate[2] "/" pom_coordinate[3] "/" pom_coordinate[2] "-" pom_coordinate[3] ".pom"
+        pom_chain[1] = "Required by:"
+        pom_chain[2] = "project " quote compile_classpath_module quote
+        pom_chain[3] = line
+        pom_chain[4] = "> Could not get resource " quote pom_url quote "."
+        pom_chain[5] = "> Could not GET " quote pom_url quote "."
+        pom_chain[6] = "> Received status code 429 from server: Too Many Requests"
+        pom_download_step = 1
+        pom_candidate = 1
+      }
+    }
     {
       line = trim($0)
       if (line == "" || line == "* What went wrong:") {
         next
       }
+
+      observe_pom_429(line)
 
       # Require the complete matching coordinate, repository path and 429 chain.
       if (jar_download_step) {
@@ -200,7 +237,8 @@ classify_failure_body() {
         next
       }
       if ((buildsrc_jar_resolver || cache_jar_resolver || fixtures_resolver ||
-           (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration)) &&
+           (wrapped_cache_cause && resolved_configuration == expected_wrapped_configuration) ||
+           (compile_classpath_wrapper && resolved_configuration == expected_compile_configuration)) &&
           line ~ /^> Could not download [[:alnum:]_.-]+\.jar \([[:alnum:]_-]+(\.[[:alnum:]_-]+)*:[[:alnum:]_.-]+:[0-9][[:alnum:]_.-]*\)$/) {
         artifact_coordinate = line
         sub(/^.*\(/, "", artifact_coordinate)
@@ -339,6 +377,18 @@ classify_failure_body() {
         cache_cause++
         next
       }
+      # Gradle 9.9 can surface compileClasspath downloads while serializing
+      # JavaCompile.classpath. Admit only this typed, same-module wrapper.
+      if (line ~ /^Configuration cache state could not be cached: field `classpath` of task `:[[:alnum:]-]+:compileJava` of type `org\.gradle\.api\.tasks\.compile\.JavaCompile`: error writing value of type \047org\.gradle\.api\.internal\.artifacts\.configurations\.DefaultResolvableConfiguration\047$/) {
+        module = line
+        sub(/^.* of task `/, "", module)
+        sub(/:compileJava`.*$/, "", module)
+        if (compile_classpath_module != "" && compile_classpath_module != module) invalid++
+        compile_classpath_module = module
+        expected_compile_configuration = module ":compileClasspath"
+        compile_classpath_wrapper++
+        next
+      }
       if (line ~ /^Execution failed for task \047:[[:alnum:]-]+:generateJooq\047 \(registered by plugin \047net\.firedevops\.firemud\.jooq-conventions\047\)\.$/) {
         task_reference = line
         sub(/^Execution failed for task \047/, "", task_reference)
@@ -434,6 +484,7 @@ classify_failure_body() {
           configuration_name = substr(configuration_name, 2, length(configuration_name) - 2)
         }
         resolved_configuration = configuration_name
+        if (compile_classpath_wrapper && configuration_name != expected_compile_configuration) invalid++
         if (configuration_name == "classpath") buildsrc_classpath++
         if (configuration_name ~ /^:[[:alnum:]-]+:jooqCodegen$/) {
           jooq_codegen_roots++
@@ -505,7 +556,19 @@ classify_failure_body() {
       invalid++
     }
     END {
+      # A POM 429 chain that did not match its exact coordinate, requester,
+      # and repository response must not fall through to generic retry rules.
+      if (pom_candidate_429 && (pom_mismatch || pom_download_step)) {
+        exit 1
+      }
       if (is_disabled_processor_pom_429()) {
+        print "before-compile-cached-configuration-only"
+        exit 0
+      }
+      if (pom_downloads && !invalid && !pom_mismatch && !pom_download_step &&
+          !jar_downloads && !jar_download_step &&
+          compile_classpath_wrapper == 1 && resolved_configuration == expected_compile_configuration &&
+          resolver_roots == 1 && other_cause_lines == 2 + 7 * pom_downloads && cache_summary <= 1) {
         print "before-compile-cached-configuration-only"
         exit 0
       }
@@ -530,12 +593,22 @@ classify_failure_body() {
              jooq_jar_resource != 1 || jooq_jar_get != 1 ||
              coordinates != 1 || repository_requests != 2 || searched ||
              jooq_wrapper_causes != 1)) ||
+          (compile_classpath_wrapper && jar_downloads &&
+            (compile_classpath_wrapper != 1 || compile_classpath_module == "" ||
+             resolver_roots != 1 || resolved_configuration != expected_compile_configuration ||
+             cache_cause > 1 || compile_task_failure || jar_downloads == 0 ||
+             coordinates != jar_downloads || transient != jar_downloads ||
+             repository_requests != 2 * jar_downloads || searched || repository_urls ||
+             other_cause_lines != 2 ||
+             buildsrc_configuration || buildsrc_context || buildsrc_repository || buildsrc_pom ||
+             mavenrepo_disabled || protoc_connect_timeout || jooq_wrapper_causes || jooq_execution_causes ||
+             wrapped_resolution_causes || fixtures_resolver)) ||
           (!buildsrc_jar_downloads &&
             (buildsrc_configuration || buildsrc_context || buildsrc_repository || buildsrc_pom || buildsrc_http_429) &&
             (buildsrc_configuration != 1 || buildsrc_context == 0 ||
              resolver_roots != 1 || buildsrc_classpath != 1 || buildsrc_http_429 == 0 ||
              cache_cause || compile_task_failure || searched)) ||
-          (cache_summary && (cache_cause == 0 || cache_cause > 2)) ||
+          (cache_summary && ((cache_cause == 0 && !compile_classpath_wrapper) || cache_cause > 2)) ||
           (compile_task_failure && compile_classpath_roots == 0) ||
           (wrapped_resolution_causes &&
             (wrapped_resolution_causes != 1 || resolver_roots != 1 ||
@@ -554,7 +627,7 @@ classify_failure_body() {
       }
       if (checkstyle_configuration) print "before-compile-cached-configuration-only"
       else if (buildsrc_jar_downloads || cache_jar_resolver) print "before-compile-cached"
-      else if (wrapped_resolution_causes || (fixtures_resolver && jar_downloads)) print "before-compile"
+      else if (wrapped_resolution_causes || ((compile_classpath_wrapper || fixtures_resolver) && jar_downloads)) print "before-compile"
       exit 0
     }
   ' "$log_path"
@@ -841,7 +914,7 @@ fi
 retry_refresh=true
 retry_description="with dependency metadata refresh"
 if [[ "$RESOLUTION_BOUNDARY" == before-compile-cached* ]]; then
-  # Avoid revalidating the entire cache after these all-JAR throttling failures.
+  # Preserve usable cached metadata when the failing reads are precisely known.
   retry_refresh=false
   retry_description="with cached dependency metadata"
   for gradle_argument in "${GRADLE_ARGS[@]}"; do

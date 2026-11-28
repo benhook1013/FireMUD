@@ -11,6 +11,7 @@ python3 -c 'import yaml' >/dev/null 2>&1 || {
   echo "python3 with PyYAML is required for the preview runner isolation contract." >&2
   exit 1
 }
+python3 -c 'import sys; sys.exit(0 if __debug__ else "Preview runner isolation contract requires Python assertions; unset PYTHONOPTIMIZE.")'
 
 python3 - "$ROOT_DIR" <<'PY'
 from __future__ import annotations
@@ -31,6 +32,7 @@ workflow_dir = root / ".github" / "workflows"
 preview_path = workflow_dir / "preview.yml"
 trusted_path = workflow_dir / "hosted-identity-request.yml"
 reconciler_path = workflow_dir / "preview-reconciler.yml"
+reconciler_script_path = root / "dev-tools/hosted/preview/reconcile-preview-deploys.sh"
 janitor_path = workflow_dir / "preview-janitor.yml"
 dev_demo_path = workflow_dir / "dev-demo.yml"
 dev_demo_reconciler_path = workflow_dir / "dev-demo-reconciler.yml"
@@ -96,6 +98,75 @@ else:
     raise AssertionError("scalar write-all permissions escaped source checking")
 
 
+
+# Exercise the reconciler's actual active-run filter, not a duplicate predicate.
+reconciler_source = reconciler_script_path.read_text(encoding="utf-8")
+active_filter_match = re.search(
+    r'--arg retry_run_suffix [^\n]+\n\s*"\$preview_native_pr_binding_jq"\'\n(.*?)\' <<<"\$\{active_preview_runs_json\}"',
+    reconciler_source, re.S,
+)
+if active_filter_match is None:
+    raise AssertionError("missing active preview filter in checked-in reconciler")
+active_filter = active_filter_match.group(1)
+native_pr_binding = re.search(r"readonly preview_native_pr_binding_jq='(.*?)'", reconciler_source, re.S)
+if native_pr_binding is None:
+    raise AssertionError("missing native PR binding in checked-in reconciler")
+
+
+def active_ids(row: dict[str, Any]) -> str:
+    return subprocess.check_output([
+        "jq", "-r", "--arg", "workflow_name", "PR Preview Environment",
+        "--argjson", "workflow_id", "173511323", "--argjson", "consumer_workflow_id", "357129350",
+        "--arg", "repository", "benhook1013/FireMUD",
+        "--arg", "default_branch", "develop", "--arg", "pr_title", "PR preview 7",
+        "--argjson", "pr_number", "7", "--arg", "base_sha", "b" * 40,
+        "--arg", "head_sha", "a" * 40, "--arg", "merge_sha", "c" * 40,
+        "--arg", "run_name", "Preview dispatch pr-7-base-b-head-a-merge-c",
+        "--arg", "retry_run_suffix", "pr-7-base-b-head-a-merge-c",
+        native_pr_binding.group(1) + "(" + active_filter + ") | [.id, .exact] | @tsv",
+    ], input=json.dumps([row]), text=True).strip()
+expected_association = {"number": 7, "head": {"sha": "a" * 40}}
+active_run = {
+    "id": 1, "name": "PR preview 7", "path": ".github/workflows/preview.yml",
+    "workflow_id": 173511323, "repository": {"full_name": "benhook1013/FireMUD"},
+    "head_repository": {"full_name": "benhook1013/FireMUD"},
+    "head_branch": "feature", "head_sha": "a" * 40, "pull_requests": [expected_association],
+    "display_title": "PR preview 7", "status": "in_progress", "run_attempt": 1, "event": "pull_request",
+    "firemud_reconciler_branch_filtered": False,
+}
+assert active_ids(active_run) == "1\tfalse"
+assert active_ids({key: value for key, value in active_run.items() if key != "run_attempt"}) == ""
+assert active_ids({**active_run, "pull_requests": [{"number": 8}, expected_association]}) == "1\tfalse"
+assert active_ids({**active_run, "pull_requests": [expected_association, expected_association]}) == ""
+qualified_pr = {**active_run, "path": ".github/workflows/preview.yml@refs/pull/7/merge",
+                "pull_requests": [], "head_sha": "c" * 40}
+assert active_ids(qualified_pr) == "1\tfalse"
+assert active_ids({**qualified_pr, "head_sha": "a" * 40}) == ""
+assert active_ids({**qualified_pr, "path": ".github/workflows/preview.yml@refs/pull/8/merge"}) == ""
+for fields in (
+    {"path": ".github/workflows/unrelated.yml"},
+    {"head_sha": "b" * 40},
+    {"workflow_id": 170000000},
+    {"head_repository": {"full_name": "fork/FireMUD"}},
+    {"repository": {"full_name": "fork/FireMUD"}},
+    {"pull_requests": [{"number": 8}]},
+):
+    assert active_ids({**active_run, **fields}) == ""
+assert active_ids({**active_run, "event": "pull_request_target"}) == "1\tfalse"
+assert active_ids({**active_run, "event": "pull_request_target", "path": ".github/workflows/unrelated.yml"}) == ""
+dispatch_title = "Preview dispatch pr-7-base-b-head-a-merge-c"
+dispatch = {**active_run, "name": dispatch_title, "display_title": dispatch_title,
+            "pull_requests": [], "head_branch": "develop"}
+assert active_ids(dispatch) == ""
+assert active_ids({**dispatch, "pull_requests": [expected_association]}) == "1\tfalse"
+assert active_ids({**dispatch, "event": "repository_dispatch"}) == "1\ttrue"
+assert active_ids({**dispatch, "event": "repository_dispatch", "head_branch": "feature"}) == ""
+assert active_ids({**dispatch, "event": "repository_dispatch", "workflow_id": 170000000}) == ""
+assert active_ids({**dispatch, "event": "repository_dispatch", "path": ".github/workflows/other.yml"}) == ""
+assert active_ids({**dispatch, "event": "pull_request_target", "pull_requests": [{"number": 7}]}) == ""
+assert active_ids({**dispatch, "event": "workflow_run", "name": "Trusted Hosted Identity Request",
+                   "path": ".github/workflows/hosted-identity-request.yml"}) == ""
+
 preview = load(preview_path)
 trusted = load(trusted_path)
 recovery = load(recovery_path)
@@ -108,9 +179,9 @@ if not isinstance(preview_jobs, dict) or not preview_jobs:
     raise AssertionError("preview.yml must define source jobs")
 if not isinstance(trusted_jobs, dict) or not trusted_jobs:
     raise AssertionError("hosted-identity-request.yml must define trusted jobs")
-if set(preview_triggers) != {"pull_request_target", "repository_dispatch"}:
+if set(preview_triggers) != {"pull_request", "repository_dispatch"}:
     raise AssertionError(
-        "preview.yml must use only default-branch-owned pull_request_target and repository_dispatch triggers"
+        "preview.yml must use only credential-free pull_request and default-branch repository_dispatch triggers"
     )
 if preview_triggers["repository_dispatch"] != {"types": ["preview-deploy", "preview-destroy"]}:
     raise AssertionError("preview.yml must accept only typed preview deploy/destroy dispatches")
@@ -255,16 +326,13 @@ for path, job_names in protected_jobs.items():
                 f"{path.name}:{job_name} still consumes the legacy shared preview kubeconfig secret"
             )
 
-# The source workflow definition must not be selectable from a PR branch.
-# Typed repository dispatch and pull_request_target execute the default-branch
-# workflow; the source job may still check out an exact PR merge only on an
-# unprivileged GitHub-hosted runner.
+# Automatic pull_request source is untrusted; only typed repository dispatch
+# uses the default-branch workflow. Both render with credential-free tools.
 preview_source = preview_path.read_text(encoding="utf-8")
-if "workflow_dispatch" in preview_source or "on:\n  pull_request:" in preview_source:
+if "workflow_dispatch" in preview_source or "pull_request_target:" in preview_source:
     raise AssertionError("preview.yml retains a branch-selectable source trigger")
 if '"$EVENT_NAME" == repository_dispatch && "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH"' not in preview_source:
     raise AssertionError("preview.yml dispatch lacks a default-branch ref guard")
-reconciler_source = reconciler_path.read_text(encoding="utf-8")
 if (
     '"repos/${GITHUB_REPOSITORY}/dispatches"' not in reconciler_source
     or "event_type=preview-deploy" not in reconciler_source
@@ -297,6 +365,10 @@ def check_preview_source_permissions(job_name: str, job: dict[str, Any]) -> None
             raise AssertionError(
                 "preview-runtime-base-refresh must have exactly contents:write and pull-requests:read"
             )
+        condition = str(job.get("if", "")).strip()
+        # Accept only the current conjunction grammar; OR is not a mandatory gate.
+        if not condition.startswith("$"+"{{ github.event_name == 'repository_dispatch' && ") or "||" in condition:
+            raise AssertionError("preview runtime refresh write permissions require dispatch-only gating")
         return
     job_permissions_list = permissions(job_permissions)
     if any(permission.endswith(": write") for permission in job_permissions_list):
@@ -304,6 +376,28 @@ def check_preview_source_permissions(job_name: str, job: dict[str, Any]) -> None
             f"preview source job {job_name} grants write permissions: {job_permissions_list}"
         )
 
+
+# Preserve per-PR supersession for ordinary renders and give each reserved
+# retry a separate run-scoped group so an ordinary run cannot replace it.
+job_concurrency = {
+    "preview-plan": (
+        "github.event_name == 'repository_dispatch' && github.event.client_payload.proof_retry_nonce != ''",
+        "github.event_name == 'pull_request' && github.event.pull_request.number || "
+        "github.event.client_payload.pr_number || github.ref",
+    ),
+    "preview-render": (
+        "needs.preview-plan.outputs.proof_retry_nonce != ''",
+        "needs.preview-plan.outputs.pr_number",
+    ),
+}
+for job_name, (retry, ordinary_key) in job_concurrency.items():
+    concurrency = preview_jobs[job_name]["concurrency"]
+    prefix = job_name.removeprefix("preview-")
+    assert concurrency["group"] == (
+        f"preview-readonly-{prefix}-" + "${{ "
+        + f"({retry}) && format('retry-{{0}}', github.run_id) || {ordinary_key}" + " }}"
+    )
+    assert concurrency["cancel-in-progress"] == "${{ !(" + retry + ") }}"
 
 for job_name, job in preview_jobs.items():
     if not isinstance(job, dict):
@@ -344,7 +438,12 @@ if refresh_needs != "preview-plan" and refresh_needs != ["preview-plan"]:
 if checkouts(refresh_job):
     raise AssertionError("preview runtime base refresh must not check out PR-controlled source")
 refresh_if = str(refresh_job.get("if", ""))
-for required in ("base_refresh_required == 'true'", "action == 'deploy'"):
+for required in (
+    "eligible == 'true'",
+    "base_refresh_required == 'true'",
+    "action == 'deploy'",
+    "image_tag != needs.preview-plan.outputs.base_sha",
+):
     if required not in refresh_if:
         raise AssertionError(f"preview runtime base refresh lost its {required} gate")
 refresh_scripts = [
@@ -355,11 +454,23 @@ refresh_scripts = [
     and re.fullmatch(r"actions/github-script@[0-9a-f]{40}", step["uses"])
 ]
 if len(refresh_scripts) != 1:
-    raise AssertionError("preview runtime base refresh must use exactly one pinned GitHub dispatcher")
-if 'event_type: "pr-runtime-base-refresh"' not in refresh_scripts[0]:
-    raise AssertionError("preview runtime base refresh lost its typed dispatch")
-if "base_sha" not in refresh_scripts[0] or "head_sha" not in refresh_scripts[0] or "merge_sha" not in refresh_scripts[0]:
-    raise AssertionError("preview runtime base refresh dispatch lost its exact merge tuple")
+    raise AssertionError("preview runtime base refresh must use exactly one pinned GitHub Script step")
+refresh_script = refresh_scripts[0]
+if re.search(r"['\"]pr-runtime-base-refresh['\"]", refresh_script):
+    raise AssertionError("preview must not start the runtime producer directly")
+request = re.search(
+    r'event_type: "pr-runtime-base-refresh-request",\s*client_payload: \{([^}]+)\}',
+    refresh_script,
+)
+if request is None or [line.strip() for line in request[1].strip().splitlines()] != [
+    "pr_number: process.env.PR_NUMBER,",
+    "base_ref: baseRef,",
+    "base_sha: process.env.BASE_SHA,",
+    "head_sha: process.env.HEAD_SHA,",
+    "merge_sha: process.env.MERGE_SHA,",
+    "preview_only: true,",
+]:
+    raise AssertionError("preview must request durable admission for the exact preview-only runtime tuple")
 
 # Keep the permission boundary regression-tested independently of the live
 # workflow. A render write grant is always forbidden; the trusted dispatcher
@@ -388,14 +499,186 @@ except AssertionError:
 else:
     raise AssertionError("preview runtime refresh extra permission mutation escaped source checking")
 
+refresh_with_pr_gate = dict(refresh_job)
+refresh_with_pr_gate["if"] = "${{ github.event_name == 'pull_request' }}"
+try:
+    check_preview_source_permissions("preview-runtime-base-refresh", refresh_with_pr_gate)
+except AssertionError:
+    pass
+else:
+    raise AssertionError("preview runtime refresh PR write mutation escaped source checking")
+
+refresh_with_or_gate = dict(refresh_job)
+refresh_with_or_gate["if"] = "$"+"{{ github.event_name == 'repository_dispatch' || github.event_name == 'pull_request' }}"
+try:
+    check_preview_source_permissions("preview-runtime-base-refresh", refresh_with_or_gate)
+except AssertionError:
+    pass
+else:
+    raise AssertionError("OR dispatch gate escaped source checking")
+
 # The plan's local actions and scripts must come from the default branch; the
 # render's PR checkout is exact, unprivileged, and bound to the planned merge.
 plan_checkouts = checkouts(preview_jobs["preview-plan"])
-if len(plan_checkouts) != 1 or plan_checkouts[0].get("with", {}).get("ref") != "${{ github.event.repository.default_branch }}":
-    raise AssertionError("preview plan must check out the trusted default branch")
+if len(plan_checkouts) != 1:
+    raise AssertionError("preview plan must have one trusted tools checkout")
 render_checkouts = checkouts(preview_jobs["preview-render"])
-if len(render_checkouts) != 1 or render_checkouts[0].get("with", {}).get("ref") != "refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge":
-    raise AssertionError("preview render must check out the exact PR merge ref")
+if len(render_checkouts) != 2:
+    raise AssertionError("preview render must isolate trusted tools and candidate chart checkouts")
+
+def check_trusted_tools_checkout(checkout: dict[str, Any]) -> None:
+    options = checkout.get("with", {})
+    if options.get("ref") != "${{ github.event.repository.default_branch }}" or options.get("path") is not None:
+        raise AssertionError("preview tools must remain rooted at the trusted default branch")
+    if "repository" in options and options["repository"] != "${{ github.repository }}":
+        raise AssertionError("preview tools must check out the current repository")
+
+for tools_checkout in (plan_checkouts[0], render_checkouts[0]):
+    check_trusted_tools_checkout(tools_checkout)
+    for override, reason in (
+        ({"repository": "other-owner/other-repo"}, "preview tools must check out the current repository"),
+        ({"path": "candidate"}, "preview tools must remain rooted at the trusted default branch"),
+    ):
+        try:
+            check_trusted_tools_checkout({**tools_checkout, "with": {**tools_checkout["with"], **override}})
+        except AssertionError as error:
+            if str(error) != reason:
+                raise
+        else:
+            raise AssertionError(f"untrusted tools checkout escaped checking: {override}")
+
+def check_candidate_checkout(step: dict[str, Any]) -> None:
+    options = step.get("with", {})
+    if options.get("repository", "$"+"{{ github.repository }}") != "$"+"{{ github.repository }}":
+        raise AssertionError("preview candidate must check out the current repository")
+    if options.get("ref") != "refs/pull/${{ needs.preview-plan.outputs.pr_number }}/merge" or options.get("path") != "candidate":
+        raise AssertionError("preview render must isolate the exact PR merge ref under candidate/")
+    depth = options.get("fetch-depth")
+    if not re.fullmatch(r"0|[1-9][0-9]*", str(depth)) or int(depth) == 1:
+        raise AssertionError("preview candidate checkout must fetch depth 0 or an explicit integer at least 2 to verify ordered merge parents")
+
+check_candidate_checkout(render_checkouts[1])
+for depth in (0, 2, 3, "2"):
+    check_candidate_checkout({
+        **render_checkouts[1],
+        "with": {**render_checkouts[1]["with"], "fetch-depth": depth},
+    })
+for options in (
+    {key: value for key, value in render_checkouts[1]["with"].items() if key != "fetch-depth"},
+    {**render_checkouts[1]["with"], "fetch-depth": 1},
+):
+    try:
+        check_candidate_checkout({**render_checkouts[1], "with": options})
+    except AssertionError as error:
+        if str(error) != "preview candidate checkout must fetch depth 0 or an explicit integer at least 2 to verify ordered merge parents":
+            raise
+    else:
+        raise AssertionError(f"shallow candidate checkout escaped ordered-parent checking: {options}")
+try:
+    check_candidate_checkout({
+        **render_checkouts[1],
+        "with": {**render_checkouts[1].get("with", {}), "repository": "other-owner/other-repo"},
+    })
+except AssertionError as error:
+    if str(error) != "preview candidate must check out the current repository":
+        raise
+else:
+    raise AssertionError("foreign candidate checkout escaped repository checking")
+
+def check_trusted_working_directories(workflow: dict[str, Any], job: dict[str, Any]) -> None:
+    inherited = workflow.get("defaults", {}).get("run", {}).get("working-directory", ".")
+    inherited = job.get("defaults", {}).get("run", {}).get("working-directory", inherited)
+    for step in job.get("steps", []):
+        if "run" not in step:
+            continue
+        effective = step.get("working-directory", inherited)
+        if effective not in (".", "./", "$"+"{{ github.workspace }}"):
+            raise AssertionError("preview executable step must remain rooted in trusted tools")
+
+for name in ("preview-plan", "preview-render"):
+    check_trusted_working_directories(preview, preview_jobs[name])
+for mutation in (
+    {"defaults": {"run": {"working-directory": "candidate"}}, "steps": [{"run": "true"}]},
+    {"steps": [{"run": "true", "working-directory": "candidate"}]},
+):
+    try:
+        check_trusted_working_directories(preview, mutation)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("candidate working-directory mutation escaped source checking")
+try:
+    check_trusted_working_directories(
+        {"defaults": {"run": {"working-directory": "candidate"}}}, {"steps": [{"run": "true"}]}
+    )
+except AssertionError:
+    pass
+else:
+    raise AssertionError("workflow default working-directory escaped source checking")
+render_text = text(preview_jobs["preview-render"])
+for required in ("git -C candidate", "candidate/k8s/helm/firemud", "python3 ./dev-tools/hosted/preview/"):
+    if required not in render_text:
+        raise AssertionError(f"preview render lost isolated trusted-tools/candidate-data boundary: {required}")
+render_step = next(
+    step for step in preview_jobs["preview-render"]["steps"]
+    if step.get("name") == "Render and sanitize preview without credentials"
+)
+assert render_step["env"]["PLANNED_MERGE_SHA"] == "${{ needs.preview-plan.outputs.merge_sha }}"
+assert render_step["env"]["BASE_SHA"] == "${{ needs.preview-plan.outputs.base_sha }}"
+assert render_step["env"]["HEAD_SHA"] == "${{ needs.preview-plan.outputs.head_sha }}"
+render_guard, marker, _ = render_step["run"].partition('values="$RUNNER_TEMP/preview-values.yaml"')
+assert marker, "preview merge comparison must run before reading candidate values"
+merge_sha, base_sha, head_sha, moved_sha = (digit * 40 for digit in "abcf")
+fixture_git = r'''
+git() {
+    case "$*" in
+        "-C candidate rev-parse --verify HEAD^{commit}") printf '%s\n' "$CANDIDATE" ;;
+        "-C candidate rev-list --parents -n 1 $CANDIDATE") printf '%s %s\n' "$CANDIDATE" "$PARENTS" ;;
+        *) return 2 ;;
+    esac
+}
+'''
+for candidate, parents, expected in (
+    (merge_sha, f"{base_sha} {head_sha}", 0),
+    (moved_sha, f"{base_sha} {head_sha}", 1),
+    (merge_sha, f"{head_sha} {base_sha}", 1),
+):
+    result = subprocess.run(
+        ["bash", "-c", fixture_git + render_guard], capture_output=True, text=True,
+        env={"CANDIDATE": candidate, "PARENTS": parents, "PLANNED_MERGE_SHA": merge_sha,
+             "BASE_SHA": base_sha, "HEAD_SHA": head_sha}, timeout=5,
+    )
+    assert result.returncode == expected, (candidate, parents, result.stderr)
+    if expected:
+        assert "Stale preview merge ref" in result.stderr
+def check_candidate_execution(job):
+    for step in job.get("steps", []):
+        if re.match(r"(?:\./)?candidate/", step.get("uses", "")):
+            raise AssertionError("preview render uses a candidate local action")
+        script = step.get("run", "").replace("\\\n", "")
+        if re.search(r"""\b(?:bash|sh|python3)\s+['"]?(?:\./)?candidate/""", script) or re.search(
+            r"""(?:^|[;&|()]|\b(?:then|do|else)\s)\s*['"]?(?:\./)?candidate/""",
+            script,
+            flags=re.MULTILINE,
+        ):
+            raise AssertionError("preview render executes a candidate tool")
+
+check_candidate_execution(preview_jobs["preview-render"])
+check_candidate_execution({"steps": [{"run": "helm template example ./candidate/k8s/helm/firemud"}]})
+try:
+    check_candidate_execution({"steps": [{"run": "if false; then ./candidate/inert-fixture.sh; fi"}]})
+except AssertionError:
+    pass
+else:
+    raise AssertionError("conditional candidate execution escaped isolation checking")
+for interpreter in ("bash", "sh", "python3"):
+    try:
+        check_candidate_execution({"steps": [{"run": f"{interpreter} './candidate/inert-fixture.sh'"}]})
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(f"quoted candidate operand for {interpreter} escaped isolation checking")
+check_candidate_execution({"steps": [{"run": "if false; then ./chart-data/inert-fixture.sh; fi"}]})
 for job_name, job in preview_jobs.items():
     for checkout in checkouts(job):
         if checkout.get("with", {}).get("persist-credentials") is not False:
@@ -405,12 +688,12 @@ trusted_target = next(
     if isinstance(step, dict) and step.get("id") == "target"
 )["run"]
 for required in (
-    "[[ \"$SOURCE_EVENT\" == pull_request_target || \"$SOURCE_EVENT\" == repository_dispatch ]]",
+    "[[ \"$SOURCE_EVENT\" == pull_request || \"$SOURCE_EVENT\" == repository_dispatch ]]",
     "require_source_field path '.github/workflows/preview.yml'",
     'require_source_field head "$WORKFLOW_RUN_HEAD_SHA"',
     'require_source_field head-branch "$DEFAULT_BRANCH"',
     "Ignoring source run without exactly one canonical preview artifact.",
-    '"$SOURCE_EVENT" == pull_request_target && "$ARTIFACT_KIND" != render',
+    '"$SOURCE_EVENT" == pull_request && "$ARTIFACT_KIND" != render',
     '[[ "$current_head_sha" == "$EXPECTED_HEAD_SHA" ]]',
 ):
     if required not in trusted_target:
@@ -510,11 +793,10 @@ if "CLEANUP_STATE=open" not in trusted_text or "RETIRE_IDENTITY=true" not in tru
 
 if "preview-allocation-lifecycle" not in trusted_text:
     raise AssertionError("trusted deploy/cleanup lifecycle lost its allocation lock")
-reconciler_text = reconciler_path.read_text(encoding="utf-8")
 allocator_text = (root / "dev-tools/hosted/preview/allocate-preview-capacity.sh").read_text(
     encoding="utf-8"
 )
-if "preview:priority" not in reconciler_text or "preview:priority" not in allocator_text:
+if "preview:priority" not in reconciler_source or "preview:priority" not in allocator_text:
     raise AssertionError("preview priority allocation gates are missing")
 if "preview-allocation-lifecycle" not in janitor_path.read_text(encoding="utf-8"):
     raise AssertionError("preview janitor lost the shared allocation lifecycle lock")
@@ -567,3 +849,6 @@ with tempfile.TemporaryDirectory() as temporary:
 
 print("preview runner isolation contract checks passed")
 PY
+
+# Exercise the metadata-only observer through this canonical isolation gate.
+node --test "$ROOT_DIR/dev-tools/tests/preview-runtime-refresh.test.cjs"

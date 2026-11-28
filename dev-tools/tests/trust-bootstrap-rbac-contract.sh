@@ -150,6 +150,31 @@ assert subjects == [{
     "namespace": "firemud-system",
 }]
 
+holder_name = "firemud-preview-proof-retries"
+holder = [item for item in deployment if item["kind"] == "ConfigMap"]
+assert holder == [{
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": {"name": holder_name, "namespace": "firemud-system"},
+    "data": {"schemaVersion": "1"},
+}]
+named_roles = [item for item in deployment if item["kind"] == "Role"]
+assert len(named_roles) == 1
+assert named_roles[0]["metadata"] == holder[0]["metadata"]
+assert named_roles[0]["rules"] == [{
+    "apiGroups": [""],
+    "resources": ["configmaps"],
+    "resourceNames": [holder_name],
+    "verbs": ["get", "patch"],
+}]
+named_bindings = [item for item in deployment if item["kind"] == "RoleBinding"]
+assert len(named_bindings) == 1
+assert named_bindings[0]["metadata"] == holder[0]["metadata"]
+assert named_bindings[0]["roleRef"] == {
+    "apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": holder_name,
+}
+assert named_bindings[0]["subjects"] == subjects
+
 admission = documents(admission_path)
 policy_names = {
     "firemud-trust-runtime-namespace-boundary",

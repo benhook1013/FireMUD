@@ -134,11 +134,12 @@ jobs:
             [[ "$observed_uid" == "$EXPECTED_NAMESPACE_UID" ]] || fail "namespace UID changed"
           }
 
-          # Recheck both external identities immediately before the existing UID-fenced delete helper.
+          # The delete helper also verifies the proof marker on its resourceVersion-fenced read.
           verify_closed_pr
           verify_fixture_namespace
-          bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
-            --delete-runtime "$namespace" "$EXPECTED_NAMESPACE_UID"
+          PREVIEW_REQUIRE_CLEANUP_PROOF=true \
+            bash ./dev-tools/hosted/preview/prune-stale-preview-namespaces.sh \
+              --delete-runtime "$namespace" "$EXPECTED_NAMESPACE_UID"
 
           remaining="$(kubectl get namespace "$namespace" --ignore-not-found -o name)" ||
             fail "could not verify namespace deletion"

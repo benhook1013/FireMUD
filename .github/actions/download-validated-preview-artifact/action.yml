@@ -4,8 +4,8 @@ inputs:
   artifact-directory:
     description: Runner-local directory where the preview artifact will be downloaded
     required: true
-  artifact-name:
-    description: Exact source workflow artifact name
+  artifact-id:
+    description: Immutable ID of the artifact validated for the source workflow attempt
     required: true
   source-run-id:
     description: Exact source preview workflow run ID
@@ -43,7 +43,7 @@ runs:
     - name: Download exact source render artifact
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
       with:
-        name: ${{ inputs['artifact-name'] }}
+        artifact-ids: ${{ inputs['artifact-id'] }}
         path: ${{ inputs['artifact-directory'] }}
         github-token: ${{ inputs['github-token'] }}
         run-id: ${{ inputs['source-run-id'] }}

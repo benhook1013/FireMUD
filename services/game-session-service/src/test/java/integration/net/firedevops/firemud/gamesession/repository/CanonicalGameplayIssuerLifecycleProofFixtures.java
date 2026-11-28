@@ -6,11 +6,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisException;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
+import io.lettuce.core.codec.RedisCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
 import io.lettuce.core.protocol.ProtocolVersion;
@@ -104,13 +106,54 @@ abstract class CanonicalGameplayIssuerLifecycleProofFixtures {
     if (username != null) builder.withAuthentication(username, password);
     RedisURI uri = builder.build();
     uri.setTimeout(Duration.ofSeconds(5));
-    RedisClient client = RedisClient.create(uri);
+    RedisClient client = username == null ? RedisClient.create(uri) : new IssuerFixtureClient(uri);
     client.setOptions(
         ClientOptions.builder()
             .autoReconnect(false)
             .protocolVersion(ProtocolVersion.RESP2)
             .build());
     return client;
+  }
+
+  private static final class IssuerFixtureClient extends RedisClient {
+    private IssuerFixtureClient(RedisURI uri) {
+      super(null, uri);
+    }
+
+    @Override
+    public <K, V> StatefulRedisConnection<K, V> connect(RedisCodec<K, V> codec) {
+      try {
+        return connectAndAuthenticate(codec);
+      } catch (DisconnectedBeforeUse disconnected) {
+        // A fresh fixture socket can drop before its first command on a loaded runner.
+        // Only the read-only role probe ran. The owner still executes its commands once.
+        return connectAndAuthenticate(codec);
+      }
+    }
+
+    private <K, V> StatefulRedisConnection<K, V> connectAndAuthenticate(RedisCodec<K, V> codec) {
+      var connection = super.connect(codec);
+      try {
+        if (!OWNER_PRINCIPAL.equals(connection.sync().aclWhoami())) {
+          throw new IllegalStateException("Issuer fixture connected as an unexpected Redis user");
+        }
+        return connection;
+      } catch (RedisException failure) {
+        boolean disconnected = !connection.isOpen();
+        connection.close();
+        if (disconnected) throw new DisconnectedBeforeUse(failure);
+        throw failure;
+      } catch (RuntimeException failure) {
+        connection.close();
+        throw failure;
+      }
+    }
+
+    private static final class DisconnectedBeforeUse extends IllegalStateException {
+      private DisconnectedBeforeUse(RedisException cause) {
+        super("Issuer fixture Redis socket disconnected before use", cause);
+      }
+    }
   }
 
   protected CanonicalGameplayAdmissionAbortCompositionFixture newFixture() {

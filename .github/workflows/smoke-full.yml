@@ -16,6 +16,11 @@ on:
       image_tag:
         required: true
         type: string
+      runtime_digests:
+        description: Exact registry digest for each runtime service
+        required: false
+        default: ""
+        type: string
   workflow_dispatch:
     inputs:
       action:
@@ -75,6 +80,73 @@ jobs:
         with:
           requirements: smoke
 
+      - name: Checkout trusted smoke entrypoint and override
+        if: ${{ inputs.runtime_digests != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .trusted-runtime-workflow
+          persist-credentials: false
+
+      - name: Install the trusted digest-aware smoke override
+        if: ${{ inputs.runtime_digests != '' }}
+        run: |
+          set -euo pipefail
+          test "$(git -C .trusted-runtime-workflow rev-parse HEAD)" = "$GITHUB_WORKFLOW_SHA"
+          install -T .trusted-runtime-workflow/docker/docker-compose.smoke-images.override.yml \
+            docker/docker-compose.smoke-images.override.yml
+
+      - name: Export exact runtime image references
+        if: ${{ inputs.runtime_digests != '' }}
+        env:
+          RUNTIME_DIGESTS: ${{ inputs.runtime_digests }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+
+          runtime_services = {
+              "account-service",
+              "automation-scripting-service",
+              "entity-management-service",
+              "game-design-service",
+              "game-logic-service",
+              "game-session-service",
+              "logging-admin-service",
+              "social-groups-service",
+              "spring-cloud-gateway",
+              "tcp-proxy-service",
+              "world-management-service",
+          }
+
+          def unique_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ValueError("Duplicate key in runtime_digests")
+                  result[key] = value
+              return result
+
+          try:
+              digests = json.loads(os.environ["RUNTIME_DIGESTS"], object_pairs_hook=unique_object)
+          except ValueError:
+              raise SystemExit("runtime_digests must be valid JSON without duplicate keys")
+          if not isinstance(digests, dict) or digests.keys() != runtime_services:
+              raise SystemExit("runtime_digests must contain exactly the 11 runtime service names")
+          for service, digest in digests.items():
+              if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                  raise SystemExit(f"runtime_digests has an invalid digest for {service}")
+
+          refs = {
+              "SMOKE_IMAGE_REF_" + service.upper().replace("-", "_"): f"ghcr.io/benhook1013/{service}@{digest}"
+              for service, digest in digests.items()
+          }
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
+              for variable, image in refs.items():
+                  environment.write(f"{variable}={image}\n")
+          PY
+
       - name: Generate Dev Certificates
         run: ./dev-tools/certs/generate-dev-certs.sh
 
@@ -86,7 +158,16 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🧪 Run Canonical Image Smoke Proof
-        run: SMOKE_IMAGE_TAG="${{ inputs.image_tag }}" bash ./dev-tools/verify-smoke-images.sh --keep-running
+        env:
+          FIREMUD_SMOKE_RUNTIME_DIGESTS: ${{ inputs.runtime_digests }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$FIREMUD_SMOKE_RUNTIME_DIGESTS" ]]; then
+            FIREMUD_SMOKE_SOURCE_ROOT="$GITHUB_WORKSPACE" \
+              bash .trusted-runtime-workflow/dev-tools/verify-smoke-images.sh --keep-running
+          else
+            bash ./dev-tools/verify-smoke-images.sh --keep-running
+          fi
 
       - name: 📜 Dump Docker Compose Logs on Failure
         if: failure()

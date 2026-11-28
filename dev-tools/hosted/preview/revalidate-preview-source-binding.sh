@@ -1,8 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 4 && $# -ne 5 ]]; then
-  echo "usage: $0 PR_NUMBER EXPECTED_HEAD_SHA EXPECTED_BASE_SHA EXPECTED_MERGE_SHA [stage]" >&2
+require_current_run_attempt() {
+  local run_id="$1" attempt="$2" stage="$3" run_json
+  if [[ ! "$run_id" =~ ^[1-9][0-9]*$ || ! "$attempt" =~ ^[1-9][0-9]*$ ]] ||
+    ! run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" ||
+    ! jq -es --arg run_id "$run_id" --arg attempt "$attempt" --arg repo "$GITHUB_REPOSITORY" '
+      length == 1 and (.[0] |
+        (.id | type == "number" and tostring == $run_id) and
+        (.run_attempt | type == "number" and tostring == $attempt) and
+        .repository.full_name == $repo and .status == "completed" and .conclusion == "success")
+    ' <<<"$run_json" >/dev/null; then
+    echo "::error title=Preview source attempt changed::The pinned preview render is no longer a verified current completed success${stage:+ $stage}." >&2
+    return 1
+  fi
+}
+
+if [[ ${1:-} == --run-attempt && $# -ge 3 && $# -le 4 ]]; then
+  require_current_run_attempt "$2" "$3" "${4:-}"
+  exit
+fi
+if [[ $# -ne 4 && $# -ne 5 && $# -ne 7 ]]; then
+  echo "usage: $0 PR_NUMBER EXPECTED_HEAD_SHA EXPECTED_BASE_SHA EXPECTED_MERGE_SHA [stage [SOURCE_RUN_ID SOURCE_RUN_ATTEMPT]]" >&2
+  echo "       $0 --run-attempt SOURCE_RUN_ID SOURCE_RUN_ATTEMPT [stage]" >&2
   exit 2
 fi
 
@@ -120,3 +140,10 @@ jq -e \
   echo "::error title=Preview source binding changed::The current PR merge commit does not have the expected base and head parents${STAGE:+ $STAGE}." >&2
   exit 1
 }
+
+if [[ $# -eq 7 ]]; then
+  require_current_run_attempt "$6" "$7" "$STAGE"
+  # Repeat the exact comparison after the independent source-attempt read.
+  timeout 15s bash "${BASH_SOURCE[0]}" \
+    "$PR_NUMBER" "$EXPECTED_HEAD_SHA" "$EXPECTED_BASE_SHA" "$EXPECTED_MERGE_SHA" "$STAGE"
+fi

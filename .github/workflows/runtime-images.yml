@@ -54,9 +54,12 @@ run-name: Build Runtime Images ${{ (github.event_name == 'pull_request' || githu
 permissions:
   contents: read
 
+# Serialize each exact PR tuple without replacing a queued claim-backed receiver.
+# Protected branches sharing a commit serialize selection, smoke and publication.
 concurrency:
-  group: runtime-images-${{ github.workflow }}-${{ (github.event_name == 'pull_request' && format('pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha)) || (github.event_name == 'repository_dispatch' && github.event.client_payload.pr_number != '' && github.event.client_payload.base_sha != '' && github.event.client_payload.head_sha != '' && github.event.client_payload.merge_sha != '' && format('pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.client_payload.pr_number, github.event.client_payload.base_sha, github.event.client_payload.head_sha, github.event.client_payload.merge_sha)) || (github.event_name == 'repository_dispatch' && format('repository-dispatch-run-{0}', github.run_id)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && format('ci-pr-run-{0}-attempt-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && format('branch-{0}', github.event.workflow_run.head_branch)) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
-  cancel-in-progress: true
+  group: runtime-images-${{ github.workflow }}-${{ (github.event_name == 'pull_request' && format('pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha)) || (github.event_name == 'repository_dispatch' && github.event.client_payload.pr_number != '' && github.event.client_payload.base_sha != '' && github.event.client_payload.head_sha != '' && github.event.client_payload.merge_sha != '' && format('pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.client_payload.pr_number, github.event.client_payload.base_sha, github.event.client_payload.head_sha, github.event.client_payload.merge_sha)) || (github.event_name == 'repository_dispatch' && format('repository-dispatch-run-{0}', github.run_id)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && format('ci-pr-run-{0}-attempt-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.head_branch == 'develop') && format('protected-sha-{0}', github.event.workflow_run.head_sha)) || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && format('protected-sha-{0}', github.sha)) || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && format('ci-push-run-{0}-attempt-{1}', github.event.workflow_run.id, github.event.workflow_run.run_attempt)) || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null && 'metadata' || 'required' }}
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   image-meta:
@@ -99,6 +102,192 @@ jobs:
       - name: Set up canonical Python
         uses: ./.github/actions/setup-python
 
+      - name: Verify runtime refresh claim
+        id: claim
+        if: ${{ github.event_name == 'repository_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.client_payload.head_sha || '' }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number || github.event.client_payload.pr_number || '' }}
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.client_payload.base_ref || '' }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.client_payload.base_sha || '' }}
+          EVENT_MERGE_SHA: ${{ github.event.client_payload.merge_sha || '' }}
+          EVENT_RUNTIME_REFRESH_CLAIM: ${{ github.event.client_payload.runtime_refresh_claim || '' }}
+          EVENT_ACTION: ${{ github.event.action || '' }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$EVENT_ACTION" == "pr-runtime-base-refresh" ]] || {
+            echo "Runtime PR refresh requires the typed pr-runtime-base-refresh dispatch." >&2
+            exit 1
+          }
+          [[ "$GITHUB_REF" == "refs/heads/${DEFAULT_BRANCH}" ]] || {
+            echo "Runtime PR refresh must run from the repository default branch." >&2
+            exit 1
+          }
+          PR_NUMBER="$EVENT_PR_NUMBER"
+          BASE_REF="$EVENT_BASE_REF"
+          BASE_SHA="$EVENT_BASE_SHA"
+          MERGE_SHA="$EVENT_MERGE_SHA"
+          HEAD_SHA="$EVENT_HEAD_SHA"
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]] || {
+            echo "Runtime PR refresh payload has an invalid pull request number." >&2
+            exit 1
+          }
+          git check-ref-format "refs/heads/${BASE_REF}" >/dev/null || {
+            echo "Runtime PR refresh payload has an invalid base ref." >&2
+            exit 1
+          }
+          for sha_name in BASE_SHA HEAD_SHA MERGE_SHA; do
+            sha_value="${!sha_name}"
+            [[ "$sha_value" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "Runtime PR refresh payload has an invalid ${sha_name}." >&2
+              exit 1
+            }
+          done
+
+          claim_witness="$(jq -er '.client_payload.runtime_refresh_claim_witness // "" | select(type == "string")' "$GITHUB_EVENT_PATH")"
+          if [[ ! "${EVENT_RUNTIME_REFRESH_CLAIM:-}" =~ ^[1-9][0-9]{0,15}$ ]] ||
+            (( EVENT_RUNTIME_REFRESH_CLAIM > 9007199254740991 )) ||
+            [[ ! "$claim_witness" =~ ^[0-9a-f]{64}$ || ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Runtime PR refresh claim identity is invalid." >&2
+            exit 1
+          fi
+          base_ref_hash="$(printf '%s' "$BASE_REF" | sha256sum | cut -d' ' -f1)"
+          witness_hash="$(printf '%s' "$claim_witness" | sha256sum | cut -d' ' -f1)"
+          claim="firemud-runtime-refresh-intent/v1/pr-${PR_NUMBER}/${MERGE_SHA}/${base_ref_hash}/g${EVENT_RUNTIME_REFRESH_CLAIM}"
+          claim_read_error="$(mktemp)"
+          trap 'rm -f "$claim_read_error"' EXIT
+          claim_read_deadline=$((SECONDS + 60))
+          read_claim_object() {
+            local endpoint="$1"
+            local attempt response status remaining request_timeout normalized_response response_status
+            local response_headers response_body retry_after retry_wait retry_epoch retry_after_value
+            local primary_remaining primary_reset reset_wait now_epoch
+            local -a retry_after_values=()
+            local -a primary_remaining_values=() primary_reset_values=()
+            for attempt in 1 2 3; do
+              primary_remaining=""
+              primary_reset=""
+              remaining=$((claim_read_deadline - SECONDS))
+              (( remaining > 2 )) || break
+              request_timeout=15
+              (( remaining - 2 < request_timeout )) && request_timeout=$((remaining - 2))
+              response=""
+              if response="$(timeout --kill-after=2s "${request_timeout}s" gh api --include --method GET "$endpoint" 2>"$claim_read_error")"; then
+                status=0
+              else
+                status=$?
+              fi
+              normalized_response="${response//$'\r'/}"
+              response_status="$(sed -n '1{s/^HTTP\/[^ ]* \([0-9][0-9][0-9]\).*/\1/p;}' <<<"$normalized_response")"
+              response_headers="${normalized_response%%$'\n\n'*}"
+              response_body=""
+              if [[ "$normalized_response" == *$'\n\n'* ]]; then
+                response_body="${normalized_response#*$'\n\n'}"
+              fi
+
+              if [[ "$response_status" == "200" && $status -eq 0 ]]; then
+                [[ -n "$response_body" ]] || break
+                printf '%s\n' "$response_body"
+                return 0
+              fi
+              if [[ "$response_status" == "429" || "$response_status" == "403" ]]; then
+                retry_after_values=()
+                mapfile -t retry_after_values < <(
+                  awk 'tolower($1) == "retry-after:" {sub(/^[^:]*:[[:space:]]*/, ""); print}' <<<"$response_headers"
+                )
+                primary_remaining_values=()
+                primary_reset_values=()
+                mapfile -t primary_remaining_values < <(
+                  awk 'tolower($1) == "x-ratelimit-remaining:" {sub(/^[^:]*:[[:space:]]*/, ""); print}' <<<"$response_headers"
+                )
+                mapfile -t primary_reset_values < <(
+                  awk 'tolower($1) == "x-ratelimit-reset:" {sub(/^[^:]*:[[:space:]]*/, ""); print}' <<<"$response_headers"
+                )
+                retry_wait=0
+                if (( ${#retry_after_values[@]} > 0 )); then
+                  retry_after="${retry_after_values[0]}"
+                  for retry_after_value in "${retry_after_values[@]}"; do
+                    [[ "$retry_after_value" == "$retry_after" ]] || break 2
+                  done
+                  if [[ "$retry_after" =~ ^[0-9]{1,8}$ ]]; then
+                    retry_wait=$((10#$retry_after))
+                  elif [[ "$retry_after" =~ ^[A-Z][a-z]{2},[[:space:]][0-9]{2}[[:space:]][A-Z][a-z]{2}[[:space:]][0-9]{4}[[:space:]][0-9]{2}:[0-9]{2}:[0-9]{2}[[:space:]]GMT$ ]]; then
+                    retry_epoch="$(date -u --date="$retry_after" +%s 2>/dev/null)" || break
+                    now_epoch="$(date -u +%s)"
+                    retry_wait=$((retry_epoch - now_epoch))
+                    (( retry_wait > 0 )) || break
+                  else
+                    break
+                  fi
+                fi
+                if (( ${#primary_remaining_values[@]} > 0 || ${#primary_reset_values[@]} > 0 )); then
+                  (( ${#primary_remaining_values[@]} == 1 && ${#primary_reset_values[@]} == 1 )) || break
+                  primary_remaining="${primary_remaining_values[0]}"
+                  primary_reset="${primary_reset_values[0]}"
+                  [[ "$primary_remaining" =~ ^[0-9]{1,8}$ && "$primary_reset" =~ ^[0-9]{1,12}$ ]] || break
+                  if (( 10#$primary_remaining == 0 )); then
+                    now_epoch="$(date -u +%s)"
+                    reset_wait=$((10#$primary_reset - now_epoch))
+                    (( reset_wait > 0 )) || break
+                    (( reset_wait > retry_wait )) && retry_wait=$reset_wait
+                  fi
+                fi
+                (( retry_wait > 0 )) || break
+                remaining=$((claim_read_deadline - SECONDS))
+                if (( attempt == 3 || remaining <= 2 || retry_wait + 2 >= remaining )); then
+                  break
+                fi
+                echo "Runtime refresh claim GET was rate-limited; honoring the provider delay before retrying the same exact object." >&2
+                sleep "$retry_wait"
+                continue
+              fi
+              if (( attempt == 3 )) || {
+                (( status != 124 )) && [[ ! "$response_status" =~ ^(408|500|502|503|504)$ ]] &&
+                ! grep -Eq '^gh: .*\(HTTP (408|500|502|503|504)\)$' "$claim_read_error";
+              }; then
+                break
+              fi
+              remaining=$((claim_read_deadline - SECONDS))
+              (( remaining > attempt )) || break
+              echo "Transient runtime refresh claim read failure; retrying the same object." >&2
+              sleep "$attempt"
+            done
+            echo "Runtime refresh claim read failed or exhausted its bounded Retry-After budget. If this run is positively identified as the original receiver for the same current comparison, re-run all jobs after recovery. Preserve the claim and do not dispatch another receiver." >&2
+            return 1
+          }
+          claim_ref="$(read_claim_object "repos/${GITHUB_REPOSITORY}/git/ref/tags/${claim}")"
+          claim_sha="$(jq -er --arg claim "refs/tags/${claim}" 'select(.ref == $claim and .object.type == "tag") | .object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' <<<"$claim_ref")"
+          claim_tag="$(read_claim_object "repos/${GITHUB_REPOSITORY}/git/tags/${claim_sha}")"
+          jq -e --arg sha "$claim_sha" --arg claim "$claim" --arg merge "$MERGE_SHA" \
+            --arg pr "$PR_NUMBER" --arg base_ref "$BASE_REF" --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
+            --arg generation "$EVENT_RUNTIME_REFRESH_CLAIM" --arg witness_hash "$witness_hash" \
+            '{pr_number:$pr,base_ref:$base_ref,base_sha:$base,head_sha:$head,merge_sha:$merge,
+              generation:$generation,witness_sha256:$witness_hash} as $tuple |
+             .sha == $sha and .tag == $claim and .object.type == "commit" and
+             ((.message | fromjson) as $annotation |
+              if $annotation | has("owner_revision") then
+                $annotation.owner_revision as $owner |
+                ($owner | type) == "string" and ($owner | test("^[0-9a-f]{40}\\z")) and .object.sha == $owner and
+                .message == (($tuple + {owner_revision:$owner}) | tojson + "\n")
+              else
+                .object.sha == $merge and .message == ($tuple | tojson + "\n")
+              end)' \
+            <<<"$claim_tag" >/dev/null || {
+              echo "Runtime PR refresh claim does not bind the verified tuple and dispatch witness." >&2
+              exit 1
+            }
+          {
+            echo "runtime_refresh_claim=${EVENT_RUNTIME_REFRESH_CLAIM}"
+            echo "runtime_refresh_claim_tag=${claim_sha}"
+            echo "runtime_refresh_claim_attempt=${GITHUB_RUN_ATTEMPT}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Runtime refresh claim generation ${{ steps.claim.outputs.runtime_refresh_claim }} attempt ${{ steps.claim.outputs.runtime_refresh_claim_attempt }} tag ${{ steps.claim.outputs.runtime_refresh_claim_tag }}
+        if: ${{ steps.claim.outputs.runtime_refresh_claim != '' }}
+        run: ':'
+
       - name: Derive image tags
         id: meta
         env:
@@ -109,7 +298,6 @@ jobs:
           EVENT_BASE_REF: ${{ github.event.pull_request.base.ref || github.event.client_payload.base_ref || '' }}
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.client_payload.base_sha || '' }}
           EVENT_MERGE_SHA: ${{ github.event.client_payload.merge_sha || '' }}
-          EVENT_ACTION: ${{ github.event.action || '' }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
@@ -146,14 +334,6 @@ jobs:
                 exit 1
               }
           elif [ "$EVENT_NAME" = "repository_dispatch" ]; then
-            [[ "$EVENT_ACTION" == "pr-runtime-base-refresh" ]] || {
-              echo "Runtime PR refresh requires the typed pr-runtime-base-refresh dispatch." >&2
-              exit 1
-            }
-            [[ "$GITHUB_REF" == "refs/heads/${DEFAULT_BRANCH}" ]] || {
-              echo "Runtime PR refresh must run from the repository default branch." >&2
-              exit 1
-            }
             PR_NUMBER="$EVENT_PR_NUMBER"
             BASE_REF="$EVENT_BASE_REF"
             BASE_SHA="$EVENT_BASE_SHA"
@@ -161,22 +341,6 @@ jobs:
             HEAD_SHA="$EVENT_HEAD_SHA"
             HEAD_BRANCH=""
             CHECKOUT_REF="$MERGE_SHA"
-            [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,50}$ ]] || {
-              echo "Runtime PR refresh payload has an invalid pull request number." >&2
-              exit 1
-            }
-            git check-ref-format "refs/heads/${BASE_REF}" >/dev/null || {
-              echo "Runtime PR refresh payload has an invalid base ref." >&2
-              exit 1
-            }
-            for sha_name in BASE_SHA HEAD_SHA MERGE_SHA; do
-              sha_value="${!sha_name}"
-              [[ "$sha_value" =~ ^[0-9a-f]{40}$ ]] || {
-                echo "Runtime PR refresh payload has an invalid ${sha_name}." >&2
-                exit 1
-              }
-            done
-
             encoded_base_ref="$(python3 -c 'import sys; from urllib.parse import quote; print(quote(sys.argv[1], safe="/"))' "$BASE_REF")"
             current_base_ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${encoded_base_ref}")"
             jq -e \
@@ -253,6 +417,15 @@ jobs:
               echo "Runtime branch publication is restricted to main or develop." >&2
               exit 1
             }
+            current_head="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${HEAD_BRANCH}" --jq '.object.sha')"
+            [[ "$current_head" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "Runtime publication could not prove the live ${HEAD_BRANCH} head." >&2
+              exit 1
+            }
+            if [[ "$current_head" != "$HEAD_SHA" ]]; then
+              echo "Skipping runtime builds for obsolete ${HEAD_BRANCH}@${HEAD_SHA}; current head is ${current_head}."
+              exit 0
+            fi
           fi
 
           if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "repository_dispatch" ]; then
@@ -282,7 +455,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify successful CI push for manual publication
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && steps.meta.outputs.head_sha != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_SHA: ${{ steps.meta.outputs.head_sha }}
@@ -490,10 +663,6 @@ jobs:
               "gradlew.bat",
               "settings.gradle.kts",
             ]);
-            const runtimeRunEvents = ["pull_request", "repository_dispatch"];
-            const runtimeRunPageSize = 100;
-            const runtimeRunLookbackMilliseconds = 7 * 24 * 60 * 60 * 1000;
-
             const waitForMergeRefresh = async () => {
               await new Promise((resolve) => setTimeout(resolve, 2000));
             };
@@ -637,162 +806,6 @@ jobs:
                 };
               }
               return null;
-            };
-
-            const loadExistingRuntimeRuns = async () => {
-              const readInventory = async (createdSince) => {
-                const inventory = [];
-                let complete = true;
-                let incompleteReason = null;
-                for (const event of runtimeRunEvents) {
-                  const response = await github.rest.actions.listWorkflowRuns({
-                    ...context.repo,
-                    workflow_id: "runtime-images.yml",
-                    event,
-                    created: `${createdSince}..*`,
-                    per_page: runtimeRunPageSize,
-                    page: 1,
-                  });
-                  const payload = response?.data;
-                  if (!payload || !Number.isInteger(payload.total_count) ||
-                    payload.total_count < 0 || !Array.isArray(payload.workflow_runs)) {
-                    throw new Error(`runtime-images ${event} recent run inventory is malformed`);
-                  }
-                  if (payload.total_count > runtimeRunPageSize) {
-                    complete = false;
-                    incompleteReason ??= `runtime-images ${event} has more than ${runtimeRunPageSize} runs since ${createdSince}`;
-                  }
-                  const expectedPageLength = Math.min(payload.total_count, runtimeRunPageSize);
-                  if (payload.workflow_runs.length !== expectedPageLength) {
-                    throw new Error(`runtime-images ${event} recent run inventory is incomplete`);
-                  }
-                  inventory.push(...payload.workflow_runs);
-                }
-                return {complete, runs: inventory, reason: incompleteReason};
-              };
-
-              const createdSince = new Date(Date.now() - runtimeRunLookbackMilliseconds).toISOString();
-              const initial = await readInventory(createdSince);
-              if (initial.complete) {
-                return initial;
-              }
-
-              const inFlightStatuses = ["queued", "waiting", "requested", "pending", "in_progress"];
-              const inFlightRuns = initial.runs.filter((run) => inFlightStatuses.includes(run?.status));
-              if (inFlightRuns.length === 0) {
-                return initial;
-              }
-
-              const validTimestamp = (value) => typeof value === "string" &&
-                /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) &&
-                Number.isFinite(Date.parse(value));
-              if (inFlightRuns.some((run) => !runtimeRunEvents.includes(run.event) ||
-                !Number.isSafeInteger(run.id) || run.id <= 0 || !validTimestamp(run.created_at))) {
-                return {
-                  ...initial,
-                  reason: "truncated recent inventory contains an in-flight run without a valid event, id, or creation timestamp",
-                };
-              }
-
-              const refinementSince = inFlightRuns
-                .map((run) => run.created_at)
-                .sort()[0];
-              // The inclusive created lower bound makes the refined pages a complete candidate set without relying on API ordering.
-              const refined = await readInventory(refinementSince);
-              if (!refined.complete) {
-                return {
-                  ...refined,
-                  reason: refined.reason || "refined runtime run inventory is incomplete",
-                };
-              }
-              const refinedIds = new Set(refined.runs.map((run) => `${run?.event}:${run?.id}`));
-              if (inFlightRuns.some((run) => !refinedIds.has(`${run.event}:${run.id}`))) {
-                return {
-                  ...refined,
-                  complete: false,
-                  reason: "refined inventory did not retain every initially observed in-flight run",
-                };
-              }
-              return refined;
-            };
-
-            const findExactExistingProducer = (tuple, inventory) => {
-              const expectedWorkflowPath = ".github/workflows/runtime-images.yml";
-              const workflowPathMatches = (path) => {
-                if (path === expectedWorkflowPath) {
-                  return true;
-                }
-                const prefix = `${expectedWorkflowPath}@`;
-                if (typeof path !== "string" || !path.startsWith(prefix)) {
-                  return false;
-                }
-                const ref = path.slice(prefix.length);
-                if (ref.length === 0 || ref === "@" || ref.endsWith(".") ||
-                  /[\u0000-\u0020\u007f]/.test(ref) ||
-                  ["~", "^", ":", "?", "*", "[", "\\"].some((character) => ref.includes(character)) ||
-                  ref.includes("..") || ref.includes("@{")) {
-                  return false;
-                }
-                return ref.split("/").every((part) =>
-                  part.length > 0 && part !== "." && part !== ".." &&
-                  !part.startsWith(".") &&
-                  !part.endsWith(".lock")
-                );
-              };
-              const expectedTitle =
-                `Build Runtime Images secure-pr-artifact pr-${tuple.prNumber} ` +
-                `base-${tuple.baseSha} head-${tuple.headSha} merge-${tuple.mergeSha} mode-required`;
-              const matching = inventory.runs.filter((run) =>
-                run?.display_title === expectedTitle
-              );
-              const ordered = [];
-              const matchingIds = new Set();
-              for (const run of matching) {
-                if (!runtimeRunEvents.includes(run.event) ||
-                  !Number.isSafeInteger(run.id) || run.id <= 0 || matchingIds.has(run.id) ||
-                  typeof run.created_at !== "string" ||
-                  !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(run.created_at) ||
-                  !Number.isFinite(Date.parse(run.created_at)) ||
-                  !workflowPathMatches(run.path) ||
-                  !["Build Runtime Images", expectedTitle].includes(run.name) ||
-                  run.repository?.full_name !== context.payload.repository.full_name ||
-                  run.head_repository?.full_name !== context.payload.repository.full_name) {
-                  throw new Error(`run ${run.id} has the exact tuple title but invalid workflow or repository identity`);
-                }
-                matchingIds.add(run.id);
-                ordered.push(run);
-                if (run.event === "pull_request") {
-                  if (run.head_sha !== tuple.headSha) {
-                    throw new Error(`run ${run.id} has the exact tuple title but a different PR head SHA`);
-                  }
-                  const pullRequests = run.pull_requests;
-                  if (!Array.isArray(pullRequests) || (pullRequests.length > 0 && !pullRequests.some((pullRequest) =>
-                    String(pullRequest?.number) === tuple.prNumber &&
-                    pullRequest?.head?.sha === tuple.headSha
-                  ))) {
-                    throw new Error(`run ${run.id} has incomplete or conflicting PR association evidence`);
-                  }
-                }
-              }
-              ordered.sort((left, right) => right.created_at.localeCompare(left.created_at));
-              if (ordered.length > 1 && ordered[0].created_at === ordered[1].created_at) {
-                throw new Error("newest exact runtime producer has an ambiguous created_at timestamp");
-              }
-              const newest = ordered[0];
-              if (!newest) {
-                return [];
-              }
-              if (["queued", "waiting", "requested", "pending", "in_progress"].includes(newest.status)) {
-                if (newest.conclusion !== null && newest.conclusion !== undefined) {
-                  throw new Error(`run ${newest.id} has a conclusion while still ${newest.status}`);
-                }
-                return [newest];
-              }
-              if (newest.status === "completed") {
-                // Completed source success does not prove publication remains usable; preserve recovery dispatch.
-                return [];
-              }
-              throw new Error(`run ${newest.id} has an unknown status and cannot be classified`);
             };
 
             if (!shaPattern.test(refreshSha) || typeof refreshBranch !== "string" ||
@@ -947,61 +960,23 @@ jobs:
                 }
               }
             }
-            let runtimeInventoryPromise;
-            let runtimeInventoryError = null;
             for (const resolved of refreshTargets) {
               const {tuple, pullRequest} = resolved;
               if (await hasRuntimeChange(pullRequest)) {
-                let existingProducers = [];
-                let fallbackReason = null;
-                let inventory;
-                if (runtimeInventoryError) {
-                  fallbackReason = runtimeInventoryError;
-                } else {
-                  try {
-                    runtimeInventoryPromise ??= loadExistingRuntimeRuns();
-                    inventory = await runtimeInventoryPromise;
-                  } catch (error) {
-                    fallbackReason = error.message || String(error);
-                    runtimeInventoryError = fallbackReason;
-                  }
-                }
-                if (!fallbackReason) {
-                  try {
-                    existingProducers = findExactExistingProducer(tuple, inventory);
-                    if (!inventory.complete) {
-                      // The REST contract does not specify a sort order, so a truncated page cannot prove omitted runs are older.
-                      existingProducers = [];
-                      fallbackReason = inventory.reason || "recent run inventory is incomplete";
-                    }
-                  } catch (error) {
-                    fallbackReason = error.message || String(error);
-                  }
-                }
-                if (fallbackReason) {
-                  core.warning(
-                    `Cannot verify recent runtime producer evidence for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}); falling back to the required refresh dispatch: ${fallbackReason}`
-                  );
-                }
-                if (existingProducers.length > 0) {
-                  const producer = existingProducers[0];
-                  core.info(
-                    `Skipping duplicate PR runtime refresh for #${tuple.prNumber}: exact tuple producer ${producer.id} remains ${producer.status}.`
-                  );
-                } else {
-                  core.info(`No reusable in-flight exact producer was verified in the bounded recent inventory; dispatching required PR runtime refresh for #${tuple.prNumber} (${tuple.baseSha} / ${tuple.headSha} / ${tuple.mergeSha}).`);
-                  await github.rest.repos.createDispatchEvent({
-                    ...context.repo,
-                    event_type: "pr-runtime-base-refresh",
-                    client_payload: {
-                      pr_number: tuple.prNumber,
-                      base_ref: tuple.baseRef,
-                      base_sha: tuple.baseSha,
-                      head_sha: tuple.headSha,
-                      merge_sha: tuple.mergeSha,
-                    },
-                  });
-                }
+                // The admission workflow serializes this tuple and alone can
+                // prove the producer or claim belongs to its exact base ref.
+                core.info(`Requesting serialized PR runtime refresh admission for #${tuple.prNumber} (${tuple.baseRef} / ${tuple.mergeSha}).`);
+                await github.rest.repos.createDispatchEvent({
+                  ...context.repo,
+                  event_type: "pr-runtime-base-refresh-request",
+                  client_payload: {
+                    pr_number: tuple.prNumber,
+                    base_ref: tuple.baseRef,
+                    base_sha: tuple.baseSha,
+                    head_sha: tuple.headSha,
+                    merge_sha: tuple.mergeSha,
+                  },
+                });
               } else {
                 core.info(`Skipping PR runtime image refresh for #${tuple.prNumber}: no runtime-changing files.`);
               }
@@ -1122,8 +1097,8 @@ jobs:
 
   build-runtime-images:
     name: Build Runtime Images (${{ matrix.service }})
-    needs: [image-meta, build-base-image]
-    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
+    needs: [image-meta, build-base-image, select-protected-runtime-digests]
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.select-protected-runtime-digests.result == 'success' && needs.select-protected-runtime-digests.outputs.missing_services != '' && needs.select-protected-runtime-digests.outputs.missing_services != '[]' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
     runs-on: ubuntu-latest
     permissions:
       # This job publishes only unique staging service tags. Canonical aliases
@@ -1133,18 +1108,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service:
-          - account-service
-          - automation-scripting-service
-          - entity-management-service
-          - game-design-service
-          - game-logic-service
-          - game-session-service
-          - logging-admin-service
-          - social-groups-service
-          - spring-cloud-gateway
-          - tcp-proxy-service
-          - world-management-service
+        service: ${{ fromJSON(needs.select-protected-runtime-digests.outputs.missing_services) }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
@@ -1548,6 +1512,8 @@ jobs:
     if: ${{ (github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null)) || github.event_name == 'repository_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # A repository dispatch runs on the default branch but builds candidate code.
+    cache-mode: read
     permissions:
       # PR-controlled source receives no registry or repository write credential.
       contents: read
@@ -1723,6 +1689,7 @@ jobs:
               "mergeSha": os.environ["MERGE_SHA"],
               "imageTag": os.environ["IMAGE_TAG"],
               "sourceRunId": int(os.environ["SOURCE_RUN_ID"]),
+              "sourceRunAttempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
               "services": services,
           }
           with open(os.environ["PROVENANCE_PATH"], "w", encoding="utf-8") as output:
@@ -1736,7 +1703,7 @@ jobs:
         if: ${{ success() && (needs.image-meta.outputs.runtime_smoke_required == 'false' || steps.runtime-smoke.outcome == 'success') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: pr-runtime-images-${{ needs.image-meta.outputs.image_tag }}
+          name: pr-runtime-images-${{ needs.image-meta.outputs.image_tag }}-attempt-${{ github.run_attempt }}
           path: |
             /tmp/pr-runtime-images.tar.gz
             /tmp/pr-runtime-services.txt
@@ -1751,7 +1718,7 @@ jobs:
           BASE_SHA: ${{ needs.image-meta.outputs.base_sha }}
           HEAD_SHA: ${{ needs.image-meta.outputs.head_sha }}
           MERGE_SHA: ${{ needs.image-meta.outputs.merge_sha }}
-          ARTIFACT_NAME: pr-runtime-images-${{ needs.image-meta.outputs.image_tag }}
+          ARTIFACT_NAME: pr-runtime-images-${{ needs.image-meta.outputs.image_tag }}-attempt-${{ github.run_attempt }}
         run: |
           {
             echo "### PR runtime images and applicable full-stack smoke"
@@ -1763,7 +1730,7 @@ jobs:
             echo "- Merge-scoped publication tag: \`pr-merge-${MERGE_SHA}\`"
             echo "- Artifact: \`${ARTIFACT_NAME}\`"
             echo
-            echo "This read-only PR workflow built the PR merge commit and runs full-stack smoke when required by change scope. The trusted default-branch publisher uploads only the exact merge-scoped artifact from this successful run."
+            echo "This read-only PR workflow built the PR merge commit and runs full-stack smoke when required by change scope. The trusted default-branch publisher accepts only the exact merge-scoped artifact from this successful run attempt."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dump Docker Compose logs on failure
@@ -1859,6 +1826,7 @@ jobs:
     if: ${{ ((github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null)) || github.event_name == 'repository_dispatch') && needs.image-meta.outputs.controller_smoke_required == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    cache-mode: read
     permissions:
       # PR-controlled source receives no registry or repository write credential.
       contents: read
@@ -1903,7 +1871,6 @@ jobs:
           load: true
           tags: ${{ env.BASE_IMAGE }}
           cache-from: type=gha,scope=pr-controller-smoke
-          cache-to: type=gha,mode=max,scope=pr-controller-smoke
 
       - name: Set up Python for Gradle recovery
         uses: ./.github/actions/setup-python
@@ -1925,6 +1892,56 @@ jobs:
         run: |
           set -euo pipefail
           bash ./dev-tools/hosted/controller/smoke-paused-controller-image.sh "$CONTROLLER_IMAGE" >/dev/null
+
+  select-protected-runtime-digests:
+    name: Select Existing Complete Runtime Digest Set
+    needs: [image-meta]
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      fixed_digests: ${{ steps.select.outputs.fixed_digests }}
+      missing_services: ${{ steps.select.outputs.missing_services }}
+    env:
+      HEAD_SHA: ${{ needs.image-meta.outputs.head_sha }}
+      HEAD_BRANCH: ${{ needs.image-meta.outputs.head_branch }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout trusted runtime selection source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c581273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Verify trusted runtime selection revision
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_WORKFLOW_SHA"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to GHCR with read access
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read the fixed digest inventory
+        id: select
+        env:
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          source ./dev-tools/hosted/shared/protected-runtime-image-registry.sh
+          select_existing_fixed_digests
 
   dispatch-pr-runtime-publication:
     name: Dispatch Trusted PR Runtime Publication
@@ -1951,12 +1968,58 @@ jobs:
               client_payload: { source_run_id: String(context.runId) },
             });
 
+  pin-protected-runtime-digests:
+    name: Pin Runtime Digest Set for Smoke
+    needs: [image-meta, build-runtime-images, select-protected-runtime-digests]
+    if: ${{ always() && !cancelled() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.select-protected-runtime-digests.result == 'success' && ((needs.select-protected-runtime-digests.outputs.missing_services != '' && needs.select-protected-runtime-digests.outputs.missing_services != '[]' && needs.build-runtime-images.result == 'success') || (needs.select-protected-runtime-digests.outputs.missing_services == '[]' && needs.build-runtime-images.result == 'skipped')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      runtime_digests: ${{ steps.pin.outputs.runtime_digests }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout trusted digest inventory source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Verify trusted digest inventory revision
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_WORKFLOW_SHA"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to GHCR with read access
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bind the complete smoke digest set
+        id: pin
+        env:
+          CANDIDATE_TAG: ${{ needs.image-meta.outputs.candidate_tag }}
+          FIXED_RUNTIME_DIGESTS: ${{ needs.select-protected-runtime-digests.outputs.fixed_digests }}
+        run: |
+          set -euo pipefail
+          source ./dev-tools/hosted/shared/protected-runtime-image-registry.sh
+          pin_runtime_digests
+
   smoke-full:
     name: Published Runtime Full-Stack Smoke
-    needs: [image-meta, build-runtime-images]
-    if: ${{ always() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.build-runtime-images.result == 'success' }}
+    needs: [image-meta, pin-protected-runtime-digests]
+    if: ${{ always() && !cancelled() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.pin-protected-runtime-digests.result == 'success' && needs.pin-protected-runtime-digests.outputs.runtime_digests != '' }}
     permissions:
-      # The trusted branch smoke workflow only pulls the staged candidate images.
+      # The trusted smoke workflow pulls the complete fixed and staged set by digest.
       contents: read
       packages: read
     uses: ./.github/workflows/smoke-full.yml
@@ -1965,21 +2028,28 @@ jobs:
       head_sha: ${{ needs.image-meta.outputs.head_sha }}
       checkout_ref: ${{ needs.image-meta.outputs.checkout_ref }}
       image_tag: ${{ needs.image-meta.outputs.candidate_tag }}
+      runtime_digests: ${{ needs.pin-protected-runtime-digests.outputs.runtime_digests }}
     secrets: inherit
 
   publish-runtime-images:
     name: Promote Smoke-Tested Runtime Images
-    needs: [image-meta, build-runtime-images, smoke-full]
-    if: ${{ github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.build-runtime-images.result == 'success' && needs.smoke-full.result == 'success' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
+    needs: [image-meta, select-protected-runtime-digests, pin-protected-runtime-digests, smoke-full]
+    if: ${{ always() && !cancelled() && github.event_name != 'pull_request' && github.event_name != 'repository_dispatch' && needs.image-meta.result == 'success' && needs.select-protected-runtime-digests.result == 'success' && needs.pin-protected-runtime-digests.result == 'success' && needs.pin-protected-runtime-digests.outputs.runtime_digests != '' && needs.smoke-full.result == 'success' && (needs.image-meta.outputs.head_branch == 'main' || needs.image-meta.outputs.head_branch == 'develop') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      # Fixed SHA tags are shared across branches; branch alias checks remain required.
+      group: runtime-image-promotion-protected-branches
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: read
       packages: write
     env:
       HEAD_SHA: ${{ needs.image-meta.outputs.head_sha }}
       HEAD_BRANCH: ${{ needs.image-meta.outputs.head_branch }}
-      CANDIDATE_TAG: ${{ needs.image-meta.outputs.candidate_tag }}
+      RUNTIME_DIGESTS: ${{ needs.pin-protected-runtime-digests.outputs.runtime_digests }}
+      FIXED_RUNTIME_DIGESTS: ${{ needs.select-protected-runtime-digests.outputs.fixed_digests }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
@@ -1989,8 +2059,11 @@ jobs:
       - name: Checkout trusted publication source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.image-meta.outputs.checkout_ref }}
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
+
+      - name: Verify trusted publication revision
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_WORKFLOW_SHA"
 
       - name: Set up canonical GitHub CLI
         uses: ./.github/actions/setup-gh
@@ -2013,109 +2086,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          services=(
-            account-service
-            automation-scripting-service
-            entity-management-service
-            game-design-service
-            game-logic-service
-            game-session-service
-            logging-admin-service
-            social-groups-service
-            spring-cloud-gateway
-            tcp-proxy-service
-            world-management-service
-          )
-
-          declare -A registry_tokens=()
-          registry_manifest_state() {
-            local image="$1"
-            local image_path="${image#ghcr.io/}"
-            local repository_path="${image_path%:*}"
-            local tag="${image_path##*:}"
-            local manifest_url="https://ghcr.io/v2/${repository_path}/manifests/${tag}"
-            local registry_token="${registry_tokens[$repository_path]:-}"
-            local status
-
-            [[ -n "${GHCR_USERNAME:-}" && -n "${GHCR_TOKEN:-}" ]] || {
-              echo "GHCR credentials are unavailable for authenticated manifest preflight: $image" >&2
-              return 1
-            }
-            if [[ -z "$registry_token" ]]; then
-              if ! registry_token="$(curl --silent --show-error --location --fail \
-                --connect-timeout 10 --max-time 30 \
-                --user "${GHCR_USERNAME}:${GHCR_TOKEN}" \
-                --get \
-                --data-urlencode 'service=ghcr.io' \
-                --data-urlencode "scope=repository:${repository_path}:pull" \
-                --header 'Accept: application/json' \
-                'https://ghcr.io/token' | jq -er '.token // .access_token // empty')"; then
-                echo "GHCR bearer-token exchange failed for $image; refusing to infer absence." >&2
-                return 1
-              fi
-              registry_tokens["$repository_path"]="$registry_token"
-            fi
-            # `docker manifest inspect "$image"` conflates a 404 with auth,
-            # registry, and network failures, so it is never an absence check.
-            if ! status="$(curl --silent --show-error --location --head \
-              --connect-timeout 10 --max-time 30 \
-              --header "Authorization: Bearer ${registry_token}" \
-              --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-              --output /dev/null --write-out '%{http_code}' "$manifest_url")"; then
-              echo "Authenticated OCI manifest HEAD failed for $image; refusing to infer absence." >&2
-              return 1
-            fi
-            case "$status" in
-              200) printf 'existing\n' ;;
-              404) printf 'missing\n' ;;
-              *)
-                echo "Authenticated OCI manifest HEAD returned HTTP ${status} for $image; refusing to push." >&2
-                return 1
-                ;;
-            esac
-          }
-
-          registry_digest() {
-            local image="$1"
-            local inspect_output inspect_status
-            local digest
-            if inspect_output="$(docker buildx imagetools inspect "$image")"; then
-              :
-            else
-              inspect_status=$?
-              echo "Unable to inspect exact registry digest for $image (imagetools exit $inspect_status); refusing to publish." >&2
-              return "$inspect_status"
-            fi
-            digest="$(awk '$1 == "Digest:" && $2 ~ /^sha256:[0-9a-f]{64}$/ { print $2; exit }' <<<"$inspect_output")"
-            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
-              echo "Registry manifest for $image has no exact digest." >&2
-              return 1
-            }
-            printf '%s\n' "$digest"
-          }
-
-          assert_current_branch_head() {
-            local current_sha
-            current_sha="$(gh api \
-              "repos/${GITHUB_REPOSITORY}/git/ref/heads/${HEAD_BRANCH}" \
-              --jq '.object.sha')"
-            [[ "$current_sha" == "$HEAD_SHA" ]] || {
-              echo "Refusing canonical runtime publication: ${HEAD_BRANCH} moved from ${HEAD_SHA} to ${current_sha}." >&2
-              exit 1
-            }
-          }
+          source ./dev-tools/hosted/shared/protected-runtime-image-registry.sh
 
           promote_alias() {
-            local source="$1" target="$2" fixed="$3"
-            local source_digest existing_digest target_digest
-            source_digest="$(registry_digest "$source")"
+            local source="$1" target="$2" fixed="$3" retained_digest="${4:-}"
+            local source_digest="${source##*@}" existing_digest target_digest
             local target_state
-            if ! target_state="$(registry_manifest_state "$target")"; then
+            if ! registry_manifest_state "$target" target_state; then
               echo "Immutable target preflight failed for $target; refusing to publish." >&2
               exit 1
             fi
             if [[ "$target_state" == missing ]]; then
-              docker buildx imagetools create --tag "$target" "$source"
+              if [[ "$fixed" == true && -n "$retained_digest" ]]; then
+                echo "Fixed runtime tag $target disappeared after smoke qualification." >&2
+                exit 1
+              fi
+              docker buildx imagetools create --prefer-index=false --tag "$target" "$source"
             else
               existing_digest="$(registry_digest "$target")"
               if [[ "$fixed" == true && "$existing_digest" != "$source_digest" ]]; then
@@ -2123,7 +2109,7 @@ jobs:
                 exit 1
               fi
               if [[ "$existing_digest" != "$source_digest" ]]; then
-                docker buildx imagetools create --tag "$target" "$source"
+                docker buildx imagetools create --prefer-index=false --tag "$target" "$source"
               fi
             fi
             target_digest="$(registry_digest "$target")"
@@ -2133,13 +2119,14 @@ jobs:
             }
           }
 
+          preflight_fixed_digest_set
           for service in "${services[@]}"; do
-            candidate="ghcr.io/benhook1013/${service}:${CANDIDATE_TAG}"
+            candidate="${smoke_sources[$service]}"
             sha_tag="ghcr.io/benhook1013/${service}:${HEAD_SHA}"
             branch_tag="ghcr.io/benhook1013/${service}:${HEAD_BRANCH}"
 
             assert_current_branch_head
-            promote_alias "$candidate" "$sha_tag" true
+            promote_alias "$candidate" "$sha_tag" true "${retained_fixed[$service]}"
             assert_current_branch_head
             promote_alias "$candidate" "$branch_tag" false
             if [[ "$HEAD_BRANCH" == develop ]]; then

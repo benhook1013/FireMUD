@@ -7,7 +7,8 @@ on:
   repository_dispatch:
     types: [pr-runtime-image-publication]
 
-run-name: Publish PR Runtime Images ${{ github.event.workflow_run.display_title || format('source-run-{0}', github.event.client_payload.source_run_id) }}
+# Typed refresh callbacks include the exact source run ID because their tuple can be reused.
+run-name: Publish PR Runtime Images ${{ github.event.workflow_run.event == 'repository_dispatch' && format('{0} source-run-{1}', github.event.workflow_run.display_title, github.event.workflow_run.id) || github.event.workflow_run.display_title || format('source-run-{0}', github.event.client_payload.source_run_id) }}
 
 permissions: {}
 
@@ -23,6 +24,8 @@ jobs:
       source: ${{ steps.resolve.outputs.source }}
       title: ${{ steps.resolve.outputs.title }}
       artifact_name: ${{ steps.resolve.outputs.artifact_name }}
+      artifact_id: ${{ steps.resolve.outputs.artifact_id }}
+      artifact_digest: ${{ steps.resolve.outputs.artifact_digest }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
@@ -48,6 +51,11 @@ jobs:
               throw new Error("publication source run ID is not a positive safe integer");
             }
             const sourceId = Number(sourceIdText);
+            let sourceAttempt = callback ? context.payload.workflow_run.run_attempt : undefined;
+            const positiveInteger = value => Number.isSafeInteger(value) && value > 0;
+            if (callback && !positiveInteger(sourceAttempt)) {
+              throw new Error("publication callback source attempt is not a positive safe integer");
+            }
             const repository = `${context.repo.owner}/${context.repo.repo}`;
             const { data: workflow } = await github.rest.actions.getWorkflow({
               ...context.repo, workflow_id: "runtime-images.yml",
@@ -76,6 +84,7 @@ jobs:
               });
               const title = typeof run.display_title === "string" && run.display_title.match(titlePattern);
               if (run.id !== sourceId || run.workflow_id !== workflow.id ||
+                  !positiveInteger(run.run_attempt) ||
                   !isTrustedWorkflowPath(run.path) || !title ||
                   !["Build Runtime Images", run.display_title].includes(run.name) ||
                   !["pull_request", "repository_dispatch"].includes(run.event) ||
@@ -88,28 +97,72 @@ jobs:
               }
               if (callback) {
                 const event = context.payload.workflow_run;
-                for (const field of ["id", "workflow_id", "display_title", "event", "conclusion", "head_branch", "head_sha"]) {
+                for (const field of ["id", "workflow_id", "display_title", "event", "status", "conclusion", "head_branch", "head_sha"]) {
                   if (run[field] !== event[field]) throw new Error(`source API ${field} differs from callback`);
                 }
                 for (const field of ["repository", "head_repository"]) {
                   if (run[field]?.full_name !== event[field]?.full_name) throw new Error(`source API ${field} differs from callback`);
                 }
               }
+              sourceAttempt ??= run.run_attempt;
+              if (run.run_attempt !== sourceAttempt) {
+                throw new Error("current publication source attempt differs from the pinned attempt");
+              }
               if (run.status === "completed") {
                 if (run.conclusion !== "success") throw new Error("publication source run did not succeed");
-                const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-                  ...context.repo, run_id: sourceId, per_page: 100,
-                });
-                if (jobs.some(job => job.name === "PR Full-Stack Smoke (runtime-required=true)" &&
-                    (job.steps ?? []).some(step =>
-                      step.name === "Known canonical transition PLAY failure with successful authenticated cleanup" &&
-                      step.status === "completed" && step.conclusion === "success"))) {
+                const jobs = await github.paginate(
+                  "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
+                  { ...context.repo, run_id: sourceId, attempt_number: sourceAttempt, per_page: 100 },
+                );
+                const producerJobs = jobs.filter(job =>
+                  /^PR Full-Stack Smoke \(runtime-required=(?:true|false)\)$/.test(job.name));
+                const [producer] = producerJobs;
+                if (producerJobs.length !== 1 || !positiveInteger(producer.id) ||
+                    producer.run_id !== sourceId ||
+                    (Object.hasOwn(producer, "run_attempt") && producer.run_attempt !== sourceAttempt) ||
+                    producer.head_sha !== run.head_sha || producer.status !== "completed" || producer.conclusion !== "success") {
+                  throw new Error(
+                    "publication requires one successful runtime image job from the exact source attempt" +
+                    ". If the updated producer lacks its own evidence after Re-run failed jobs, use Re-run all jobs while the comparison is current. " +
+                    "For an outgoing producer, start a fresh exact-tuple build with the updated definition.",
+                  );
+                }
+                if ((producer.steps ?? []).some(step =>
+                    step.name === "Known canonical transition PLAY failure with successful authenticated cleanup" &&
+                    step.status === "completed" && step.conclusion === "success")) {
                   core.notice("CI passed under the canonical PLAY transition exception; no runtime images are eligible for publication.");
                   return;
                 }
                 core.setOutput("source", JSON.stringify(run));
                 core.setOutput("title", run.display_title);
-                core.setOutput("artifact_name", `pr-runtime-images-pr-merge-${title[4]}`);
+                const artifactName = `pr-runtime-images-pr-merge-${title[4]}-attempt-${sourceAttempt}`;
+                const { data: artifacts } = await github.rest.actions.listWorkflowRunArtifacts({
+                  ...context.repo, run_id: sourceId, name: artifactName, per_page: 100,
+                });
+                const [artifact] = artifacts.artifacts;
+                if (artifacts.total_count !== 1 || artifacts.artifacts.length !== 1 ||
+                    !positiveInteger(artifact.id) || artifact.name !== artifactName ||
+                    artifact.expired !== false || artifact.workflow_run?.id !== sourceId ||
+                    !/^sha256:[0-9a-f]{64}$/.test(artifact.digest ?? "")) {
+                  if (artifacts.total_count === 0 && artifacts.artifacts.length === 0) {
+                    const legacyName = `pr-runtime-images-pr-merge-${title[4]}`;
+                    const { data: legacy } = await github.rest.actions.listWorkflowRunArtifacts({
+                      ...context.repo, run_id: sourceId, name: legacyName, per_page: 100,
+                    });
+                    if (legacy.total_count === 1 && legacy.artifacts.length === 1 &&
+                        legacy.artifacts[0].name === legacyName && legacy.artifacts[0].workflow_run?.id === sourceId) {
+                      throw new Error("The outgoing runtime producer used a merge-only archive. Start a fresh build for the exact current PR tuple with the updated producer definition.");
+                    }
+                  }
+                  throw new Error(
+                    "publication requires one immutable exact-attempt artifact and SHA256" +
+                    ". If the updated producer lacks its own evidence after Re-run failed jobs, use Re-run all jobs while the comparison is current. " +
+                    "For an outgoing producer, start a fresh exact-tuple build with the updated definition.",
+                  );
+                }
+                core.setOutput("artifact_name", artifactName);
+                core.setOutput("artifact_id", String(artifact.id));
+                core.setOutput("artifact_digest", artifact.digest);
                 break;
               }
               if (callback || !["queued", "in_progress", "waiting", "pending", "requested"].includes(run.status) ||
@@ -126,6 +179,7 @@ jobs:
     concurrency:
       group: publish-pr-merge-images-${{ needs.source.outputs.title }}
       cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     permissions:
       # This trusted default-branch workflow reads one successful run artifact and publishes immutable merge tags.
@@ -153,7 +207,8 @@ jobs:
       - name: Download successful PR image artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          name: ${{ needs.source.outputs.artifact_name }}
+          artifact-ids: ${{ needs.source.outputs.artifact_id }}
+          digest-mismatch: error
           # The pinned action extracts a sole artifact directly into path.
           path: /tmp/pr-runtime-artifacts/${{ needs.source.outputs.artifact_name }}
           github-token: ${{ github.token }}
@@ -163,6 +218,7 @@ jobs:
         env:
           CURRENT_REPOSITORY: ${{ github.repository }}
           SOURCE_RUN_ID: ${{ fromJSON(needs.source.outputs.source).id }}
+          SOURCE_RUN_ATTEMPT: ${{ fromJSON(needs.source.outputs.source).run_attempt }}
           SOURCE_RUN_URL: ${{ fromJSON(needs.source.outputs.source).html_url }}
           SOURCE_RUN_TITLE: ${{ fromJSON(needs.source.outputs.source).display_title }}
           SOURCE_RUN_EVENT: ${{ fromJSON(needs.source.outputs.source).event }}
@@ -280,6 +336,10 @@ jobs:
           if not source_run_id_text.isdigit() or int(source_run_id_text) <= 0:
               fail("source workflow run id is not a positive integer")
           source_run_id = int(source_run_id_text)
+          source_run_attempt_text = required_environment("SOURCE_RUN_ATTEMPT")
+          if not re.fullmatch(r"[1-9][0-9]*", source_run_attempt_text):
+              fail("source workflow run attempt is not a positive integer")
+          source_run_attempt = int(source_run_attempt_text)
           source_title = required_environment("SOURCE_RUN_TITLE")
           title_match = TITLE_PATTERN.fullmatch(source_title)
           if title_match is None:
@@ -306,6 +366,8 @@ jobs:
           source_run = gh_json(f"repos/{repository}/actions/runs/{source_run_id}")
           if source_run.get("id") != source_run_id:
               fail("source workflow run API id does not match the event")
+          if type(source_run.get("run_attempt")) is not int or source_run["run_attempt"] != source_run_attempt:
+              fail("current workflow run attempt differs from the pinned source attempt")
           if source_run.get("workflow_id") != int(workflow_id_text):
               fail("source workflow identity changed between event and API")
           if source_run.get("name") not in {"Build Runtime Images", source_title}:
@@ -401,7 +463,7 @@ jobs:
               if path.is_dir() and path.name.startswith("pr-runtime-images-")
           )
           image_tag = f"pr-merge-{merge_sha}"
-          expected_artifact_name = f"pr-runtime-images-{image_tag}"
+          expected_artifact_name = f"pr-runtime-images-{image_tag}-attempt-{source_run_attempt}"
           if artifact_dirs != [artifact_root / expected_artifact_name]:
               fail("downloaded artifacts do not contain exactly the expected runtime image artifact")
           artifact_dir = artifact_dirs[0]
@@ -423,10 +485,12 @@ jobs:
               fail(f"runtime provenance JSON is malformed: {error}")
           expected_provenance_keys = {
               "repository", "prNumber", "baseSha", "headSha", "mergeSha",
-              "imageTag", "sourceRunId", "services",
+              "imageTag", "sourceRunId", "sourceRunAttempt", "services",
           }
-          if set(provenance) != expected_provenance_keys:
+          if not isinstance(provenance, dict) or set(provenance) != expected_provenance_keys:
               fail("runtime provenance JSON schema contains missing or extra keys")
+          if type(provenance["sourceRunAttempt"]) is not int or provenance["sourceRunAttempt"] != source_run_attempt:
+              fail("runtime provenance attempt differs from the pinned source attempt")
           if provenance != {
               "repository": repository,
               "prNumber": pr_number_int,
@@ -435,6 +499,7 @@ jobs:
               "mergeSha": merge_sha,
               "imageTag": image_tag,
               "sourceRunId": source_run_id,
+              "sourceRunAttempt": source_run_attempt,
               "services": EXPECTED_SERVICES,
           }:
               fail("runtime provenance does not exactly match the trusted source run and PR")
@@ -450,7 +515,7 @@ jobs:
               env_file.write(f"HEAD_SHA={head_sha}\n")
               env_file.write(f"MERGE_SHA={merge_sha}\n")
           print(
-              f"Validated source run {source_run_id}, PR #{pr_number}, "
+              f"Validated source run {source_run_id} attempt {source_run_attempt}, PR #{pr_number}, "
               f"merge {merge_sha}, artifact {expected_artifact_name}; registry remains untouched."
           )
           PY
@@ -458,6 +523,7 @@ jobs:
       - name: Summarize trusted publication source
         env:
           SOURCE_RUN_ID: ${{ fromJSON(needs.source.outputs.source).id }}
+          SOURCE_RUN_ATTEMPT: ${{ fromJSON(needs.source.outputs.source).run_attempt }}
           SOURCE_RUN_URL: ${{ fromJSON(needs.source.outputs.source).html_url }}
           SOURCE_RUN_TITLE: ${{ fromJSON(needs.source.outputs.source).display_title }}
           SOURCE_HEAD_BRANCH: ${{ fromJSON(needs.source.outputs.source).head_branch }}
@@ -473,13 +539,13 @@ jobs:
 
           summary = f"""### Trusted PR runtime image publication
 
-          - Source workflow run: [{os.environ['SOURCE_RUN_ID']}]({os.environ['SOURCE_RUN_URL']})
+          - Source workflow run: [{os.environ['SOURCE_RUN_ID']}]({os.environ['SOURCE_RUN_URL']}) (attempt {os.environ['SOURCE_RUN_ATTEMPT']})
           - Source run title: <code>{markdown_code(os.environ['SOURCE_RUN_TITLE'])}</code>
           - Source workflow branch/SHA: <code>{markdown_code(os.environ['SOURCE_HEAD_BRANCH'])}</code> / `{os.environ['SOURCE_HEAD_SHA']}`
           - Current PR head branch/SHA: <code>{markdown_code(os.environ.get('PR_HEAD_BRANCH', '<validated>'))}</code> / `{os.environ['HEAD_SHA']}`
           - Tested merge SHA and immutable image tag: `{os.environ['MERGE_SHA']}` / `{os.environ['IMAGE_TAG']}`
 
-          GitHub displays this run in the default-branch context because completion callbacks and typed publication handoffs use the trusted workflow definition. It publishes only the successful source run's exact merge-SHA artifact after validating current PR identity and provenance, and does not check out PR source.
+          GitHub displays this run in the default-branch context because completion callbacks and typed publication handoffs use the trusted workflow definition. It publishes only the exact merge-SHA artifact from the pinned successful source attempt after validating current PR identity and provenance, and does not check out PR source.
           """
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary_file:
               summary_file.write(summary)
@@ -490,6 +556,21 @@ jobs:
           set -o pipefail
           gzip -dc "$PR_RUNTIME_ARTIFACT_DIR/pr-runtime-images.tar.gz" | docker load
 
+      - name: Fence current source attempt before registry login
+        env:
+          CURRENT_REPOSITORY: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ fromJSON(needs.source.outputs.source).id }}
+          SOURCE_RUN_ATTEMPT: ${{ fromJSON(needs.source.outputs.source).run_attempt }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh api "repos/${CURRENT_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" |
+            jq -e --argjson id "$SOURCE_RUN_ID" --argjson attempt "$SOURCE_RUN_ATTEMPT" \
+              '.id == $id and .run_attempt == $attempt and .status == "completed" and .conclusion == "success"' >/dev/null; then
+            echo "The pinned source attempt is no longer a current completed success; registry remains untouched." >&2
+            exit 1
+          fi
+
       - name: Login to GHCR
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
@@ -499,6 +580,10 @@ jobs:
 
       - name: Publish fixed PR image tags
         env:
+          CURRENT_REPOSITORY: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ fromJSON(needs.source.outputs.source).id }}
+          SOURCE_RUN_ATTEMPT: ${{ fromJSON(needs.source.outputs.source).run_attempt }}
+          GH_TOKEN: ${{ github.token }}
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -591,16 +676,16 @@ jobs:
           verify_existing_target() {
             local service="$1"
             local image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
-            if ! docker pull "$image" >/dev/null; then
+            if ! timeout 120s docker pull "$image" >/dev/null; then
               echo "Existing fixed image tag could not be pulled for immutable comparison: $image" >&2
-              exit 1
+              return 1
             fi
             local target_image_id
             target_image_id="$(docker image inspect --format '{{.Id}}' "$image" 2>/dev/null || true)"
             if [[ -z "$target_image_id" || "$target_image_id" != "${source_image_ids[$service]}" ]]; then
               echo "Existing fixed image tag does not match the validated source artifact: $image" >&2
               echo "Expected source image ID ${source_image_ids[$service]}, observed target image ID ${target_image_id:-<missing>}." >&2
-              exit 1
+              return 1
             fi
             echo "Fixed image tag already exists with the validated source image ID; preserving first publication: $image"
           }
@@ -625,57 +710,71 @@ jobs:
             verify_existing_target "$service"
           done
 
+          report_partial_publication() {
+            local failed_service="$1" candidate_service reached_failure=false
+            local -a unpublished_services=()
+            for candidate_service in "${missing_services[@]}"; do
+              if [[ "$candidate_service" == "$failed_service" ]]; then
+                reached_failure=true
+              fi
+              if [[ "$reached_failure" == true ]]; then
+                unpublished_services+=("$candidate_service")
+              fi
+            done
+            {
+              echo "### Partial PR runtime image publication"
+              echo
+              echo "Verified available fixed tags before stop:"
+              if ((${#available_services[@]} == 0)); then
+                echo "- None"
+              else
+                # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
+                for candidate_service in "${available_services[@]}"; do
+                  printf -- '- `ghcr.io/benhook1013/%s:%s`\n' "$candidate_service" "$IMAGE_TAG"
+                done
+              fi
+              echo
+              echo "Fixed tags not verified available at stop:"
+              if ((${#unpublished_services[@]} == 0)); then
+                echo "- None"
+              else
+                # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
+                for candidate_service in "${unpublished_services[@]}"; do
+                  printf -- '- `ghcr.io/benhook1013/%s:%s`\n' "$candidate_service" "$IMAGE_TAG"
+                done
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
           available_services=("${existing_services[@]}")
           for service in "${missing_services[@]}"; do
             image="ghcr.io/benhook1013/${service}:${IMAGE_TAG}"
             max_push_attempts=3
             push_attempt=1
             while true; do
+              # Preflight, verification of earlier tags, and retry backoff
+              # can all outlive the producer attempt. Fence each actual write.
+              if ! gh api "repos/${CURRENT_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" |
+                jq -e --argjson id "$SOURCE_RUN_ID" --argjson attempt "$SOURCE_RUN_ATTEMPT" \
+                  '.id == $id and .run_attempt == $attempt and .status == "completed" and .conclusion == "success"' >/dev/null; then
+                echo "The pinned source attempt is no longer a verified current success before pushing $image; stopping publication." >&2
+                report_partial_publication "$service"
+                exit 1
+              fi
               if docker push "$image"; then
-                # A successful client push is not publication proof until the
-                # authenticated target resolves to the exact source image ID.
-                verify_existing_target "$service"
                 break
               fi
               if ! state="$(registry_manifest_state "$image")"; then
                 echo "Unable to classify $image after a failed push; refusing to infer absence." >&2
+                report_partial_publication "$service"
                 exit 1
               fi
               if [[ "$state" == existing ]]; then
-                verify_existing_target "$service"
                 break
               fi
               if (( push_attempt >= max_push_attempts )); then
                 echo "Failed to publish $image after ${push_attempt} attempts." >&2
-                unpublished_services=()
-                reached_failure=false
-                for candidate_service in "${missing_services[@]}"; do
-                  if [[ "$candidate_service" == "$service" ]]; then
-                    reached_failure=true
-                  fi
-                  if [[ "$reached_failure" == true ]]; then
-                    unpublished_services+=("$candidate_service")
-                  fi
-                done
-                {
-                  echo "### Partial PR runtime image publication"
-                  echo
-                  echo "Successfully available fixed tags:"
-                  if ((${#available_services[@]} == 0)); then
-                    echo "- None"
-                  else
-                    # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
-                    printf -- '- `%s`\n' "${available_services[@]}"
-                  fi
-                  echo
-                  echo "Unpublished fixed tags (not rechecked after the failed push):"
-                  if ((${#unpublished_services[@]} == 0)); then
-                    echo "- None"
-                  else
-                    # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
-                    printf -- '- `%s`\n' "${unpublished_services[@]}"
-                  fi
-                } >> "$GITHUB_STEP_SUMMARY"
+                report_partial_publication "$service"
                 exit 1
               fi
               backoff_seconds=$((5 * 2 ** (push_attempt - 1)))
@@ -683,5 +782,69 @@ jobs:
               sleep "$backoff_seconds"
               push_attempt=$((push_attempt + 1))
             done
+            # Only authenticated readback of the source image ID verifies the tag.
+            if ! verify_existing_target "$service"; then
+              report_partial_publication "$service"
+              exit 1
+            fi
             available_services+=("$service")
           done
+
+      - name: Record exact fixed-tag publication receipt
+        env:
+          SOURCE_WORKFLOW_ID: ${{ fromJSON(needs.source.outputs.source).workflow_id }}
+          SOURCE_RUN_ID: ${{ fromJSON(needs.source.outputs.source).id }}
+          SOURCE_RUN_ATTEMPT: ${{ fromJSON(needs.source.outputs.source).run_attempt }}
+          SOURCE_ARTIFACT_ID: ${{ needs.source.outputs.artifact_id }}
+          SOURCE_ARTIFACT_DIGEST: ${{ needs.source.outputs.artifact_digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" |
+            jq -e --argjson id "$SOURCE_RUN_ID" --argjson attempt "$SOURCE_RUN_ATTEMPT" \
+              '.id == $id and .run_attempt == $attempt and .status == "completed" and .conclusion == "success"' >/dev/null; then
+            echo "The pinned source attempt is no longer a verified current success; withholding the publication receipt." >&2
+            {
+              echo "### Fixed tags verified before the publication receipt was withheld"
+              while IFS= read -r service || [[ -n "$service" ]]; do
+                # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
+                printf -- '- `ghcr.io/benhook1013/%s:%s`\n' "$service" "$IMAGE_TAG"
+              done < "$PR_RUNTIME_ARTIFACT_DIR/pr-runtime-services.txt"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          env = os.environ
+          receipt = {
+              "schema": 1, "repository": env["GITHUB_REPOSITORY"],
+              "prNumber": int(env["PR_NUMBER"]), "baseSha": env["BASE_SHA"],
+              "headSha": env["HEAD_SHA"], "mergeSha": env["MERGE_SHA"],
+              "imageTag": env["IMAGE_TAG"], "producerWorkflowId": int(env["SOURCE_WORKFLOW_ID"]),
+              "producerRunId": int(env["SOURCE_RUN_ID"]),
+              "producerAttempt": int(env["SOURCE_RUN_ATTEMPT"]),
+              "producerArtifactId": int(env["SOURCE_ARTIFACT_ID"]),
+              "producerArtifactDigest": env["SOURCE_ARTIFACT_DIGEST"],
+              "publisherWorkflowRef": env["GITHUB_WORKFLOW_REF"],
+              "publisherRunId": int(env["GITHUB_RUN_ID"]),
+              "publisherAttempt": int(env["GITHUB_RUN_ATTEMPT"]),
+              "publishJob": "Publish Fixed PR Merge Image Tags",
+              "publishStep": "Publish fixed PR image tags",
+          }
+          path = Path(env["RUNNER_TEMP"]) / "exact-pr-runtime-publication.json"
+          with path.open("x", encoding="utf-8") as output:
+              json.dump(receipt, output, sort_keys=True, separators=(",", ":"))
+          PY
+
+      - name: Retain exact fixed-tag publication receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: pr-runtime-publication-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/exact-pr-runtime-publication.json
+          if-no-files-found: error
+          overwrite: false

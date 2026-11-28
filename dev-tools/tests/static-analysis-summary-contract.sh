@@ -15,25 +15,29 @@ if ! awk '
 fi
 
 grep -Fq 'github.paginate(github.rest.actions.listWorkflowRuns' "$workflow"
-grep -Fq 'workflowRunFor("codeql.yml")' "$workflow"
-grep -Fq 'workflowRunFor("license-scan.yml")' "$workflow"
+grep -Fq 'workflowRunFor("codeql.yml", "CodeQL Gate")' "$workflow"
+grep -Fq 'workflowRunFor("license-scan.yml", "License Gate")' "$workflow"
 grep -Fq 'head_sha: headSha,' "$workflow"
 grep -Fq 'return "skipped";' "$workflow"
 grep -Fq 'run_attempt' "$workflow"
-grep -Fq 'checkRunWorkflowId' "$workflow"
-grep -Fq 'github.paginate(github.rest.checks.listForRef' "$workflow"
+grep -Fq 'job.run_attempt !== candidate.run_attempt' "$workflow"
+if grep -Fq 'github.rest.checks.listForRef' "$workflow"; then
+  echo "static analysis summary must not reuse a head-level check snapshot across attempts" >&2
+  exit 1
+fi
 grep -Fq 'github.paginate(github.rest.issues.listComments' "$workflow"
 grep -Fq 'per_page: 100' "$workflow"
 grep -Fq 'cancel-in-progress: false' "$workflow"
 # GitHub expressions are literal workflow text, not shell expansions.
 # shellcheck disable=SC2016
-grep -Fq 'group: static-analysis-summary-${{ github.event.workflow_run.head_branch || github.ref }}-${{ github.event.workflow_run.head_sha }}' "$workflow"
-grep -Fq 'currentPullRequest.head?.sha !== headSha' "$workflow"
+grep -Fq 'group: static-analysis-summary-pr-${{ needs.resolve-summary-target.outputs.pull-number }}' "$workflow"
+grep -Fq 'const headSha = currentPullRequest.head?.sha;' "$workflow"
 grep -Fq 'context.payload.workflow_run.display_title !== expectedSourceTitle' "$workflow"
-grep -Fq 'finalPullRequest.base?.sha !== baseSha' "$workflow"
-grep -Fq 'workflowRun?.display_title === expectedTitle' "$workflow"
+grep -Fq 'current.base?.sha === baseSha' "$workflow"
+grep -Fq 'run?.display_title === expectedTitle' "$workflow"
 grep -Fq 'comment.user?.login === "github-actions[bot]"' "$workflow"
 grep -Fq 'if (comment.id === existing?.id) continue;' "$workflow"
+grep -Fq 'Source: base ${baseRef}@${baseSha}, head ${headSha}' "$workflow"
 
 if grep -Fq 'listWorkflowRunsForRepo' "$workflow"; then
   echo "static analysis summary must query the CodeQL workflow directly" >&2
@@ -77,6 +81,80 @@ for line in lines[start + 1 :]:
 script_path.write_text(textwrap.dedent("\n".join(body)) + "\n", encoding="utf-8")
 PY
 
+# Execute the actual pre-queue resolver and verify the job-level lock boundary.
+python3 - "$workflow" "$test_root/summary-target.js" <<'PY_TARGET'
+import sys
+from pathlib import Path
+import yaml
+if not __debug__:
+    raise SystemExit("Static analysis summary resolver proof requires Python assertions")
+workflow = yaml.load(Path(sys.argv[1]).read_text(), Loader=yaml.BaseLoader)
+assert "concurrency" not in workflow, "unvalidated callbacks must not share a workflow queue"
+resolver = workflow["jobs"]["resolve-summary-target"]
+publisher = workflow["jobs"]["publish-summary"]
+assert resolver["permissions"] == {}, "resolver must not receive write authority"
+assert resolver["if"] == "${{ github.event.workflow_run.event == 'pull_request' }}"
+assert publisher["needs"] == ["resolve-summary-target"]
+assert publisher["if"] == "${{ needs.resolve-summary-target.outputs.pull-number != '' }}"
+assert publisher["concurrency"] == {
+    "group": "static-analysis-summary-pr-${{ needs.resolve-summary-target.outputs.pull-number }}",
+    "cancel-in-progress": "false",
+    "queue": "max",
+}
+step = next(step for step in resolver["steps"] if step.get("id") == "target")
+assert resolver["outputs"]["pull-number"] == "${{ steps.target.outputs.pull-number }}"
+Path(sys.argv[2]).write_text(step["with"]["script"])
+PY_TARGET
+node - "$test_root/summary-target.js" <<'NODE_TARGET'
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const resolve = new Function("context", "core", fs.readFileSync(process.argv[2], "utf8"));
+const head = "a".repeat(40), base = "b".repeat(40);
+function source(number = 42, workflow = "CodeQL Analysis", sha = head) {
+  return {event: "pull_request", name: workflow,
+    path: workflow === "CodeQL Analysis" ? ".github/workflows/codeql.yml" : ".github/workflows/license-scan.yml",
+    display_title: `${workflow} pr-${number} base-${base} head-${sha}`, head_sha: sha,
+    head_repository: {id: 123}, head_branch: "shared", pull_requests: [{number}]};
+}
+function group(run) {
+  const outputs = {};
+  resolve({payload: {workflow_run: run}}, {setOutput: (key, value) => { outputs[key] = value; }});
+  return outputs["pull-number"] ? `static-analysis-summary-pr-${outputs["pull-number"]}` : null;
+}
+const a = group(source()), b = group(source(99));
+assert.equal(a, "static-analysis-summary-pr-42");
+assert.equal(b, "static-analysis-summary-pr-99");
+assert.equal(group({...source(), display_title: source().display_title + " mode-metadata"}), null);
+
+assert.equal(a, group(source(42, "License Gate")), "producer channels must serialize per PR");
+for (const run of [source(), source(42, "License Gate")]) {
+  assert.equal(a, group({...run, path: run.path + "@refs/pull/42/merge"}));
+  assert.equal(null, group({...run, path: run.path + "@refs/pull/99/merge"}));
+  assert.equal(null, group({...run, path: run.path + "@refs/heads/develop"}));
+}
+assert.equal(a, group(source(42, "CodeQL Analysis", "c".repeat(40))), "head advance must keep the PR queue");
+for (const pull_requests of [[{number: 99}, {number: 42}], [{number: 42}, {number: 99}]]) {
+  assert.equal(group({...source(), pull_requests}), a, "association order must not select another PR");
+}
+for (const override of [
+  {event: "push"}, {event: "schedule"}, {display_title: "malformed"},
+  {head_sha: "d".repeat(40)}, {path: ".github/workflows/unrelated.yml"}, {name: "forged"},
+  {head_repository: {id: 0}}, {head_repository: null}, {head_branch: ""},
+  {pull_requests: null}, {pull_requests: [{number: 99}]},
+  {pull_requests: [{number: 42}, {number: 42}]},
+]) assert.equal(group({...source(), ...override}), null, JSON.stringify(override));
+// Fork identity is not authority: keep a valid association routable; the existing
+// publisher independently verifies the live PR repository/branch before any write.
+assert.equal(group({...source(), head_repository: {id: 456}}), a);
+const pending = new Map();
+pending.set(a, "42-final"); pending.set(b, "99-old");
+const push = group({...source(), event: "push"});
+if (push) pending.set(push, "push");
+assert.equal(pending.get(a), "42-final", "other PR and push cannot replace PR42 pending work");
+assert.equal(pending.get(b), "99-old");
+console.log("static summary target and queue isolation contract passed");
+NODE_TARGET
+
 node - "$script_path" <<'NODE'
 const fs = require("node:fs");
 const script = fs.readFileSync(process.argv[2], "utf8");
@@ -87,20 +165,77 @@ let currentBaseSha = baseSha;
 let currentBaseRef = "develop";
 let pullRequestReads = 0;
 let changeBaseDuringRun = false;
+let changeHeadDuringRun = false;
+let changeHeadDuringComments = false;
 let deleteStatus = null;
 let existingBody = "### Static Analysis Summary\nold";
 const calls = { paginate: [], deleted: [], updated: [], created: [] };
+const mutationCounts = () => [calls.updated.length, calls.created.length, calls.deleted.length];
+const mutationsChanged = before => mutationCounts().some((count, index) => count !== before[index]);
 const codeqlListWorkflowRuns = async () => undefined;
 const checksListForRef = async () => undefined;
 const commentsList = async () => undefined;
+const association = (ref, number = 42) => ({number, base: {ref}});
+const jobRequests = [];
+const workflowRunsById = new Map();
+const attemptJobIdentities = [];
+const rememberWorkflowRuns = rows => {
+  for (const row of rows) workflowRunsById.set(row.id, {...row});
+  return rows;
+};
 const github = {
+  request: async (route, input) => {
+    if (route !== "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs") throw new Error("unexpected native request");
+    jobRequests.push(input);
+    if (input.per_page !== 100) throw new Error("candidate must use bounded jobs");
+    const selectedRun = workflowRunsById.get(input.run_id);
+    if (!selectedRun) throw new Error("candidate jobs must use the selected workflow run ID");
+    attemptJobIdentities.push({run_id: input.run_id, run_attempt: input.attempt_number,
+      head_sha: selectedRun.head_sha});
+    const fromAttempt = (row) => ({
+      ...row, run_id: input.run_id, run_attempt: input.attempt_number, head_sha: selectedRun.head_sha,
+      ...(["License Gate", "CodeQL Gate"].includes(row.name) ? {steps: row.steps ?? [
+        {name: row.name === "License Gate" ? "Verify ORT results" : "Enforce successful CodeQL analysis",
+          status: "completed", conclusion: row.conclusion},
+      ]} : {}),
+    });
+    if (input.run_id === 275) {
+      return {data: {total_count: 1, jobs: [fromAttempt({id: 2751,
+        name: "CodeQL Gate", status: "completed", conclusion: "success", steps: [
+          {name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "success"},
+          {name: "Enforce successful CodeQL analysis", status: "completed", conclusion: "skipped"},
+        ]})]}};
+    }
+    if (input.run_id === 270) {
+      return {data: {total_count: 1, jobs: [fromAttempt({id: 2701,
+        name: "github.event.action == 'edited' && 'PR Metadata Edit (CodeQL Gate)' || 'CodeQL Gate'",
+        status: "completed", conclusion: "skipped"})]}};
+    }
+    // Reuse the existing status fixtures as native jobs. Each callback reads them
+    // from this same selected-attempt response, not via a real head-check query.
+    const callCount = calls.paginate.length;
+    const fixtures = await github.paginate(checksListForRef, {ref: currentHeadSha, per_page: 100});
+    calls.paginate.splice(callCount);
+    let jobs = fixtures.filter(row => row.details_url.includes(`/runs/${input.run_id}/`)).map(fromAttempt);
+    if (input.attempt_number === 2) jobs = jobs.map(job => ({...job, id: job.id + 10000,
+      status: "in_progress", conclusion: null}));
+    return {data: {total_count: jobs.length, jobs}};
+  },
   rest: {
     pulls: { get: async () => {
       pullRequestReads += 1;
+      if (changeHeadDuringRun && pullRequestReads === 2) currentHeadSha = "e".repeat(40);
       if (changeBaseDuringRun && pullRequestReads === 2) currentBaseSha = "c".repeat(40);
-      return { data: { state: "open", head: { sha: currentHeadSha }, base: { sha: currentBaseSha, ref: currentBaseRef } } };
+      return { data: { state: "open", head: { sha: currentHeadSha, repo: { id: 123 }, ref: "feature" }, base: { sha: currentBaseSha, ref: currentBaseRef } } };
     } },
-    actions: { listWorkflowRuns: codeqlListWorkflowRuns },
+    actions: {
+      listWorkflowRuns: codeqlListWorkflowRuns,
+      getWorkflowRun: async ({run_id}) => {
+        const run = workflowRunsById.get(run_id);
+        if (run) return {data: {...run}};
+        throw new Error("unexpected current producer read " + run_id);
+      },
+    },
     checks: { listForRef: checksListForRef },
     issues: {
       listComments: commentsList,
@@ -116,7 +251,7 @@ const github = {
     calls.paginate.push({ method, input });
     if (method === codeqlListWorkflowRuns) {
       if (input.workflow_id === "codeql.yml") {
-        return [
+        const rows = [
           {
             id: 100,
             event: "pull_request",
@@ -138,6 +273,29 @@ const github = {
             conclusion: "failure",
           },
           {
+            // A later metadata-only edit run: its gate is skipped under a
+            // non-required name and must not mask the substantive failure.
+            id: 270,
+            event: "pull_request",
+            head_sha: headSha,
+            display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`,
+            created_at: "2026-09-20T12:00:00Z",
+            run_attempt: 1,
+            status: "completed",
+            conclusion: "skipped",
+          },
+          {
+            // The same-name preservation gate cannot mask the source failure.
+            id: 275,
+            event: "pull_request",
+            head_sha: headSha,
+            display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`,
+            created_at: "2026-09-20T15:00:00Z",
+            run_attempt: 1,
+            status: "completed",
+            conclusion: "success",
+          },
+          {
             id: 250,
             event: "pull_request",
             head_sha: headSha,
@@ -157,9 +315,10 @@ const github = {
             status: "completed",
             conclusion: "success",
           },
-        ];
+        ].map(row => ({...row, pull_requests: [association("develop", row.id === 250 ? 99 : 42)]}));
+        return rememberWorkflowRuns(rows);
       }
-      return [
+      return rememberWorkflowRuns([
         {
           id: 300,
           event: "pull_request",
@@ -169,8 +328,9 @@ const github = {
           run_attempt: 1,
           status: "completed",
           conclusion: "success",
+          pull_requests: [association("develop")],
         },
-      ];
+      ]);
     }
     if (method === checksListForRef) {
       return [
@@ -182,6 +342,16 @@ const github = {
           created_at: "2026-09-19T00:01:00Z",
           completed_at: "2026-09-19T00:02:00Z",
           details_url: "https://github.example/actions/runs/100/job/1001",
+        },
+        {
+          id: 2701,
+          // Initial checks precede the new metadata run; candidate jobs classify it later.
+          name: "Unrelated earlier snapshot",
+          status: "completed",
+          conclusion: "skipped",
+          created_at: "2026-09-20T12:00:01Z",
+          completed_at: "2026-09-20T12:00:01Z",
+          details_url: "https://github.example/actions/runs/270/job/2701",
         },
         {
           id: 2001,
@@ -222,6 +392,7 @@ const github = {
       ];
     }
     if (method === commentsList) {
+      if (changeHeadDuringComments) currentHeadSha = "9".repeat(40);
       return [
         ...Array.from({ length: 35 }, (_, index) => ({
           id: 10000 + index,
@@ -271,6 +442,7 @@ const context = {
       path: ".github/workflows/codeql.yml",
       head_sha: headSha,
       head_branch: "feature",
+      head_repository: { id: 123 },
       display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`,
       pull_requests: [{ number: 42 }],
     },
@@ -280,6 +452,7 @@ const core = { info: () => {} };
 const run = new Function("github", "context", "core", `return (async () => {\n${script}\n})()`);
 // Model the two serialized workflow_run callbacks against a persistent comment store.
 async function assertCompletionOrders() {
+  const advancedHeadSha = "f".repeat(40);
   const originalPaginate = github.paginate;
   const originalIssues = github.rest.issues;
   const originalTimeout = global.setTimeout;
@@ -311,34 +484,42 @@ async function assertCompletionOrders() {
         github.paginate = async (method, input) => {
           const rows = await originalPaginate(method, input);
           if (method === commentsList) return comments;
+          const requestedHead = method === codeqlListWorkflowRuns ? input.head_sha : input.ref;
+          const liveHead = requestedHead === advancedHeadSha;
+          const proofHead = liveHead ? advancedHeadSha : headSha;
+          const runOffset = (currentBaseSha === baseSha ? 0 : 1000) + (liveHead ? 2000 : 0);
           if (method === codeqlListWorkflowRuns) {
             if (!currentTuplePublished) return rows;
             const key = input.workflow_id === "codeql.yml" ? "codeql" : "license";
             if (!completed.has(key) && absentCounterpart) return [];
-            return rows.filter((row) => [100, 200, 300].includes(row.id)).map((row) => ({ ...row,
-              id: row.id + (currentBaseSha === baseSha ? 0 : 1000),
-              display_title: row.display_title.replace(`base-${baseSha}`, `base-${currentBaseSha}`),
+            return rememberWorkflowRuns(rows.filter((row) => [100, 200, 300].includes(row.id)).map((row) => ({ ...row,
+              id: row.id + runOffset,
+              head_sha: proofHead,
+              pull_requests: [association(currentBaseRef)],
+              display_title: row.display_title.replace(`base-${baseSha}`, `base-${currentBaseSha}`).replace(`head-${headSha}`, `head-${proofHead}`),
               status: completed.has(key) ? "completed" : "in_progress",
               conclusion: completed.has(key) ? "success" : null,
-            }));
+            })));
           }
           return rows.filter((row) => !absentCounterpart || completed.has(row.id === 3001 ? "license" : "codeql"))
             .map((row) => ({ ...row,
-              details_url: row.details_url.replace(/runs\/(\d+)/, (_, id) => `runs/${Number(id) + (currentBaseSha === baseSha ? 0 : 1000)}`),
+              id: row.id + runOffset,
+              details_url: row.details_url.replace(/runs\/(\d+)/, (_, id) => `runs/${Number(id) + runOffset}`),
               status: completed.has(row.id === 3001 ? "license" : "codeql") ? "completed" : "in_progress",
               conclusion: completed.has(row.id === 3001 ? "license" : "codeql")
-                ? (currentBaseSha !== baseSha && row.id === 2001 ? "failure" : "success") : null,
+                ? (!liveHead && currentBaseSha !== baseSha && row.id === 2001 ? "failure" : "success") : null,
             }));
         };
         const callback = async (key) => {
           const name = key === "codeql" ? "CodeQL Analysis" : "License Gate";
           Object.assign(context.payload.workflow_run, {
-            name, path: `.github/workflows/${key === "codeql" ? "codeql" : "license-scan"}.yml`,
+            name, path: `.github/workflows/${key === "codeql" ? "codeql" : "license-scan"}.yml@refs/pull/42/merge`,
             display_title: `${name} pr-42 base-${baseSha} head-${headSha}`,
           });
           calls.paginate.length = 0;
           await run(github, context, core);
-          if (calls.paginate.length !== 4) throw new Error("each callback must take exactly one snapshot of both producers, checks and comments");
+          const reads = comments[0]?.body.includes("checks passed") ? 5 : 3;
+          if (calls.paginate.length !== reads) throw new Error("producer selection should repeat only before publishing a pass");
         };
         await callback(first);
         if (creates !== 1 || updates !== 0 || comments.length !== 1 || !comments[0].body.includes("still running")) {
@@ -370,6 +551,26 @@ async function assertCompletionOrders() {
           await callback(counterpart);
           if (updates !== writes) throw new Error("older-base callback must not regress the current-base snapshot");
         }
+        // Both producer orders must recover current-head proof even if the
+        // final wake is an obsolete head and all current-head wakes coalesced.
+        currentHeadSha = advancedHeadSha;
+        const writesBeforeHeadAdvance = updates;
+        await callback(first);
+        if (updates !== writesBeforeHeadAdvance + 1 ||
+            !comments[0].body.includes(currentHeadSha)) {
+          throw new Error("older-head wake must publish new head identity in the existing comment");
+        }
+        if (!comments[0].body.includes("CodeQL gate: `success`") ||
+            !comments[0].body.includes("License gate: `success`") ||
+            !comments[0].body.includes("✅ Static analysis checks passed")) {
+          throw new Error("stale-head wake must publish both passing gates for the live head");
+        }
+        const writesAfterHeadAdvance = updates;
+        await callback(counterpart);
+        if (updates !== writesAfterHeadAdvance || creates !== 1 || comments.length !== 1) {
+          throw new Error("counterpart callback must leave the live-head summary unchanged");
+        }
+        currentHeadSha = headSha;
         currentBaseSha = "e".repeat(40);
         currentTuplePublished = false;
         await callback(first);
@@ -386,8 +587,550 @@ async function assertCompletionOrders() {
     global.setTimeout = originalTimeout;
   }
 }
+async function assertAttemptEvidencePinnedWhenLiveHeadAdvances() {
+  const originalPaginate = github.paginate;
+  const originalHead = currentHeadSha;
+  const originalBase = currentBaseSha;
+  const originalBaseRef = currentBaseRef;
+  const advancedHeadSha = "f".repeat(40);
+  currentHeadSha = headSha;
+  currentBaseSha = baseSha;
+  currentBaseRef = "develop";
+  pullRequestReads = 0;
+  changeBaseDuringRun = false;
+  changeHeadDuringRun = false;
+  Object.assign(context.payload.workflow_run, {
+    name: "CodeQL Analysis", path: ".github/workflows/codeql.yml",
+    head_sha: headSha, display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`,
+    head_repository: {id: 123}, head_branch: "feature", pull_requests: [{number: 42}],
+  });
+  const requestStart = attemptJobIdentities.length;
+  const writesBefore = mutationCounts();
+  let headAdvancedAfterSelection = false;
+  const listedAttempts = new Map();
+  const producerQueries = new Map();
+  github.paginate = async (method, input) => {
+    const rows = await originalPaginate(method, input);
+    if (method === codeqlListWorkflowRuns) {
+      const requests = producerQueries.get(input.workflow_id) ?? [];
+      requests.push(input.head_sha);
+      producerQueries.set(input.workflow_id, requests);
+      if (input.head_sha === advancedHeadSha) return [];
+      for (const {id, run_attempt} of rows) listedAttempts.set(id, run_attempt);
+    }
+    if (method === codeqlListWorkflowRuns && input.workflow_id === "codeql.yml" && !headAdvancedAfterSelection) {
+      headAdvancedAfterSelection = true;
+      currentHeadSha = advancedHeadSha;
+    }
+    return rows;
+  };
+  try {
+    await run(github, context, core);
+    const reads = attemptJobIdentities.slice(requestStart);
+    for (const workflow of ["codeql.yml", "license-scan.yml"]) {
+      const requestedHeads = producerQueries.get(workflow) ?? [];
+      if (requestedHeads.length === 0 || requestedHeads.some(sha => sha !== headSha)) {
+        throw new Error(`Producer queries for ${workflow} must use the captured head after a live head change`);
+      }
+    }
+    if (!headAdvancedAfterSelection || reads.length === 0 ||
+        reads.some(({head_sha}) => head_sha !== headSha)) {
+      throw new Error("native job evidence must stay bound to each selected run ID/attempt after the live PR head advances");
+    }
+    if (jobRequests.slice(-reads.length).some(({run_id, attempt_number}) =>
+      listedAttempts.get(run_id) !== attempt_number)) {
+      throw new Error("native jobs request must use each selected producer's run ID and attempt");
+    }
+    if (mutationsChanged(writesBefore)) {
+      throw new Error("an advanced live head must prevent publication from the earlier native evidence snapshot");
+    }
+  } finally {
+    github.paginate = originalPaginate;
+    currentHeadSha = originalHead;
+    currentBaseSha = originalBase;
+    currentBaseRef = originalBaseRef;
+    pullRequestReads = 0;
+  }
+}
+async function assertAssociationSelection() {
+  const source = context.payload.workflow_run;
+  Object.assign(source, { name: "CodeQL Analysis", path: ".github/workflows/codeql.yml",
+    display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}` });
+  const reset = () => {
+    pullRequestReads = 0;
+    for (const values of Object.values(calls)) values.length = 0;
+  };
+  for (const associations of [[{number: 99}, {number: 42}], [{number: 42}, {number: 99}]]) {
+    reset(); source.pull_requests = associations;
+    await run(github, context, core);
+    const commentLookups = calls.paginate.filter(({method}) => method === commentsList);
+    if (calls.updated.length !== 1 || commentLookups.length !== 1 || commentLookups[0].input.issue_number !== 42) {
+      throw new Error("unrelated associations must not hide or redirect canonical PR publication");
+    }
+  }
+  for (const associations of [[{number: 42}, {number: 42}], [{number: 99}], null]) {
+    reset(); source.pull_requests = associations;
+    await run(github, context, core);
+    if (pullRequestReads || calls.paginate.length || calls.created.length || calls.updated.length || calls.deleted.length) {
+      throw new Error("missing or duplicate matching association must fail before provider reads");
+    }
+  }
+  source.pull_requests = [{number: 42}];
+  for (const [repository, branch] of [[null, "feature"], [{id: 0}, "feature"], [{id: 123}, ""], [{id: 456}, "feature"], [{id: 123}, "different"]]) {
+    reset(); source.head_repository = repository; source.head_branch = branch;
+    await run(github, context, core);
+    if (calls.paginate.length || calls.created.length || calls.updated.length || calls.deleted.length) {
+      throw new Error("invalid or mismatched concurrency identity must not publish");
+    }
+  }
+  source.head_repository = {id: 123}; source.head_branch = "feature";
+}
+async function assertProducerSelectionRace() {
+  const originalPaginate = github.paginate;
+  const comments = [{id: 42, user: {login: "github-actions[bot]"},
+    body: "### Static Analysis Summary\nchecks are still running"}];
+  const originalRequest = github.request;
+  for (const movedWorkflow of ["codeql.yml", "license-scan.yml", "gate-evidence"]) {
+    let readComments = false;
+    currentHeadSha = headSha; currentBaseSha = baseSha;
+    currentBaseRef = "develop"; pullRequestReads = 0;
+    Object.assign(context.payload.workflow_run, {
+      name: "CodeQL Analysis", path: ".github/workflows/codeql.yml", head_sha: headSha,
+      display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`,
+      head_repository: {id: 123}, head_branch: "feature", pull_requests: [{number: 42}],
+    });
+    github.paginate = async (method, input) => {
+      const rows = await originalPaginate(method, input);
+      if (method === commentsList) {
+        readComments = true;
+        return comments;
+      }
+      if (method === checksListForRef) {
+        return rows.map(row => ({...row, status: "completed", conclusion: "success"}));
+      }
+      if (method !== codeqlListWorkflowRuns) return rows;
+      const selected = rows.filter(row => row.id === (input.workflow_id === "codeql.yml" ? 200 : 300));
+      if (!readComments || input.workflow_id !== movedWorkflow) return selected;
+      return rememberWorkflowRuns([...selected, {...selected[0], id: 999, created_at: "2026-09-24T00:00:00Z",
+        status: "in_progress", conclusion: null}]);
+    };
+    let lostEnforcementRead = false;
+    github.request = async (route, input) => {
+      const result = await originalRequest(route, input);
+      if (movedWorkflow !== "gate-evidence" || !readComments || input.run_id !== 200) return result;
+      lostEnforcementRead = true;
+      const jobs = result.data.jobs.map(job => job.name === "CodeQL Gate" ? {...job, steps: []} : job);
+      return {data: {...result.data, jobs}};
+    };
+    const before = mutationCounts();
+    try { await run(github, context, core); } finally {
+      github.paginate = originalPaginate;
+      github.request = originalRequest;
+    }
+    if (!readComments || mutationsChanged(before)) throw new Error("changed producer evidence must preserve the pending comment");
+    if (movedWorkflow === "gate-evidence") {
+      if (!lostEnforcementRead) throw new Error("the same attempt's latest gate result was not checked");
+    } else if (!jobRequests.some(({run_id}) => run_id === 999)) {
+      throw new Error("the newer producer was not checked");
+    }
+    jobRequests.length = 0;
+  }
+}
+async function assertFinalProducerRead() {
+  const originalPaginate = github.paginate;
+  const originalRequest = github.request;
+  const originalGetRun = github.rest.actions.getWorkflowRun;
+  for (const change of ["codeql-attempt", "license-outcome", "stable"]) {
+    currentHeadSha = headSha; currentBaseSha = baseSha;
+    currentBaseRef = "develop"; pullRequestReads = 0;
+    let licenseJobReads = 0;
+    const directReads = [];
+    github.paginate = async (method, input) => {
+      const rows = await originalPaginate(method, input);
+      if (method === checksListForRef) {
+        return rows.map(row => ({...row, status: "completed", conclusion: "success"}));
+      }
+      if (method !== codeqlListWorkflowRuns) return rows;
+      return rows.filter(row => row.id === (input.workflow_id === "codeql.yml" ? 200 : 300));
+    };
+    github.request = async (route, input) => {
+      const result = await originalRequest(route, input);
+      if (input.run_id === 300) licenseJobReads += 1;
+      return result;
+    };
+    github.rest.actions.getWorkflowRun = async (input) => {
+      const result = await originalGetRun(input);
+      if (licenseJobReads !== 2) throw new Error("direct read preceded the final producer selections");
+      const {run_id: id} = input;
+      directReads.push(id);
+      if (change === "codeql-attempt" && id === 200) return {data: {...result.data, run_attempt: 2}};
+      if (change === "license-outcome" && id === 300) {
+        return {data: {...result.data, status: "in_progress", conclusion: null}};
+      }
+      return result;
+    };
+    const before = mutationCounts();
+    try {
+      await run(github, context, core);
+    } finally {
+      github.paginate = originalPaginate;
+      github.request = originalRequest;
+      github.rest.actions.getWorkflowRun = originalGetRun;
+    }
+    if (change === "stable") {
+      const published = [...calls.updated.slice(before[0]), ...calls.created.slice(before[1])];
+      if (directReads.join(",") !== "200,300" || published.length !== 1 ||
+          !published[0].body.includes("Static analysis checks passed")) {
+        throw new Error("a stable passing selection must recheck both attempts and publish");
+      }
+    } else {
+      const changedId = change === "codeql-attempt" ? 200 : 300;
+      if (!directReads.includes(changedId) || mutationsChanged(before)) {
+        throw new Error("changed producer attempt or outcome must preserve the existing summary");
+      }
+    }
+  }
+}
+async function assertLicenseSetupFailureClassification() {
+  const originalPaginate = github.paginate;
+  const originalRequest = github.request;
+  for (const changesConclusion of ["skipped", "success", "failure"]) {
+    currentHeadSha = headSha; currentBaseSha = baseSha;
+    currentBaseRef = "develop"; pullRequestReads = 0;
+    github.paginate = async (method, input) => {
+      const rows = await originalPaginate(method, input);
+      if (method !== codeqlListWorkflowRuns || input.workflow_id !== "license-scan.yml") return rows;
+      const prior = rows.find(row => row.id === 300);
+      return rememberWorkflowRuns([
+        ...rows,
+        {...prior, id: 380, created_at: "2026-09-23T00:00:00Z", conclusion: "failure"},
+      ]);
+    };
+    github.request = async (route, input) => {
+      if (input.run_id !== 380) return originalRequest(route, input);
+      jobRequests.push(input);
+      const common = {run_id: input.run_id, run_attempt: input.attempt_number,
+        head_sha: headSha, status: "completed"};
+      return {data: {total_count: 2, jobs: [
+        {...common, id: 3801, name: "Detect License-Relevant Changes", conclusion: changesConclusion},
+        {...common, id: 3802, name: "License Gate", conclusion: "failure", steps: [
+          {name: "Harden runner", status: "completed", conclusion: "failure"},
+          {name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "skipped"},
+          {name: "Verify ORT results", status: "completed", conclusion: "skipped"},
+        ]},
+      ]}};
+    };
+    const start = calls.updated.length;
+    const jobsStart = jobRequests.length;
+    try { await run(github, context, core); } finally {
+      github.paginate = originalPaginate;
+      github.request = originalRequest;
+    }
+    const expected = changesConclusion === "skipped" ? "success" : "failure";
+    if (!jobRequests.slice(jobsStart).some(({run_id}) => run_id === 380) ||
+        !calls.updated.slice(start).some(({body}) => body.includes("License gate: `" + expected + "`"))) {
+      throw new Error("License setup failure misclassified with change job " + changesConclusion);
+    }
+  }
+}
+
+async function assertCodeqlSetupFailureClassification() {
+  const originalPaginate = github.paginate;
+  const originalRequest = github.request;
+  currentHeadSha = headSha; currentBaseSha = baseSha; currentBaseRef = "develop";
+  pullRequestReads = 0;
+  try {
+    for (const analysisConclusion of [null, "success", "failure"]) {
+      const metadataOnly = analysisConclusion === null;
+      const setupStep = metadataOnly ? "Check out required-gate action" : "Harden runner";
+      github.paginate = async (method, input) => {
+        const rows = await originalPaginate(method, input);
+        if (method !== codeqlListWorkflowRuns || input.workflow_id !== "codeql.yml") return rows;
+        const priorSuccess = rows.find(row => row.id === 100);
+        const failedCheckout = rows.find(row => row.id === 200);
+        return rememberWorkflowRuns([
+          priorSuccess,
+          {...failedCheckout, id: 380, created_at: "2026-09-23T00:00:00Z", conclusion: "failure"},
+        ]);
+      };
+      github.request = async (route, input) => {
+        if (input.run_id !== 380) return originalRequest(route, input);
+        jobRequests.push(input);
+        const common = {run_id: 380, run_attempt: input.attempt_number, head_sha: headSha,
+          status: "completed"};
+        const jobs = [
+          {...common, id: 3801, name: "Detect CodeQL-Relevant Changes",
+            conclusion: metadataOnly ? "skipped" : "success"},
+          {...common, id: 3802, name: "CodeQL Gate", conclusion: "failure", steps: [
+            {name: setupStep, status: "completed", conclusion: "failure"},
+            {name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "skipped"},
+            {name: "Enforce successful CodeQL analysis", status: "completed", conclusion: "skipped"},
+          ]},
+        ];
+        if (!metadataOnly) {
+          jobs.push(
+            {...common, id: 3803, name: "CodeQL Analysis (java)", conclusion: analysisConclusion},
+            {...common, id: 3804, name: "CodeQL Analysis (javascript-typescript)", conclusion: analysisConclusion},
+          );
+        }
+        return {data: {total_count: jobs.length, jobs}};
+      };
+      const start = calls.updated.length;
+      const jobsStart = jobRequests.length;
+      await run(github, context, core);
+      const body = calls.updated.slice(start).at(-1)?.body ?? "";
+      if (!jobRequests.slice(jobsStart).some(({run_id}) => run_id === 380)) {
+        throw new Error("CodeQL setup failure was not observed in the native jobs");
+      }
+      if (metadataOnly) {
+        if (!body.includes("CodeQL gate: `success`") ||
+            !body.includes("CodeQL analysis (java): `success`") ||
+            !body.includes("CodeQL analysis (javascript-typescript): `skipped`")) {
+          throw new Error("metadata-only checkout failure replaced earlier substantive CodeQL evidence");
+        }
+      } else if (!body.includes("CodeQL gate: `failure`") ||
+                 !body.includes("CodeQL analysis (java): `" + analysisConclusion + "`") ||
+                 !body.includes("CodeQL analysis (javascript-typescript): `" + analysisConclusion + "`") ||
+                 body.includes("checks passed")) {
+        throw new Error("skipped enforcement hid a substantive CodeQL gate or its selected analysis results");
+      }
+    }
+  } finally {
+    github.paginate = originalPaginate;
+    github.request = originalRequest;
+    currentHeadSha = headSha; currentBaseSha = baseSha; currentBaseRef = "develop";
+    pullRequestReads = 0;
+  }
+}
+
+async function assertUnclassifiedCancellation() {
+  const originalPaginate = github.paginate;
+  currentHeadSha = headSha; currentBaseSha = baseSha;
+  currentBaseRef = "develop"; pullRequestReads = 0;
+  github.paginate = async (method, input) => {
+    const rows = await originalPaginate(method, input);
+    if (method !== codeqlListWorkflowRuns || input.workflow_id !== "codeql.yml") return rows;
+    const prior = rows.find(row => row.id === 200);
+    return rememberWorkflowRuns([
+      ...rows,
+      {...prior, id: 280, created_at: "2026-09-23T00:00:00Z", status: "completed", conclusion: "cancelled"},
+    ]);
+  };
+  const start = calls.updated.length;
+  try { await run(github, context, core); } finally { github.paginate = originalPaginate; }
+  if (!jobRequests.some(({run_id}) => run_id === 280) ||
+      !calls.updated.slice(start).some(({body}) => body.includes("CodeQL gate: `cancelled`"))) {
+    throw new Error("a native cancellation with no jobs must not be presumed metadata");
+  }
+}
+
+async function assertExactBaseRef() {
+  const originalPaginate = github.paginate;
+  const originalActions = github.rest.actions;
+  const originalRequest = github.request;
+  currentBaseRef = "main";
+  try {
+    const pendingStart = calls.updated.length;
+    const jobStart = jobRequests.length;
+    await run(github, context, core);
+    if (jobRequests.length !== jobStart ||
+        !calls.updated.slice(pendingStart).some(({body}) =>
+          body.includes("CodeQL gate: `pending`") && body.includes("License gate: `pending`"))) {
+      throw new Error("same-SHA retarget must not read or reuse old-ref jobs");
+    }
+
+    github.paginate = async (method, input) => {
+      const rows = await originalPaginate(method, input);
+      if (method !== codeqlListWorkflowRuns) return rows;
+      return rememberWorkflowRuns(rows.map(row => [200, 300].includes(row.id)
+        ? {...row, conclusion: "success", pull_requests: [association("develop", 99), association("main")]} : row));
+    };
+    github.request = async (route, input) => {
+      const {data} = await originalRequest(route, input);
+      return {data: {...data, jobs: data.jobs.map(job => ({...job, conclusion: "success",
+        steps: job.steps?.map(step => ({...step, conclusion: "success"})),
+      }))}};
+    };
+    const passStart = calls.updated.length;
+    await run(github, context, core);
+    if (!calls.updated.slice(passStart).some(({body}) => body.includes("checks passed"))) {
+      throw new Error("valid producers for the new base ref must qualify after a same-SHA retarget");
+    }
+
+    const beforeReadback = mutationCounts();
+    github.rest.actions = {...originalActions, getWorkflowRun: async input => {
+      const {data} = await originalActions.getWorkflowRun(input);
+      return {data: {...data, pull_requests: [association("develop")]}};
+    }};
+    await run(github, context, core);
+    if (mutationsChanged(beforeReadback)) throw new Error("producer ref changes on readback must prevent publication");
+
+    github.rest.actions = {...originalActions, getWorkflowRun: async input => {
+      const result = await originalActions.getWorkflowRun(input);
+      currentBaseRef = "develop";
+      return result;
+    }};
+    const beforeLiveChange = mutationCounts();
+    await run(github, context, core);
+    if (mutationsChanged(beforeLiveChange)) throw new Error("a live ref change at the same base SHA must prevent publication");
+
+    github.rest.actions = originalActions;
+    const exactPaginate = github.paginate;
+    currentBaseRef = "main";
+    for (const pull_requests of [[], [{number: 42}], [association("main"), association("develop")]]) {
+      github.paginate = async (method, input) => {
+        const rows = await exactPaginate(method, input);
+        return method === codeqlListWorkflowRuns
+          ? rows.map(row => row.id === 270 ? {...row, pull_requests} : row) : rows;
+      };
+      const before = mutationCounts();
+      let refused = false;
+      try { await run(github, context, core); } catch (error) {
+        if (!error.message.includes("base ref is unavailable")) throw error;
+        refused = true;
+      }
+      if (!refused || mutationsChanged(before)) {
+        throw new Error("a newer candidate with no exact ref must prevent falling back to an older pass");
+      }
+    }
+  } finally {
+    currentBaseRef = "develop";
+    github.paginate = originalPaginate;
+    github.rest.actions = originalActions;
+    github.request = originalRequest;
+  }
+}
+async function assertSkippedRequiredGates() {
+  const originalRequest = github.request;
+  const originalPaginate = github.paginate;
+  try {
+    for (const [jobName, label] of [["CodeQL Gate", "CodeQL gate"], ["License Gate", "License gate"]]) {
+      github.paginate = async (method, input) => {
+        const rows = await originalPaginate(method, input);
+        return method === codeqlListWorkflowRuns
+          ? rememberWorkflowRuns(rows.map(row => row.id === 200 ? {...row, conclusion: "success"} : row)) : rows;
+      };
+      github.request = async (route, input) => {
+        const {data} = await originalRequest(route, input);
+        if (![200, 300].includes(input.run_id)) return {data};
+        return {data: {...data, jobs: data.jobs.map(job => {
+          const conclusion = [jobName, "CodeQL Analysis (java)"].includes(job.name) ? "skipped" : "success";
+          return {...job, conclusion, steps: job.steps?.map(step => ({...step, conclusion}))};
+        })}};
+      };
+      const start = calls.updated.length;
+      await run(github, context, core);
+      if (!calls.updated.slice(start).some(({body}) => body.includes(label + ": `unavailable`") &&
+          body.includes("Static analysis evidence is unavailable") &&
+          body.includes("CodeQL analysis (java): `skipped`"))) {
+        throw new Error("a skipped required gate must be unavailable while a skipped detail remains skipped");
+      }
+    }
+  } finally {
+    github.request = originalRequest;
+    github.paginate = originalPaginate;
+  }
+}
+async function assertDuplicateDeletionRecovery() {
+  const originalPaginate = github.paginate;
+  const originalIssues = github.rest.issues;
+  const comments = [
+    {id: 2, user: {login: "github-actions[bot]"}, body: "### Static Analysis Summary\nold"},
+    {id: 3, user: {login: "github-actions[bot]"}, body: "### Static Analysis Summary\nduplicate"},
+  ];
+  const writes = {updated: [], created: [], deleted: []};
+  const deletionFailure = {status: 500};
+  let failDeletion = true;
+  github.paginate = async (method, input) => method === commentsList
+    ? comments.map(comment => ({...comment})) : originalPaginate(method, input);
+  github.rest.issues = {
+    ...originalIssues,
+    updateComment: async input => {
+      writes.updated.push(input);
+      const comment = comments.find(({id}) => id === input.comment_id);
+      if (!comment) throw new Error("recovery must update the stored canonical comment");
+      comment.body = input.body;
+    },
+    createComment: async input => {
+      writes.created.push(input);
+      comments.push({id: 4, user: {login: "github-actions[bot]"}, body: input.body});
+    },
+    deleteComment: async ({comment_id}) => {
+      writes.deleted.push(comment_id);
+      if (failDeletion) throw deletionFailure;
+      const index = comments.findIndex(({id}) => id === comment_id);
+      if (index === -1) throw new Error("recovery must delete the stored duplicate");
+      comments.splice(index, 1);
+    },
+  };
+  try {
+    let failed = false;
+    try { await run(github, context, core); } catch (error) {
+      if (error !== deletionFailure) throw error;
+      failed = true;
+    }
+    if (!failed || writes.updated.length !== 1 || writes.updated[0].comment_id !== 2 ||
+        writes.created.length || writes.deleted.length !== 1 || writes.deleted[0] !== 3 ||
+        comments.length !== 2 || comments[0].body !== writes.updated[0].body ||
+        !comments[0].body.includes("checks failed")) {
+      throw new Error("duplicate deletion failure must propagate after persisting the canonical update");
+    }
+    const publishedBody = comments[0].body;
+    failDeletion = false;
+    await run(github, context, core);
+    if (writes.updated.length !== 1 || writes.created.length ||
+        writes.deleted.length !== 2 || writes.deleted[1] !== 3 ||
+        comments.length !== 1 || comments[0].id !== 2 || comments[0].body !== publishedBody) {
+      throw new Error("later callback must finish duplicate deletion without republishing the canonical summary");
+    }
+  } finally {
+    github.paginate = originalPaginate;
+    github.rest.issues = originalIssues;
+  }
+}
+async function assertInterruptedRecovery() {
+  const originalPaginate = github.paginate;
+  const reset = () => {
+    currentHeadSha = headSha; currentBaseSha = baseSha; pullRequestReads = 0;
+    Object.assign(context.payload.workflow_run, {
+      name: "CodeQL Analysis", path: ".github/workflows/codeql.yml", head_sha: headSha,
+      display_title: `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`,
+    });
+    for (const values of Object.values(calls)) values.length = 0;
+  };
+  reset();
+  changeHeadDuringRun = true;
+  await run(github, context, core);
+  if (calls.updated.length || calls.created.length || calls.deleted.length) {
+    throw new Error("head movement during reconciliation must not write stale proof");
+  }
+  changeHeadDuringRun = false;
+  reset();
+  changeHeadDuringComments = true;
+  await run(github, context, core);
+  changeHeadDuringComments = false;
+  if (calls.updated.length || calls.created.length || calls.deleted.length) {
+    throw new Error("head movement while listing comments must not write stale proof");
+  }
+  reset();
+  github.paginate = async () => { throw new Error("provider interrupted"); };
+  let failed = false;
+  try { await run(github, context, core); } catch (error) {
+    if (error.message !== "provider interrupted") throw error;
+    failed = true;
+  } finally { github.paginate = originalPaginate; }
+  if (!failed || calls.updated.length || calls.created.length || calls.deleted.length) {
+    throw new Error("failed snapshot must propagate without publication");
+  }
+  // A retained/pending callback or explicit rerun can recover; no false success
+  // or automatic retry is invented when the provider is unavailable.
+  await run(github, context, core);
+  if (calls.updated.length !== 1 || !calls.updated[0].body.includes("checks failed")) {
+    throw new Error("later callback must recover after interrupted reconciliation");
+  }
+}
 run(github, context, core).then(async () => {
-  if (calls.paginate.length !== 4) throw new Error(`expected four paginated calls, got ${calls.paginate.length}`);
+  if (calls.paginate.length !== 3) throw new Error(`expected three paginated calls, got ${calls.paginate.length}`);
   if (!calls.paginate.every(({ input }) => input.per_page === 100)) throw new Error("all API listings must request page size 100");
   if (calls.updated.length !== 1 || calls.updated[0].comment_id !== 2) throw new Error("oldest bot summary was not updated");
   if (calls.deleted.length !== 1 || calls.deleted[0] !== 3) throw new Error("only the later duplicate should be deleted");
@@ -397,35 +1140,36 @@ run(github, context, core).then(async () => {
   const canonicalBody = calls.updated[0].body;
   context.payload.workflow_run.name = "Forged workflow name";
   await run(github, context, core);
-  if (calls.paginate.length !== 4 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
+  if (calls.paginate.length !== 3 || calls.updated.length !== 1 || calls.created.length !== 0 || calls.deleted.length !== 1) {
     throw new Error("unrelated source names must not query runs or alter comments");
   }
   context.payload.workflow_run.name = "CodeQL Analysis";
-  currentHeadSha = "d".repeat(40);
+  context.payload.workflow_run.head_sha = "invalid";
   return run(github, context, core).then(() => {
-    if (calls.paginate.length !== 4 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
-      throw new Error("superseded source head should not query runs or alter comments");
+    if (calls.paginate.length !== 3 || calls.updated.length !== 1 || calls.created.length !== 0 || calls.deleted.length !== 1) {
+      throw new Error("malformed source head should not query runs or alter comments");
     }
+    context.payload.workflow_run.head_sha = headSha;
     currentHeadSha = headSha;
     currentBaseSha = baseSha;
     pullRequestReads = 0;
     context.payload.workflow_run.display_title = `CodeQL Analysis pr-42 base-invalid head-${headSha}`;
     return run(github, context, core).then(() => {
-      if (calls.paginate.length !== 4 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
+      if (calls.paginate.length !== 3 || calls.updated.length !== 1 || calls.created.length !== 0 || calls.deleted.length !== 1) {
         throw new Error("source run with a malformed canonical title must not query runs or alter comments");
       }
       context.payload.workflow_run.display_title = `CodeQL Analysis pr-42 base-${baseSha} head-${headSha}`;
       context.payload.workflow_run.path = ".github/workflows/unrelated.yml";
       return run(github, context, core).then(() => {
-        if (calls.paginate.length !== 4 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
+        if (calls.paginate.length !== 3 || calls.updated.length !== 1 || calls.created.length !== 0 || calls.deleted.length !== 1) {
           throw new Error("an unrelated source workflow must not query runs or alter comments");
         }
         context.payload.workflow_run.path = ".github/workflows/codeql.yml";
         pullRequestReads = 0;
         changeBaseDuringRun = true;
         return run(github, context, core).then(() => {
-          if (calls.paginate.length !== 7 || calls.updated.length !== 1 || calls.deleted.length !== 1) {
-            throw new Error("base changes during summarization must not query or alter comments");
+          if (calls.paginate.length !== 6 || calls.updated.length !== 1 || calls.created.length !== 0 || calls.deleted.length !== 1) {
+            throw new Error("base changes during summarization must not alter comments");
           }
           currentHeadSha = headSha;
           currentBaseSha = baseSha;
@@ -458,9 +1202,212 @@ run(github, context, core).then(async () => {
             return run(github, context, core).then(
               () => { throw new Error("non-404 duplicate deletion errors must propagate"); },
               async (error) => {
-                if (error?.status !== 500) throw error;
-                deleteStatus = null;
-                await assertCompletionOrders();
+                 if (error?.status !== 500) throw error;
+                 deleteStatus = null;
+                 await assertDuplicateDeletionRecovery();
+                 await assertCompletionOrders();
+                await assertAttemptEvidencePinnedWhenLiveHeadAdvances();
+                await assertProducerSelectionRace();
+                await assertFinalProducerRead();
+                await assertLicenseSetupFailureClassification();
+                await assertCodeqlSetupFailureClassification();
+                await assertUnclassifiedCancellation();
+                await assertExactBaseRef();
+                await assertSkippedRequiredGates();
+                await assertInterruptedRecovery();
+                await assertAssociationSelection();
+                if (!jobRequests.some(input => input.run_id === 270)) throw new Error("metadata race was not classified from candidate jobs");
+                const savedRequest = github.request;
+                const savedPaginate = github.paginate;
+                github.paginate = async (method, input) => {
+                  const rows = await savedPaginate(method, input);
+                  return method === codeqlListWorkflowRuns && input.workflow_id === "codeql.yml"
+                    ? rememberWorkflowRuns(rows.map(row =>
+                      row.id === 200 ? {...row, run_attempt: 2, status: "in_progress", conclusion: null} : row))
+                    : rows;
+                };
+                const rerunStart = calls.updated.length;
+                await run(github, context, core);
+                const rerunWrites = calls.updated.slice(rerunStart);
+                github.paginate = savedPaginate;
+                if (!jobRequests.some(input => input.run_id === 200 && input.attempt_number === 2) ||
+                    !rerunWrites.some(row => row.body.includes("CodeQL gate: \`in_progress\`")) ||
+                    rerunWrites.some(row => row.body.includes("checks passed"))) {
+                  throw new Error("a prior attempt's status cannot replace the selected running rerun");
+                }
+                github.paginate = async (method, input) => {
+                  const rows = await savedPaginate(method, input);
+                  return method === codeqlListWorkflowRuns && input.workflow_id === "codeql.yml"
+                    ? rememberWorkflowRuns(rows.map(row => row.id === 270 ? {...row, conclusion: "startup_failure"} : row))
+                    : rows;
+                };
+                const rawNameStart = calls.updated.length;
+                await run(github, context, core);
+                if (!calls.updated.slice(rawNameStart).some(row => row.body.includes("CodeQL gate: \`startup_failure\`"))) {
+                  throw new Error("a terminal workflow failure with a raw skipped gate name must remain visible");
+                }
+                github.paginate = savedPaginate;
+                github.request = async (route, input) => {
+                  if (input.run_id !== 200) return savedRequest(route, input);
+                  const job = (id, name) => ({id, name, run_id: 200, run_attempt: 2, head_sha: currentHeadSha,
+                    status: "completed", conclusion: "success",
+                    steps: name === "CodeQL Gate" ? [
+                      {name: "Enforce successful CodeQL analysis", status: "completed", conclusion: "success"},
+                    ] : [],
+                  });
+                  return {data: {total_count: 2, jobs: [job(20021, "CodeQL Gate"), job(20022, "CodeQL Analysis (javascript-typescript)")]}};
+                };
+                github.paginate = async (method, input) => {
+                  const rows = await savedPaginate(method, input);
+                  return method === codeqlListWorkflowRuns && input.workflow_id === "codeql.yml"
+                    ? rememberWorkflowRuns(rows.map(row => row.id === 200 ? {...row, run_attempt: 2, conclusion: "success"} : row))
+                    : rows;
+                };
+                const partialStart = calls.updated.length;
+                await run(github, context, core);
+                if (!calls.updated.slice(partialStart).some(row => row.body.includes("CodeQL analysis (java): \`unavailable\`") &&
+                    row.body.includes("CodeQL analysis (javascript-typescript): \`success\`"))) {
+                  throw new Error("a partial rerun cannot report an unobserved language as skipped");
+                }
+                github.paginate = savedPaginate;
+                github.request = async (route, input) => {
+                  if (input.run_id !== 270) return savedRequest(route, input);
+                  return {data: {total_count: 1, jobs: [{
+                    id: 2701, run_id: input.run_id, run_attempt: input.attempt_number,
+                    head_sha: currentHeadSha, name: "Unrelated job",
+                    status: "completed", conclusion: "success",
+                  }]}};
+                };
+                for (const [status, conclusion, shown, headline] of [
+                  ["in_progress", null, "in_progress", "still running"],
+                  ["completed", "success", "unavailable", "evidence is unavailable"],
+                  ["completed", "skipped", "unavailable", "evidence is unavailable"],
+                  ["completed", null, "unavailable", "evidence is unavailable"],
+                  ...["failure", "cancelled", "timed_out", "action_required", "startup_failure"]
+                    .map(value => ["completed", value, value, "checks failed"]),
+                ]) {
+                  github.paginate = async (method, input) => {
+                    const rows = await savedPaginate(method, input);
+                    return method === codeqlListWorkflowRuns && input.workflow_id === "codeql.yml"
+                      ? rememberWorkflowRuns(rows.map(row => row.id === 270 ? {...row, status, conclusion} : row))
+                      : rows;
+                  };
+                  const start = calls.updated.length;
+                  await run(github, context, core);
+                  const writes = calls.updated.slice(start);
+                  if (!writes.some(row => row.body.includes("CodeQL gate: \`" + shown + "\`") && row.body.includes(headline)) ||
+                      writes.some(row => row.body.includes("checks passed"))) {
+                    throw new Error(`no-gate candidate ${status}/${conclusion} must display ${shown} and ${headline}`);
+                  }
+                  if (status === "completed" && ["startup_failure", "failure"].includes(conclusion)) {
+                    const unavailable = String.fromCharCode(96) + "unavailable" + String.fromCharCode(96);
+                    if (!writes.some(row =>
+                      row.body.includes("CodeQL analysis (java): " + unavailable) &&
+                      row.body.includes("CodeQL analysis (javascript-typescript): " + unavailable))) {
+                      throw new Error("missing CodeQL language jobs on " + conclusion + " must display unavailable");
+                    }
+                  }
+                }
+                github.paginate = savedPaginate;
+                for (const nonterminal of ["requested", "waiting"]) {
+                  github.request = async (route, input) => {
+                    const response = await savedRequest(route, input);
+                    if (input.run_id === 200) {
+                      const gate = response.data.jobs.find(job => job.name === "CodeQL Gate");
+                      gate.status = nonterminal;
+                      gate.conclusion = null;
+                    }
+                    return response;
+                  };
+                  const requestedStart = calls.updated.length;
+                  await run(github, context, core);
+                  if (!calls.updated.slice(requestedStart).some(row =>
+                      row.body.includes("Static analysis checks are still running") &&
+                      row.body.includes("⏳ CodeQL gate: `" + nonterminal + "`")) ||
+                      calls.updated.slice(requestedStart).some(row => row.body.includes("checks passed"))) {
+                    throw new Error("a " + nonterminal + " exact gate must display as pending");
+                  }
+                }
+                github.request = async (route, input) => {
+                  const response = await savedRequest(route, input);
+                  if (input.run_id === 200) {
+                    const gate = response.data.jobs.find(job => job.name === "CodeQL Gate");
+                    gate.conclusion = "stale";
+                  }
+                  return response;
+                };
+                const staleGateStart = calls.updated.length;
+                await run(github, context, core);
+                const staleGateWrites = calls.updated.slice(staleGateStart);
+                if (!staleGateWrites.some(row => row.body.includes("evidence is unavailable") &&
+                    row.body.includes("CodeQL gate: `unavailable`")) ||
+                    staleGateWrites.some(row => row.body.includes("checks passed"))) {
+                  throw new Error("a completed stale gate cannot report a passing summary");
+                }
+                github.request = savedRequest;
+                const savedActions = github.rest.actions;
+                const staleBefore = mutationCounts();
+                github.rest.actions = {...savedActions, getWorkflowRun: async (input) => {
+                  const {data} = await savedActions.getWorkflowRun(input);
+                  return {data: {...data, run_attempt: data.run_attempt + 1}};
+                }};
+                try { await run(github, context, core); }
+                finally { github.rest.actions = savedActions; }
+                if (mutationsChanged(staleBefore)) {
+                  throw new Error("a producer rerun after evidence read must not mutate comments");
+                }
+                const beforeHeadMovement = mutationCounts();
+                github.rest.actions = {...savedActions, getWorkflowRun: async (input) => {
+                  const response = await savedActions.getWorkflowRun(input);
+                  currentHeadSha = "e".repeat(40);
+                  return response;
+                }};
+                try { await run(github, context, core); }
+                finally { github.rest.actions = savedActions; currentHeadSha = headSha; }
+                if (mutationsChanged(beforeHeadMovement)) {
+                  throw new Error("head movement during producer recheck must not mutate comments");
+                }
+
+                let currentAttempt = 1;
+                github.rest.actions = {...savedActions, getWorkflowRun: async (input) => {
+                  const {data} = await savedActions.getWorkflowRun(input);
+                  return {data: input.run_id === 200 ? {...data, run_attempt: currentAttempt} : data};
+                }};
+                for (const fault of ["attempt", "duplicate", "head"]) {
+                  github.request = async (route, input) => {
+                    const response = await savedRequest(route, input);
+                    if (input.run_id !== 200) return response;
+                    const jobs = response.data.jobs;
+                    const gate = jobs.find(job => job.name === "CodeQL Gate");
+                    if (fault === "duplicate") jobs.push({...gate, id: gate.id + 50000});
+                    else if (fault === "head") gate.head_sha = "e".repeat(40);
+                    else gate.run_attempt = input.attempt_number + 1;
+                    return {data: {jobs, total_count: jobs.length}};
+                  };
+                  const unavailableStart = calls.updated.length;
+                  await run(github, context, core);
+                  if (!calls.updated.slice(unavailableStart).some(row =>
+                      row.body.includes("Static analysis evidence is unavailable") &&
+                      row.body.includes("CodeQL gate: \`unavailable\`"))) {
+                    throw new Error("untrustworthy exact-attempt inventory must not leave a green summary");
+                  }
+                }
+                currentAttempt = 2;
+                const staleAttemptWrites = mutationCounts();
+                let staleAttemptRefused = false;
+                try { await run(github, context, core); } catch (error) {
+                  staleAttemptRefused = error.message.includes("cannot confirm the current workflow attempt");
+                } finally { github.rest.actions = savedActions; }
+                if (!staleAttemptRefused || mutationsChanged(staleAttemptWrites)) {
+                  throw new Error("an older ambiguous snapshot must not overwrite a newer summary");
+                }
+                const writesBefore = mutationCounts();
+                github.request = async () => ({ data: { total_count: 101, jobs: [] } });
+                let refused = false;
+                try { await run(github, context, core); } catch (error) {
+                  refused = error.message.includes("jobs are incomplete");
+                } finally { github.request = savedRequest; }
+                if (!refused || mutationsChanged(writesBefore)) throw new Error("incomplete candidate jobs must not mutate comments");
                 console.log("static analysis summary behavioral contract passed");
               },
             );

@@ -10,6 +10,7 @@ namespace="$1"
 release_name="$2"
 wait_seconds="${PREVIEW_NAMESPACE_DELETE_TIMEOUT_SECONDS:-180}"
 expected_namespace_uid="${PREVIEW_EXPECTED_NAMESPACE_UID:-}"
+require_cleanup_proof="${PREVIEW_REQUIRE_CLEANUP_PROOF:-false}"
 
 if [[ "$namespace" == "dev" ]]; then
   if [[ "$release_name" != "dev" ]]; then
@@ -35,6 +36,12 @@ fi
 if [[ -n "$expected_namespace_uid" ]] &&
   ! [[ "$expected_namespace_uid" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]]; then
   echo "expected namespace UID is malformed" >&2
+  exit 2
+fi
+
+if [[ "$require_cleanup_proof" == true ]] &&
+  [[ "$namespace" == dev || -z "$expected_namespace_uid" ]]; then
+  echo "cleanup proof deletion requires an exact preview namespace UID" >&2
   exit 2
 fi
 
@@ -83,12 +90,41 @@ if [[ -n "$expected_namespace_uid" && "$namespace_uid" != "$expected_namespace_u
   echo "hosted namespace ${namespace} UID changed before deletion" >&2
   exit 1
 fi
+if [[ "$require_cleanup_proof" == true ]] &&
+  ! jq -e '.metadata.annotations["firemud.dev/cleanup-proof"] == "true"' <<<"$namespace_json" >/dev/null; then
+  echo "hosted namespace ${namespace} cleanup-proof marker is missing at deletion" >&2
+  exit 1
+fi
 delete_uid="${expected_namespace_uid:-$namespace_uid}"
+delete_resource_version=""
+
+if [[ -n "$expected_pr_number" ]]; then
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source=dev-tools/hosted/preview/preview-proof-retry-record.shlib disable=SC1091
+  source "$script_dir/../preview/preview-proof-retry-record.shlib"
+  if ! legacy_retry="$(legacy_preview_retry_entry "$namespace_json" "$namespace")"; then
+    echo "unable to read legacy proof-retry evidence for $namespace; refusing deletion" >&2
+    exit 1
+  fi
+  # Fence the read of both a present legacy record and its absence. An
+  # intervening writer can add the first record without changing the UID.
+  if ! delete_resource_version="$(jq -er '.metadata.resourceVersion | select(type == "string" and length > 0)' <<<"$namespace_json")"; then
+    echo "unable to read namespace resource version for $namespace; refusing deletion" >&2
+    exit 1
+  fi
+  if [[ "$legacy_retry" != null ]] && ! preserve_legacy_preview_retry_entry "$legacy_retry" "$namespace"; then
+    echo "unable to retain the proof-retry budget for $namespace; refusing deletion" >&2
+    exit 1
+  fi
+fi
 
 delete_options="$(
   jq -cn \
     --arg uid "$delete_uid" \
-    '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}}'
+    --arg resource_version "$delete_resource_version" '
+      {apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}}
+      | if $resource_version != "" then .preconditions.resourceVersion = $resource_version else . end
+    '
 )"
 delete_status=0
 printf '%s\n' "$delete_options" |

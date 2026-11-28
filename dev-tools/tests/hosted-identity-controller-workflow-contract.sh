@@ -399,6 +399,7 @@ assert "needs.pr-local-smoke.outputs.publishable == 'true'" in (
 
 controller_job = workflow["jobs"]["pr-controller-smoke"]
 assert controller_job["needs"] == ["image-meta"]
+assert controller_job["cache-mode"] == "read"
 assert "needs.image-meta.outputs.controller_smoke_required == 'true'" in (
     controller_job["if"]
 )
@@ -431,7 +432,6 @@ assert base_step["with"] == {
     "load": True,
     "tags": "${{ env.BASE_IMAGE }}",
     "cache-from": "type=gha,scope=pr-controller-smoke",
-    "cache-to": "type=gha,mode=max,scope=pr-controller-smoke",
 }
 assert "docker/login-action@" not in str(controller_job)
 assert "GITHUB_TOKEN" not in str(controller_job)
@@ -842,7 +842,8 @@ for job_name in ("validate-target", "prepare-runtime", "deploy-runtime"):
         step for step in workflow["jobs"][job_name]["steps"]
         if step.get("uses") == "./.github/actions/setup-python"
     ]
-    assert not caller_python_steps, (job_name, caller_python_steps)
+    expected_python_steps = [{"name": "Set up canonical Python", "uses": "./.github/actions/setup-python"}] if job_name == "validate-target" else []
+    assert caller_python_steps == expected_python_steps, (job_name, caller_python_steps)
 assert any(
     step.get("uses") == "./.github/actions/resolve-certificate-identity-mode"
     for step in workflow["jobs"]["validate-target"]["steps"]
@@ -898,7 +899,7 @@ assert resolve_run.index('case "$mode" in') < resolve_run.index(
 
 expected_artifact_inputs = {
     "artifact-directory",
-    "artifact-name",
+    "artifact-id",
     "source-run-id",
     "github-token",
     "repository",
@@ -925,7 +926,7 @@ assert [step["name"] for step in artifact_action_steps] == [
 artifact_download = artifact_action_steps[0]
 assert_immutable_action_pin(artifact_download, "actions/download-artifact")
 assert artifact_download["with"] == {
-    "name": "${{ inputs['artifact-name'] }}",
+    "artifact-ids": "${{ inputs['artifact-id'] }}",
     "path": "${{ inputs['artifact-directory'] }}",
     "github-token": "${{ inputs['github-token'] }}",
     "run-id": "${{ inputs['source-run-id'] }}",
@@ -986,6 +987,7 @@ assert workflow["permissions"] == {
 jobs = workflow["jobs"]
 expected_gates = {
     "prepare-runtime": "needs.validate-target.outputs.action == 'deploy'",
+    "publish-preparation-failure": "needs.validate-target.outputs.action == 'deploy'",
     "deploy-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "verify-runtime": "needs.validate-target.outputs.action == 'deploy'",
     "publish-preview-proof": "needs.validate-target.outputs.action == 'deploy'",
@@ -1034,8 +1036,7 @@ assert validate_job["if"] == (
     "${{ (github.event_name == 'workflow_run' && "
     "github.event.workflow_run.conclusion == 'success' && "
     "github.event.workflow_run.head_repository.full_name == github.repository && "
-    "github.event.workflow_run.name == 'PR Preview Environment' && "
-    "(github.event.workflow_run.event == 'pull_request_target' || "
+    "(github.event.workflow_run.event == 'pull_request' || "
     "github.event.workflow_run.event == 'repository_dispatch')) || "
     "(github.event_name == 'pull_request_target' && "
     "github.event.action == 'closed' && "
@@ -1049,6 +1050,10 @@ assert validate_job["permissions"] == {
 assert validate_job["timeout-minutes"] == 10
 assert jobs["prepare-runtime"]["permissions"] == {
     "actions": "read",
+    "contents": "read",
+    "pull-requests": "read",
+}
+assert jobs["publish-preparation-failure"]["permissions"] == {
     "contents": "read",
     "issues": "write",
     "pull-requests": "read",
@@ -1241,6 +1246,23 @@ exit 99
     assert not any(call.startswith("manifest inspect ") for call in calls)
     assert not any(call.startswith("push ") for call in calls)
 
+def install_pinned_publisher_source(fixture_root):
+    fake_gh = fixture_root / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+[[ "$#" == 2 && "$1" == api && "$2" == repos/example/FireMUD/actions/runs/42 ]]
+printf '%s\\n' '{"id":42,"run_attempt":2,"status":"completed","conclusion":"success"}'
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    return {
+        "CURRENT_REPOSITORY": "example/FireMUD",
+        "SOURCE_RUN_ID": "42",
+        "SOURCE_RUN_ATTEMPT": "2",
+    }
+
 with tempfile.TemporaryDirectory() as partial_publish_fixture_dir:
     fixture_root = Path(partial_publish_fixture_dir)
     docker_calls = fixture_root / "docker-calls"
@@ -1294,6 +1316,7 @@ fi
     )
     fake_curl.chmod(0o755)
     fixture_env = os.environ.copy()
+    fixture_env.update(install_pinned_publisher_source(fixture_root))
     fixture_env.update(
         DOCKER_CALLS=str(docker_calls),
         GHCR_USERNAME="fixture-user",
@@ -1319,14 +1342,16 @@ fi
     summary_text = summary.read_text(encoding="utf-8")
     assert "Partial PR runtime image publication" in summary_text
     available_section, unpublished_section = summary_text.split(
-        "Unpublished fixed tags (not rechecked after the failed push):", maxsplit=1
+        "Fixed tags not verified available at stop:", maxsplit=1
     )
-    assert "`account-service`" in available_section
-    assert "`entity-management-service`" in available_section
-    assert "`social-groups-service`" not in available_section
-    assert "`social-groups-service`" in unpublished_section
-    assert "`world-management-service`" not in unpublished_section
-    assert "`entity-management-service`" not in unpublished_section
+    assert "Verified available fixed tags before stop:" in available_section
+    assert [line for line in available_section.splitlines() if line.startswith("- ")] == [
+        "- `ghcr.io/benhook1013/account-service:fixture-head`",
+        "- `ghcr.io/benhook1013/entity-management-service:fixture-head`",
+    ]
+    assert [line for line in unpublished_section.splitlines() if line.startswith("- ")] == [
+        "- `ghcr.io/benhook1013/social-groups-service:fixture-head`",
+    ]
 
 with tempfile.TemporaryDirectory() as publication_race_fixture_dir:
     fixture_root = Path(publication_race_fixture_dir)
@@ -1393,6 +1418,7 @@ fi
     fake_docker.chmod(0o755)
     fake_sleep.chmod(0o755)
     fixture_env = os.environ.copy()
+    fixture_env.update(install_pinned_publisher_source(fixture_root))
     fixture_env.update(
         DOCKER_CALLS=str(docker_calls),
         GHCR_USERNAME="fixture-user",
@@ -1676,10 +1702,40 @@ assert janitor_runtime_cleanup_step.get("run") == (
 )
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
-assert target_script.count("validate-preview-artifact.py") == 2
+assert target_script.count("validate-preview-artifact.py") == 3
 assert target_script.count(
     'python3 ./dev-tools/hosted/preview/validate-preview-artifact.py'
-) == 2
+) == 3
+retry_rejection_step = next(
+    step for step in validate_job["steps"]
+    if step.get("name", "").startswith("Trusted preview retry rejected stale-head nonce-")
+)
+assert retry_rejection_step["name"] == (
+    "Trusted preview retry rejected stale-head nonce-${{ steps.target.outputs.stale_head_retry_nonce }}"
+)
+assert retry_rejection_step["if"] == (
+    "${{ steps.target.outputs.action == 'none' && steps.target.outputs.stale_head_retry_nonce != '' }}"
+)
+comparison_rejection_step = next(
+    step for step in validate_job["steps"]
+    if step.get("name", "").startswith("Trusted preview retry rejected stale-comparison nonce-")
+)
+assert comparison_rejection_step["name"] == (
+    "Trusted preview retry rejected stale-comparison nonce-${{ steps.target.outputs.stale_comparison_retry_nonce }}"
+)
+assert comparison_rejection_step["if"] == (
+    "${{ steps.target.outputs.action == 'none' && steps.target.outputs.stale_comparison_retry_nonce != '' }}"
+)
+ineligible_rejection_step = next(
+    step for step in validate_job["steps"]
+    if step.get("name", "").startswith("Trusted preview retry rejected ineligible nonce-")
+)
+assert ineligible_rejection_step["name"] == (
+    "Trusted preview retry rejected ineligible nonce-${{ steps.target.outputs.ineligible_retry_nonce }}"
+)
+assert ineligible_rejection_step["if"] == (
+    "${{ steps.target.outputs.action == 'none' && steps.target.outputs.ineligible_retry_nonce != '' }}"
+)
 assert '"$ARTIFACT_DIRECTORY/preview-metadata.json"' in target_script
 assert '"$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml"' in target_script
 assert 'exposure-mode "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml"' in target_script
@@ -1687,7 +1743,7 @@ assert 'case "$exposure_mode" in' in target_script
 assert 'private|public) ;;' in target_script
 assert 'Private bridge proof requires hosted-controller identity.' in target_script
 assert '"${{ steps.certificate-identity.outputs.mode }}"' in target_script
-assert target_script.count('download_source_artifact "$ARTIFACT_NAME"') == 1
+assert target_script.count('download_source_artifact "$ARTIFACT_ID" "$ARTIFACT_KIND"') == 1
 assert target_script.count('metadata_event="$(jq -r') == 1
 workflow_run_start = target_script.index('if [[ "$EVENT_NAME" == workflow_run ]]; then')
 destroy_branch_start = target_script.index(
@@ -1714,7 +1770,10 @@ for fragment in (
     'expected_artifact_name="preview-${ARTIFACT_KIND}-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}"',
     'canonical_artifacts="$(jq -c',
     'select(.expired == false)',
-    'preview-(render|intent)-pr-[1-9][0-9]{0,50}-[0-9a-fA-F]{40}',
+    'preview-render-pr-[1-9][0-9]{0,50}-[0-9a-fA-F]{40}-attempt-[1-9][0-9]*$',
+    'and endswith("-attempt-" + $attempt)',
+    'expected_artifact_name+="-attempt-${SOURCE_RUN_ATTEMPT}"',
+    '--run-attempt "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT" "after validating the pinned render artifact"',
     "[[ \"$(jq 'length' <<<\"$canonical_artifacts\")\" == 1 ]]",
     'mergeable="$(jq -r',
     'if (.mergeable | type) == "boolean" then (.mergeable | tostring) else "invalid" end',
@@ -1757,7 +1816,7 @@ expected_artifact_call = {
     "uses": "./.github/actions/download-validated-preview-artifact",
     "with": {
         "artifact-directory": "${{ runner.temp }}/preview-artifact",
-        "artifact-name": "${{ needs.validate-target.outputs.artifact_name }}",
+        "artifact-id": "${{ needs.validate-target.outputs.artifact_id }}",
         "source-run-id": "${{ needs.validate-target.outputs.render_run_id }}",
         "github-token": "${{ github.token }}",
         "repository": "${{ github.repository }}",
@@ -1937,11 +1996,6 @@ clean_revalidate_step_index = next(
     for index, step in enumerate(deploy_steps)
     if step.get("name") == "Revalidate exact PR target before clean runtime redeploy"
 )
-capture_retry_step_index = next(
-    index
-    for index, step in enumerate(deploy_steps)
-    if step.get("name") == "Capture exact proof-retry record before namespace recreation"
-)
 allocate_port_step_index = next(
     index
     for index, step in enumerate(deploy_steps)
@@ -1960,7 +2014,6 @@ deployed_step_index = next(
 assert (
     allocate_port_step_index
     < clean_revalidate_step_index
-    < capture_retry_step_index
     < clean_delete_step_index
     < requested_step_index
     < apply_step_index
@@ -1971,6 +2024,8 @@ clean_revalidate = deploy_by_name[
 ]
 assert clean_revalidate["env"] == {
     "GH_TOKEN": "${{ github.token }}",
+    "SOURCE_RUN_ID": "${{ needs.validate-target.outputs.render_run_id }}",
+    "SOURCE_RUN_ATTEMPT": "${{ needs.validate-target.outputs.render_run_attempt }}",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
     "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
     "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
@@ -1982,9 +2037,31 @@ assert clean_revalidate_run.index(
 ) < clean_revalidate_run.index(
     "bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh"
 )
+proof_retry_recheck = deploy_by_name["Recheck proof retry under the preview allocation lock"]
+assert proof_retry_recheck["id"] == "recheck-proof-retry"
+assert proof_retry_recheck["env"]["RETRY_NAMESPACE_UID"] == (
+    "${{ needs.validate-target.outputs.proof_retry_namespace_uid }}"
+)
+assert "check-preview-proof-retry.sh" in proof_retry_recheck["run"]
+for guarded_step in (
+    "Revalidate exact PR source binding before privileged mutations",
+    "Prune stale runtime namespaces",
+    "Revalidate exact PR source binding before capacity reclaim",
+    "Enforce priority-aware preview capacity",
+):
+    assert list(deploy_by_name).index(proof_retry_recheck["name"]) < list(
+        deploy_by_name
+    ).index(guarded_step)
+    assert deploy_by_name[guarded_step]["if"] == (
+        "${{ steps.recheck-proof-retry.outputs.proceed == 'true' }}"
+    )
+assert list(deploy_by_name).index(
+    "Revalidate exact PR source binding before privileged mutations"
+) < list(deploy_by_name).index("Prune stale runtime namespaces")
 clean_delete = deploy_by_name["Delete exact preview runtime namespace before recreate"]
 assert clean_delete["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "PREVIEW_EXPECTED_NAMESPACE_UID": "${{ needs.validate-target.outputs.proof_retry_namespace_uid }}",
     "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
     "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
 }
@@ -1995,45 +2072,19 @@ assert (
     'bash ./dev-tools/hosted/shared/delete-hosted-namespace.sh \\\n'
     '  "$RUNTIME_NAMESPACE" "$RUNTIME_NAMESPACE"'
 ) in clean_delete["run"]
-capture_retry = deploy_by_name[
-    "Capture exact proof-retry record before namespace recreation"
-]
-assert capture_retry["env"] == {
-    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
-    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
-    "PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
-    "EXPECTED_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
-    "EXPECTED_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
-    "EXPECTED_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
-    "EXPECTED_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
-}
-for required in (
-    'kubectl get namespace "$RUNTIME_NAMESPACE" --ignore-not-found -o json',
-    'firemud.dev/proof-retry-count',
-    'firemud.dev/proof-retry-base-sha',
-    'firemud.dev/proof-retry-head-sha',
-    'firemud.dev/proof-retry-merge-sha',
-    'firemud.dev/proof-retry-image-tag',
-    'Retry annotations must be a complete string record before namespace recreation.',
-    'Existing proof-retry record belongs to another tuple; resetting its budget.',
-    'proof_retry_count=$retry_count',
-):
-    assert required in capture_retry["run"], required
 create_step = deploy_by_name["Create and annotate exact preview runtime namespace"]
+# If the locked recheck reports proceed=false, capacity allocation never runs.
+# Its absent allocation output must also block both Namespace mutations.
+for namespace_mutation in (clean_delete, create_step):
+    assert namespace_mutation["if"] == "${{ steps.allocate-capacity.outputs.allocation_status == 'allocated' }}"
 assert create_step["env"]["ALLOCATED_TELNET_PORT"] == (
     "${{ steps.allocate-telnet-port.outputs.port }}"
 )
 assert create_step["env"]["ALLOCATION_TIMESTAMP"] == (
     "${{ steps.allocate-capacity.outputs.allocation_timestamp }}"
 )
-for output_name in (
-    "proof_retry_count",
-    "proof_retry_base_sha",
-    "proof_retry_head_sha",
-    "proof_retry_merge_sha",
-    "proof_retry_image_tag",
-):
-    assert f"steps.capture-proof-retry.outputs.{output_name}" in create_step["run"]
+assert "proof_retry_" not in create_step["run"]
+assert "Capture exact proof-retry record before namespace recreation" not in deploy_by_name
 standalone_grpc_shared = deploy_by_name["Prepare standalone shared gRPC TLS secret"]
 standalone_grpc_certificates = deploy_by_name["Prepare standalone gRPC certificates"]
 standalone_grpc = deploy_by_name["Prepare standalone gRPC TLS secret"]
@@ -2225,7 +2276,9 @@ assert apply_run.count(revalidate_target) == 2
 source_binding_helper = (
     "bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh"
 )
-assert trusted_source.count(source_binding_helper) == 9
+assert trusted_source.count(source_binding_helper) == 12
+assert create_step["run"].index(source_binding_helper) < create_step["run"].index("kubectl create namespace")
+assert '"before recreating the preview namespace" "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"' in create_step["run"]
 assert trusted_source.count('pull_request_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"') == 1
 assert "current_pull_request_json" not in trusted_source
 assert "(.head.repo.full_name == $repository)" not in trusted_source
@@ -2273,6 +2326,18 @@ assert apply_lines[dry_run_line + 1] == revalidate_target + " \\"
 assert apply_lines[dry_run_line + 2] == '"$PR_NUMBER" "$EXPECTED_HEAD_SHA"'
 assert actual_apply_line == dry_run_line + 3
 assert apply_run.count(source_binding_helper) == 2
+assert '"before applying the preview runtime" "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"' in apply_run
+for fence_name in (
+    "Revalidate exact PR source binding before privileged mutations",
+    "Revalidate exact PR source binding before capacity reclaim",
+    "Revalidate exact PR target before clean runtime redeploy",
+    "Create and annotate exact preview runtime namespace",
+    "Apply validated PR runtime artifact",
+):
+    fence = deploy_by_name[fence_name]
+    assert fence["env"]["SOURCE_RUN_ID"] == "${{ needs.validate-target.outputs.render_run_id }}"
+    assert fence["env"]["SOURCE_RUN_ATTEMPT"] == "${{ needs.validate-target.outputs.render_run_attempt }}"
+    assert '"$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"' in fence["run"]
 assert apply_run.count('current_pull_request_json') == 0
 
 capacity_unavailable = next(
@@ -2292,6 +2357,7 @@ deploy_failure = next(
 )
 assert deploy_failure["if"] == (
     "${{ !cancelled() && failure() && "
+    "steps.recheck-proof-retry.outputs.proceed != 'false' && "
     "(steps.allocate-capacity.outputs.allocation_status != 'unavailable' || "
     "steps.publish-capacity-unavailable.outcome == 'failure') }}"
 )
@@ -2330,7 +2396,7 @@ assert "rollout status" not in rollout_step["run"]
 assert "concurrency" not in jobs["prepare-runtime"]
 assert "concurrency" not in jobs["verify-runtime"]
 for job_name in (
-    "deploy-runtime", "publish-preview-proof", "destroy-runtime", "retire-identity"
+    "deploy-runtime", "publish-preparation-failure", "publish-preview-proof", "destroy-runtime", "retire-identity"
 ):
     assert jobs[job_name]["concurrency"] == {
         "group": "preview-allocation-lifecycle",
@@ -2374,6 +2440,37 @@ assert "Wait for tested PR merge runtime images" not in deploy_by_name
 assert "Wait for exact controller identity readiness" not in deploy_by_name
 assert "Wait for runtime rollouts before operator validation" not in deploy_by_name
 
+preparation_failure = jobs["publish-preparation-failure"]
+assert preparation_failure["needs"] == ["validate-target", "prepare-runtime"]
+assert preparation_failure["if"] == (
+    "${{ !cancelled() && needs.validate-target.outputs.action == 'deploy' "
+    "&& needs.prepare-runtime.result == 'failure' }}"
+)
+preparation_failure_steps = {
+    step.get("name"): step for step in preparation_failure["steps"]
+}
+preparation_failure_check = preparation_failure_steps[
+    "Recheck proof retry before publishing preparation failure"
+]
+preparation_failure_comment = preparation_failure_steps[
+    "Publish trusted preview preparation failure"
+]
+assert list(preparation_failure_steps).index(preparation_failure_check["name"]) < list(
+    preparation_failure_steps
+).index(preparation_failure_comment["name"])
+assert "check-preview-proof-retry.sh" in preparation_failure_check["run"]
+assert "proof-missing) echo 'proceed=true'" in preparation_failure_check["run"]
+assert "proof-complete|namespace-changed)" in preparation_failure_check["run"]
+assert preparation_failure_check["env"]["RETRY_NAMESPACE_UID"] == (
+    "${{ needs.validate-target.outputs.proof_retry_namespace_uid }}"
+)
+assert preparation_failure["concurrency"]["group"] == "preview-allocation-lifecycle"
+assert "if" not in preparation_failure_check
+assert preparation_failure_comment["if"] == (
+    "${{ steps.recheck-preparation-failure.outputs.proceed == 'true' }}"
+)
+assert preparation_failure_comment["name"] not in prepare_by_name
+
 verify_steps = jobs["verify-runtime"]["steps"]
 verify_by_name = {
     step.get("name"): step for step in verify_steps if isinstance(step, dict)
@@ -2383,7 +2480,7 @@ proof_by_name = {
     step.get("name"): step for step in proof_steps if isinstance(step, dict)
 }
 for publisher in (
-    prepare_by_name["Publish trusted preview preparation failure"],
+    preparation_failure_comment,
     deploy_by_name["Publish trusted preview unavailable capacity"],
     deploy_by_name["Publish trusted preview deployment failure"],
     verify_by_name["Publish trusted preview deployment state"],
@@ -2758,6 +2855,17 @@ assert operator_run.count("needs.dev-demo-plan.outputs.telnet_port") == 1
 
 preview_plan_steps = preview_workflow["jobs"]["preview-plan"]["steps"]
 preview_plan_outputs = preview_workflow["jobs"]["preview-plan"]["outputs"]
+obsolete_plan_step = next(
+    step for step in preview_plan_steps
+    if step.get("name", "").startswith("Preview retry no handoff stale-comparison nonce-")
+)
+assert obsolete_plan_step["name"] == (
+    "Preview retry no handoff stale-comparison nonce-${{ steps.derive.outputs.obsolete_retry_nonce }}"
+)
+assert obsolete_plan_step["if"] == "${{ steps.derive.outputs.obsolete_retry_nonce != '' }}"
+for step_id in ("target-metadata", "eligibility"):
+    step = next(step for step in preview_plan_steps if step.get("id") == step_id)
+    assert step["if"] == "${{ steps.derive.outputs.obsolete_retry_nonce == '' }}"
 preview_plan_checkouts = [
     step
     for step in preview_plan_steps
@@ -2776,7 +2884,9 @@ assert set(preview_workflow["jobs"]) == {
 }
 refresh_job = preview_workflow["jobs"]["preview-runtime-base-refresh"]
 assert refresh_job["needs"] == "preview-plan"
+assert "github.event_name == 'repository_dispatch'" in refresh_job["if"]
 assert "base_refresh_required == 'true'" in refresh_job["if"]
+assert "needs.preview-plan.outputs.proof_retry_namespace_uid == ''" in refresh_job["if"]
 assert "image_tag != needs.preview-plan.outputs.base_sha" in refresh_job["if"]
 assert refresh_job["permissions"] == {"contents": "write", "pull-requests": "read"}
 refresh_step = next(
@@ -2791,6 +2901,7 @@ assert "parents[1]" in refresh_step["with"]["script"]
 render_job = preview_workflow["jobs"]["preview-render"]
 assert render_job["needs"] == ["preview-plan", "preview-runtime-base-refresh"]
 assert "always()" in render_job["if"]
+assert "needs.preview-plan.outputs.eligible == 'true'" in render_job["if"]
 assert "close_certificate_identity_mode" not in preview_plan_outputs
 assert "certificate_identity_mode" not in preview_plan_outputs
 preview_derive_step = next(
@@ -3302,117 +3413,16 @@ mapfile -t preview_annotator_calls <"$preview_annotator_log"
 [[ "${preview_annotator_calls[1]}" == \
   "label namespace pr-42 firemud.dev/preview=true firemud.dev/pr-number=42 firemud.dev/preview-exposure-mode=private --overwrite" ]]
 
+# Retry custody belongs to the independent management holder. The runtime
+# writer must reject additional retry arguments instead of restoring them.
 : >"$preview_annotator_log"
-run_preview_annotator \
+if run_preview_annotator \
   pr-42 42 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-  private 0 2026-09-13T01:02:03Z \
-  2 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-  cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-mapfile -t preview_annotator_calls <"$preview_annotator_log"
-[[ "${#preview_annotator_calls[@]}" -eq 2 ]]
-[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-count=2"* ]]
-[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-base-sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"* ]]
-[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-head-sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]]
-[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-merge-sha=cccccccccccccccccccccccccccccccccccccccc"* ]]
-[[ "${preview_annotator_calls[0]}" == *"firemud.dev/proof-retry-image-tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]]
-
-for partial_retry_args in \
-  "2" \
-  "2 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; do
-  : >"$preview_annotator_log"
-  read -r -a partial_retry_values <<<"$partial_retry_args"
-  if run_preview_annotator \
-    pr-42 42 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-    private 0 2026-09-13T01:02:03Z "${partial_retry_values[@]}" \
-    >"$TEMP_DIR/invalid-preview-retry.output" \
-    2>"$TEMP_DIR/invalid-preview-retry.error"; then
-    echo "preview namespace annotator accepted a partial proof-retry record: $partial_retry_args" >&2
-    exit 1
-  fi
-  [[ ! -s "$preview_annotator_log" ]]
-done
-
-capture_retry_step="$TEMP_DIR/capture-proof-retry.sh"
-python3 - "$trusted" "$capture_retry_step" <<'PY'
-import sys
-from pathlib import Path
-
-import yaml
-
-workflow = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
-steps = workflow["jobs"]["deploy-runtime"]["steps"]
-step = next(
-    step
-    for step in steps
-    if step.get("name") == "Capture exact proof-retry record before namespace recreation"
-)
-Path(sys.argv[2]).write_text(step["run"], encoding="utf-8")
-PY
-chmod +x "$capture_retry_step"
-capture_retry_stub_dir="$TEMP_DIR/capture-retry-stubs"
-capture_retry_namespace_json="$TEMP_DIR/capture-retry-namespace.json"
-capture_retry_output="$TEMP_DIR/capture-retry-output"
-capture_retry_partial_stdout="$TEMP_DIR/capture-retry-partial.stdout"
-capture_retry_partial_stderr="$TEMP_DIR/capture-retry-partial.stderr"
-mkdir -p "$capture_retry_stub_dir"
-cat >"$capture_retry_stub_dir/kubectl" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "$1" == get && "$2" == namespace ]]; then
-  cat "${CAPTURE_RETRY_NAMESPACE_JSON:?}"
-  exit 0
-fi
-printf 'unexpected capture-retry kubectl invocation: %s\n' "$*" >&2
-exit 2
-SH
-chmod +x "$capture_retry_stub_dir/kubectl"
-run_capture_retry() {
-  env \
-    PATH="$capture_retry_stub_dir:$PATH" \
-    KUBECONFIG=fake \
-    RUNTIME_NAMESPACE=pr-42 \
-    PR_NUMBER=42 \
-    EXPECTED_BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
-    EXPECTED_HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-    EXPECTED_MERGE_SHA=cccccccccccccccccccccccccccccccccccccccc \
-    EXPECTED_IMAGE_TAG=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-    GITHUB_OUTPUT="$capture_retry_output" \
-    CAPTURE_RETRY_NAMESPACE_JSON="$capture_retry_namespace_json" \
-    bash "$capture_retry_step"
-}
-jq -nc \
-  '{metadata:{annotations:{
-    "firemud.dev/proof-retry-count":"2",
-    "firemud.dev/proof-retry-base-sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "firemud.dev/proof-retry-head-sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "firemud.dev/proof-retry-merge-sha":"cccccccccccccccccccccccccccccccccccccccc",
-    "firemud.dev/proof-retry-image-tag":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  }}}' >"$capture_retry_namespace_json"
-: >"$capture_retry_output"
-run_capture_retry
-grep -Fqx 'proof_retry_count=2' "$capture_retry_output"
-grep -Fqx 'proof_retry_base_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "$capture_retry_output"
-grep -Fqx 'proof_retry_head_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$capture_retry_output"
-grep -Fqx 'proof_retry_merge_sha=cccccccccccccccccccccccccccccccccccccccc' "$capture_retry_output"
-grep -Fqx 'proof_retry_image_tag=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$capture_retry_output"
-
-jq -nc \
-  '{metadata:{annotations:{
-    "firemud.dev/proof-retry-count":"2",
-    "firemud.dev/proof-retry-base-sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  }}}' >"$capture_retry_namespace_json"
-: >"$capture_retry_output"
-if run_capture_retry >"$capture_retry_partial_stdout" 2>"$capture_retry_partial_stderr"; then
-  echo "capture accepted a partial proof-retry annotation record" >&2
+  private 0 2026-09-13T01:02:03Z 2 >/dev/null 2>&1; then
+  echo "preview namespace annotator accepted obsolete retry arguments" >&2
   exit 1
 fi
-[[ ! -s "$capture_retry_output" ]]
-grep -Fqx '::error title=Malformed proof-retry annotations::Retry annotations must be a complete string record before namespace recreation.' \
-  "$capture_retry_partial_stderr" || {
-    echo "capture rejected a partial proof-retry record without the expected error; observed stderr:" >&2
-    cat "$capture_retry_partial_stderr" >&2
-    exit 1
-  }
+[[ ! -s "$preview_annotator_log" ]]
 
 invalid_preview_annotator_cases=(
   "pr-042|042|public|32000|2026-09-13T01:02:03Z"
@@ -3829,6 +3839,7 @@ if [[ "$2" == repos/example/FireMUD/pulls/901/files\?per_page=100 ]]; then
   exit 0
 fi
 if [[ "$2" == repos/example/FireMUD/git/ref/heads/develop ]]; then
+  [[ "${PREVIEW_DERIVE_BASE_UNAVAILABLE:-false}" == false ]] || exit 1
   printf '%s\n' '{"ref":"refs/heads/develop","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
   exit 0
 fi
@@ -3880,8 +3891,10 @@ run_preview_derive_dispatch() {
     CLIENT_PR_NUMBER="$input_pr_number" \
     CLIENT_HEAD_SHA="$input_head_sha" \
     CLIENT_BASE_REF=develop \
-    CLIENT_BASE_SHA="$preview_derive_base_lower" \
+    CLIENT_BASE_SHA="${PREVIEW_DERIVE_CLIENT_BASE_SHA:-$preview_derive_base_lower}" \
     CLIENT_MERGE_SHA="$preview_derive_merge_lower" \
+    CLIENT_PROOF_RETRY_NAMESPACE_UID="${PREVIEW_DERIVE_RETRY_UID:-}" \
+    CLIENT_PROOF_RETRY_NONCE="${PREVIEW_DERIVE_RETRY_NONCE:-}" \
     CLIENT_PREVIEW_DOMAIN="$input_preview_domain" \
     CLIENT_ACTION="$input_action" \
     CLIENT_IMAGE_TAG="$input_image_tag" \
@@ -3918,6 +3931,40 @@ grep -Fxq "base_sha=$preview_derive_base_lower" "$preview_derive_output"
 grep -Fxq "merge_sha=$preview_derive_merge_lower" "$preview_derive_output"
 test "$(wc -l <"${preview_derive_output}.gh.log")" -eq 2
 grep -Fxq 'api repos/example/FireMUD/pulls/901' "${preview_derive_output}.gh.log"
+
+preview_plan_retry_nonce=01234567-0123-4123-8123-0123456789ab
+preview_derive_retry_pr_json="$(jq -c '. + {number:901,state:"open"}' <<<"$preview_derive_pr_json")"
+for preview_retry_case in obsolete matching unreadable; do
+  preview_retry_output="$TEMP_DIR/preview-derive-retry-$preview_retry_case.output"
+  preview_retry_error="$TEMP_DIR/preview-derive-retry-$preview_retry_case.error"
+  planned_base=dddddddddddddddddddddddddddddddddddddddd
+  base_unavailable=false
+  [[ "$preview_retry_case" != matching ]] || planned_base="$preview_derive_base_lower"
+  [[ "$preview_retry_case" != unreadable ]] || base_unavailable=true
+  retry_status=0
+  PREVIEW_DERIVE_CLIENT_BASE_SHA="$planned_base" PREVIEW_DERIVE_BASE_UNAVAILABLE="$base_unavailable" \
+    PREVIEW_DERIVE_PR_JSON="$preview_derive_retry_pr_json" PREVIEW_DERIVE_RETRY_UID=uid-pr-901 \
+    PREVIEW_DERIVE_RETRY_NONCE="$preview_plan_retry_nonce" \
+    run_preview_derive_dispatch 901 "$preview_derive_head_lower" deploy "$planned_base" preview.firedevops.net \
+      "$preview_retry_output" "$preview_retry_error" || retry_status=$?
+  case "$preview_retry_case" in
+    obsolete)
+      test "$retry_status" -eq 0
+      test "$(cat "$preview_retry_output")" = "obsolete_retry_nonce=$preview_plan_retry_nonce"
+      ;;
+    matching)
+      test "$retry_status" -eq 0
+      grep -Fxq "proof_retry_nonce=$preview_plan_retry_nonce" "$preview_retry_output"
+      grep -Fxq 'action=deploy' "$preview_retry_output"
+      test -z "$(sed -n '/^obsolete_retry_nonce=/p' "$preview_retry_output")"
+      ;;
+    unreadable)
+      test "$retry_status" -eq 1
+      test ! -s "$preview_retry_output"
+      grep -Fq 'Invalid pull request base ref' "$preview_retry_error"
+      ;;
+  esac
+done
 
 preview_derive_runtime_output="$TEMP_DIR/preview-derive-runtime.output"
 PREVIEW_DERIVE_CHANGED_FILES='.github/workflows/runtime-images.yml' run_preview_derive_dispatch \
@@ -4063,8 +4110,8 @@ run_preview_derive_target() {
   local error_path="$4"
   env \
     PATH="$preview_derive_stub_dir:$PATH" \
-    EVENT_NAME=pull_request_target \
-    GITHUB_REF=refs/heads/develop \
+    EVENT_NAME=pull_request \
+    GITHUB_REF=refs/pull/901/merge \
     DEFAULT_BRANCH=develop \
     EVENT_ACTION=synchronize \
     EVENT_PR_NUMBER=901 \
@@ -4076,7 +4123,7 @@ run_preview_derive_target() {
     CLIENT_ACTION='' \
     GITHUB_REPOSITORY=example/FireMUD \
     GH_TOKEN=fake \
-    GITHUB_SHA="$preview_derive_head_lower" \
+    GITHUB_SHA="$preview_derive_merge_lower" \
     PREVIEW_DERIVE_PR_JSON="$preview_derive_pr_json" \
     PREVIEW_DERIVE_PR_JSON_1='' \
     PREVIEW_DERIVE_PR_JSON_2='' \
@@ -4097,7 +4144,7 @@ if run_preview_derive_target \
   "$preview_derive_base_lower" \
   "$preview_derive_stale_head_output" \
   "$TEMP_DIR/preview-derive-stale-head.error"; then
-  echo "preview plan accepted a stale pull_request_target head SHA" >&2
+  echo "preview plan accepted a stale pull_request head SHA" >&2
   exit 1
 fi
 grep -Fxq \
@@ -5135,6 +5182,29 @@ fi
 grep -Fxq \
   'preview artifact rejected: Deployment/account-service.spec.template is not an object' \
   "$null_template_error"
+
+# A proof-retry receipt must bind the native source run attempt to the complete
+# retained tuple, including the Namespace UID fence and unique reservation.
+retry_receipt="$TEMP_DIR/preview-retry-receipt.json"
+cat >"$retry_receipt" <<'JSON'
+{"event":"repository_dispatch","action":"deploy","repository":"example/FireMUD","sourceWorkflow":".github/workflows/preview.yml","sourceRunId":42,"sourceRunAttempt":2,"prNumber":42,"baseSha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","mergeSha":"cccccccccccccccccccccccccccccccccccccccc","imageTag":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","proofRetryNamespaceUid":"uid-pr-42","proofRetryNonce":"01234567-0123-4123-8123-0123456789ab"}
+JSON
+python3 "$artifact_validator" retry-receipt "$retry_receipt" example/FireMUD 42 2 42 \
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  uid-pr-42 01234567-0123-4123-8123-0123456789ab
+retry_receipt_error="$TEMP_DIR/preview-retry-receipt-mismatch-error"
+if python3 "$artifact_validator" retry-receipt "$retry_receipt" example/FireMUD 42 3 42 \
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  cccccccccccccccccccccccccccccccccccccccc aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  uid-pr-42 01234567-0123-4123-8123-0123456789ab \
+  >"$TEMP_DIR/preview-retry-receipt-mismatch-output" 2>"$retry_receipt_error"; then
+  echo "preview retry receipt validator accepted a different source attempt" >&2
+  exit 1
+fi
+grep -Fxq \
+  'preview retry receipt rejected: retry receipt metadata sourceRunAttempt does not match the retained reservation' \
+  "$retry_receipt_error"
 test ! -e "$null_template_output"
 
 null_template_metadata="$TEMP_DIR/null-template-metadata.json"
@@ -5464,11 +5534,12 @@ PY
 # fixtures prove that close/head races after server dry-run stop the real apply
 # and therefore cannot publish deployed-head evidence.
 apply_runtime_step="$TEMP_DIR/apply-runtime-step.sh"
+create_runtime_step="$TEMP_DIR/create-runtime-step.sh"
 record_preview_head_step="$TEMP_DIR/record-preview-head-step.sh"
 record_source_preview_head_step="$TEMP_DIR/record-source-preview-head-step.sh"
 prepared_render="$TEMP_DIR/runtime-target-prepared.yaml"
 python3 - "$trusted" "$preview" "$apply_runtime_step" "$record_preview_head_step" \
-  "$record_source_preview_head_step" <<'PY'
+  "$record_source_preview_head_step" "$create_runtime_step" <<'PY'
 import sys
 from pathlib import Path
 
@@ -5494,6 +5565,10 @@ for source, target in {
 Path(sys.argv[3]).write_text(apply_run, encoding="utf-8")
 Path(sys.argv[4]).write_text(record_step["run"], encoding="utf-8")
 Path(sys.argv[5]).write_text(record_step["run"], encoding="utf-8")
+create_step = next(
+    step for step in steps if step.get("name") == "Create and annotate exact preview runtime namespace"
+)
+Path(sys.argv[6]).write_text(create_step["run"], encoding="utf-8")
 PY
 
 apply_stub_dir="$TEMP_DIR/apply-stubs"
@@ -5501,9 +5576,23 @@ mkdir -p "$apply_stub_dir"
 cat >"$apply_stub_dir/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$1" == api && "$2" == repos/example/FireMUD/actions/runs/77 ]]; then
+  attempt=1
+  if [[ "${TEST_APPLY_SCENARIO:?}" == source-reran ]]; then
+    attempt=2
+  elif [[ -n "${TEST_SOURCE_ATTEMPT_FILE:-}" ]]; then
+    attempt="$(<"$TEST_SOURCE_ATTEMPT_FILE")"
+  fi
+  printf 'source-attempt-%s\n' "$attempt" >>"${TEST_APPLY_LOG:?}"
+  jq -nc --argjson attempt "$attempt" \
+    '{id:77,run_attempt:$attempt,repository:{full_name:"example/FireMUD"},status:"completed",conclusion:"success"}'
+  exit 0
+fi
 if [[ "$1" == api && "$2" == repos/example/FireMUD/git/ref/heads/develop ]]; then
   branch_sha="${TEST_EXPECTED_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
-  if [[ "${TEST_APPLY_SCENARIO:?}" == wrong-base ]]; then
+  if [[ "${TEST_APPLY_SCENARIO:?}" == wrong-base ]] ||
+    { [[ "$TEST_APPLY_SCENARIO" == base-advanced-during-source-read ]] &&
+      grep -Fxq 'source-attempt-1' "${TEST_APPLY_LOG:?}"; }; then
     branch_sha=dddddddddddddddddddddddddddddddddddddddd
   fi
   jq -nc --arg sha "$branch_sha" '{ref:"refs/heads/develop",object:{sha:$sha}}'
@@ -5537,7 +5626,7 @@ repository_name=example/FireMUD
 base_sha="${TEST_EXPECTED_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
 merge_sha="${TEST_EXPECTED_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}"
 case "${TEST_APPLY_SCENARIO:?}" in
-  success)
+  success|source-reran|base-advanced-during-source-read)
     ;;
   closed-first)
     state=closed
@@ -5636,6 +5725,8 @@ run_apply_fixture() {
       TELNET_PORT=32000 \
       EXPOSURE_MODE=private \
       ALLOCATED_TELNET_PORT=32000 \
+      SOURCE_RUN_ID=77 \
+      SOURCE_RUN_ATTEMPT=1 \
       TEST_APPLY_SCENARIO="$scenario" \
       TEST_EXPECTED_HEAD="$head_sha" \
       TEST_GH_COUNT="$gh_count" \
@@ -5687,8 +5778,45 @@ run_apply_fixture wrong-base \
 run_apply_fixture wrong-merge \
   "gh-1" \
   "Preview source binding changed"
+run_apply_fixture source-reran \
+  "gh-1 gh-2 dry-run gh-3 gh-4 source-attempt-2" \
+  "Preview source attempt changed"
+run_apply_fixture base-advanced-during-source-read \
+  "gh-1 gh-2 dry-run gh-3 gh-4 source-attempt-1 gh-5" \
+  "Preview source binding changed"
 run_apply_fixture success \
-  "gh-1 gh-2 dry-run gh-3 gh-4 apply deployed-tuple"
+  "gh-1 gh-2 dry-run gh-3 gh-4 source-attempt-1 gh-5 apply deployed-tuple"
+
+# The old source attempt was current before DELETE. The mocked wait completion
+# advances GitHub's native attempt while the PR tuple stays identical.
+(
+  cd "$ROOT_DIR"
+  export PATH="$apply_stub_dir:$PATH" GITHUB_REPOSITORY=example/FireMUD GH_TOKEN=fake
+  export TEST_APPLY_SCENARIO=success SOURCE_RUN_ID=77 SOURCE_RUN_ATTEMPT=1
+  export RUNTIME_NAMESPACE=pr-42 PR_NUMBER=42 EXPOSURE_MODE=private ALLOCATED_TELNET_PORT=32000
+  export BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  export HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  export MERGE_SHA=cccccccccccccccccccccccccccccccccccccccc
+  export IMAGE_TAG="pr-merge-$MERGE_SHA" ALLOCATION_TIMESTAMP=2026-01-01T00:00:00Z
+  export TEST_EXPECTED_HEAD="$HEAD_SHA" TEST_GH_COUNT="$TEMP_DIR/recreate-runtime.gh-count"
+  export TEST_APPLY_LOG="$TEMP_DIR/recreate-runtime.log"
+  export TEST_SOURCE_ATTEMPT_FILE="$TEMP_DIR/recreate-runtime.source-attempt"
+  printf '1\n' >"$TEST_SOURCE_ATTEMPT_FILE"
+  bash ./dev-tools/hosted/preview/revalidate-preview-source-binding.sh \
+    --run-attempt "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT"
+  printf 'delete-wait-completed\n' >>"$TEST_APPLY_LOG"
+  printf '2\n' >"$TEST_SOURCE_ATTEMPT_FILE"
+  if bash "$create_runtime_step" >"$TEMP_DIR/recreate-runtime.out" 2>"$TEMP_DIR/recreate-runtime.err"; then
+    echo "Namespace creation accepted a source attempt superseded during deletion" >&2
+    exit 1
+  fi
+  grep -Fq 'verified current completed success before recreating the preview namespace' \
+    "$TEMP_DIR/recreate-runtime.err"
+  test "$(paste -sd ' ' "$TEST_APPLY_LOG")" = 'source-attempt-1 delete-wait-completed gh-1 source-attempt-2'
+  if grep -Fq 'unexpected fake kubectl invocation' "$TEMP_DIR/recreate-runtime.err"; then
+    exit 1
+  fi
+)
 
 stage_error="$TEMP_DIR/source-binding-stage.error"
 set +e
@@ -6538,20 +6666,10 @@ for argument in "$@"; do
   fi
   previous="$argument"
 done
-if [[ "$1" == run && "$2" == download ]]; then
-  artifact_directory=""
-  artifact_name=""
-  previous=""
-  for argument in "$@"; do
-    if [[ "$previous" == --name ]]; then
-      artifact_name="$argument"
-    elif [[ "$previous" == --dir ]]; then
-      artifact_directory="$argument"
-    fi
-    previous="$argument"
-  done
-  [[ -n "$artifact_name" && -n "$artifact_directory" ]]
-  mkdir -p "$artifact_directory"
+if [[ "$1" == api && "$resource" == repos/example/FireMUD/actions/artifacts/40[12]/zip ]]; then
+  printf '%s\n' "$*" >>"${SOURCE_GH_LOG:?}"
+  artifact_directory="$(mktemp -d)"
+  trap 'rm -rf -- "$artifact_directory"' EXIT
   case "${FAKE_ARTIFACT_FILES:-valid}" in
     valid|extra|missing-metadata)
       cp "${VALID_RENDER_MANIFEST:?}" "$artifact_directory/preview-rendered-sanitized.yaml"
@@ -6566,8 +6684,9 @@ if [[ "$1" == run && "$2" == download ]]; then
   if [[ "${FAKE_ARTIFACT_FILES:-valid}" == valid || "${FAKE_ARTIFACT_FILES:-valid}" == extra ]]; then
     manifest_sha="$(sha256sum "${VALID_RENDER_MANIFEST:?}" | awk '{print $1}')"
     jq -nc \
-      --arg event "${FAKE_METADATA_EVENT:-pull_request_target}" \
+      --arg event "${FAKE_METADATA_EVENT:-pull_request}" \
       --arg action "${FAKE_METADATA_ACTION:-}" \
+      --argjson source_attempt "${FAKE_METADATA_SOURCE_ATTEMPT:-1}" \
       --argjson pr_number "${FAKE_METADATA_PR_NUMBER:-900}" \
       --arg base_sha "${FAKE_METADATA_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
       --arg head_sha "${FAKE_METADATA_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
@@ -6575,22 +6694,40 @@ if [[ "$1" == run && "$2" == download ]]; then
       --arg image_tag "${FAKE_METADATA_IMAGE_TAG:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
       --arg hostname "${FAKE_METADATA_HOSTNAME:-pr-900.preview.firedevops.net}" \
       --arg manifest_sha "$manifest_sha" \
-      '{schemaVersion:1,event:$event,repository:"example/FireMUD",sourceWorkflow:".github/workflows/preview.yml",sourceRunId:42,prNumber:$pr_number,baseSha:$base_sha,headSha:$head_sha,mergeSha:$merge_sha,hostname:$hostname,imageTag:$image_tag,manifestSha256:$manifest_sha} + (if $event == "repository_dispatch" then {action:$action} else {} end)' \
+      --arg nonce "${FAKE_METADATA_RETRY_NONCE:-}" \
+      '{schemaVersion:1,event:$event,repository:"example/FireMUD",sourceWorkflow:".github/workflows/preview.yml",sourceRunId:42,sourceRunAttempt:$source_attempt,prNumber:$pr_number,baseSha:$base_sha,headSha:$head_sha,mergeSha:$merge_sha,hostname:$hostname,imageTag:$image_tag,manifestSha256:$manifest_sha}
+       + (if $event == "repository_dispatch" then {action:$action} else {} end)
+       + (if $nonce != "" then {proofRetryNonce:$nonce,proofRetryNamespaceUid:"uid-pr-900"} else {} end)' \
       >"$artifact_directory/preview-metadata.json"
   fi
   if [[ "${FAKE_ARTIFACT_FILES:-valid}" == extra ]]; then
     printf '%s\n' extra >"$artifact_directory/unexpected.txt"
   fi
+  python3 - "$artifact_directory" <<'PYZIP'
+import sys
+from io import BytesIO
+from pathlib import Path
+from zipfile import ZipFile
+
+archive = BytesIO()
+with ZipFile(archive, "w") as fixture:
+    for file in Path(sys.argv[1]).iterdir():
+        fixture.write(file, file.name)
+sys.stdout.buffer.write(archive.getvalue())
+PYZIP
   exit 0
 fi
 case "$resource" in
   repos/example/FireMUD/actions/runs/42)
     if [[ -z "$jq_expression" ]]; then
-      printf '%s\n' "$*" >>"${SOURCE_GH_LOG:?}"
-      if [[ -n "${FAKE_WORKFLOW_RUN_JSON:-}" ]]; then
+      previous_source_reads="$(grep -Fxc "$*" "${SOURCE_GH_LOG:?}" 2>/dev/null || true)"
+      printf '%s\n' "$*" >>"$SOURCE_GH_LOG"
+      if [[ "${previous_source_reads:-0}" -gt 0 && -n "${FAKE_REFRESHED_WORKFLOW_RUN_JSON:-}" ]]; then
+        printf '%s' "$FAKE_REFRESHED_WORKFLOW_RUN_JSON"
+      elif [[ -n "${FAKE_WORKFLOW_RUN_JSON:-}" ]]; then
         printf '%s' "$FAKE_WORKFLOW_RUN_JSON"
       else
-        printf '%s' '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+        printf '%s' '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}]}'
       fi
     elif [[ "$jq_expression" == .path ]]; then
       printf '%s' '.github/workflows/preview.yml'
@@ -6623,14 +6760,18 @@ case "$resource" in
       --arg head "${TEST_PR_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       --arg repository "${TEST_PR_HEAD_REPOSITORY:-example/FireMUD}" \
       --arg base_ref "${TEST_PR_BASE_REF:-develop}" \
+      --arg base_sha "${TEST_PR_BASE_SHA:-dddddddddddddddddddddddddddddddddddddddd}" \
+      --arg merge "${TEST_PR_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       --argjson mergeable "${TEST_PR_MERGEABLE:-true}" \
       --argjson mergeable_state "$mergeable_state_json" \
       --argjson labels "${TEST_PR_LABELS_JSON:-[]}" \
       --argjson changed_files "$changed_file_count" \
-      '{state:$state,changed_files:$changed_files,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:"dddddddddddddddddddddddddddddddddddddddd",repo:{full_name:"example/FireMUD"}},merge_commit_sha:"cccccccccccccccccccccccccccccccccccccccc",mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels}'
+      --argjson number "${TEST_PR_NUMBER:-900}" \
+      '{number:$number,state:$state,changed_files:$changed_files,head:{sha:$head,repo:{full_name:$repository}},base:{ref:$base_ref,sha:$base_sha,repo:{full_name:"example/FireMUD"}},merge_commit_sha:$merge,mergeable:$mergeable,mergeable_state:$mergeable_state,labels:$labels,user:{login:"human"}}'
     ;;
   repos/example/FireMUD/git/ref/heads/*)
-    printf '%s' '{"ref":"refs/heads/develop","object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}'
+    jq -cn --arg ref "refs/heads/${resource#repos/example/FireMUD/git/ref/heads/}" '
+      {ref:$ref,object:{sha:("b" * 40)}}'
     ;;
   repos/example/FireMUD/commits/cccccccccccccccccccccccccccccccccccccccc)
     if [[ "${FAKE_STALE_MERGE_PARENTS:-false}" == true ]]; then
@@ -6639,7 +6780,12 @@ case "$resource" in
       printf '%s' '{"sha":"cccccccccccccccccccccccccccccccccccccccc","parents":[{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"sha":"cccccccccccccccccccccccccccccccccccccccc"}]}'
     fi
     ;;
+  repos/example/FireMUD/commits/dddddddddddddddddddddddddddddddddddddddd)
+    [[ "${TEST_PR_MERGE_SHA:-}" == dddddddddddddddddddddddddddddddddddddddd ]]
+    printf '%s' '{"sha":"dddddddddddddddddddddddddddddddddddddddd","parents":[{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},{"sha":"cccccccccccccccccccccccccccccccccccccccc"}]}'
+    ;;
   repos/example/FireMUD/actions/runs/42/artifacts\?per_page=100)
+    printf '%s\n' "$*" >>"${SOURCE_GH_LOG:?}"
     if [[ -n "${FAKE_ARTIFACTS_JSON:-}" ]]; then
       printf '%s' "$FAKE_ARTIFACTS_JSON"
     else
@@ -6688,6 +6834,7 @@ target_gh_log="$TEMP_DIR/target-gh.log"
     INPUT_PR_NUMBER='' \
     INPUT_HEAD_SHA='' \
     INPUT_ACTION='' \
+    FAKE_WORKFLOW_RUN_JSON='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[]}' \
     SOURCE_GH_LOG="$target_gh_log" \
     GITHUB_OUTPUT="$TEMP_DIR/output" \
     bash "$TEMP_DIR/target.sh"
@@ -6706,6 +6853,9 @@ cat >"$target_fixture_bin/python3" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == ./dev-tools/hosted/preview/validate-preview-artifact.py ]]; then
+  if [[ "${2:-}" == retry-receipt ]]; then
+    exec "${TARGET_REAL_PYTHON3:?}" "$@"
+  fi
   if [[ "${2:-}" == exposure-mode ]]; then
     [[ -f "${3:-}" ]]
     printf '%s\n' "${FAKE_EXPOSURE_MODE:-private}"
@@ -6719,11 +6869,12 @@ SH
 chmod +x "$target_fixture_bin/python3"
 target_real_python3="$(command -v python3)"
 
-canonical_artifact_name='preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc'
-valid_workflow_run_json='{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
+legacy_artifact_name='preview-render-pr-900-cccccccccccccccccccccccccccccccccccccccc'
+canonical_artifact_name="${legacy_artifact_name}-attempt-1"
+valid_workflow_run_json='{"id":42,"status":"completed","conclusion":"success","run_attempt":1,"head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}]}'
 distinct_source_sha=dddddddddddddddddddddddddddddddddddddddd
-distinct_source_workflow_run_json='{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900}]}'
-valid_artifacts_json='[{"artifacts":[{"name":"'"$canonical_artifact_name"'","expired":false},{"name":"old-preview","expired":true},{"name":"unrelated-artifact","expired":false}]}]'
+distinct_source_workflow_run_json='{"id":42,"status":"completed","conclusion":"success","run_attempt":1,"head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml@refs/pull/900/merge","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"dddddddddddddddddddddddddddddddddddddddd"}}]}'
+valid_artifacts_json='[{"artifacts":[{"id":401,"name":"'"$canonical_artifact_name"'","expired":false},{"name":"old-preview","expired":true},{"name":"unrelated-artifact","expired":false}]}]'
 
 run_deploy_target_fixture() {
   local scenario="$1"
@@ -6747,14 +6898,17 @@ run_deploy_target_fixture() {
       EVENT_NAME=workflow_run \
       EVENT_ACTION=completed \
       WORKFLOW_RUN_ID=42 \
+      WORKFLOW_RUN_ATTEMPT="${FAKE_FIXTURE_CALLBACK_ATTEMPT:-1}" \
       WORKFLOW_RUN_HEAD_SHA="${FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       DEFAULT_BRANCH=develop \
       ARTIFACT_DIRECTORY="$TEMP_DIR/deploy-target-${scenario}-artifact" \
       SOURCE_GH_LOG="$TEMP_DIR/deploy-target-${scenario}.gh.log" \
       GITHUB_OUTPUT="$output" \
       FAKE_WORKFLOW_RUN_JSON="${FAKE_FIXTURE_WORKFLOW_RUN_JSON:-$valid_workflow_run_json}" \
+      FAKE_REFRESHED_WORKFLOW_RUN_JSON="${FAKE_FIXTURE_REFRESHED_WORKFLOW_RUN_JSON:-}" \
       FAKE_ARTIFACTS_JSON="${FAKE_FIXTURE_ARTIFACTS_JSON:-$valid_artifacts_json}" \
       FAKE_ARTIFACT_FILES="${FAKE_FIXTURE_ARTIFACT_FILES:-valid}" \
+      FAKE_METADATA_SOURCE_ATTEMPT="${FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT:-1}" \
       FAKE_METADATA_BASE_SHA="${FAKE_FIXTURE_METADATA_BASE_SHA:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
       FAKE_METADATA_MERGE_SHA="${FAKE_FIXTURE_METADATA_MERGE_SHA:-cccccccccccccccccccccccccccccccccccccccc}" \
       TEST_PR_LABELS_JSON="${FAKE_FIXTURE_PR_LABELS_JSON:-[]}" \
@@ -6788,7 +6942,32 @@ run_deploy_target_fixture() {
 }
 
 run_deploy_target_fixture valid 0 'action=deploy'
-grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-valid.output"
+grep -Fxq "artifact_id=401" "$TEMP_DIR/deploy-target-valid.output"
+qualified_source_run_json="$(jq -c '.path += "@refs/pull/900/merge"' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$qualified_source_run_json" \
+  run_deploy_target_fixture qualified-source-deploy 0 'action=deploy'
+grep -Fxq 'action=deploy' "$TEMP_DIR/deploy-target-qualified-source-deploy.output"
+grep -Fxq "artifact_id=401" "$TEMP_DIR/deploy-target-qualified-source-deploy.output"
+for reference in develop refs/heads/develop; do
+  dispatch_run="$(jq -c --arg reference "$reference" '
+    .event = "repository_dispatch" | .head_branch = "develop" | .path += ("@" + $reference)
+    | del(.pull_requests)' <<<"$valid_workflow_run_json")"
+  FAKE_FIXTURE_WORKFLOW_RUN_JSON="$dispatch_run" FAKE_METADATA_EVENT=repository_dispatch \
+    FAKE_METADATA_ACTION=deploy run_deploy_target_fixture "dispatch-${reference##*/}-${#reference}" 0 'action=deploy'
+  grep -Fxq 'action=deploy' "$TEMP_DIR/deploy-target-dispatch-${reference##*/}-${#reference}.output"
+done
+foreign_dispatch_run="$(jq -c '
+  .event = "repository_dispatch" | .head_branch = "develop" | .path += "@refs/heads/not-develop"
+  | del(.pull_requests)' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$foreign_dispatch_run" \
+  run_deploy_target_fixture foreign-dispatch-path 1 'Unexpected source run path'
+cross_pr_qualified_source_run_json="$(jq -c '
+  .path += "@refs/pull/901/merge" | .pull_requests += [{number:901,head:{sha:.head_sha}}]
+' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$cross_pr_qualified_source_run_json" \
+  run_deploy_target_fixture qualified-source-cross-pr 0 'Ignoring artifact not bound to the qualified source path pull request.'
+grep -Fxq 'action=none' "$TEMP_DIR/deploy-target-qualified-source-cross-pr.output"
+
 FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/V2__scope_gameplay_command_identity.sql"}]]' \
   run_deploy_target_fixture v2-schema-migration 0 'v2_schema_migration_change=true'
 FAKE_FIXTURE_PR_FILES_JSON='[[{"filename":"services/game-session-service/src/main/resources/db/migration/R__refresh_runtime_views.sql"}]]' \
@@ -6830,17 +7009,135 @@ FAKE_FIXTURE_EXPOSURE_MODE=public \
 FAKE_FIXTURE_CERTIFICATE_MODE=standalone FAKE_FIXTURE_EXPOSURE_MODE=public \
   run_deploy_target_fixture standalone-public 0 'action=deploy'
 
-# workflow_run.head_sha identifies the source/default-branch workflow run here,
-# while the PR head remains bound by the current PR and artifact metadata.
+# Natural render consumption requires callback, REST run, and artifact to agree on the attempt.
+second_attempt_run_json="$(jq -c '.run_attempt = 2' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$second_attempt_run_json" \
+FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT=2 \
+  run_deploy_target_fixture natural-stale-callback 0 \
+    'Ignoring render callback not bound to the current source attempt.'
+test "$(wc -l < "$TEMP_DIR/deploy-target-natural-stale-callback.gh.log")" = 1
+both_attempt_artifacts="$(jq -c --arg name "${legacy_artifact_name}-attempt-2" \
+  '.[0].artifacts += [{id:402,name:$name,expired:false}]' <<<"$valid_artifacts_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$second_attempt_run_json" \
+FAKE_FIXTURE_ARTIFACTS_JSON="$both_attempt_artifacts" \
+FAKE_FIXTURE_CALLBACK_ATTEMPT=2 \
+FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT=2 \
+  run_deploy_target_fixture natural-matching-attempt 0 'action=deploy'
+grep -Fxq 'render_run_attempt=2' "$TEMP_DIR/deploy-target-natural-matching-attempt.output"
+grep -Fxq 'artifact_id=402' "$TEMP_DIR/deploy-target-natural-matching-attempt.output"
+grep -Fxq 'api repos/example/FireMUD/actions/artifacts/402/zip' \
+  "$TEMP_DIR/deploy-target-natural-matching-attempt.gh.log"
+FAKE_FIXTURE_REFRESHED_WORKFLOW_RUN_JSON="$second_attempt_run_json" \
+  run_deploy_target_fixture reran-after-artifact-pin 0 \
+    'Ignoring render whose source attempt is no longer a current completed success.'
+test "$(grep -Fxc 'api repos/example/FireMUD/actions/runs/42' "$TEMP_DIR/deploy-target-reran-after-artifact-pin.gh.log")" = 2
+grep -Fxq 'action=none' "$TEMP_DIR/deploy-target-reran-after-artifact-pin.output"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$second_attempt_run_json" \
+FAKE_FIXTURE_ARTIFACTS_JSON="$both_attempt_artifacts" \
+FAKE_FIXTURE_CALLBACK_ATTEMPT=2 \
+FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT=1 \
+  run_deploy_target_fixture natural-stale-artifact 0 \
+    'Ignoring render metadata not bound to the current source attempt.'
+test "$(cat "$TEMP_DIR/deploy-target-natural-stale-artifact.output")" = $'action=none\nretire_identity=false\ncleanup_state=none'
+
+# A real natural preview uses H in the REST run, its workflow_run callback and PR
+# association; the sanitized artifact also records the different execution merge M.
+native_merge_sha=dddddddddddddddddddddddddddddddddddddddd
+native_source_run_json="$(jq -c '.pull_requests[0].base.sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' <<<"$valid_workflow_run_json")"
+TEST_PR_BASE_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
+TEST_PR_MERGE_SHA="$native_merge_sha" \
+FAKE_FIXTURE_METADATA_MERGE_SHA="$native_merge_sha" \
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$native_source_run_json" \
+  run_deploy_target_fixture native-distinct-merge 0 'action=deploy'
+grep -Fxq 'head_sha=cccccccccccccccccccccccccccccccccccccccc' "$TEMP_DIR/deploy-target-native-distinct-merge.output"
+grep -Fxq "merge_sha=$native_merge_sha" "$TEMP_DIR/deploy-target-native-distinct-merge.output"
+TEST_PR_BASE_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
+TEST_PR_MERGE_SHA="$native_merge_sha" \
+FAKE_FIXTURE_METADATA_MERGE_SHA="$native_merge_sha" \
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$native_source_run_json" \
+FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$native_merge_sha" \
+  run_deploy_target_fixture native-distinct-merge-callback 1 'Unexpected source run head'
+test ! -s "$TEMP_DIR/deploy-target-native-distinct-merge-callback.output"
+
+# A merge-reported callback must agree with REST and the provider-confirmed
+# current merge parents. An empty association requires the exact native PR path.
+for source_binding in associated qualified-empty; do
+  bound_merge_run="$(jq -c --arg sha "$native_merge_sha" --arg binding "$source_binding" '
+    .head_sha = $sha | if $binding == "qualified-empty"
+      then .path += "@refs/pull/900/merge" | .pull_requests = [] else . end
+  ' <<<"$native_source_run_json")"
+  TEST_PR_BASE_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
+  TEST_PR_MERGE_SHA="$native_merge_sha" \
+  FAKE_FIXTURE_METADATA_MERGE_SHA="$native_merge_sha" \
+  FAKE_FIXTURE_WORKFLOW_RUN_JSON="$bound_merge_run" \
+  FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$native_merge_sha" \
+    run_deploy_target_fixture "native-merge-$source_binding" 0 'action=deploy'
+done
+bare_empty_merge_run="$(jq -c --arg sha "$native_merge_sha" '
+  .head_sha = $sha | .pull_requests = []
+' <<<"$native_source_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$bare_empty_merge_run" \
+FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$native_merge_sha" \
+  run_deploy_target_fixture native-merge-bare-empty 0 'Ignoring source run without a bound pull request association.'
+
+# A PR source run needs native identity in addition to the artifact head.
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$distinct_source_workflow_run_json" \
 FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$distinct_source_sha" \
-  run_deploy_target_fixture distinct-source-head 0 'action=deploy'
-grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-distinct-source-head.output"
+  run_deploy_target_fixture distinct-source-head 0 'Ignoring artifact not bound to the source run pull request and head.'
+grep -Fxq "action=none" "$TEMP_DIR/deploy-target-distinct-source-head.output"
+# Independently prove neither the API run head nor association can substitute for the other.
+run_head_only_json="$(jq -c --arg sha "$distinct_source_sha" '.head_sha=$sha' <<<"$valid_workflow_run_json")"
+association_head_only_json="$(jq -c --arg sha "$distinct_source_sha" '.pull_requests[0].head.sha=$sha' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$run_head_only_json" \
+FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$distinct_source_sha" \
+  run_deploy_target_fixture run-head-only 0 'Ignoring artifact not bound to the source run pull request and head.'
+grep -Fxq "action=none" "$TEMP_DIR/deploy-target-run-head-only.output"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$association_head_only_json" \
+  run_deploy_target_fixture association-head-only 0 'Ignoring artifact not bound to the source run pull request and head.'
+grep -Fxq "action=none" "$TEMP_DIR/deploy-target-association-head-only.output"
 
+# Reach the final artifact binding guard: PR 901/D satisfies the initial run
+# association check, but the bare-path run/callback head D cannot authorize PR 900/C.
+final_run_head_mismatch_json="$(jq -c --arg sha "$distinct_source_sha" '
+  .head_sha = $sha | .pull_requests = [{number:901,head:{sha:$sha}}] + .pull_requests
+' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$final_run_head_mismatch_json" \
+FAKE_FIXTURE_WORKFLOW_RUN_HEAD_SHA="$distinct_source_sha" \
+  run_deploy_target_fixture final-run-head-mismatch 0 'Ignoring artifact not bound to the source run pull request and head.'
+test "$(cat "$TEMP_DIR/deploy-target-final-run-head-mismatch.output")" = $'action=none\nretire_identity=false\ncleanup_state=none'
+grep -Fxq 'api repos/example/FireMUD/actions/runs/42' \
+  "$TEMP_DIR/deploy-target-final-run-head-mismatch.gh.log"
+grep -Fxq 'api --paginate --slurp repos/example/FireMUD/actions/runs/42/artifacts?per_page=100' \
+  "$TEMP_DIR/deploy-target-final-run-head-mismatch.gh.log"
+grep -Fxq 'api repos/example/FireMUD/actions/artifacts/401/zip' \
+  "$TEMP_DIR/deploy-target-final-run-head-mismatch.gh.log"
+
+# Unrelated native associations do not erase the uniquely selected artifact target.
+for association_order in before after; do
+  multiple_association_json="$(jq -c --arg order "$association_order" '
+    .pull_requests = (if $order == "before" then [{number:901,head:{sha:.head_sha}}] + .pull_requests
+      else .pull_requests + [{number:901,head:{sha:.head_sha}}] end)' <<<"$valid_workflow_run_json")"
+  FAKE_FIXTURE_WORKFLOW_RUN_JSON="$multiple_association_json" \
+    run_deploy_target_fixture "multiple-associations-${association_order}" 0 'action=deploy'
+  grep -Fxq 'action=deploy' "$TEMP_DIR/deploy-target-multiple-associations-${association_order}.output"
+done
+duplicate_target_json="$(jq -c '.pull_requests += .pull_requests' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$duplicate_target_json" \
+  run_deploy_target_fixture duplicate-target-association 0 'Ignoring artifact not bound to the source run pull request and head.'
+grep -Fxq "action=none" "$TEMP_DIR/deploy-target-duplicate-target-association.output"
+
+FAKE_FIXTURE_ARTIFACTS_JSON="$(jq -nc --arg name "$legacy_artifact_name" \
+  '[{artifacts:[{id:401,name:$name,expired:false}]}]')" \
+  run_deploy_target_fixture unknown-legacy-attempt 0 \
+    'Ignoring source run without exactly one canonical preview artifact.'
 FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[]}]' \
   run_deploy_target_fixture missing-canonical 0 \
     'Ignoring source run without exactly one canonical preview artifact.'
-FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[{"name":"'"$canonical_artifact_name"'","expired":false},{"name":"preview-render-pr-900-dddddddddddddddddddddddddddddddddddddddd","expired":false}]}]' \
+FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[{"name":"'"$canonical_artifact_name"'","expired":false}]}]' \
+  run_deploy_target_fixture missing-immutable-artifact-id 0 \
+    'Ignoring source run without an immutable preview artifact ID.'
+if grep -Fq '/actions/artifacts/' "$TEMP_DIR/deploy-target-missing-immutable-artifact-id.gh.log"; then exit 1; fi
+FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[{"id":401,"name":"'"$canonical_artifact_name"'","expired":false},{"name":"preview-render-pr-900-dddddddddddddddddddddddddddddddddddddddd-attempt-1","expired":false}]}]' \
   run_deploy_target_fixture multiple-canonical 0 \
     'Ignoring source run without exactly one canonical preview artifact.'
 FAKE_FIXTURE_ARTIFACT_FILES=missing-metadata \
@@ -6861,6 +7158,105 @@ FAKE_FIXTURE_METADATA_BASE_SHA=dddddddddddddddddddddddddddddddddddddddd \
 FAKE_FIXTURE_METADATA_MERGE_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
   run_deploy_target_fixture merge-mismatch 0 \
     'Ignoring render artifact bound to a stale or different pull-request merge.'
+retry_nonce=01234567-0123-4123-8123-0123456789ab
+retry_source_run_json="$(jq -c --arg nonce "$retry_nonce" '
+  . + {event:"repository_dispatch",head_branch:"develop",
+    display_title:("Preview retry " + $nonce + " pr-900-base-" + ("b" * 40) + "-head-" + .head_sha + "-merge-" + .head_sha)}
+' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$retry_source_run_json" FAKE_METADATA_EVENT=repository_dispatch \
+  FAKE_METADATA_ACTION=deploy FAKE_METADATA_RETRY_NONCE="$retry_nonce" TEST_PR_HEAD_SHA="$distinct_source_sha" \
+  run_deploy_target_fixture retry-stale-head 0 'Ignoring stale lifecycle event for an earlier PR head.'
+grep -Fxq 'action=none' "$TEMP_DIR/deploy-target-retry-stale-head.output"
+grep -Fxq "stale_head_retry_nonce=${retry_nonce}" "$TEMP_DIR/deploy-target-retry-stale-head.output"
+
+for retry_eligibility_case in priority removed malformed superseded; do
+  case "$retry_eligibility_case" in
+    priority)
+      retry_labels='[{"name":"preview:priority"}]'
+      expected_message='action=deploy'
+      ;;
+    malformed)
+      retry_labels='{}'
+      expected_message='Refusing hosted preview lifecycle action: PR label metadata is missing or malformed.'
+      ;;
+    *)
+      retry_labels='[]'
+      expected_message='Refusing hosted preview lifecycle action: PR is not preview-eligible.'
+      ;;
+  esac
+  refreshed_retry_source=''
+  if [[ "$retry_eligibility_case" == superseded ]]; then
+    refreshed_retry_source="$(jq -c '.run_attempt = 2' <<<"$retry_source_run_json")"
+  fi
+  TEST_PR_BASE_REF=feature/stack FAKE_FIXTURE_PR_LABELS_JSON="$retry_labels" \
+    FAKE_FIXTURE_WORKFLOW_RUN_JSON="$retry_source_run_json" \
+    FAKE_FIXTURE_REFRESHED_WORKFLOW_RUN_JSON="$refreshed_retry_source" \
+    FAKE_METADATA_EVENT=repository_dispatch FAKE_METADATA_ACTION=deploy FAKE_METADATA_RETRY_NONCE="$retry_nonce" \
+    FAKE_METADATA_IMAGE_TAG="pr-merge-cccccccccccccccccccccccccccccccccccccccc" \
+    run_deploy_target_fixture "retry-eligibility-$retry_eligibility_case" 0 "$expected_message"
+  retry_eligibility_output="$TEMP_DIR/deploy-target-retry-eligibility-$retry_eligibility_case.output"
+  if [[ "$retry_eligibility_case" == removed ]]; then
+    grep -Fxq 'action=none' "$retry_eligibility_output"
+    grep -Fxq "ineligible_retry_nonce=$retry_nonce" "$retry_eligibility_output"
+  else
+    test -z "$(sed -n '/^ineligible_retry_nonce=/p' "$retry_eligibility_output")"
+    if [[ "$retry_eligibility_case" != priority ]]; then
+      grep -Fxq 'action=none' "$retry_eligibility_output"
+    fi
+  fi
+done
+
+retry_old_base=dddddddddddddddddddddddddddddddddddddddd
+retry_old_merge=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+for comparison_case in base merge pending-merge stale-parents; do
+  artifact_base=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  artifact_merge="$retry_old_merge"
+  if [[ "$comparison_case" == base ]]; then
+    artifact_base="$retry_old_base"
+    artifact_merge=cccccccccccccccccccccccccccccccccccccccc
+  fi
+  retry_old_comparison_run_json="$(jq -c --arg base "$artifact_base" --arg merge "$artifact_merge" '
+    .display_title |= sub("-base-[0-9a-f]{40}"; "-base-" + $base)
+      | .display_title |= sub("-merge-[0-9a-f]{40}"; "-merge-" + $merge)
+  ' <<<"$retry_source_run_json")"
+  case "$comparison_case" in
+    base)
+      expected_message='Ignoring retry render bound to a stale or different pull-request base.'
+      ;;
+    merge)
+      expected_message="Ignoring render artifact bound to a stale or different pull-request ${comparison_case}."
+      ;;
+    pending-merge)
+      expected_message='Ignoring lifecycle event because pull-request mergeability is unavailable.'
+      ;;
+    stale-parents)
+      expected_message='Ignoring lifecycle event whose merge commit parents are stale or do not match the current base and head.'
+      ;;
+  esac
+  mergeable_state=clean
+  stale_parents=false
+  if [[ "$comparison_case" == pending-merge ]]; then mergeable_state=unknown; fi
+  if [[ "$comparison_case" == stale-parents ]]; then stale_parents=true; fi
+  FAKE_FIXTURE_WORKFLOW_RUN_JSON="$retry_old_comparison_run_json" FAKE_METADATA_EVENT=repository_dispatch \
+    FAKE_METADATA_ACTION=deploy FAKE_METADATA_RETRY_NONCE="$retry_nonce" \
+    FAKE_FIXTURE_METADATA_BASE_SHA="$artifact_base" FAKE_FIXTURE_METADATA_MERGE_SHA="$artifact_merge" \
+    TEST_PR_BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+    TEST_PR_MERGEABLE_STATE="$mergeable_state" FAKE_STALE_MERGE_PARENTS="$stale_parents" \
+    run_deploy_target_fixture "retry-comparison-${comparison_case}" 0 "$expected_message"
+  comparison_output="$TEMP_DIR/deploy-target-retry-comparison-${comparison_case}.output"
+  grep -Fxq 'action=none' "$comparison_output"
+  if [[ "$comparison_case" == base || "$comparison_case" == merge ]]; then
+    grep -Fxq "stale_comparison_retry_nonce=${retry_nonce}" "$comparison_output"
+  else
+    test "$(cat "$comparison_output")" = $'action=none\nretire_identity=false\ncleanup_state=none'
+  fi
+done
+
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$retry_source_run_json" FAKE_METADATA_EVENT=repository_dispatch \
+  FAKE_METADATA_ACTION=deploy FAKE_METADATA_RETRY_NONCE="$retry_nonce" FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT=2 \
+  TEST_PR_HEAD_SHA="$distinct_source_sha" \
+  run_deploy_target_fixture retry-unbound-stale-head 0 'Ignoring render metadata not bound to the current source attempt.'
+test "$(cat "$TEMP_DIR/deploy-target-retry-unbound-stale-head.output")" = $'action=none\nretire_identity=false\ncleanup_state=none'
 FAKE_FIXTURE_PR_LABELS_JSON='{}' \
   run_deploy_target_fixture malformed-labels 0 \
     'Refusing hosted preview lifecycle action: PR label metadata is missing or malformed.'
@@ -6887,6 +7283,8 @@ unset TEST_PR_MERGEABLE TEST_PR_MERGEABLE_STATE
 run_target_without_pull_request_metadata() {
   local scenario="$1"
   local workflow_run_json="$2"
+  local callback_attempt="${3:-}"
+  local expected_api_calls="${4:-1}"
   local output="$TEMP_DIR/target-${scenario}.output"
   local gh_log="$TEMP_DIR/target-${scenario}.gh.log"
 
@@ -6900,6 +7298,8 @@ run_target_without_pull_request_metadata() {
       EVENT_NAME=workflow_run \
       EVENT_ACTION=completed \
       WORKFLOW_RUN_ID=42 \
+      WORKFLOW_RUN_ATTEMPT="$callback_attempt" \
+      DEFAULT_BRANCH=develop \
       WORKFLOW_RUN_HEAD_SHA=cccccccccccccccccccccccccccccccccccccccc \
       EVENT_PR_NUMBER='' \
       EVENT_HEAD_SHA='' \
@@ -6912,7 +7312,8 @@ run_target_without_pull_request_metadata() {
       bash "$TEMP_DIR/target.sh"
   )
   test "$(cat "$output")" = $'action=none\nretire_identity=false\ncleanup_state=none'
-  test "$(cat "$gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
+  test "$(wc -l < "$gh_log")" = "$expected_api_calls"
+  test "$(head -n 1 "$gh_log")" = 'api repos/example/FireMUD/actions/runs/42'
 }
 
 run_target_without_pull_request_metadata \
@@ -6921,6 +7322,12 @@ run_target_without_pull_request_metadata \
 run_target_without_pull_request_metadata \
   empty \
   '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[]}'
+
+# An old completion callback must never validate artifacts from a newer retry attempt.
+retry_workflow_run='{"conclusion":"success","run_attempt":2,"display_title":"Preview retry 12345678-1234-4234-8234-123456789abc pr-900-base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-head-cccccccccccccccccccccccccccccccccccccccc-merge-dddddddddddddddddddddddddddddddddddddddd","head_sha":"cccccccccccccccccccccccccccccccccccccccc","head_branch":"develop","path":".github/workflows/preview.yml@refs/heads/develop","event":"repository_dispatch","repository":{"full_name":"example/FireMUD"}}'
+run_target_without_pull_request_metadata retry-stale-callback "$retry_workflow_run" 1
+run_target_without_pull_request_metadata retry-malformed-callback "$retry_workflow_run" 02
+run_target_without_pull_request_metadata retry-exact-callback "$retry_workflow_run" 2 2
 
 # Source validation is integrated into the target step. Reject invalid source
 # identity before downloading any artifact or considering a privileged action.
@@ -6957,19 +7364,23 @@ run_invalid_source_field() {
 
 run_invalid_source_field \
   conclusion \
-  '{"conclusion":"failure","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"}}' \
+  '{"conclusion":"failure","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}' \
   '::error title=Unexpected source run conclusion::Expected success; actual failure.'
 run_invalid_source_field \
   head \
-  '{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"}}' \
+  '{"conclusion":"success","head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}' \
   '::error title=Unexpected source run head::Expected cccccccccccccccccccccccccccccccccccccccc; actual dddddddddddddddddddddddddddddddddddddddd.'
 run_invalid_source_field \
   path \
-  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/other.yml","event":"pull_request_target","repository":{"full_name":"example/FireMUD"}}' \
+  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/other.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"}}' \
   '::error title=Unexpected source run path::Expected .github/workflows/preview.yml; actual .github/workflows/other.yml.'
 run_invalid_source_field \
+  dispatch-qualified-path \
+  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml@refs/pull/7/merge","event":"repository_dispatch","repository":{"full_name":"example/FireMUD"}}' \
+  '::error title=Unexpected source run path::Expected .github/workflows/preview.yml; actual .github/workflows/preview.yml@refs/pull/7/merge.'
+run_invalid_source_field \
   repository \
-  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request_target","repository":{"full_name":"fork/FireMUD"}}' \
+  '{"conclusion":"success","head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"fork/FireMUD"}}' \
   '::error title=Unexpected source run repository::Expected example/FireMUD; actual fork/FireMUD.'
 
 target_python_log="$TEMP_DIR/closed-target-python.log"
@@ -7040,7 +7451,7 @@ image_tag=${closed_head}
 namespace=pr-900
 hostname=pr-900.preview.firedevops.net
 render_run_id=
-artifact_name=
+artifact_id=
 retire_identity=true
 cleanup_state=closed
 EOF

@@ -563,6 +563,7 @@ DEV_TOOLS_TEST_DISCOVERY_COMMAND = "python3 -m unittest discover -s dev-tools/te
 REMAINING_FULL_RUN_COMMANDS = (
     'bash ./dev-tools/tests/cloc-report-contract.sh',
     'bash ./dev-tools/tests/ci-lightweight-scope-contract.sh',
+    'bash ./dev-tools/tests/protected-pod-admission-workflow-contract.sh',
     'bash ./dev-tools/tests/gradle-dependency-recovery-contract.sh',
     'bash ./dev-tools/tests/workflow-version-authority-contract.sh',
     'bash ./dev-tools/tests/workflow-tool-updater-contract.sh',
@@ -2275,7 +2276,7 @@ for path_item in (
 ):
     require_list_item(
         preview,
-        ("on", "pull_request_target", "paths-ignore"),
+        ("on", "pull_request", "paths-ignore"),
         path_item,
         "preview workflow",
     )

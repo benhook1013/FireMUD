@@ -410,60 +410,533 @@ smoke.yml|smoke-gate|Smoke Gate|PR Smoke Gate|smoke.yml|.github/workflows/smoke.
 codeql.yml|codeql-gate|CodeQL Gate|CodeQL Analysis|codeql.yml|.github/workflows/codeql.yml
 EOF
 
-# Model two rapid metadata edits against the unchanged head. Each lightweight
-# run gets an independent namespace, while the required gate contexts remain
-# the sole authoritative checks and optional summaries cannot leave cancelled
-# or failed residue in the aggregate rollup.
 python3 - "$ROOT_DIR" <<'PY'
+import ast
+import os
 from pathlib import Path
+import re
+import subprocess
 import sys
 
 import yaml
 
 root = Path(sys.argv[1])
-workflows = {
-    "ci.yml": ("validation-gate", "Validation Gate", True),
-    "security.yml": ("security-gate", "Security Gate", True),
-    "license-scan.yml": ("license-gate", "License Gate", False),
-    "smoke.yml": ("smoke-gate", "Smoke Gate", True),
-    "codeql.yml": ("codeql-gate", "CodeQL Gate", False),
+META = "github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null"
+SUBSTANTIVE = "(github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null)"
+PR_SUBSTANTIVE = "(github.event.action != 'edited' || github.event.changes.base.ref != null)"
+gates = {
+    # workflow: (workflow name, gate job, gate name, change job name, result step, PR-only, run-scoped metadata group)
+    "ci.yml": ("CI — Validation", "validation-gate", "Validation Gate", "Detect CI-Relevant Changes", "Enforce validation success", False, True),
+    "security.yml": ("Security Gate", "security-gate", "Security Gate", "Detect Security-Relevant Changes", "Enforce security success", False, True),
+    "license-scan.yml": ("License Gate", "license-gate", "License Gate", "Detect License-Relevant Changes", "Verify ORT results", False, False),
+    "smoke.yml": ("PR Smoke Gate", "smoke-gate", "Smoke Gate", "Detect Smoke-Relevant Changes", "Classify smoke gate execution", True, True),
+    "codeql.yml": ("CodeQL Analysis", "codeql-gate", "CodeQL Gate", "Detect CodeQL-Relevant Changes", "Enforce successful CodeQL analysis", True, False),
 }
 
-metadata_guard = "github.event.action != 'edited' || github.event.changes.base.ref != null"
-for workflow, (gate_job, gate_name, run_scoped_metadata) in workflows.items():
-    path = root / ".github" / "workflows" / workflow
-    data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    concurrency = data["concurrency"]
-    group = concurrency["group"]
-    required_group_parts = (
-        "github.event.pull_request.number",
-        "github.event.action == 'edited'",
-        "github.event.changes.base.ref == null",
-        "|| 'required'",
+
+def translate_actions(body, values):
+    tokens = re.compile(
+        r"""(?P<single>'(?:''|[^'])*')|(?P<double>"(?:\\.|[^"\\])*")|"""
+        + r"(?P<context>(?<![\w.])(?:" + "|".join(map(re.escape, values)) + r")(?![\w.]))"
+        + r"|(?P<operator>&&|\|\|)|(?P<keyword>\b(?:null|true|false)\b)"
     )
-    if any(part not in group for part in required_group_parts):
-        raise SystemExit(f"{workflow} concurrency expression lost PR-scoped metadata isolation")
-    metadata_suffix = "format('metadata-{0}', github.run_id)" if run_scoped_metadata else "&& 'metadata' || 'required'"
-    if metadata_suffix not in group:
-        raise SystemExit(f"{workflow} concurrency expression changed its metadata group")
-    if concurrency.get("cancel-in-progress") != "true":
-        raise SystemExit(f"{workflow} must cancel obsolete required-gate runs")
+    translations = {"&&": " and ", "||": " or ", "null": "None", "true": "True", "false": "False"}
+
+    def translate(token):
+        value = token[0]
+        if token.lastgroup == "single":
+            return repr(value[1:-1].replace("''", "'"))
+        if token.lastgroup == "double":
+            return value
+        if token.lastgroup == "context":
+            return values[value]
+        return translations[value]
+
+    return tokens.sub(translate, body)
+
+
+def evaluate(expression, action, base_ref, event="pull_request"):
+    """Evaluate the narrow boolean gate expressions used here."""
+    body = expression.strip()
+    if body.startswith("${{") and body.endswith("}}"):
+        body = body[3:-2].strip()
+    values = {
+        "github.event.changes.base.ref": repr(base_ref),
+        "github.event.action": repr(action),
+        "github.event_name": repr(event),
+        "always()": "True",
+    }
+    return bool(interpret_selector(ast.parse(translate_actions(body, values).strip(), mode="eval").body))
+
+
+def push_branch_matches(push_config, branch):
+    if not isinstance(push_config, dict):
+        raise ValueError("Unsupported push trigger shape")
+    if "branches-ignore" in push_config:
+        raise ValueError("Unsupported push branch exclusion syntax")
+    branches = push_config.get("branches")
+    if branches is None:
+        return True
+    if not isinstance(branches, list) or any(not isinstance(pattern, str) for pattern in branches):
+        raise ValueError("Unsupported push branch filter shape")
+    for pattern in branches:
+        if any(character in pattern for character in "!?[]+") or "**" in pattern:
+            raise ValueError(f"Unsupported push branch glob syntax: {pattern!r}")
+    for pattern in branches:
+        expression = "^" + re.escape(pattern).replace(r"\*", "[^/]*") + "$"
+        if re.fullmatch(expression, branch):
+            return True
+    return False
+
+
+assert push_branch_matches({"branches": ["main", "release/*"]}, "main")
+assert push_branch_matches({"branches": ["main", "release/*"]}, "release/2026")
+assert not push_branch_matches({"branches": ["main", "release/*"]}, "release/2026/hotfix")
+for unsupported_filter in (
+    {"branches": ["!main"]}, {"branches": ["release/**"]},
+    {"branches": ["feature/?"]}, {"branches": ["release/[0-9]"]},
+    {"branches": ["m+ain", "develop"]},
+    {"branches-ignore": ["main"]},
+):
+    try:
+        push_branch_matches(unsupported_filter, "main")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"accepted unsupported push branch filter: {unsupported_filter!r}")
+
+
+
+def actions_scalar_text(value):
+    if value is None:
+        return ""
+    if type(value) is bool:
+        return "true" if value else "false"
+    return str(value)
+
+
+def literal_format(pattern, *args):
+    if type(pattern) is not str:
+        raise ValueError("Concurrency format requires a literal string")
+    parts = []
+    cursor = 0
+    for match in re.finditer(r"\{([0-9]+)\}", pattern):
+        literal = pattern[cursor:match.start()]
+        if "{" in literal or "}" in literal:
+            raise ValueError("Unsupported concurrency format placeholder")
+        index = int(match[1])
+        if index >= len(args):
+            raise ValueError("Concurrency format placeholder out of range")
+        parts.extend((literal, actions_scalar_text(args[index])))
+        cursor = match.end()
+    tail = pattern[cursor:]
+    if "{" in tail or "}" in tail:
+        raise ValueError("Unsupported concurrency format placeholder")
+    return "".join((*parts, tail))
+
+
+def selector_equal(left, right):
+    # GitHub Actions compares like kinds directly and coerces unlike kinds
+    # to numbers. Object values compare only with values of the same kind.
+    if type(left) is type(right):
+        if isinstance(left, str):
+            return left.casefold() == right.casefold()
+        return left == right
+    if type(left) not in (str, bool, int, float, type(None)) or \
+            type(right) not in (str, bool, int, float, type(None)):
+        return False
+
+    def to_number(value):
+        if value is None:
+            return 0
+        if type(value) in (bool, int):
+            return int(value)
+        if type(value) is str:
+            if not value:
+                return 0
+            number = value.strip(" \t\r\n")
+            if re.fullmatch(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?", number):
+                return float(number)
+            return float("nan")
+        raise ValueError("Unsupported concurrency comparison operand")
+
+    return to_number(left) == to_number(right)
+
+
+def interpret_selector(node):
+    if isinstance(node, ast.Constant) and type(node.value) in (str, int, bool, type(None)):
+        return node.value
+    if isinstance(node, ast.Dict):
+        return {interpret_selector(key): interpret_selector(value) for key, value in zip(node.keys, node.values)}
+    if isinstance(node, ast.BoolOp) and isinstance(node.op, (ast.And, ast.Or)):
+        # GitHub's boolean operators return operands and short-circuit.
+        value = interpret_selector(node.values[0])
+        for operand in node.values[1:]:
+            if bool(value) == isinstance(node.op, ast.Or):
+                return value
+            value = interpret_selector(operand)
+        return value
+    if (isinstance(node, ast.Compare) and len(node.ops) == 1
+            and isinstance(node.ops[0], (ast.Eq, ast.NotEq))):
+        left = interpret_selector(node.left)
+        right = interpret_selector(node.comparators[0])
+        return selector_equal(left, right) == isinstance(node.ops[0], ast.Eq)
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "format" and not node.keywords and node.args
+            and isinstance(node.args[0], ast.Constant)):
+        return literal_format(*(interpret_selector(arg) for arg in node.args))
+    raise ValueError("Unsupported concurrency selector")
+
+
+for expression, expected in (
+    ("'Develop' == 'develop'", True),
+    ("'Develop' != 'develop'", False),
+    ("12 == '12'", True),
+    ("12 != ' 1.2e1 '", False),
+    ("False == 0", True),
+    ("None == 0", True),
+    ("1 == 'one'", False),
+    ("1 == '01'", False),
+):
+    assert interpret_selector(ast.parse(expression, mode="eval").body) is expected
+
+assert not evaluate(SUBSTANTIVE + " && github.event.action != 'SYNCHRONIZE'", "synchronize", None)
+
+
+assert literal_format("metadata-{0}", 123) == "metadata-123"
+for forbidden in ("{name}", "{0.attr}", "{0[0]}", "{0:04}", "{0!r}", "{{0}}", "{1}"):
+    try:
+        literal_format(forbidden, 123)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"Accepted unsupported concurrency format: {forbidden}")
+
+
+assert evaluate("github.event.changes.base.ref == null", "edited", None)
+assert not evaluate("'null' == 'None'", "edited", None)
+assert evaluate("'room!=hall||garden' == 'room!=hall||garden'", "edited", None)
+assert not evaluate("'room!=hall' == 'room != hall'", "edited", None)
+
+
+def effective_group(group, action, base_ref, workflow_name="Required Gate", *, pr_number=42, push_branch=None, run_id="123"):
+    values = {
+        "github.event.changes.base.ref": repr(base_ref),
+        "github.event.pull_request.number": repr("") if push_branch else str(pr_number),
+        "github.event.action": repr(action),
+        "github.event_name": repr("push" if push_branch else "pull_request"),
+        "github.workflow": repr(workflow_name),
+        "github.run_id": repr(run_id),
+        "github.ref": repr(f"refs/heads/{push_branch}" if push_branch else f"refs/pull/{pr_number}/merge"),
+    }
+
+    def render(match):
+        body = translate_actions(match[1].strip(), values)
+        tree = ast.parse(body, mode="eval")
+        return actions_scalar_text(interpret_selector(tree.body))
+    return re.sub(r"\$\{\{(.*?)\}\}", render, group)
+
+
+assert effective_group("${{ 'null' == 'None' && 'failed' || 'ok' }}", None, None) == "ok"
+assert effective_group("${{ 'true && false' }}", None, None) == "true && false"
+assert effective_group("${{ 'github.ref' }}", None, None) == "github.ref"
+assert effective_group("${{ 'it''s null' }}", None, None) == "it's null"
+assert effective_group("${{ true && 'a||b' == 'a or b' }}", None, None) == "false"
+
+assert effective_group("${{ format('gate{0}{1}{2}', null, true, false) }}", None, None) == "gatetruefalse"
+assert effective_group("${{ null }}-${{ true }}-${{ false }}", None, None) == "-true-false"
+
+
+def concurrency_group_collisions(rendered_groups):
+    owners = {}
+    collisions = []
+    for workflow, owner, group in rendered_groups:
+        key = group.casefold()
+        prior = owners.get(key)
+        if prior is not None and prior[:2] != (workflow, owner):
+            collisions.append((prior, (workflow, owner, group)))
+        else:
+            owners[key] = (workflow, owner, group)
+    return collisions
+
+
+def can_reuse_required_name(name, required_names):
+    if not name:
+        return False
+    # These current matrix templates have fixed delimiters that can never
+    # render any required context. Do not assume arbitrary dynamics are safe.
+    matrix_prefixes = (
+        "Build and Test (${{ matrix.module }} / ${{ matrix.partition }})",
+        "Build and Test (account-service / ${{ matrix.partition }})",
+        "Build and Test (game-session-service / ${{ matrix.partition }})",
+        "Build and Test (world-management-service / ${{ matrix.partition }})",
+        "CodeQL Analysis (${{ matrix.language }})",
+    )
+    if name in matrix_prefixes and all(
+        not gate.startswith(("Build and Test (", "CodeQL Analysis (")) for gate in required_names
+    ):
+        return False
+    dynamic = re.fullmatch(r"\$\{\{(.*?)\}\}", name)
+    if not dynamic:
+        return "${{" in name or name in required_names
+    body = dynamic[1].strip()
+    # Limit dynamic names to the existing exact metadata ternary shape or a
+    # constant literal; other shapes need an explicitly reviewed model.
+    if re.fullmatch(r"'[^']*'", body):
+        return body[1:-1] in required_names
+    summary = re.fullmatch(
+        re.escape("github.event.action == 'edited' && github.event.changes.base.ref == null")
+        + r" && '([^']*)' \|\| '([^']*)'",
+        body,
+    )
+    return not summary or any(option in required_names for option in summary.groups())
+
+
+assert can_reuse_required_name("${{ 'CodeQL Gate' }}", {"CodeQL Gate"})
+assert not can_reuse_required_name("${{ 'Auxiliary Report' }}", {"CodeQL Gate"})
+assert can_reuse_required_name("${{ matrix.language }}", {"CodeQL Gate"})
+assert not can_reuse_required_name("CodeQL Analysis (${{ matrix.language }})", {"CodeQL Gate"})
+
+
+def isolates_metadata_group(group, run_scoped, workflow_name, *, pr_number=42):
+    metadata_groups = [
+        effective_group(group, "edited", None, workflow_name, pr_number=pr_number, run_id=run_id)
+        for run_id in ("123", "456")
+    ]
+    expected_suffixes = ("-metadata-123", "-metadata-456") if run_scoped else ("-metadata", "-metadata")
+    substantive = [effective_group(group, action, base_ref, workflow_name, pr_number=pr_number) for action, base_ref in (
+        ("edited", {"from": "main", "to": "develop"}), ("opened", None), ("synchronize", None), ("reopened", None),
+    )]
+    if len({name.casefold() for name in substantive}) != 1:
+        return False
+    distinct_metadata_groups = metadata_groups[0].casefold() != metadata_groups[1].casefold()
+    if distinct_metadata_groups != run_scoped:
+        return False
+    return all(
+        name.endswith(suffix) for name, suffix in zip(metadata_groups, expected_suffixes)
+    ) and all(name.endswith("-required") for name in substantive)
+
+
+def excludes_metadata(expression):
+    body = expression.strip()
+    if body.startswith("${{") and body.endswith("}}"):
+        body = body[3:-2].strip()
+    if body == SUBSTANTIVE[1:-1] or body == PR_SUBSTANTIVE[1:-1]:
+        return True
+    # Only a required top-level conjunction can enforce the exclusion.
+    # Parenthesized additional conditions may contain OR without bypassing it.
+    depth = 0
+    quoted = False
+    start = 0
+    terms = []
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char == "'":
+            if quoted and index + 1 < len(body) and body[index + 1] == "'":
+                index += 2
+                continue
+            quoted = not quoted
+        elif not quoted:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth < 0:
+                    return False
+            elif depth == 0 and body[index:index + 2] == "||":
+                return False
+            elif depth == 0 and body[index:index + 2] == "&&":
+                terms.append(body[start:index].strip())
+                start = index + 2
+                index += 1
+        index += 1
+    terms.append(body[start:].strip())
+    return not quoted and depth == 0 and any(term in (SUBSTANTIVE, PR_SUBSTANTIVE) for term in terms)
+
+
+assert excludes_metadata("${{ " + SUBSTANTIVE + " && needs.changes.result == 'success' }}")
+assert excludes_metadata("${{ always() && " + PR_SUBSTANTIVE + " && (true || false) }}")
+assert not excludes_metadata("${{ github.event_name == 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}")
+assert not excludes_metadata("${{ " + SUBSTANTIVE + " || always() }}")
+assert not excludes_metadata("${{ (" + SUBSTANTIVE + " || always()) }}")
+
+for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_only, run_scoped) in gates.items():
+    path = root / ".github/workflows" / workflow
+    text = path.read_text(encoding="utf-8")
+    data = yaml.load(text, Loader=yaml.BaseLoader)
+    if data.get("name") != workflow_name:
+        raise SystemExit(f"{workflow} must keep workflow name {workflow_name!r}")
+    if set(data["on"]["pull_request"]["types"]) != {"opened", "synchronize", "reopened", "edited"}:
+        raise SystemExit(f"{workflow} must still trigger on edited so base retargets rerun the gate")
+    expected_title = (
+        f"{workflow_name} ${{{{ github.event_name == 'pull_request' && format('pr-{{0}} base-{{1}} head-{{2}}', "
+        "github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha) || github.ref_name }}"
+    )
+    if data.get("run-name") != expected_title:
+        raise SystemExit(f"{workflow} must publish its canonical pull-request run title")
+    if data["jobs"]["changes"].get("name") != change_job:
+        raise SystemExit(f"{workflow} change detection job must stay {change_job!r}")
 
     gate = data["jobs"][gate_job]
     if gate.get("name") != gate_name:
-        raise SystemExit(f"{workflow} required gate context changed")
+        raise SystemExit(f"{workflow} {gate_name} must retain its required context for metadata edits")
+    expected_if = "${{ always() && github.event_name == 'pull_request' }}" if pr_only else "${{ always() }}"
+    if gate.get("if") != expected_if or not evaluate(gate["if"], "edited", None):
+        raise SystemExit(f"{workflow} {gate_name} must evaluate the preservation path on title/body edits")
+    retarget_change = {"from": "main", "to": "develop"}
+    for action, base_ref in (("edited", retarget_change), ("opened", None), ("synchronize", None), ("reopened", None)):
+        if not evaluate(gate["if"], action, base_ref):
+            raise SystemExit(f"{workflow} {gate_name} must run for {action} (base change={base_ref})")
+    if not pr_only and not evaluate(gate["if"], None, None, event="push"):
+        raise SystemExit(f"{workflow} {gate_name} must still run on push")
+    needs = gate.get("needs")
+    needs = needs if isinstance(needs, list) else [needs]
+    if "changes" not in needs:
+        raise SystemExit(f"{workflow} {gate_name} must depend on change detection")
+    if workflow == "codeql.yml" and "analyze" not in needs:
+        raise SystemExit(f"{workflow} {gate_name} must depend directly on analyze")
+    result_steps = [step for step in gate.get("steps", []) if step.get("name") == result_step]
+    if len(result_steps) != 1 or result_steps[0].get("env", {}).get("CHANGES_RESULT") != "${{ needs.changes.result }}":
+        raise SystemExit(f"{workflow} {gate_name} must enforce through one {result_step!r} step reading CHANGES_RESULT")
+    if result_steps[0].get("continue-on-error", "false") != "false":
+        raise SystemExit(f"{workflow} {gate_name} result step cannot ignore failures")
+    if workflow == "smoke.yml":
+        if "if" in result_steps[0] or result_steps[0]["env"].get("SMOKE_GATE_REQUIRED") != (
+            "${{ github.event.action != 'edited' || github.event.changes.base.ref != null }}"
+        ):
+            raise SystemExit("Smoke classification must distinguish metadata edits from substantive proof")
+    else:
+        condition = result_steps[0].get("if", "")
+        if not condition or evaluate(condition, "edited", None):
+            raise SystemExit(f"{workflow} {gate_name} substantive enforcement must skip metadata edits")
+        for action, base_ref in (("edited", retarget_change), ("opened", None), ("synchronize", None), ("reopened", None)):
+            if not evaluate(condition, action, base_ref):
+                raise SystemExit(f"{workflow} {gate_name} must enforce failure for {action}")
+        if not pr_only and not evaluate(condition, None, None, event="push"):
+            raise SystemExit(f"{workflow} {gate_name} must enforce failure on push")
+    if workflow == "codeql.yml":
+        step = result_steps[0]
+        if step["env"].get("SHOULD_RUN") != "${{ needs.changes.outputs.should_run }}" or \
+           step["env"].get("ANALYZE_RESULT") != "${{ needs.analyze.result }}":
+            raise SystemExit("CodeQL enforcement must use actual detector and analyzer results")
+        for changes, should_run, analyze, success in (
+            ("success", "true", "failure", False),
+            ("success", "true", "success", True),
+            ("success", "false", "skipped", True),
+            ("failure", "false", "skipped", False),
+            ("success", "", "skipped", False),
+        ):
+            outcome = subprocess.run(["bash", "-e", "-c", step["run"]], check=False, capture_output=True,
+                                     env={**os.environ, "CHANGES_RESULT": changes,
+                                          "SHOULD_RUN": should_run, "ANALYZE_RESULT": analyze})
+            if (outcome.returncode == 0) != success:
+                raise SystemExit(f"CodeQL enforcement returned {outcome.returncode} for {changes}/{should_run}/{analyze}")
 
-for workflow in ("ci.yml", "security.yml", "smoke.yml"):
-    path = root / ".github" / "workflows" / workflow
-    data = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    for job_name, job in data["jobs"].items():
-        if job_name == workflows[workflow][0]:
+    # Every other job also stays idle for metadata-only edits, and none of
+    # them may hold a required gate name.
+    for job_id, job in data["jobs"].items():
+        if job_id == gate_job:
             continue
-        condition = job.get("if", "") if isinstance(job, dict) else ""
-        if metadata_guard not in condition:
-            raise SystemExit(
-                f"{workflow} job {job_name} can run for a metadata-only edited event"
-            )
+        condition = job.get("if", "")
+        if not excludes_metadata(condition):
+            raise SystemExit(f"{workflow} job {job_id} can run for a metadata-only edit")
+        if can_reuse_required_name(job.get("name", job_id), {name for _, _, name, *_ in gates.values()}):
+            raise SystemExit(f"{workflow} job {job_id} has a possible required gate name collision")
+
+    # Metadata runs never cancel or replace the substantive run.
+    concurrency = data["concurrency"]
+    group = concurrency["group"]
+    suffix = "format('metadata-{0}', github.run_id) || 'required'" if run_scoped else "&& 'metadata' || 'required'"
+    if "github.event.pull_request.number" not in group or META.split(" && ", 1)[1] not in group or suffix not in group:
+        raise SystemExit(f"{workflow} concurrency group must keep metadata runs out of the PR's required namespace")
+    for pr_number in (42, 43, 44):
+        if not isolates_metadata_group(group, run_scoped, workflow_name, pr_number=pr_number):
+            raise SystemExit(f"{workflow} PR {pr_number} effective metadata and substantive groups must differ")
+    # The old substring guard would accept this expression despite its bypass.
+    bypassed = group.replace(META, "true && 'required' || " + META, 1)
+    assert bypassed != group and META in bypassed and suffix in bypassed
+    assert effective_group(bypassed, "edited", None, workflow_name) == effective_group(
+        bypassed, "edited", {"from": "main", "to": "develop"}, workflow_name
+    ), workflow
+    assert effective_group(bypassed, "edited", None, workflow_name).endswith("-required"), workflow
+    assert not isolates_metadata_group(bypassed, run_scoped, workflow_name), workflow
+    collided = group.replace(META, f"github.event.action == 'synchronize' || {META}", 1)
+    assert collided != group and not isolates_metadata_group(collided, run_scoped, workflow_name), workflow
+    if workflow == "ci.yml":
+        split_opened = (
+            "${{ github.workflow == 'CI — Validation' && github.event.action == 'opened' && 'opened-' || '' }}"
+            + group
+        )
+        assert isolates_metadata_group(split_opened, run_scoped, "Required Gate")
+        assert not isolates_metadata_group(split_opened, run_scoped, workflow_name), workflow
+    if concurrency.get("cancel-in-progress") != "true":
+        raise SystemExit(f"{workflow} must cancel obsolete runs within each namespace")
+
+rendered_groups = []
+workflow_data = {}
+for workflow, (workflow_name, *_rest) in gates.items():
+    data = yaml.load((root / ".github/workflows" / workflow).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    workflow_data[workflow] = data
+    group = data["concurrency"]["group"]
+    if data.get("name") != workflow_name:
+        raise SystemExit(f"{workflow} actual name must match its required-gate contract")
+    run_scoped = gates[workflow][-1]
+    for pr_number in (42, 43, 44):
+        for run_id in ("123", "456"):
+            metadata_owner = ("metadata", pr_number, run_id) if run_scoped else ("metadata", pr_number)
+            rendered_groups.append((
+                workflow, metadata_owner,
+                effective_group(group, "edited", None, workflow_name, pr_number=pr_number, run_id=run_id),
+            ))
+    pr_group_owners = {}
+    for action, base_ref in (("opened", None), ("synchronize", None), ("reopened", None),
+                             ("edited", {"from": "main", "to": "develop"})):
+        for pr_number in (42, 43, 44):
+            rendered = effective_group(group, action, base_ref, workflow_name, pr_number=pr_number)
+            prior_pr = pr_group_owners.setdefault(rendered.casefold(), pr_number)
+            if prior_pr != pr_number:
+                raise SystemExit(f"{workflow} PRs {prior_pr} and {pr_number} share concurrency group {rendered!r}")
+            rendered_groups.append((workflow, ("pr", pr_number), rendered))
+
+for branch in ("main", "develop"):
+    for workflow, data in workflow_data.items():
+        if "push" not in data["on"]:
+            continue
+        if not push_branch_matches(data["on"]["push"] or {}, branch):
+            continue
+        rendered_groups.append((
+            workflow,
+            ("push", branch),
+            effective_group(data["concurrency"]["group"], None, None, data["name"], push_branch=branch),
+        ))
+missing_pr_collision = "${{ github.event.pull_request.number == null && 'protected-main' || github.ref }}"
+assert effective_group(missing_pr_collision, None, None, push_branch="develop") == effective_group(
+    missing_pr_collision, None, None, push_branch="main"
+), "missing push PR context must expose a cross-branch collision"
+collisions = concurrency_group_collisions(rendered_groups)
+if collisions:
+    first, second = collisions[0]
+    raise SystemExit(
+        f"{first[0]} {first[1]} and {second[0]} {second[1]} share a "
+        f"concurrency group (case-insensitive): {first[2]!r} / {second[2]!r}"
+    )
+assert concurrency_group_collisions([
+    ("ci.yml", ("pr", 42), "required-pr-42"),
+    ("smoke.yml", ("pr", 42), "REQUIRED-PR-42"),
+]), "the collision detector must model GitHub's case-insensitive group comparison"
+assert concurrency_group_collisions([
+    ("ci.yml", ("pr", 42), "required-pr-42"),
+    ("ci.yml", ("push", "develop"), "required-pr-42"),
+]), "a push and PR in the same workflow cannot replace each other"
+assert concurrency_group_collisions([
+    ("ci.yml", ("metadata", 42, "123"), "pr-42-metadata-123"),
+    ("smoke.yml", ("push", "develop"), "PR-42-METADATA-123"),
+]), "a metadata edit cannot share another workflow's protected-push group"
+assert not concurrency_group_collisions([
+    ("ci.yml", ("pr", 42), "required-pr-42"),
+    ("ci.yml", ("pr", 42), "REQUIRED-PR-42"),
+]), "substantive events of the same PR may share its concurrency group"
 PY
 
 # shellcheck disable=SC2016 # Match the checked-in arithmetic assignment literally.
@@ -618,7 +1091,7 @@ const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-$
 const cancellationInventoryBody = script.match(/const preExecutionCancelledJobNames = new Set\(\[([\s\S]*?)\]\);/)[1];
 const cancellationInventory = new Function(`return [${cancellationInventoryBody}];`)();
 const canonicalCancellationInventory = JSON.parse(require("node:fs").readFileSync(process.argv[2] + ".cancelled-job-names.json", "utf8"));
-assert.equal(cancellationInventory.length, 13);
+assert.equal(new Set(cancellationInventory).size, cancellationInventory.length);
 assert.deepEqual([...cancellationInventory].sort(), canonicalCancellationInventory.sort(),
   "bounded cancellation inventory must match all canonical runtime workflow job names");
 const context = { repo: { owner: "example", repo: "firemud" }, sha: merge,
@@ -627,8 +1100,12 @@ const context = { repo: { owner: "example", repo: "firemud" }, sha: merge,
 const execute = new Function("github", "context", "core", "Date", "setTimeout", `return (async () => {\n${script}\n})()`);
 async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
   let now = 1000;
+  let runLookups = 0;
   const start = now;
+  const movedBase = "f".repeat(40), movedMerge = "e".repeat(40);
+  const baseMoved = () => selectionCase === "cancelled-live-tuple-moves" && now - start >= 4 * 60 * 1000;
   const failures = [];
+  const cancelledReads = new Set();
   const listRuns = async () => {}, listJobs = async () => {};
   const cancelledSource = runId => ({id: runId, workflow_id: 7, run_attempt: 1, event: "pull_request",
     status: "completed", conclusion: "cancelled", path: ".github/workflows/runtime-images.yml",
@@ -644,19 +1121,33 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
       steps: selectionCase === "cancelled-executed" && index === 0 ? [{name: "executed"}] : []}));
   };
   const github = { rest: {
-    pulls: { get: async () => ({ data: { state: "open", head: { sha: head }, base: { ref: "develop", sha: base }, merge_commit_sha: merge } }) },
-    repos: { getCommit: async () => ({ data: { sha: merge, parents: [{ sha: base }, { sha: head }] } }) },
+    pulls: { get: async () => ({ data: { state: "open", head: { sha: head }, base: { ref: "develop", sha: baseMoved() ? movedBase : base }, merge_commit_sha: baseMoved() ? movedMerge : merge } }) },
+    repos: { getCommit: async ({ref}) => ({ data: { sha: ref, parents: [{ sha: ref === movedMerge ? movedBase : base }, { sha: head }] } }) },
+    git: { getRef: async ({ref}) => {
+      assert.equal(ref, "heads/develop");
+      return {data: {object: {sha: baseMoved() ? movedBase : base}}};
+    } },
     actions: { listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
       getWorkflow: async () => ({data: {id: 7, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}}),
-      getWorkflowRun: async ({run_id}) => ({data: {id: run_id,
-        run_attempt: selectionCase === "cancelled-changed-attempt" ? 2 : 1,
-        status: "completed", conclusion: "cancelled"}}) },
+      getWorkflowRun: async ({run_id}) => {
+        runLookups += 1;
+        if (selectionCase === "sole-final-attempt-transient" && runLookups <= 4) {
+          throw Object.assign(new Error("final attempt temporarily unavailable"), {status: 503});
+        }
+        if (selectionCase === "sole-final-attempt-after-deadline" && runLookups === 2) {
+          now += 60 * 1000;
+        }
+        return {data: {id: run_id, run_attempt: selectionCase === "cancelled-changed-attempt" ? 2 : 1,
+          status: "completed", conclusion: cancelledReads.has(run_id) ? "cancelled" : "success"}};
+      } },
   }, request: async (route, input) => {
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
     assert.equal(input.attempt_number, 1);
+    cancelledReads.add(input.run_id);
     return {data: cancelledSource(input.run_id)};
   }, paginate: async (method, input) => {
-    if (method === listJobs) {
+    assert.equal(input.attempt_number, 1);
+    if (!cancelledReads.has(input.run_id)) {
       return [{ id: input.run_id + 100, run_id: input.run_id, name: "PR Full-Stack Smoke", status: "completed", conclusion: "success",
         steps: [{ name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success" }] }];
     }
@@ -717,12 +1208,20 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
   const clock = { now: () => now, parse: Date.parse };
   const sleep = (callback, duration) => { now += duration; queueMicrotask(callback); };
   await execute(github, context, core, clock, sleep);
-  return { failures, minutes: (now - start) / 60000 };
+  return { failures, minutes: (now - start) / 60000, runLookups };
 }
 (async () => {
   const success = await scenario("success", 30);
   assert.deepEqual(success.failures, [], "exact producer success after 25 minutes must be admitted");
   assert.equal(success.minutes, 30);
+  const recovered = await scenario("success", 0, "sole-final-attempt-transient");
+  assert.deepEqual(recovered.failures, [], "the sole exact producer may recover after bounded final-read retries");
+  assert.equal(recovered.runLookups, 6, "a recovered read must still be followed by the final exact-attempt check");
+  const lateFinalRead = await scenario("success", 89.5, "sole-final-attempt-after-deadline");
+  assert.equal(lateFinalRead.runLookups, 2, "the timeout must occur during the final successful attempt read");
+  assert.equal(lateFinalRead.minutes, 90.5);
+  assert.equal(lateFinalRead.failures.length, 1, "successful evidence returned after the deadline must fail the gate");
+  assert.match(lateFinalRead.failures[0], /Timed out waiting for the exact/);
   const failed = await scenario("failure", 30);
   assert.equal(failed.failures.length, 1);
   assert.match(failed.failures[0], /did not complete successfully/);
@@ -753,6 +1252,11 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single") {
   assert.equal(cancelled.failures.length, 1);
   assert.match(cancelled.failures[0], /cancelled/i);
   assert.ok(cancelled.minutes <= 5.25, "cancelled source without an exact replacement remains bounded");
+  const movedCancellation = await scenario("cancelled", 0, "cancelled-live-tuple-moves");
+  assert.equal(movedCancellation.failures.length, 1);
+  assert.match(movedCancellation.failures[0], /cancelled/i);
+  assert.ok(movedCancellation.minutes >= 9 && movedCancellation.minutes <= 9.25,
+    "one verified comparison change earns its own bounded replacement window");
   const deadline = await scenario("success", Infinity);
   assert.equal(deadline.failures.length, 1);
   assert.match(deadline.failures[0], /Timed out waiting for the exact/);
@@ -797,10 +1301,43 @@ const execute = new Function("github", "context", "core", "Date", "setTimeout", 
 const head = "a".repeat(40), base = "b".repeat(40), merge = "c".repeat(40), defaultSha = "d".repeat(40);
 const repository = "example/firemud";
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
-async function scenario(kind, event = "pull_request") {
-  let now = 1000, snapshots = 0, reads = 0;
-  const failures = [], refs = [];
-  const context = {repo: {owner: "example", repo: "firemud"}, sha: merge, payload: {
+async function scenario(kind, event = "pull_request", captureLookupFailure = false) {
+  let now = 1000, snapshots = 0, reads = 0, currentRunReads = 0, refreshInventoryReads = 0;
+  const baseMovesDuringOrdering = kind === "pending-native-dual-base-moves-during-ordering";
+  const liveFallback = kind.startsWith("trusted-current-base") || kind === "optional-final-acceptance-transient" ||
+    baseMovesDuringOrdering;
+  const h0 = kind.startsWith("optional-final-read-");
+  const cancelledPrimary = kind === "optional-final-read-cancelled-primary";
+  const missingCancellation = kind === "optional-final-read-cancellation-disappears";
+  const cancelledWithReplacement = kind === "optional-final-read-cancelled-with-replacement" || missingCancellation;
+  const movedNativeCancellation = kind === "cancelled-native-attempt-moves";
+  const cancelledWithPendingRefresh = kind === "cancelled-native-pending-refresh";
+  const transientFinalPull = kind === "optional-final-read-pr-identity";
+  let nativeCancellationRead = false, failedFinalPullReads = 0, pendingReplacementRead = false;
+  let movedNativeFailureObserved = false;
+  let nativeCancellationDisappeared = false;
+  const finalAttemptError = kind.startsWith("optional-final-read-attempt-");
+  const duplicatePrimary = kind === "optional-final-read-duplicate";
+  const newerFailure = kind === "duplicate-after-newer-failure";
+  const newerSuccessDuringAcceptance = kind.startsWith("duplicate-succeeds-during-acceptance");
+  const disappearingSnapshot = kind === "optional-final-read-incomplete-snapshot";
+  const badStatus = kind.endsWith("-forbidden") ? 403 : kind.endsWith("-missing") ? 404 : 503;
+  const primaryDisappears = kind === "optional-final-read-primary-disappears-missing";
+  const primaryCanRecover = h0 && !cancelledPrimary && !cancelledWithReplacement && !primaryDisappears &&
+    [404, 503].includes(badStatus);
+  const primaryReady = () => (primaryCanRecover || newerFailure) && primaryInventoryReads > 1;
+  let alternativeJobsReads = 0, primaryInventoryReads = 0, completedPrimaryJobReads = 0, lookupFailure;
+  let acceptanceLookupArmed = false, acceptanceLookupAttempts = 0, acceptancePendingObserved = false;
+  const nextBase = "e".repeat(40), nextMerge = "f".repeat(40);
+  const baseAdvanceRead = {
+    "trusted-current-base-advances": 1,
+    "trusted-current-base-advances-during-acceptance-attempt": 2,
+  }[kind] ?? Infinity;
+  const tupleAdvanced = () => currentRunReads >= baseAdvanceRead ||
+    (baseMovesDuringOrdering && pendingRefreshObserved);
+  let rerunStartedDuringLatestIdentityRead = false, rerunStartedDuringFinalTupleRead = false;
+  const failures = [], refs = [], info = [], warnings = [];
+  const context = {repo: {owner: "example", repo: "firemud"}, sha: liveFallback ? null : merge, payload: {
     repository: {default_branch: "develop"},
     pull_request: {number: 42, head: {sha: head, repo: {full_name: repository}},
       base: {ref: "develop", sha: base}, created_at: "2026-09-01T00:00:00Z"},
@@ -810,6 +1347,13 @@ async function scenario(kind, event = "pull_request") {
     head_repository: {full_name: repository}, path: ".github/workflows/runtime-images.yml",
     event, head_sha: event === "pull_request" ? head : defaultSha, head_branch: "develop", display_title: title,
     status: "completed", conclusion: "success", pull_requests: []};
+  const exactPrimary = {...source, id: 43, event: "pull_request", head_sha: head,
+    created_at: "2026-09-01T00:00:01Z"};
+  const cancelledOriginal = {...exactPrimary, status: "completed", conclusion: "cancelled"};
+  const dispatchPrimary = {...source, id: 44, created_at: "2026-09-01T00:00:02Z"};
+  const replacementNative = {...exactPrimary, id: 45, created_at: "2026-09-01T00:00:03Z"};
+  const incompleteSnapshot = kind.startsWith("incomplete-snapshot-");
+  let snapshotRerunVisible = false;
   const job = {id: 100, run_id: 42, run_attempt: 1, head_sha: source.head_sha,
     check_run_url: `https://api.github.com/repos/${repository}/check-runs/100`,
     name: "PR Full-Stack Smoke (runtime-required=true)", status: "completed", conclusion: "success",
@@ -818,8 +1362,13 @@ async function scenario(kind, event = "pull_request") {
   if (kind === "marker-success") job.steps[0].conclusion = "success";
   if (kind.startsWith("legacy")) job.name = "PR Full-Stack Smoke";
   if (kind === "not-required") job.name = "PR Full-Stack Smoke (runtime-required=false)";
+  if (kind === "duplicate-nonterminal-step") job.steps.push({name: "Run credential-free full-stack smoke", status: "in_progress", conclusion: null});
+  if (["duplicate-terminal-skipped", "duplicate-terminal-failure"].includes(kind)) job.steps.push({name: "Run credential-free full-stack smoke", status: "completed", conclusion: kind.endsWith("failure") ? "failure" : "skipped"});
+  if (kind === "pending-native-refresh-failed") source.conclusion = "failure";
+  if (kind === "pending-native-refresh-skipped") job.steps.push({name: "Run credential-free full-stack smoke", status: "completed", conclusion: "skipped"});
   if (kind === "step-skipped") job.steps = [{name: "Run credential-free full-stack smoke", status: "completed", conclusion: "skipped"}];
   if (kind === "legacy-positive") job.steps = [{name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}];
+  if (kind.startsWith("sole-final-")) job.steps.push({name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"});
   const sourceMutations = {
     "wrong-repository": {repository: {full_name: "other/repo"}},
     "wrong-workflow": {workflow_id: 8}, "wrong-path": {path: ".github/workflows/fake.yml"},
@@ -828,14 +1377,30 @@ async function scenario(kind, event = "pull_request") {
     "wrong-title": {display_title: title + " unrelated"}, "wrong-source-attempt": {run_attempt: 2},
     "wrong-dispatch-branch": {head_branch: "feature"},
   };
+  const fallbackReadOrder = [];
+  let pendingRefreshObserved = false, selectedRerunObserved = false;
   const listRuns = async () => {}, listJobs = async () => {};
   const github = {rest: {
     pulls: {get: async () => {
       reads += 1;
-      return {data: {state: "open", head: {sha: head}, base: {ref: kind === "stale-final" && reads > 3 ? "other" : "develop", sha: base}, merge_commit_sha: merge}};
+      if (transientFinalPull && alternativeJobsReads >= 3 && primaryInventoryReads === 1) {
+        failedFinalPullReads += 1;
+        throw Object.assign(new Error("optional refresh PR identity temporarily unavailable"), {status: 503});
+      }
+      if (kind === "optional-final-acceptance-transient" && acceptancePendingObserved && acceptanceLookupAttempts === 0) {
+        acceptanceLookupArmed = true;
+      }
+      if (kind === "trusted-current-base-attempt-advances" && currentRunReads === 1) {
+        rerunStartedDuringLatestIdentityRead = true;
+      }
+      if (kind === "trusted-current-base-attempt-advances-during-final-tuple" && currentRunReads === 2) {
+        rerunStartedDuringFinalTupleRead = true;
+      }
+      return {data: {state: "open", head: {sha: head}, base: {ref: kind === "stale-final" && reads > 3 ? "other" : "develop", sha: tupleAdvanced() ? nextBase : base}, merge_commit_sha: tupleAdvanced() ? nextMerge : merge}};
     }},
+    git: {getRef: async () => ({data: {object: {sha: tupleAdvanced() ? nextBase : base}}})},
     repos: {
-      getCommit: async ({ref}) => ({data: {sha: ref, parents: [{sha: kind === "bad-parents" ? defaultSha : base}, {sha: head}]}}),
+      getCommit: async ({ref}) => ({data: {sha: ref, parents: [{sha: kind === "bad-parents" ? defaultSha : ref === nextMerge ? nextBase : base}, {sha: head}]}}),
       getContent: async ({ref, path}) => {
         refs.push(ref);
         assert.equal(path, source.path);
@@ -847,34 +1412,258 @@ async function scenario(kind, event = "pull_request") {
     actions: {
       listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
       getWorkflow: async () => ({data: {id: 7, path: source.path, name: "Build Runtime Images"}}),
-      getWorkflowRun: async () => ({data: {...source, run_attempt: kind === "newer-attempt" ? 2 : 1}}),
+      getWorkflowRun: async ({run_id: runId}) => {
+        if (missingCancellation && runId === replacementNative.id) return {data: replacementNative};
+        if (runId === 43 && primaryReady()) return {data: exactPrimary};
+        if (runId === 43 && newerSuccessDuringAcceptance) return {data: exactPrimary};
+        if (runId === 43 && (cancelledPrimary || cancelledWithReplacement ||
+            (event === "repository_dispatch" && !h0 && !kind.startsWith("pending-native")))) {
+          if (missingCancellation && pendingReplacementRead) {
+            nativeCancellationDisappeared = true;
+            throw Object.assign(new Error("native cancellation no longer available"), {status: 404});
+          }
+          nativeCancellationRead = true;
+          if (cancelledWithPendingRefresh) fallbackReadOrder.push(runId);
+          return {data: movedNativeCancellation
+            ? {...exactPrimary, run_attempt: 2, status: "queued", conclusion: null}
+            : cancelledOriginal};
+        }
+        if (runId === 44 && cancelledWithReplacement) {
+          if (missingCancellation) {
+            pendingReplacementRead = true;
+            return {data: {...dispatchPrimary, status: "queued", conclusion: null}};
+          }
+          return {data: dispatchPrimary};
+        }
+        if (kind === "optional-final-acceptance-transient" && runId === 44) {
+          acceptancePendingObserved = true;
+          return {data: acceptanceLookupAttempts === 4
+            ? dispatchPrimary : {...dispatchPrimary, status: "queued", conclusion: null}};
+        }
+        if (kind === "optional-final-acceptance-transient" && acceptanceLookupArmed) {
+          acceptanceLookupAttempts += 1;
+          if (acceptanceLookupAttempts === 4) acceptanceLookupArmed = false;
+          throw Object.assign(new Error("final current-base workflow-run lookup unavailable"), {status: 503});
+        }
+        fallbackReadOrder.push(runId);
+        if (runId === 44 && cancelledWithPendingRefresh) {
+          return {data: {...dispatchPrimary, status: "queued", conclusion: null}};
+        }
+        if (runId === 43 && (kind.startsWith("pending-native") || kind.startsWith("duplicate-"))) {
+          const terminal = kind === "pending-native-fails-after-final-order" ||
+            (kind === "pending-native-dual-native-fails-during-refresh" && pendingRefreshObserved);
+          if (kind === "pending-native-dual-selected-reruns-during-native") selectedRerunObserved = true;
+          return {data: {...exactPrimary, status: terminal ? "completed" : "queued", conclusion: terminal ? "failure" : null}};
+        }
+        if (runId === 44 && kind.startsWith("pending-native-dual-")) {
+          pendingRefreshObserved = true;
+          return {data: {...dispatchPrimary, status: "queued", conclusion: null}};
+        }
+        currentRunReads += 1;
+        if (kind === "sole-final-attempt-missing") {
+          throw Object.assign(new Error("sole final attempt missing"), {status: 404});
+        }
+        if (finalAttemptError && currentRunReads >= 2) {
+          throw Object.assign(new Error("alternative final workflow-run unavailable"),
+            kind.endsWith("-network") ? {cause: {code: "ECONNRESET"}} : {status: badStatus});
+        }
+        if (incompleteSnapshot) {
+          snapshotRerunVisible = kind === "incomplete-snapshot-superseded";
+          return {data: {...source, run_attempt: snapshotRerunVisible ? 2 : 1}};
+        }
+        const superseded = kind === "newer-attempt" || selectedRerunObserved || rerunStartedDuringLatestIdentityRead ||
+          rerunStartedDuringFinalTupleRead || (kind === "rerun-after-proof" && currentRunReads > 1);
+        return {data: {...source, run_attempt: superseded ? 2 : 1, status: superseded ? "in_progress" : "completed"}};
+      },
     },
   }, request: async (route, input) => {
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
+    if (missingCancellation && input.run_id === replacementNative.id) {
+      assert.equal(input.attempt_number, replacementNative.run_attempt);
+      return {data: replacementNative};
+    }
+    if (input.run_id === 43 && primaryReady()) {
+      assert.equal(input.attempt_number, exactPrimary.run_attempt);
+      return {data: exactPrimary};
+    }
+    if (kind === "optional-final-acceptance-transient" && input.run_id === 44) {
+      assert.equal(input.attempt_number, source.run_attempt);
+      return {data: {...source, id: 44, event: "repository_dispatch", head_sha: defaultSha,
+        head_branch: "develop", status: "completed", conclusion: "success"}};
+    }
+    if (cancelledWithReplacement && input.run_id === 44) {
+      assert.equal(input.attempt_number, dispatchPrimary.run_attempt);
+      return {data: dispatchPrimary};
+    }
+    if ((cancelledPrimary || cancelledWithReplacement ||
+        (event === "repository_dispatch" && !h0 && !kind.startsWith("pending-native"))) &&
+        input.run_id === 43) {
+      return {data: input.attempt_number === 2 && movedNativeCancellation
+        ? {...exactPrimary, run_attempt: 2, status: "completed", conclusion: "failure"}
+        : cancelledOriginal};
+    }
     assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
     return {data: {...source, ...(sourceMutations[kind] || {})}};
   }, paginate: async (method, input) => {
     if (method === listJobs) { snapshots += 1; return kind === "duplicate-jobs" ? [job, {...job, id: 101}] : [job]; }
     assert.equal(method, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
-    assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
+    if (missingCancellation && input.run_id === replacementNative.id) {
+      assert.equal(input.attempt_number, replacementNative.run_attempt);
+      return [{...job, run_id: replacementNative.id, head_sha: head, steps: [...job.steps,
+        {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
+    }
+    if (input.run_id === 43 && newerSuccessDuringAcceptance) {
+      completedPrimaryJobReads += 1;
+      assert.equal(input.attempt_number, exactPrimary.run_attempt);
+      return [{...job, run_id: 43, head_sha: head, steps: [...job.steps,
+        {name: "Run credential-free full-stack smoke", status: "completed",
+          conclusion: kind.endsWith("-without-proof") ? "skipped" : "success"}]}];
+    }
+    if (input.run_id === 43 && primaryReady()) {
+      assert.equal(input.attempt_number, exactPrimary.run_attempt);
+      return [{...job, run_id: 43, head_sha: head, steps: [...job.steps,
+        {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
+    }
+    if (kind === "optional-final-acceptance-transient" && input.run_id === 44) {
+      assert.equal(input.attempt_number, source.run_attempt);
+      return [{...job, run_id: 44, head_sha: defaultSha, steps: [...job.steps,
+        {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
+    }
+    if (cancelledWithReplacement && input.run_id === 44) {
+      assert.equal(input.attempt_number, dispatchPrimary.run_attempt);
+      return [{...job, run_id: 44, steps: [...job.steps,
+        {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
+    }
+    assert.equal(input.run_id, 42);
+    if (kind === "sole-final-jobs-missing") {
+      throw Object.assign(new Error("sole final jobs missing"), {status: 404});
+    }
+    if (h0) alternativeJobsReads += 1;
+    if (h0 && alternativeJobsReads > (cancelledPrimary ? 0 : 2) &&
+        !finalAttemptError && !transientFinalPull && !missingCancellation) {
+      assert.equal(input.attempt_number, source.run_attempt);
+      if (kind.endsWith("-malformed")) return null;
+      if (disappearingSnapshot) return [];
+      throw Object.assign(new Error("alternative final attempt jobs unavailable"),
+        kind.endsWith("-network") ? {code: "ECONNRESET"} : {status: badStatus});
+    }
+    if (finalAttemptError && alternativeJobsReads > 2) {
+      assert.equal(input.attempt_number, source.run_attempt);
+      return [{...job, steps: [...job.steps,
+        {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
+    }
+    if (incompleteSnapshot) {
+      snapshots += 1;
+      if (input.attempt_number === 1) return [];
+      assert.equal(input.attempt_number, 2);
+      return [{...job, run_attempt: 2, steps: [
+        ...job.steps, {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"},
+      ]}];
+    }
+    assert.equal(input.attempt_number, 1);
     const mutations = {
       "wrong-job": {id: 101}, "wrong-job-run": {run_id: 43}, "wrong-job-attempt": {run_attempt: 2},
       "wrong-job-head": {head_sha: defaultSha}, "wrong-check-url": {check_run_url: "https://example.com/check"},
       "failed-job": {conclusion: "failure"}, "pending-job": {status: "in_progress", conclusion: null},
     };
-    return kind === "duplicate-attempt-jobs" ? [job, {...job, id: 101}] : [{...job, ...(mutations[kind] || {})}];
+    snapshots += 1;
+    return ["duplicate-jobs", "duplicate-attempt-jobs"].includes(kind) ? [job, {...job, id: 101}] : [{...job, ...(mutations[kind] || {})}];
   }};
   github.paginate.iterator = async function* (method, input) {
     assert.equal(method, listRuns);
-    if (event === "repository_dispatch" && input.event === "pull_request") {
-      yield {data: [{...source, event: "pull_request", head_sha: head, conclusion: "cancelled"}]}; return;
+    if (kind === "optional-final-acceptance-transient" && input.event === "repository_dispatch") {
+      primaryInventoryReads += 1;
+      const pending = {...dispatchPrimary, status: "queued", conclusion: null};
+      yield {data: acceptanceLookupAttempts === 4 ? [dispatchPrimary] : [pending, source]};
+      return;
     }
-    yield {data: [source]};
+    if ((h0 || newerFailure) && input.event === "pull_request") {
+      primaryInventoryReads += 1;
+      if (nativeCancellationDisappeared) {
+        yield {data: [replacementNative]};
+        return;
+      }
+      if (primaryDisappears && primaryInventoryReads > 1) { yield {data: []}; return; }
+      const primary = {...exactPrimary, status: cancelledPrimary || cancelledWithReplacement || primaryReady() ? "completed" : "queued",
+        conclusion: cancelledPrimary || cancelledWithReplacement ? "cancelled" : primaryReady() ? "success" : null};
+      if (newerFailure) {
+        const failed = {...source, id: 44, created_at: "2026-09-01T00:00:00.500Z", conclusion: "failure"};
+        yield {data: [primary, failed, source]};
+        return;
+      }
+      yield {data: duplicatePrimary ? [primary, source] : [primary]};
+      return;
+    }
+    if (cancelledWithReplacement && input.event === "repository_dispatch") {
+      refreshInventoryReads += 1;
+      const replacementReady = !missingCancellation && refreshInventoryReads > 1;
+      const next = replacementReady ? dispatchPrimary : {...dispatchPrimary, status: "queued", conclusion: null};
+      yield {data: [next, source]}; return;
+    }
+    if (event === "repository_dispatch" && input.event === "pull_request") {
+      const nativeFailed = kind === "pending-native-dual-native-fails-during-refresh" && pendingRefreshObserved;
+      const rerunFailed = movedNativeCancellation && nativeCancellationRead;
+      if (rerunFailed) movedNativeFailureObserved = true;
+      yield {data: [{...exactPrimary, run_attempt: rerunFailed ? 2 : 1,
+        status: kind.startsWith("pending-native") && !nativeFailed ? "queued" : "completed",
+        conclusion: nativeFailed || rerunFailed ? "failure" : kind.startsWith("pending-native") ? null : "cancelled"}]}; return;
+    }
+    if (kind === "pending-native-refresh-newer-fails" && input.event === "repository_dispatch") {
+      refreshInventoryReads += 1;
+      yield {data: refreshInventoryReads === 1 ? [source] : [{...dispatchPrimary, conclusion: "failure"}, source]};
+      return;
+    }
+    if ((kind.startsWith("pending-native-dual-") || cancelledWithPendingRefresh) && input.event === "repository_dispatch") {
+      refreshInventoryReads += 1;
+      const failed = kind.endsWith("-fails") && refreshInventoryReads > 1;
+      yield {data: [
+        {...source, id: 44, created_at: "2026-09-01T00:00:02Z",
+          status: failed ? "completed" : "queued", conclusion: failed ? "failure" : null},
+        source,
+      ]};
+      return;
+    }
+    if (kind.startsWith("pending-native-inventory-") && input.event === "repository_dispatch") {
+      refreshInventoryReads += 1;
+      const forbidden = kind.endsWith("-forbidden");
+      throw Object.assign(new Error(forbidden ? "optional inventory forbidden" : "optional inventory unavailable"),
+        {status: forbidden ? 403 : kind.endsWith("-missing") ? 404 : 503});
+    }
+    if (kind === "duplicate-fails-during-acceptance" || newerSuccessDuringAcceptance) {
+      primaryInventoryReads += 1;
+      yield {data: [{...exactPrimary, status: primaryInventoryReads === 1 ? "queued" : "completed",
+        conclusion: primaryInventoryReads === 1 ? null : newerSuccessDuringAcceptance ? "success" : "failure"}, source]};
+      return;
+    }
+    if (incompleteSnapshot) {
+      yield {data: [{...source, run_attempt: snapshotRerunVisible ? 2 : 1}]}; return;
+    }
+    if (kind === "duplicate-intermediate-fails-during-acceptance") {
+      primaryInventoryReads += 1;
+      yield {data: [
+        {...exactPrimary, status: "queued", conclusion: null},
+        {...source, id: 44, created_at: "2026-09-01T00:00:00.500Z",
+          status: primaryInventoryReads === 1 ? "in_progress" : "completed",
+          conclusion: primaryInventoryReads === 1 ? null : "failure"},
+        source,
+      ]};
+      return;
+    }
+    if (kind === "duplicate-preceding-green") primaryInventoryReads += 1;
+    yield {data: kind.startsWith("duplicate-") && !["duplicate-jobs", "duplicate-attempt-jobs"].includes(kind)
+      ? [{...source, id: 43, created_at: "2026-09-01T00:00:01Z", status: "in_progress", conclusion: null}, source] : [source]};
   };
   const clock = {now: () => now, parse: Date.parse};
-  await execute(github, context, {info: () => {}, warning: () => {}, setFailed: message => failures.push(message)},
-    clock, (callback, duration) => {now += duration; queueMicrotask(callback);}, require);
-  return {failures, refs, snapshots};
+  try {
+    await execute(github, context, {info: message => info.push(message), warning: message => warnings.push(message), setFailed: message => failures.push(message)},
+      clock, (callback, duration) => {now += duration; queueMicrotask(callback);}, require);
+  } catch (error) {
+    if (!captureLookupFailure) throw error;
+    lookupFailure = error;
+  }
+  return {failures, refs, snapshots, info, warnings, refreshInventoryReads, alternativeJobsReads, primaryInventoryReads,
+    completedPrimaryJobReads, acceptanceLookupAttempts, failedFinalPullReads, rerunStartedDuringFinalTupleRead, lookupFailure,
+    fallbackReadOrder, movedNativeFailureObserved};
 }
 (async () => {
   for (const event of ["pull_request", "repository_dispatch"]) {
@@ -882,7 +1671,174 @@ async function scenario(kind, event = "pull_request") {
     assert.deepEqual(success.failures, []);
     assert.deepEqual(success.refs, [event === "pull_request" ? merge : defaultSha], "immutable definition must come from actual source event revision");
   }
+  const movedCancellation = await scenario("cancelled-native-attempt-moves", "repository_dispatch");
+  assert.equal(movedCancellation.movedNativeFailureObserved, true,
+    "the fresh exact native inventory must observe attempt 2 failing after the original cancellation");
+  assert(movedCancellation.warnings.some(line => line.includes("Native runtime ordering changed before accepting replacement proof")),
+    movedCancellation.warnings.join("\n"));
+  assert.equal(movedCancellation.failures.length, 1, "a later native failed attempt cannot inherit cancelled-attempt fallback proof");
+  const stableCancellation = await scenario("cancelled-native-attempt-stable", "repository_dispatch");
+  assert.deepEqual(stableCancellation.failures, [], "unchanged exact cancellation may still admit the proven fallback");
+  const cancelledWithPendingRefresh = await scenario("cancelled-native-pending-refresh", "repository_dispatch");
+  assert.deepEqual(cancelledWithPendingRefresh.failures, [],
+    "a stable pending refresh must not hide older verified refresh proof after native cancellation");
+  assert.equal(cancelledWithPendingRefresh.refreshInventoryReads, 2,
+    "read refresh ordering once for selection and once for the pending fallback fence");
+  assert.deepEqual(cancelledWithPendingRefresh.fallbackReadOrder.slice(-4), [44, 43, 43, 42],
+    "observe the pending refresh and native cancellation before the selected attempt's final read");
+  const transientRefreshPull = await scenario("optional-final-read-pr-identity", "repository_dispatch");
+  assert.equal(transientRefreshPull.failedFinalPullReads, 4, "bounded PR validation retry must finish before returning to native selection");
+  assert(transientRefreshPull.info.some(line => line.includes("Found runtime-images run 43 with status=completed")));
+  assert.deepEqual(transientRefreshPull.failures, []);
   assert.deepEqual((await scenario("legacy-positive")).failures, []);
+  assert.deepEqual((await scenario("pending-native-refresh", "repository_dispatch")).failures, [], "trusted successful refresh releases queued native wait");
+  const latePendingFailure = await scenario("pending-native-fails-after-final-order", "repository_dispatch");
+  assert(latePendingFailure.warnings.some(line => line.includes("Pending runtime attempt changed before fallback proof")));
+  assert.equal(latePendingFailure.failures.length, 1, "late native failure cannot inherit older refresh proof");
+  const intermediateFailure = await scenario("duplicate-intermediate-fails-during-acceptance");
+  assert(intermediateFailure.warnings.some(line => line.includes("candidate ordering changed before accepting older success")));
+  assert.equal(intermediateFailure.failures.length, 1, "pending newest runtime cannot hide an intermediate terminal failure");
+  const newRefreshFailed = await scenario("pending-native-refresh-newer-fails", "repository_dispatch");
+  assert(newRefreshFailed.refreshInventoryReads >= 2);
+  assert(newRefreshFailed.warnings.some(line => line.includes("Trusted refresh ordering changed before fallback proof")));
+  assert.equal(newRefreshFailed.failures.length, 1, "a newer failure must withhold the prior refresh while native remains pending");
+  const dualPending = await scenario("pending-native-dual-stays", "repository_dispatch");
+  assert(dualPending.refreshInventoryReads >= 2, "the pending refresh must receive a distinct final inventory read");
+  assert.deepEqual(dualPending.failures, [], "older proof remains usable while both newer candidates are still pending");
+  assert.deepEqual(dualPending.fallbackReadOrder.slice(-3), [44, 43, 42],
+    "observe trusted refresh and native primary before making the selected attempt the last read");
+  const advancedDuringOrdering = await scenario("pending-native-dual-base-moves-during-ordering", "repository_dispatch");
+  assert(advancedDuringOrdering.info.some(line => line.includes("PR comparison changed after candidate ordering")),
+    "the live comparison read after the pending attempt detects the move");
+  assert.match(advancedDuringOrdering.failures[0], /Timed out waiting for the exact runtime-images/,
+    "pending ordering on an obsolete current-base comparison must not release the gate");
+  const nativeDuringRefresh = await scenario("pending-native-dual-native-fails-during-refresh", "repository_dispatch");
+  assert(nativeDuringRefresh.warnings.some(line => line.includes("Pending runtime attempt changed before fallback proof")));
+  assert.equal(nativeDuringRefresh.failures.length, 1, "terminal native result observed after the refresh read refuses older proof");
+  const selectedDuringNative = await scenario("pending-native-dual-selected-reruns-during-native", "repository_dispatch");
+  assert(selectedDuringNative.warnings.some(line => line.includes("Selected successful attempt changed during final ordering")));
+  assert.equal(selectedDuringNative.failures.length, 1, "a selected rerun observed after the last pending read refuses older proof");
+
+  const dualFailed = await scenario("pending-native-dual-fails", "repository_dispatch");
+  assert(dualFailed.refreshInventoryReads >= 2);
+  assert(dualFailed.warnings.some(line => line.includes("candidate ordering changed before accepting older success")));
+  assert.equal(dualFailed.failures.length, 1, "a newly failed trusted refresh refuses older proof while native remains pending");
+  for (const kind of ["pending-native-refresh-skipped", "pending-native-refresh-failed"]) {
+    const result = await scenario(kind, "repository_dispatch");
+    assert.equal(result.failures.length, 1, `${kind} cannot release queued native wait`);
+    assert(result.info.some(line => line.startsWith("Found runtime-images run 43 with status=queued")),
+      `${kind} must leave the native run selected`);
+    assert(!result.info.some(line => line.startsWith("Found runtime-images run 42 with status=")),
+      `${kind} must not select the refresh`);
+  }
+  for (const [kind, event, selectionMessage, expectedReads] of [
+    ["optional-final-read-refresh", "repository_dispatch", "supersedes the pending native wait", 6],
+    ["optional-final-read-jobs-network", "repository_dispatch", "supersedes the pending native wait", 6],
+    ["optional-final-read-duplicate", "pull_request", "precedes the pending duplicate", 6],
+    ["optional-final-read-missing", "repository_dispatch", "supersedes the pending native wait", 3],
+  ]) {
+    const result = await scenario(kind, event);
+    assert(result.info.some(line => line.includes(selectionMessage)), kind);
+    assert.equal(result.alternativeJobsReads, expectedReads, kind);
+    assert.equal(result.primaryInventoryReads, 2, kind);
+    assert(result.info.some(line => line.includes("Found runtime-images run 43 with status=completed")), kind);
+    assert.deepEqual(result.failures, [], kind);
+  }
+  for (const [kind, expectedReads, status] of [
+    ["optional-final-read-cancelled-primary", 4, 503],
+    ["optional-final-read-forbidden", 3, 403],
+    ["optional-final-read-malformed", 3, undefined],
+  ]) {
+    const result = await scenario(kind, "repository_dispatch", true);
+    assert.equal(result.alternativeJobsReads, expectedReads, kind);
+    assert.equal(result.primaryInventoryReads, 1, kind);
+    assert.equal(result.lookupFailure?.status ?? result.lookupFailure?.cause?.status, status, kind);
+    if (status === undefined) assert(result.lookupFailure instanceof TypeError, kind);
+  }
+  const cancelledReplacement = await scenario("optional-final-read-cancelled-with-replacement", "repository_dispatch");
+  assert.equal(cancelledReplacement.alternativeJobsReads, 6, "old dispatch proof exhausts final jobs retries");
+  assert(cancelledReplacement.info.some(line => line.includes("Found runtime-images run 44 with status=completed")));
+  assert.deepEqual(cancelledReplacement.failures, []);
+  const missingCancellation = await scenario("optional-final-read-cancellation-disappears", "repository_dispatch");
+  assert(missingCancellation.warnings.some(line => line.includes("Native cancellation evidence is unavailable")),
+    JSON.stringify({info: missingCancellation.info, warnings: missingCancellation.warnings}));
+  assert(missingCancellation.info.some(line => line.includes("Found runtime-images run 45 with status=completed")));
+  assert.deepEqual(missingCancellation.failures, [], "reselect the pending producer with fresh proof");
+  for (const kind of ["optional-final-read-attempt-transient", "optional-final-read-attempt-network",
+    "optional-final-read-attempt-missing",
+    "optional-final-read-incomplete-snapshot"]) {
+    const result = await scenario(kind, "repository_dispatch");
+    assert.equal(result.primaryInventoryReads, 2, `${kind} resumes the native producer`);
+    assert(result.info.some(line => line.includes("Found runtime-images run 43 with status=completed")), kind);
+    assert.deepEqual(result.failures, [], kind);
+    if (kind.endsWith("-snapshot")) assert.equal(result.alternativeJobsReads, 11, kind);
+  }
+  const finalCurrentBaseRetry = await scenario("optional-final-acceptance-transient", "repository_dispatch");
+  assert.equal(finalCurrentBaseRetry.acceptanceLookupAttempts, 4,
+    "the final optional current-base attempt read must exhaust only its bounded transient retries");
+  assert(finalCurrentBaseRetry.warnings.some(line => line.includes("Selected successful attempt is unavailable after final ordering")),
+    "inject after the live identity read for the current-base acceptance lookup: " +
+      JSON.stringify(finalCurrentBaseRetry.warnings));
+  assert.equal(finalCurrentBaseRetry.primaryInventoryReads, 3,
+    "select the older proof, recheck pending ordering, then reselect the pending exact producer");
+  assert(finalCurrentBaseRetry.info.some(line => line.includes("Found runtime-images run 44 with status=completed")));
+  assert.deepEqual(finalCurrentBaseRetry.failures, [],
+    "the pending exact producer may pass after the final transient read recovers");
+  for (const [kind, code] of [["optional-final-read-attempt-forbidden", 403]]) {
+    const result = await scenario(kind, "repository_dispatch", true);
+    assert.equal(result.lookupFailure?.status ?? result.lookupFailure?.cause?.status, code, kind);
+    assert.equal(result.primaryInventoryReads, 1, kind);
+  }
+  for (const kind of ["sole-final-jobs-missing", "sole-final-attempt-missing"]) {
+    const result = await scenario(kind, "pull_request", true);
+    assert.equal(result.lookupFailure?.status, 404, `${kind} cannot recover without a retained native primary`);
+    assert.equal(result.primaryInventoryReads, 0, kind);
+  }
+  const missingPrimary = await scenario("optional-final-read-primary-disappears-missing", "repository_dispatch");
+  assert.equal(missingPrimary.alternativeJobsReads, 3, "optional 404 resumes selection without accepting missing evidence");
+  assert.match(missingPrimary.failures[0], /Timed out waiting for the exact/,
+    "a disappearing native primary cannot turn a missing optional refresh into proof");
+  const unavailable = await scenario("pending-native-inventory-unavailable", "repository_dispatch");
+  assert(unavailable.refreshInventoryReads >= 4, "temporary inventory errors exhaust the normal retries");
+  assert(unavailable.info.some(line => line.startsWith("Found runtime-images run 43 with status=queued")),
+    "temporary inventory outage must leave the native run selected");
+  assert.equal(unavailable.failures.length, 1, "a native run that never finishes still fails the gate");
+  const missingInventory = await scenario("pending-native-inventory-missing", "repository_dispatch");
+  assert(missingInventory.info.some(line => line.startsWith("Found runtime-images run 43 with status=queued")),
+    "missing optional refresh inventory must retain the native wait");
+  assert.equal(missingInventory.failures.length, 1, "missing optional inventory never supplies proof");
+  await assert.rejects(() => scenario("pending-native-inventory-forbidden", "repository_dispatch"), /inventory forbidden/);
+  for (const kind of ["duplicate-missing-step", "duplicate-nonterminal-step"]) {
+    assert.deepEqual((await scenario(kind)).failures, [], `${kind} preserves canonical fallback`);
+  }
+  const precedingGreen = await scenario("duplicate-preceding-green");
+  assert(precedingGreen.info.some(line => line.includes("verified completed exact runtime producer precedes the pending duplicate")),
+    "a verified green as the latest completed attempt may satisfy a pending duplicate");
+  assert.deepEqual(precedingGreen.failures, []);
+  assert.equal(precedingGreen.primaryInventoryReads, 2,
+    "a genuinely pending duplicate permits older proof after exactly one fresh acceptance ordering read");
+  const failedDuringAcceptance = await scenario("duplicate-fails-during-acceptance");
+  assert.equal(failedDuringAcceptance.primaryInventoryReads, 3,
+    "one acceptance ordering read must force fresh selection after the newer candidate becomes terminal");
+  assert(failedDuringAcceptance.warnings.some(line => line.includes("candidate ordering changed before accepting older success")));
+  assert.match(failedDuringAcceptance.failures[0], /Runtime images run 43 did not complete successfully: run=failure/,
+    "an older green cannot bypass a newer exact failure that appeared during acceptance");
+  for (const kind of ["duplicate-succeeds-during-acceptance", "duplicate-succeeds-during-acceptance-without-proof"]) {
+    const result = await scenario(kind);
+    assert.equal(result.primaryInventoryReads, 3, `${kind} requires fresh selection of the now-terminal primary`);
+    assert.equal(result.completedPrimaryJobReads, 1, `${kind} must inspect the newer producer's own exact jobs`);
+    assert.equal(result.failures.length, kind.endsWith("-without-proof") ? 1 : 0,
+      `${kind} cannot inherit the older producer's successful smoke evidence`);
+  }
+  const newerFailure = await scenario("duplicate-after-newer-failure");
+  assert(newerFailure.info.some(line => line.includes("Found runtime-images run 43 with status=queued")),
+    "the older green must not bypass the newer completed failure");
+  assert(newerFailure.info.some(line => line.includes("Found runtime-images run 43 with status=completed")),
+    "the pending exact producer must finish before the gate accepts proof");
+  assert.deepEqual(newerFailure.failures, []);
+  for (const kind of ["duplicate-terminal-skipped", "duplicate-terminal-failure", "rerun-after-proof"]) {
+    assert.equal((await scenario(kind)).failures.length, 1, `${kind} cannot supply successful proof`);
+  }
   for (const kind of ["marker-missing", "marker-success", "legacy-missing", "not-required", "step-skipped", "wrong-repository", "wrong-workflow",
     "wrong-path", "wrong-event", "wrong-head", "wrong-head-repository", "wrong-title", "wrong-source-attempt",
     "changed-definition", "unavailable-definition", "wrong-job", "wrong-job-run", "wrong-job-attempt", "wrong-job-head",
@@ -890,6 +1846,35 @@ async function scenario(kind, event = "pull_request") {
     assert.equal((await scenario(kind)).failures.length, 1, `${kind} must not supply successful proof`);
   }
   assert.equal((await scenario("wrong-dispatch-branch", "repository_dispatch")).failures.length, 1);
+  const supersededSnapshot = await scenario("incomplete-snapshot-superseded");
+  assert(supersededSnapshot.info.some(line => line.includes("superseded the incomplete smoke snapshot")));
+  assert.deepEqual(supersededSnapshot.failures, [], "reselection must qualify the newer attempt's own exact smoke evidence");
+  const unchangedSnapshot = await scenario("incomplete-snapshot-unchanged");
+  assert.match(unchangedSnapshot.failures[0], /did not expose a terminal PR Full-Stack Smoke job/);
+  const stableFallback = await scenario("trusted-current-base-stable", "repository_dispatch");
+  assert.deepEqual(stableFallback.failures, [], "unchanged current-base tuple still accepts exact refresh proof");
+  const rerunningFallback = await scenario("trusted-current-base-attempt-advances", "repository_dispatch");
+  assert(rerunningFallback.info.some(line => line.includes("Runtime attempt changed before smoke proof acceptance")),
+    "rerunning the producer during the live tuple lookup cannot accept the old attempt");
+  assert.equal(rerunningFallback.failures.length, 1, "no exact proof for the new attempt must not pass");
+  const rerunningDuringFinalTuple = await scenario(
+    "trusted-current-base-attempt-advances-during-final-tuple", "repository_dispatch"
+  );
+  assert.equal(rerunningDuringFinalTuple.rerunStartedDuringFinalTupleRead, true,
+    "the fixture must start the rerun during the last live tuple lookup, not an earlier fence");
+  assert(rerunningDuringFinalTuple.warnings.some(line => line.includes("Selected successful attempt changed during final ordering")));
+  assert.equal(rerunningDuringFinalTuple.failures.length, 1,
+    "the final tuple lookup cannot leave the previously successful attempt authoritative after a rerun");
+  const advancedFallback = await scenario("trusted-current-base-advances", "repository_dispatch");
+  assert(advancedFallback.info.some(line => line.includes("current PR identity changed after its smoke snapshot")),
+    "a base move during the producer proof cannot accept the old trusted refresh");
+  assert.match(advancedFallback.failures[0], /Timed out waiting for the exact runtime-images/);
+  const advancedDuringAcceptanceAttempt = await scenario(
+    "trusted-current-base-advances-during-acceptance-attempt", "repository_dispatch"
+  );
+  assert(advancedDuringAcceptanceAttempt.info.some(line => line.includes("PR comparison changed after candidate ordering")));
+  assert.match(advancedDuringAcceptanceAttempt.failures[0], /Timed out waiting for the exact runtime-images/,
+    "the last live comparison read detects a move during the attempt lookup that precedes it");
   const stale = await scenario("stale-final");
   assert.deepEqual(stale.failures, [], "obsolete gate exits without publishing proof for changed base ref");
   console.log("Smoke producer contract passed: native outcomes, exact immutable definition/attempt, legacy proof and fail-closed cases");
@@ -3603,14 +4588,36 @@ const workflowPath = ".github/workflows/runtime-images.yml";
 const repositoryName = "benhook1013/FireMUD";
 const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
 const canonicalRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+const canonicalMergeOnlyArtifactRuntimeWorkflowSha256 = script.match(
+  /const canonicalMergeOnlyArtifactRuntimeWorkflowSha256 = "([0-9a-f]{64})";/)[1];
+assert.equal(canonicalMergeOnlyArtifactRuntimeWorkflowSha256, "004af984d2aa7ab023758cbc38c6c20f92976b8f07040c9a4965bda6616d5dd5");
+const mergeOnlyArtifactBytes = Buffer.concat([bytes, Buffer.from("\n# Merge-only artifact fixture\n")]);
+const mergeOnlyArtifactFixtureSha256 = require("node:crypto").createHash("sha256").update(mergeOnlyArtifactBytes).digest("hex");
 const preMergeRefreshBytes = Buffer.concat([bytes, Buffer.from("\n# Current default trusted refresh definition\n")]);
-const canonicalPreMergeTrustedRefreshRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256")
+const preMergeRefreshFixtureSha256 = require("node:crypto").createHash("sha256")
   .update(preMergeRefreshBytes).digest("hex");
 const previousRefreshBytes = Buffer.concat([bytes, Buffer.from("\n# Previous trusted refresh definition\n")]);
 const canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256")
   .update(previousRefreshBytes).digest("hex");
 // Separate test authority lets the same verifier exercise both immutable modes.
 const canonicalLegacyRuntimeWorkflowSha256 = "0".repeat(64);
+const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set(JSON.parse(
+  script.match(/const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set\((\[[\s\S]*?\])\);/)[1]
+    .replace(/,\s*\]/, "]")));
+
+for (const fingerprint of [
+  "1993dbcd405b657d171339ca7aaf21ff8757098289a8f9121ddc433a00df803e",
+  "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b",
+  "2a769961890119fc91a83b2987537122704f6624035d1572b446569d5f9d11a1",
+]) assert.ok(outgoingTrustedRefreshRuntimeWorkflowSha256.has(fingerprint),
+  `outgoing trusted refresh fingerprint missing: ${fingerprint}`);
+const outgoingRefreshBytes = Buffer.concat([bytes, Buffer.from("\n# Outgoing trusted refresh fixture\n")]);
+const outgoingRefreshFixtureSha256 = require("node:crypto").createHash("sha256")
+  .update(outgoingRefreshBytes).digest("hex");
+assert.ok(![canonicalRuntimeWorkflowSha256, canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
+  canonicalLegacyRuntimeWorkflowSha256].includes(outgoingRefreshFixtureSha256));
+assert.ok(!outgoingTrustedRefreshRuntimeWorkflowSha256.has(outgoingRefreshFixtureSha256));
+
 const canonicalPlayClassifierSha256 = JSON.parse(script.match(/const canonicalPlayClassifierSha256 = (\{[\s\S]*?\});/)[1]);
 const classifierDefinitions = JSON.parse(fs.readFileSync(process.argv[2] + ".classifiers.json", "utf8"));
 const headSha = "a".repeat(40), baseSha = "b".repeat(40), mergeSha = "c".repeat(40);
@@ -3662,12 +4669,14 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
       }}}};
   const verifier = knownPlay ? "verifyKnownPlayFailure" : "verifyCanonicalSmokeProducer";
   const accepted = await new Function("github", "prNumber", "repositoryName", "canonicalSmokeJobName", "workflowPath",
-    "canonicalRuntimeWorkflowSha256", "canonicalPreMergeTrustedRefreshRuntimeWorkflowSha256",
-    "canonicalPreviousTrustedRefreshRuntimeWorkflowSha256", "canonicalLegacyRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
+    "canonicalRuntimeWorkflowSha256", "canonicalMergeOnlyArtifactRuntimeWorkflowSha256", "canonicalPreviousTrustedRefreshRuntimeWorkflowSha256", "canonicalLegacyRuntimeWorkflowSha256", "outgoingTrustedRefreshRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
     `${fn}; return ${verifier}(data.run, data.candidate, data.identity);`)(
       github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
-      canonicalPreMergeTrustedRefreshRuntimeWorkflowSha256, canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
-      data.legacyDefinition ? canonicalRuntimeWorkflowSha256 : canonicalLegacyRuntimeWorkflowSha256, canonicalPlayClassifierSha256,
+      mergeOnlyArtifactFixtureSha256,
+      canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
+      data.legacyDefinition ? canonicalRuntimeWorkflowSha256 : canonicalLegacyRuntimeWorkflowSha256,
+      new Set([...outgoingTrustedRefreshRuntimeWorkflowSha256, preMergeRefreshFixtureSha256, outgoingRefreshFixtureSha256]),
+      canonicalPlayClassifierSha256,
       value => Number.isSafeInteger(value) && value > 0, (_label, call) => call(),
       {payload: {repository: {default_branch: "develop"}, pull_request: {head: {repo: {full_name: data.eventHeadRepository}}}}},
       "benhook1013", "FireMUD", require, data);
@@ -3683,10 +4692,10 @@ async function failedProof(error, event = "pull_request") {
   const warnings = [], failures = [], outputs = [];
   const core = {warning: value => warnings.push(value), setFailed: value => failures.push(value),
     setOutput: (...value) => outputs.push(value)};
-  const execute = new Function("fullSmokeJob", "matching", "canonicalSmokeJobName", "currentIdentity",
+  const execute = new Function("fullSmokeJob", "matching", "canonicalSmokeJobName", "currentIdentity", "selectedIdentity",
     "verifyKnownPlayFailure", "TerminalGitHubRequestError", "core",
     `return (async () => { smokeGatePolling: while (true) { ${failedBranch} break; } })();`);
-  await execute(candidate, {...source, event}, canonicalSmokeJobName, identity,
+  await execute(candidate, {...source, event}, canonicalSmokeJobName, identity, identity,
     async () => {throw error;}, TerminalGitHubRequestError, core);
   assert.deepEqual(failures, ["Canonical PLAY transition exception could not be verified; runtime qualification remains blocked."]);
   assert.equal(warnings.length, 1);
@@ -3706,17 +4715,79 @@ async function failedLegacyProof(stage, error, event = "pull_request") {
   const core = {warning: value => warnings.push(value), setFailed: value => failures.push(value),
     setOutput: (...value) => outputs.push(value)};
   const execute = new Function("matching", "repositoryName", "github", "owner", "repo",
-    "canonicalSmokeJobName", "currentIdentity", "withTransientGitHubRetry", "verifyKnownPlayFailure",
+    "canonicalSmokeJobName", "currentIdentity", "selectedIdentity", "withTransientGitHubRetry", "verifyKnownPlayFailure",
     "isCurrentPullRequestObsolete", "TerminalGitHubRequestError", "core",
     `return (async () => { smokeGatePolling: while (true) { ${legacyFailedBranch} break; } })();`);
   await execute({...source, conclusion: "failure", event}, repositoryName, github, "benhook1013", "FireMUD", canonicalSmokeJobName,
-    identity, (_label, call) => call(), async () => {throw error;}, async () => false,
+    identity, identity, (_label, call) => call(), async () => {throw error;}, async () => false,
     TerminalGitHubRequestError, core);
   assert.deepEqual(failures, ["Runtime images run 99 did not complete successfully: run=failure"]);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /^Canonical PLAY transition exception proof is unavailable:/);
   assert.deepEqual(outputs, []);
 }
+
+const finalPlayFence = script.slice(script.indexOf("async function currentCanonicalPlayAttempt("),
+  script.indexOf("// Canonical-transition diagnostic acceptance"));
+
+async function verifyFinalPlayFence(conclusion, event, change) {
+  const matching = {...source, event, conclusion};
+  const latest = {...matching};
+  const order = [], outputs = [], failed = [];
+  let now = 0;
+  const summary = {addHeading: () => summary, addRaw: () => summary, write: async () => {}};
+  const core = {
+    summary, warning: () => {}, setFailed: message => failed.push(message),
+    setOutput: (...output) => {order.push("accept"); outputs.push(output);},
+  };
+  const github = {
+    paginate: async () => [candidate],
+    rest: {actions: {getWorkflowRun: async ({run_id}) => {
+      assert.equal(run_id, matching.id);
+      order.push("attempt");
+      return {data: latest};
+    }}},
+  };
+  const branch = conclusion === "success" ? failedBranch : legacyFailedBranch;
+  const execute = new Function("options", "Date", `
+    return (async () => {
+      const {matching, fullSmokeJob, canonicalSmokeJobName, currentIdentity, selectedIdentity, repositoryName,
+        github, owner, repo, started, timeoutMs, core, TerminalGitHubRequestError, verifyKnownPlayFailure,
+        resolveCurrentIdentity, isCurrentPullRequestObsolete, identityKey, retryExactSelection,
+        withTransientGitHubRetry} = options;
+      ${finalPlayFence}
+      smokeGatePolling: for (let selection = 0; selection < 1; selection++) {
+        ${branch}
+      }
+    })();
+  `);
+  await execute({
+    matching, fullSmokeJob: candidate, canonicalSmokeJobName, currentIdentity: identity, selectedIdentity: identity,
+    repositoryName, github, owner: "benhook1013", repo: "FireMUD", started: 0, timeoutMs: 10_000, core,
+    TerminalGitHubRequestError, withTransientGitHubRetry: (_label, call) => call(),
+    verifyKnownPlayFailure: async () => {order.push("proof"); return true;},
+    resolveCurrentIdentity: async () => {
+      order.push("comparison");
+      if (change === "attempt") latest.run_attempt += 1;
+      if (change === "nonterminal") Object.assign(latest, {status: "in_progress", conclusion: null});
+      if (change === "conclusion") latest.conclusion = "cancelled";
+      if (change === "deadline") now = 10_000;
+      return identity;
+    },
+    isCurrentPullRequestObsolete: async () => false,
+    identityKey: value => JSON.stringify(value),
+    retryExactSelection: async (_message, options) => {
+      assert.deepEqual(options, {requirePendingPrimary: false});
+      order.push("retry");
+      return change !== "deadline";
+    },
+  }, {now: () => now});
+  assert.deepEqual(failed, []);
+  assert.deepEqual(outputs, change === "stable" ? [["known_play_exception", "true"]] : []);
+  assert.deepEqual(order, ["proof", "comparison", ...(change === "deadline" ? [] : ["attempt"]),
+    change === "stable" ? "accept" : "retry"]);
+}
+
 const markerExpression = fs.readFileSync(process.argv[2] + ".marker", "utf8").trim().slice(3, -2);
 const markerValues = {
   "github.event_name": "pull_request", "github.repository": repositoryName,
@@ -3737,8 +4808,20 @@ function markerAccepted(overrides = {}) {
 }
 (async () => {
   for (const event of ["pull_request", "repository_dispatch"]) {
+    assert.equal(await verify(data => {
+      Object.assign(data.definitions[workflowPath], {
+        content: mergeOnlyArtifactBytes.toString("base64"), size: mergeOnlyArtifactBytes.length,
+      });
+    }, event, false), true, "the previous archive format must not invalidate independent Smoke Gate proof");
+  }
+  for (const event of ["pull_request", "repository_dispatch"]) {
     for (const stage of ["jobs", "proof", "malformed-jobs"]) {
       await failedLegacyProof(stage, Object.assign(new Error("unavailable"), {status: 404}), event);
+    }
+    for (const conclusion of ["success", "failure"]) {
+      for (const change of ["stable", "attempt", "nonterminal", "conclusion", "deadline"]) {
+        await verifyFinalPlayFence(conclusion, event, change);
+      }
     }
   }
   await failedLegacyProof("proof", null);
@@ -3795,6 +4878,15 @@ function markerAccepted(overrides = {}) {
       "trusted refresh may retain the previous successful producer proof");
     assert.equal(await verify(usePreviousRefresh, "pull_request", knownPlay), false,
       "the previous successful definition cannot attest a PR producer");
+  }
+  const useOutgoingRefresh = data => Object.assign(data.definitions[workflowPath], {
+    content: outgoingRefreshBytes.toString("base64"), size: outgoingRefreshBytes.length,
+  });
+  for (const knownPlay of [true, false]) {
+    assert.equal(await verify(useOutgoingRefresh, "repository_dispatch", knownPlay), true,
+      "trusted refresh may retain an outgoing producer proof");
+    assert.equal(await verify(useOutgoingRefresh, "pull_request", knownPlay), false,
+      "an outgoing definition cannot attest a PR producer");
   }
   for (const path of Object.keys(classifierDefinitions)) {
     assert.equal(await verify(d => {

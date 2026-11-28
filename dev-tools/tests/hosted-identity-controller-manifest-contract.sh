@@ -3888,10 +3888,13 @@ done
 # rejections rather than Python attribute/index tracebacks.
 python3 - "$ARTIFACT_VALIDATOR" <<'PY'
 import copy
+import hashlib
 import importlib.util
+import json
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -3920,6 +3923,49 @@ def assert_rejected(call, expected):
         assert str(error) == expected, (str(error), expected)
     else:
         raise AssertionError(f"validator accepted malformed artifact: {expected}")
+
+
+with tempfile.TemporaryDirectory() as directory:
+    metadata_path = Path(directory) / "preview-metadata.json"
+    manifest = Path(directory) / "manifest.yaml"
+    manifest.write_text("---\n", encoding="utf-8")
+    base, head, merge = "a" * 40, "b" * 40, "c" * 40
+    host = "pr-42.preview.firedevops.net"
+    image_tag = f"pr-merge-{merge}"
+    candidate = {
+        "schemaVersion": 1,
+        "event": "repository_dispatch",
+        "action": "deploy",
+        "repository": "example/FireMUD",
+        "sourceWorkflow": ".github/workflows/preview.yml",
+        "sourceRunId": 123,
+        "sourceRunAttempt": 2,
+        "prNumber": 42,
+        "baseSha": base,
+        "headSha": head,
+        "mergeSha": merge,
+        "hostname": host,
+        "imageTag": image_tag,
+        "manifestSha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        "proofRetryNamespaceUid": "namespace-42",
+        "proofRetryNonce": "01234567-0123-4123-8123-0123456789ab",
+    }
+
+    def validate_bound_render():
+        validator.validate_metadata(
+            metadata_path, manifest, "example/FireMUD", "123", "42",
+            base, head, merge, image_tag, host,
+        )
+
+    with patch.object(validator, "validate_manifest") as validate_manifest:
+        for missing in ("proofRetryNonce", "sourceRunAttempt"):
+            incomplete = {key: value for key, value in candidate.items() if key != missing}
+            metadata_path.write_text(json.dumps(incomplete), encoding="utf-8")
+            assert_rejected(validate_bound_render, "retry metadata must bind its reservation nonce and exact source run attempt")
+        validate_manifest.assert_not_called()
+        metadata_path.write_text(json.dumps(candidate), encoding="utf-8")
+        validate_bound_render()
+        validate_manifest.assert_called_once()
 
 
 missing_application_deployments = sorted(validator.SERVICE_IMAGES)
