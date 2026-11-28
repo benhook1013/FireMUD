@@ -410,8 +410,6 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     Objects.requireNonNull(preparation, "preparation");
     Objects.requireNonNull(now, "now");
     if (proof == null) throw unavailable();
-    // A caller that found an already consumed proof may only reconcile a completed cleanup.
-    boolean reconcileOnly = proof.consumedFor(preparation);
     var consumedHere = new java.util.concurrent.atomic.AtomicBoolean();
     var provider = dsl.configuration().transactionProvider();
     var guardedProvider =
@@ -462,6 +460,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     DSL.using(dsl.configuration().derive(guardedProvider))
         .transaction(configuration -> {
           DSLContext transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
           lockRegionScope(transaction, preparation.tenantRegionTag);
           Record row =
               transaction.fetchOne(
@@ -481,7 +480,6 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
             throw unavailable();
           // A rolled-back claim (or a cleanup with lost acknowledgement) can leave PREPARED.
           if (current.phase == TimelinePreparationPhase.PREPARED) {
-            if (reconcileOnly) return;
             if (proof.consumeFor(preparation)) {
               consumedHere.set(true);
             } else if (!proof.consumedFor(preparation)) {
@@ -495,10 +493,13 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                   .equals(row.get("initialization_claim_generation", UUID.class))) {
             throw unavailable();
           }
-          // Keep the capability available through acquisition and the region lock. Consume it
-          // only on this exact generation, immediately before the first possible SQL write.
-          if (reconcileOnly || !proof.consumeFor(preparation)) throw unavailable();
-          consumedHere.set(true);
+          // This fresh read under the same lock proves any preceding cleanup finished without
+          // releasing this generation. The no-write proof still applies to the exact claim.
+          if (proof.consumeFor(preparation)) {
+            consumedHere.set(true);
+          } else if (!proof.consumedFor(preparation)) {
+            throw unavailable();
+          }
           int changed =
               transaction.execute(
                   "UPDATE "

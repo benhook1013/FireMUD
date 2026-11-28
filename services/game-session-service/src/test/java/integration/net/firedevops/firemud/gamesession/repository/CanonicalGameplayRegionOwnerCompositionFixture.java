@@ -1165,10 +1165,17 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
           throw new IllegalStateException("Fixture requires a live reused region grant to expire");
         }
         List<List<String>> sqlBeforeExpiredGrant =
-            snapshotRegionOwnerSqlState(
-                dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId());
+            snapshotBridgeSqlState(
+                dsl,
+                identity.tenantId(),
+                identity.gameInstanceId(),
+                identity.regionId(),
+                secondTransitionId);
         RegionRedisState redisBeforeExpiredGrant =
             snapshotRegionRedisState(redis, redisKey, initialMetaKey);
+        if (redisBeforeExpiredGrant.metadataTtlMillis() != -1L) {
+          throw new IllegalStateException("Fixture requires persistent timeline metadata");
+        }
         byte[] bindingBeforeExpiredGrant = redis.admin().dump(secondBindingKey);
         if (bindingBeforeExpiredGrant != null) {
           throw new IllegalStateException("Fixture requires an unbridged second Redis binding");
@@ -1181,8 +1188,12 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         }
         boolean bridgePreservedSql =
             sqlBeforeExpiredGrant.equals(
-                snapshotRegionOwnerSqlState(
-                    dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId()));
+                snapshotBridgeSqlState(
+                    dsl,
+                    identity.tenantId(),
+                    identity.gameInstanceId(),
+                    identity.regionId(),
+                    secondTransitionId));
         boolean bridgePreservedRedis =
             redisBeforeExpiredGrant.equals(
                 snapshotRegionRedisState(redis, redisKey, initialMetaKey));
@@ -1204,8 +1215,12 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         }
         boolean reinstallPreservedSql =
             sqlBeforeExpiredGrant.equals(
-                snapshotRegionOwnerSqlState(
-                    dsl, identity.tenantId(), identity.gameInstanceId(), identity.regionId()));
+                snapshotBridgeSqlState(
+                    dsl,
+                    identity.tenantId(),
+                    identity.gameInstanceId(),
+                    identity.regionId(),
+                    secondTransitionId));
         boolean reinstallPreservedRedis =
             redisBeforeExpiredGrant.equals(
                 snapshotRegionRedisState(redis, redisKey, initialMetaKey));
@@ -1922,6 +1937,26 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             .getValues("image", String.class));
   }
 
+  private static List<List<String>> snapshotBridgeSqlState(
+      DSLContext dsl, UUID tenantId, UUID gameInstanceId, UUID regionId, UUID transitionId) {
+    List<List<String>> rows =
+        new ArrayList<>(snapshotRegionOwnerSqlState(dsl, tenantId, gameInstanceId, regionId));
+    for (String table :
+        List.of(
+            "game_session_canonical_binding_transition",
+            "game_session_canonical_issuer_partition_reservation",
+            "game_session_canonical_binding_account_index_obligation",
+            "game_session_canonical_binding_issuer_index_obligation")) {
+      rows.add(
+          dsl.fetch(
+                  "SELECT to_jsonb(target)::text AS image"
+                      + " FROM {0} AS target WHERE transition_id = {1} ORDER BY image",
+                  DSL.name(table), DSL.val(transitionId))
+              .getValues("image", String.class));
+    }
+    return rows;
+  }
+
   private static RegionRedisState snapshotRegionRedisState(
       RegionRedis redis, byte[] leaseKey, String metaKey) {
     Map<String, String> metadata = new LinkedHashMap<>();
@@ -1932,7 +1967,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     return new RegionRedisState(
         redis.admin().type(leaseKey),
         asciiString(redis.admin().get(leaseKey)),
-        Map.copyOf(metadata));
+        Map.copyOf(metadata),
+        redis.admin().pttl(ascii(metaKey)));
   }
 
   private static ReadPreseededActorRuntimeReferenceRequest preseededEntityRequest(
@@ -2062,7 +2098,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       boolean expiredGrantRejectedWithoutStateChange) {}
 
   private record RegionRedisState(
-      String leaseType, String leaseValue, Map<String, String> metadata) {}
+      String leaseType, String leaseValue, Map<String, String> metadata, long metadataTtlMillis) {}
 
   private record RegionBridgeRedisState(
       String leaseValue, Map<String, String> metadata, Map<String, String> sessionBindingValue) {}

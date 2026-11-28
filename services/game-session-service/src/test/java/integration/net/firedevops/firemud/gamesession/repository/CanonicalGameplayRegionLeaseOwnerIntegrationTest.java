@@ -1092,8 +1092,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
-  void freshDeadlineReacquiresLeaseForExactRetainedTimelineWithoutCreationPermission()
-      throws Exception {
+  void freshDeadlineDoesNotReplaceExpiredOriginalGrantFromRetainedMetadata() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();
     try (RedisFixture redis = RedisFixture.open()) {
@@ -1142,30 +1141,24 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
           .hset(metaKey, ascii("first_timeline_source_digest"), ascii(preparation.sourceDigest()));
       assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
       long redisBefore = redisTimeMillis(redis.admin());
-      // Use a Game Session clock ahead of Redis. The lease must still end within its local budget.
+      // A fresh, bounded operation still cannot replace an expired original grant.
       var initializationNow = Instant.ofEpochMilli(redisBefore).plusSeconds(60);
       var initializationClock = Clock.fixed(initializationNow, ZoneOffset.UTC);
       var deadline = initializationNow.toEpochMilli() + 10_000L;
-      try (var deadlineObservation =
-          new PreparedTimelineDeadlineObservation(redis.ownerClient(), false)) {
-        initializeTimelineWithoutCreationPermission(
-            redisOwner.forHandoffDeadline(initializationClock, deadline),
-            preparation,
-            "exact-renewal");
-        assertThat(redis.admin().type(leaseKey)).isEqualTo("string");
-        assertThat(redis.admin().pexpiretime(leaseKey))
-            .isEqualTo(deadlineObservation.probeCutoff());
-        assertThat(deadlineObservation.probeCutoff())
-            .isBetween(
-                redisBefore,
-                redisTimeMillis(redis.admin())
-                    + CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS);
-      }
-      assertThat(redis.admin().hlen(metaKey)).isEqualTo(5L);
-      assertThat(redis.admin().hget(metaKey, ascii("first_timeline_operation_id")))
-          .containsExactly(ascii(preparation.operationId().toString()));
-      assertThat(redis.admin().hget(metaKey, ascii("first_timeline_source_digest")))
-          .containsExactly(ascii(preparation.sourceDigest()));
+      byte[] originalMetadata = redis.admin().dump(metaKey);
+      assertThat(redis.admin().pttl(metaKey)).isEqualTo(-1L);
+      assertThatThrownBy(() ->
+              initializeTimelineWithoutCreationPermission(
+                  redisOwner.forHandoffDeadline(initializationClock, deadline),
+                  preparation,
+                  "replacement"))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(redis.admin().type(leaseKey)).isEqualTo("none");
+      assertThat(redis.admin().dump(metaKey)).containsExactly(originalMetadata);
+      assertThat(redis.admin().pttl(metaKey)).isEqualTo(-1L);
+      assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
+          .isEqualTo(
+              CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INITIALIZING);
       assertThat(repository.beginInitialTimeline(preparation, NOW)).isEmpty();
     } finally {
       dropSchema(testSchema.schema());
@@ -1417,6 +1410,11 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   @Test
   void confirmedSqlRollbackPreservesExactNoWriteProofForRetry() throws Exception {
     assertKnownNoWriteRecovery(2);
+  }
+
+  @Test
+  void unresolvedReleaseCommitCanRetryAfterExactClaimReadback() throws Exception {
+    assertKnownNoWriteRecovery(7);
   }
 
   @Test
@@ -1727,7 +1725,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               Clock.systemUTC(),
               mode == 5);
       var recoverySlot =
-          (mode == 3 || mode == 4 || mode == 5)
+          (mode == 3 || mode == 4 || mode == 5 || mode == 7)
               ? recoveryOwner.reserveNoWriteRecovery(preparation.operationId())
               : null;
       CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit;
@@ -1871,14 +1869,12 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                                   && sql.contains("SET phase = 'PREPARED'")) {
                                                 concurrentRelease.set(
                                                     CompletableFuture.runAsync(() ->
-                                                        assertThatThrownBy(() ->
-                                                                concurrentRepository
-                                                                    .releaseInitialTimelineNoWrite(
-                                                                        preparation, retained, NOW))
-                                                            .isInstanceOf(
-                                                                IllegalStateException.class)));
-                                                // Consumed-proof reconciliation takes this same
-                                                // transaction lock. Roll back before awaiting it.
+                                                        concurrentRepository
+                                                            .releaseInitialTimelineNoWrite(
+                                                                preparation, retained, NOW)));
+                                                // The retry must wait for the original
+                                                // transaction to resolve before inspecting the
+                                                // claim.
                                                 lockAttempted
                                                     .orTimeout(10, TimeUnit.SECONDS)
                                                     .join();
@@ -1901,9 +1897,9 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                                   repository.findTimelinePreparation(source).orElseThrow().phase())
                               .isEqualTo(
                                   CanonicalGameplayRegionRuntimeStatusRepository
-                                      .TimelinePreparationPhase.INITIALIZING);
+                                      .TimelinePreparationPhase.PREPARED);
                         }
-                        if (mode == 3) {
+                        if (mode == 3 || mode == 7) {
                           recoverySlot.proof = retained;
                           var tx = testSchema.dsl().configuration().transactionProvider();
                           var ambiguous =
@@ -1915,14 +1911,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
 
                                 @Override
                                 public void commit(org.jooq.TransactionContext context) {
-                                  tx.commit(context);
+                                  if (mode == 3) {
+                                    tx.commit(context);
+                                  } else {
+                                    tx.rollback(context);
+                                  }
                                   throw new IllegalStateException("lost commit reply");
                                 }
 
                                 @Override
                                 public void rollback(org.jooq.TransactionContext context) {
-                                  // Models a successful no-op rollback after a committed
-                                  // transaction.
+                                  // The underlying transaction has already finished.
                                 }
                               };
                           var uncertain =
@@ -1931,7 +1930,8 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
                           assertThatThrownBy(() ->
                                   uncertain.releaseInitialTimelineNoWrite(
                                       preparation, retained, NOW))
-                              .isInstanceOf(RuntimeException.class);
+                              .isInstanceOf(IllegalStateException.class)
+                              .hasMessage("lost commit reply");
                         } else {
                           repository.releaseInitialTimelineNoWrite(preparation, retained, NOW);
                         }
@@ -1950,10 +1950,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         }
       }
       assertThat(proof.get()).isNotNull();
-      if (mode == 3) {
-        // The commit reached PREPARED but its caller saw failure. The owner retains the
-        // consumed capability and reconciles durable state without restoring mutation authority.
+      if (mode == 3 || mode == 7) {
+        // The caller could not tell whether the commit reached PREPARED. The owner
+        // retains the consumed proof until a locked read can establish the outcome.
         assertThat(proof.get().consumedFor(preparation)).isTrue();
+        assertThat(repository.findTimelinePreparation(source).orElseThrow().phase())
+            .isEqualTo(
+                mode == 3
+                    ? CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                        .PREPARED
+                    : CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                        .INITIALIZING);
         recoveryOwner.releaseNoWriteRecovery(preparation.operationId(), recoverySlot);
         var retry = recoveryOwner.reserveNoWriteRecovery(preparation.operationId());
         assertThat(retry).isSameAs(recoverySlot);

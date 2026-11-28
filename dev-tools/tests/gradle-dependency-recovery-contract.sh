@@ -542,13 +542,34 @@ assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UT
 assert_rate_limit_delay
 assert_output_contains "refreshed-compile-classpath"
 
-for mutation in auth wrong-module compile-started; do
+new_case compile-classpath-429-alternate-reason
+write_compile_classpath_429_cause
+sed -i 's/429 from server: Too Many Requests/429 from server: Rate limit exceeded/g' "$CASE_DIR/cause.log"
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-compile-classpath'
+run_case account-service 0
+assert_call_count 2
+assert_call 2 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck --profile --info --console=plain"
+assert_rate_limit_delay
+assert_output_contains "Rate limit exceeded"
+
+new_case compile-classpath-429-without-reason
+write_compile_classpath_429_cause
+sed -i 's/429 from server: Too Many Requests/429 from server:/g' "$CASE_DIR/cause.log"
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-compile-classpath'
+run_case account-service 0
+assert_call_count 2
+assert_rate_limit_delay
+
+for mutation in auth wrong-module compile-started malformed-host; do
   new_case "compile-classpath-429-$mutation"
   write_compile_classpath_429_cause
   case "$mutation" in
     auth) sed -i '0,/429 from server: Too Many Requests/s//403 from server: Forbidden/' "$CASE_DIR/cause.log" ;;
     wrong-module) sed -i 's/:account-service:compileClasspath/:common-platform-core:compileClasspath/' "$CASE_DIR/cause.log" ;;
     compile-started) sed -i '1i > Task :account-service:compileJava FAILED' "$CASE_DIR/cause.log" ;;
+    malformed-host) sed -i 's/429 from server: Too Many Requests/429 from other-server: Rate limit exceeded/g' "$CASE_DIR/cause.log" ;;
   esac
   # shellcheck disable=SC2016
   write_wrapper 'cat "$CASE_DIR/cause.log"; exit 1'

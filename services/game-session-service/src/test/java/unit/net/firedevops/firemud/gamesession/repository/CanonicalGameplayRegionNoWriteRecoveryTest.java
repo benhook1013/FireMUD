@@ -5,13 +5,59 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import io.grpc.Context;
+import io.grpc.Deadline;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import org.junit.jupiter.api.Test;
 
 class CanonicalGameplayRegionNoWriteRecoveryTest {
+  @Test
+  void cleanupAdmissionRefusalClearsActiveSlotAndRetainsExactProofForNextLogin() throws Exception {
+    var repository = mock(CanonicalGameplayRegionRuntimeStatusRepository.class);
+    when(repository.forBudget(any())).thenReturn(repository);
+    var owner = owner(repository);
+    var preparation =
+        mock(CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation.class);
+    var proof = mock(CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof.class);
+    UUID operation = UUID.randomUUID();
+    UUID transition = UUID.randomUUID();
+    when(preparation.operationId()).thenReturn(operation);
+    when(preparation.transitionId()).thenReturn(transition);
+    var retained = owner.reserveNoWriteRecovery(operation);
+    owner.retainNoWriteProof(preparation, retained, proof);
+
+    var recovery =
+        CanonicalGameplayRegionLeaseOwner.class.getDeclaredMethod(
+            "recoverNoWrite",
+            CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation.class,
+            CanonicalGameplayRegionLeaseOwner.RetainedNoWriteRecovery.class,
+            Clock.class,
+            long.class,
+            Deadline.class);
+    recovery.setAccessible(true);
+    assertThatThrownBy(() ->
+            recovery.invoke(
+                owner,
+                preparation,
+                retained,
+                Clock.systemUTC(),
+                Long.MAX_VALUE,
+                Deadline.after(0, TimeUnit.NANOSECONDS)))
+        .hasCauseInstanceOf(IllegalStateException.class);
+
+    owner.releaseNoWriteRecovery(operation, retained);
+    var nextLogin = owner.reserveNoWriteRecovery(operation);
+    assertThat(nextLogin).isSameAs(retained);
+    assertThat(nextLogin.proof).isSameAs(proof);
+    owner.releaseNoWriteRecovery(operation, nextLogin);
+    owner.recoverRetainedNoWriteForTransition(transition);
+    assertThat(owner.reserveNoWriteRecovery(operation)).isNotSameAs(retained);
+    verify(repository).releaseInitialTimelineNoWrite(eq(preparation), same(proof), any());
+  }
+
   @Test
   void cleanupFailureRetainsExactProofAndExclusiveSlotForRetry() {
     var repository = mock(CanonicalGameplayRegionRuntimeStatusRepository.class);

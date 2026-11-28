@@ -56,31 +56,51 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
                 .getResourceAsStream("redis/lua/game-session-region-timeline-initialize-v2.lua")) {
       var commands = connection.sync();
       String sha = commands.scriptLoad(input.readAllBytes());
-      String tag = "r1-" + "a".repeat(32) + "-" + "b".repeat(32) + "-" + "c".repeat(32);
-      byte[][] keys = {
-        ("tick-executor-lease:{" + tag + "}").getBytes(StandardCharsets.US_ASCII),
-        ("tick:{" + tag + "}:meta").getBytes(StandardCharsets.US_ASCII)
-      };
-      for (String action : java.util.List.of("PROBE", "INITIALIZE")) {
-        String[] args = {
-          "gs_region_timeline_init/v2",
-          action,
-          UUID.randomUUID().toString(),
-          "1",
-          UUID.randomUUID().toString(),
-          "a".repeat(64),
-          "30000",
-          "1",
-          "1"
+      assertThat(commands.aclWhoami()).isEqualTo(PRINCIPAL);
+      String token = UUID.randomUUID().toString();
+      String operationId = UUID.randomUUID().toString();
+      String sourceDigest = "a".repeat(64);
+      for (boolean live : java.util.List.of(false, true)) {
+        String region = (live ? "d" : "c").repeat(32);
+        String tag = "r1-" + "a".repeat(32) + "-" + "b".repeat(32) + "-" + region;
+        byte[][] keys = {
+          ascii("tick-executor-lease:{" + tag + "}"), ascii("tick:{" + tag + "}:meta")
         };
-        byte[][] bytes =
-            java.util.Arrays.stream(args)
-                .map(value -> value.getBytes(StandardCharsets.US_ASCII))
-                .toArray(byte[][]::new);
-        Long outcome = commands.evalsha(sha, io.lettuce.core.ScriptOutputType.INTEGER, keys, bytes);
-        assertThat(outcome).isEqualTo(-3L);
-        assertThat(commands.type(keys[0])).isEqualTo("none");
-        assertThat(commands.type(keys[1])).isEqualTo("none");
+        assertThat(redis.admin().type(keys[0])).isEqualTo("none");
+        assertThat(redis.admin().type(keys[1])).isEqualTo("none");
+        var redisTime = commands.time();
+        long nowMillis =
+            Long.parseLong(new String(redisTime.get(0), StandardCharsets.US_ASCII)) * 1_000L
+                + Long.parseLong(new String(redisTime.get(1), StandardCharsets.US_ASCII)) / 1_000L;
+        String deadline = live ? Long.toString(nowMillis + 30_000L) : "1";
+        for (String action : java.util.List.of("PROBE", "INITIALIZE")) {
+          byte[][] args = {
+            ascii("gs_region_timeline_init/v2"),
+            ascii(action),
+            ascii(token),
+            ascii("1"),
+            ascii(operationId),
+            ascii(sourceDigest),
+            ascii("30000"),
+            ascii("1"),
+            ascii(deadline)
+          };
+          Long outcome =
+              commands.evalsha(sha, io.lettuce.core.ScriptOutputType.INTEGER, keys, args);
+          assertThat(outcome).isEqualTo(live ? 1L : -3L);
+          if (live && "INITIALIZE".equals(action)) {
+            assertThat(redis.admin().get(keys[0])).containsExactly(ascii(token));
+            assertThat(redis.admin().pttl(keys[0])).isPositive();
+            assertThat(redis.admin().hget(keys[1], ascii("first_timeline_operation_id")))
+                .containsExactly(ascii(operationId));
+            assertThat(redis.admin().hget(keys[1], ascii("first_timeline_source_digest")))
+                .containsExactly(ascii(sourceDigest));
+            assertThat(redis.admin().pttl(keys[1])).isEqualTo(-1L);
+          } else {
+            assertThat(redis.admin().type(keys[0])).isEqualTo("none");
+            assertThat(redis.admin().type(keys[1])).isEqualTo("none");
+          }
+        }
       }
     }
   }
@@ -455,6 +475,7 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
               .addCommand(CommandType.EVALSHA)
               .addCommand(CommandType.TYPE)
               .addCommand(CommandType.HGET)
+              .addCommand(CommandType.HSET)
               .addCommand(CommandType.PTTL)
               .addCommand(CommandType.GET)
               .addCommand(CommandType.SET)

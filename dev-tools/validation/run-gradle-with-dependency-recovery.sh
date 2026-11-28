@@ -176,7 +176,7 @@ classify_failure_body() {
           jar_download_step = 2
         } else if (jar_download_step == 2 && line == "> Could not GET " quote jar_url quote ".") {
           jar_download_step = 3
-        } else if (jar_download_step == 3 && line == "> Received status code 429 from server: Too Many Requests") {
+        } else if (jar_download_step == 3 && line ~ /^> Received status code 429 from server(:.*)?$/) {
           jar_download_step = 0
           jar_downloads++
           if (buildsrc_jar) buildsrc_jar_downloads++

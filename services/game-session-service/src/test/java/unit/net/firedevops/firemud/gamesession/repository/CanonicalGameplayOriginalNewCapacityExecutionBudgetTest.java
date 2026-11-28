@@ -1366,6 +1366,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       var rollbackFailure = new AtomicReference<Throwable>();
       var autoCommitFailure = new AtomicReference<Throwable>();
       var logicalFinishes = new AtomicInteger();
+      var savepoint = mock(java.sql.Savepoint.class);
       try {
         assertThatThrownBy(() ->
                 CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundCleanup(
@@ -1379,7 +1380,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                       Connection proxy = java.util.Objects.requireNonNull(scoped.acquire());
                       scoped.acquire();
                       try {
-                        proxy.rollback(mock(java.sql.Savepoint.class));
+                        proxy.rollback(savepoint);
                         assertThat(budget.jdbcConfirmedRollbacks()).isZero();
                         proxy.rollback();
                       } catch (java.sql.SQLException failure) {
@@ -1414,6 +1415,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                 (AtomicInteger)
                     ReflectionTestUtils.getField(captured.get(), "outstandingConnections"))
             .hasValue(2);
+        verify(first).rollback(savepoint);
         verify(first).rollback();
         verify(first, never()).setAutoCommit(true);
         verify(provider).release(first);
