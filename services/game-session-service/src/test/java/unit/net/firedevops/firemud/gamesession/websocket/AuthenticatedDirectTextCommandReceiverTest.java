@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -18,6 +19,7 @@ import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.ExpiredWorldSelectionException;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.UnknownWorldSelectorException;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandPayload;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
@@ -30,14 +32,17 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.ReplayPolicy;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.PreV1CanonicalPlayAdmissionOwner;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginOwner;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyOwner;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyScope;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.web.socket.WebSocketSession;
 
 /** Wire-selector routing with controlled owners, not source qualification or admission proof. */
@@ -142,6 +147,35 @@ class AuthenticatedDirectTextCommandReceiverTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(result.commandResult().errorMessage())
         .isEqualTo("Unknown or ambiguous world selector. Run WORLDS and choose a listed selector.");
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void pointerAuthorityFailuresPreserveAuthenticatedRealmSelection(boolean unreachable) {
+    var fixture = fixture();
+    var retainedSelection = fixture.connection.selectedScope;
+    var authority = mock(GameplayAdmissionPointerAuthorityService.class);
+    if (unreachable) {
+      when(authority.listPointers()).thenThrow(new DataAccessResourceFailureException("db"));
+    } else {
+      when(authority.listPointers()).thenReturn(null);
+    }
+    var catalog = new GameplayWorldCatalog(authority);
+    var failure = catchThrowable(catalog::discoverySnapshot);
+    assertThat(failure)
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class);
+    when(fixture.lobby.realms(null, null, fixture.connection, fixture.connection.menu, "demo"))
+        .thenThrow(failure);
+
+    var result =
+        fixture.receiver.receive(
+            fixture.socket,
+            new TextCommand(TextCommandType.REALMS, List.of("demo"), "REALMS demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(unreachable ? "AUTH_UNAVAILABLE" : "ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(fixture.connection.selectedScope).isSameAs(retainedSelection);
   }
 
   @Test

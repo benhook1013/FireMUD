@@ -1246,6 +1246,48 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void pointerReadFailureIsClassifiedBeforePlayEffects(boolean unreachable) {
+    var authority = Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    if (unreachable) {
+      when(authority.listPointers())
+          .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+    } else {
+      when(authority.listPointers()).thenReturn(null);
+    }
+    var pointerHandler =
+        new PlayCommandHandler(
+            sessionAuthenticationService,
+            sessionContextService,
+            sessionRoutingNormalizationService,
+            new GameplayWorldCatalog(authority),
+            gameLogicProperties,
+            accountClient,
+            entityManagementClient,
+            moderationPolicyClient,
+            firstPartyConnectContextRegistry,
+            gameplayPresenceLifecycleService,
+            scriptEventPublisher,
+            meterRegistry);
+    SessionContext context = new SessionContext(1L, 22L, ACCOUNT_ID, 0L, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    var result = pointerHandler.handle("1", new TextCommandParser().parse("PLAY demo production"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(unreachable ? "AUTH_UNAVAILABLE" : "ADMISSION_POINTER_UNAVAILABLE");
+    Mockito.verify(sessionContextService).findBySessionId(1L);
+    Mockito.verifyNoMoreInteractions(sessionContextService);
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+  }
+
   @Test
   void playDoesNotAdmitV6QuarantinedPointerWithoutCatalogIdentity() {
     GameplayAdmissionPointerAuthorityService authorityService =
@@ -2529,26 +2571,43 @@ class PlayCommandHandlerTest {
     Mockito.verify(sessionContextService, Mockito.never()).save(Mockito.any());
   }
 
-  @ParameterizedTest
-  @ValueSource(longs = {123L, 7001L})
-  void roomlessFreshEntryUsesThePersistedActorAndRedrawsTheSameActor(long retainedCharacterId) {
-    SessionContext context =
-        new SessionContext(
-            1L,
-            22L,
-            ACCOUNT_ID,
-            "demo@example.com",
-            retainedCharacterId,
-            "demo",
-            1L,
-            null,
-            "jwt-token",
-            null,
-            1L,
-            "demo",
-            "production",
-            1L,
-            "SHARED");
+  @Test
+  void roomlessPlayRejectsImplicitReplacementOfTheRetainedActor() {
+    SessionContext context = roomlessDemoContext(123L);
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.PLAY_IDENTITY_UNAVAILABLE_CODE);
+    assertThat(result.reconnectRedrawRecommended()).isFalse();
+    verify(entityManagementClient)
+        .listCharactersByAccount(
+            "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    verifyNoGameplayBindingSideEffects();
+    verify(sessionContextService).findBySessionId(1L);
+    Mockito.verifyNoMoreInteractions(sessionContextService);
+    Mockito.verifyNoInteractions(gameplayPresenceLifecycleService, moderationPolicyClient);
+  }
+
+  @Test
+  void roomlessPlayMayChangeTheRetainedActorThroughExplicitSelection() {
+    SessionContext context = roomlessDemoContext(123L);
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
+        .thenReturn(Optional.empty());
+
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY demo production demo"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.reconnectRedrawRecommended()).isFalse();
+    verify(sessionContextService).save(Mockito.argThat(saved -> saved.characterId() == 7001L));
+  }
+
+  @Test
+  void roomlessFreshEntryRedrawsTheSamePersistedActor() {
+    SessionContext context = roomlessDemoContext(7001L);
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
         .thenReturn(Optional.empty());
@@ -2558,8 +2617,7 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo as demo");
-    boolean sameActor = retainedCharacterId == 7001L;
-    assertThat(result.reconnectRedrawRecommended()).isEqualTo(sameActor);
+    assertThat(result.reconnectRedrawRecommended()).isTrue();
     Mockito.verify(sessionContextService)
         .save(
             new SessionContext(
@@ -2585,7 +2643,7 @@ class PlayCommandHandlerTest {
                     "reason",
                     "stale_or_missing_context")
                 .count())
-        .isEqualTo(sameActor ? 1.0 : 0.0);
+        .isEqualTo(1.0);
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             new SessionContext(
@@ -2625,6 +2683,25 @@ class PlayCommandHandlerTest {
                 "SHARED"),
             "play_entry",
             "play-spawn:1:1:7001:1");
+  }
+
+  private static SessionContext roomlessDemoContext(long retainedCharacterId) {
+    return new SessionContext(
+        1L,
+        22L,
+        ACCOUNT_ID,
+        "demo@example.com",
+        retainedCharacterId,
+        "demo",
+        1L,
+        null,
+        "jwt-token",
+        null,
+        1L,
+        "demo",
+        "production",
+        1L,
+        "SHARED");
   }
 
   private static String joinedOutputText(List<PlayerOutput> outputs) {

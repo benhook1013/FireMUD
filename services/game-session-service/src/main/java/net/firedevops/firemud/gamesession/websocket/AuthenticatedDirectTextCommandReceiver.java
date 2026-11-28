@@ -7,6 +7,7 @@ import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.ExpiredWorldSelectionException;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.UnknownWorldSelectorException;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog.AuthorityPointerUnavailableException;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -151,6 +152,10 @@ public final class AuthenticatedDirectTextCommandReceiver {
             failure(rejected.code(), "Login rejected");
         default -> failure("UNAVAILABLE", "Authenticated gameplay authority unavailable");
       };
+    } catch (AuthorityPointerUnavailableException unavailable) {
+      return unavailable.authorityUnavailable()
+          ? failure("AUTH_UNAVAILABLE", "Realm routing authority is temporarily unavailable.")
+          : failure("ADMISSION_POINTER_UNAVAILABLE", "Realm routing evidence is unavailable.");
     } catch (RuntimeException unavailable) {
       return failure("UNAVAILABLE", "Authenticated gameplay authority unavailable");
     }

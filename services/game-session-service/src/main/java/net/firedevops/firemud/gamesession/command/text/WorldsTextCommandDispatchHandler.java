@@ -26,25 +26,36 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
 
   @Override
   public TextCommandInterpretationResult handle(TextCommandDispatchRequest request) {
-    TextCommandInterpretationResult result =
-        switch (request.command().type()) {
-          case WORLDS ->
-              new TextCommandInterpretationResult(
-                  net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
-                  List.of(
-                      net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
-                          worldsHandler.browseView())));
-          case JOIN -> errorResult("FEATURE_UNAVAILABLE", "JOIN is not available.");
-          case REALMS -> handleRealms(request.command());
-          case CHARS -> handleChars(request);
-          default ->
-              new TextCommandInterpretationResult(
-                  net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.failure(
-                      "INVALID_ARGUMENT", "Unsupported discovery command"),
-                  List.of(
-                      net.firedevops.firemud.gamesession.presentation.PlayerOutput.error(
-                          "INVALID_ARGUMENT", "Unsupported discovery command")));
-        };
+    final TextCommandInterpretationResult result;
+    try {
+      result =
+          switch (request.command().type()) {
+            case WORLDS ->
+                new TextCommandInterpretationResult(
+                    net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
+                    List.of(
+                        net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
+                            worldsHandler.browseView())));
+            case JOIN -> errorResult("FEATURE_UNAVAILABLE", "JOIN is not available.");
+            case REALMS -> handleRealms(request.command());
+            case CHARS -> handleChars(request);
+            default ->
+                new TextCommandInterpretationResult(
+                    net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.failure(
+                        "INVALID_ARGUMENT", "Unsupported discovery command"),
+                    List.of(
+                        net.firedevops.firemud.gamesession.presentation.PlayerOutput.error(
+                            "INVALID_ARGUMENT", "Unsupported discovery command")));
+          };
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException failure) {
+      return failure.authorityUnavailable()
+          ? errorResult(
+              GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
+              "Realm routing authority is temporarily unavailable. Retry shortly.")
+          : errorResult(
+              GameplayStageCommandConstants.ADMISSION_POINTER_UNAVAILABLE_CODE,
+              "Realm routing evidence is unavailable. Retry discovery.");
+    }
     if (result.commandResult().accepted()) {
       request
           .sessionContext()
