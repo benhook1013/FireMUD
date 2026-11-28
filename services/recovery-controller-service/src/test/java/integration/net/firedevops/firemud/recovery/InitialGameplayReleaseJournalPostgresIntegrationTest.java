@@ -884,6 +884,14 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       assertThat(dispatched.state()).isEqualTo(EffectOutboxState.DISPATCHED);
       assertThat(dispatched.lastAttemptId()).isEqualTo(port.applied.attemptId());
       assertThat(dispatched.attemptCount()).isEqualTo(port.applied.attemptOrdinal());
+      transaction.executeWithoutResult(status -> {
+        assertThatThrownBy(() ->
+                packagedJournal.recordRetryableEffectForDispatch(
+                    dispatched, RetrySource.OWNER_REJECTED, "OWNER_REJECTED", Instant.now()))
+            .isInstanceOf(InitialGameplayReleaseConflictException.class)
+            .hasMessageContaining("effect outcome requires its own transaction");
+        status.setRollbackOnly();
+      });
       Operation authorized = packagedJournal.find(operationId).orElseThrow();
       assertThat(authorized.phase()).isEqualTo(Phase.RESUME_AUTHORIZED);
       transaction.executeWithoutResult(status -> {
@@ -1406,11 +1414,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         "transition_tuple_digest_width",
         "transition_tuple_digest_nullability",
         "outbox_operation_kind_key",
+        "outbox_operation_tuple_digest_width",
         "preparation_key",
         "preparation_digest_width",
         "preparation_single_receipt",
         "preparation_globally_unique_identity",
-        "local_no_send_dispatch_precision"
+        "local_no_send_dispatch_precision",
+        "namespace_width"
       })
   @ResourceLock("packaged-recovery-control-fixture-database")
   void journalReadinessRequiresCompleteTypedKeys(String drift) throws Exception {
@@ -1458,6 +1468,12 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 ALTER TABLE recovery_control.initial_gameplay_release_preparation_receipt
                   ADD UNIQUE (outbox_id)
                 """;
+            case "outbox_operation_tuple_digest_width" ->
+                "ALTER TABLE recovery_control.initial_gameplay_release_outbox"
+                    + " ALTER COLUMN operation_tuple_digest TYPE CHAR(63)";
+            case "namespace_width" ->
+                "ALTER TABLE recovery_control.initial_gameplay_release_operation"
+                    + " ALTER COLUMN target_namespace TYPE varchar(1)";
             case "local_no_send_dispatch_precision" ->
                 "ALTER TABLE recovery_control.initial_gameplay_release_attempt_local_no_send"
                     + " ALTER COLUMN dispatched_at TYPE timestamptz(3)";
@@ -4041,6 +4057,37 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         .isEqualTo(EffectOutboxState.AMBIGUOUS);
   }
 
+  @Test
+  void transportUncertaintyRefusesAWriteSuppressedByDatabaseDrift() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry dispatch = authorizedDispatch(base);
+    UUID operationId = dispatch.effect().operationId();
+    UUID effectId = dispatch.effect().effectId();
+    var observation =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "partial",
+            base.plusSeconds(5));
+    journal.recordEffectReadback(dispatch, observation, base.plusSeconds(6));
+    String retained = storedOutbox(operationId, effectId);
+    assertThat(retained).contains("\"send_outcome_uncertain\":false");
+
+    withSuppressedOutboxUpdate(() ->
+        assertThatThrownBy(() ->
+                journal.recordAmbiguousEffectForDispatch(
+                    dispatch, "TRANSPORT_UNCERTAIN", base.plusSeconds(7)))
+            .isInstanceOf(InitialGameplayReleaseConflictException.class)
+            .hasMessageContaining("effect uncertainty compare-and-set lost"));
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+    assertThat(
+            journal.recordAmbiguousEffectForDispatch(
+                dispatch, "TRANSPORT_UNCERTAIN", base.plusSeconds(7)))
+        .isTrue();
+    assertThat(storedOutbox(operationId, effectId)).contains("\"send_outcome_uncertain\":true");
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void ambiguousTransportHoldsTheExactDispatchUntilOwnerClosure(boolean localNoSendFirst) {
@@ -4895,6 +4942,13 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     OutboxEntry held = reopened.findNextEffect(operationId).orElseThrow();
     assertThat(held.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
     assertThat(held.lastAttemptId()).isEqualTo(dispatched.lastAttemptId());
+    String retained = storedOutbox(operationId, effectId);
+    withSuppressedOutboxUpdate(() ->
+        assertThatThrownBy(() -> reopened.recordEffectReadback(held, closure, base.plusSeconds(8)))
+            .isInstanceOf(InitialGameplayReleaseConflictException.class)
+            .hasMessageContaining("owner closure provenance compare-and-set lost"));
+    assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+    assertThat(reopened.findNextEffect(operationId)).contains(held);
     reopened.recordEffectReadback(held, closure, base.plusSeconds(8));
     assertThat(storedOutbox(operationId, effectId))
         .contains("\"retry_provenance\":\"owner_closure\"");
@@ -4902,6 +4956,31 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         reopened.claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(9));
     assertThat(replacement.state()).isEqualTo(EffectOutboxState.DISPATCHED);
     assertThat(replacement.attemptCount()).isEqualTo(dispatched.attemptCount() + 1);
+  }
+
+  private void withSuppressedOutboxUpdate(Runnable assertion) {
+    dsl.execute(
+        """
+        CREATE FUNCTION recovery_control.fixture_skip_effect_outcome_update() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$
+        """);
+    try {
+      dsl.execute(
+          """
+          CREATE TRIGGER fixture_skip_effect_outcome_update BEFORE UPDATE
+          ON recovery_control.initial_gameplay_release_outbox FOR EACH ROW
+          EXECUTE FUNCTION recovery_control.fixture_skip_effect_outcome_update()
+          """);
+      assertion.run();
+    } finally {
+      try {
+        dsl.execute(
+            "DROP TRIGGER IF EXISTS fixture_skip_effect_outcome_update"
+                + " ON recovery_control.initial_gameplay_release_outbox");
+      } finally {
+        dsl.execute("DROP FUNCTION recovery_control.fixture_skip_effect_outcome_update()");
+      }
+    }
   }
 
   @Test
@@ -5292,6 +5371,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
               .isNull();
           journalFlyway(legacyUrl, "6").migrate();
           OutboxEntry reconcilable = upgradedJournal.findNextEffect(V1_OPERATION_ID).orElseThrow();
+          journalFlyway(legacyUrl, "7").migrate();
           if (retainedRetry) {
             assertThat(reconcilable.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
             assertThatThrownBy(() ->
@@ -5597,6 +5677,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         var held = legacyJournal.findNextEffect(V1_OPERATION_ID).orElseThrow();
         assertThat(held.state()).isEqualTo(EffectOutboxState.AMBIGUOUS);
         assertThat(held.lastAttemptId()).isEqualTo(attempt);
+        journalFlyway(legacyUrl, "7").migrate();
         assertThatThrownBy(() ->
                 legacyJournal.claimEffect(
                     V1_OPERATION_ID, V1_EFFECT_ID, UUID.randomUUID(), dispatchTime.plusSeconds(2)))

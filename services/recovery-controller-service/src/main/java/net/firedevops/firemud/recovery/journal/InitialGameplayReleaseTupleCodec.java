@@ -1,6 +1,7 @@
 package net.firedevops.firemud.recovery.journal;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -24,6 +25,7 @@ import tools.jackson.databind.type.LogicalType;
 /** Stable JSON and digest encoding for the operation-owned immutable tuples. */
 @Component
 public final class InitialGameplayReleaseTupleCodec {
+  private static final int MAX_EVIDENCE_JSON_BYTES = 4 * 1024 * 1024;
   private final ObjectMapper objectMapper;
   private final tools.jackson.databind.ObjectWriter digestMapper;
 
@@ -53,6 +55,45 @@ public final class InitialGameplayReleaseTupleCodec {
       return objectMapper.writeValueAsString(value);
     } catch (JacksonException exception) {
       throw new IllegalStateException("Unable to encode initial gameplay release tuple", exception);
+    }
+  }
+
+  /** Bounds newly supplied owner evidence before materializing its canonical digest input. */
+  public void requireBoundedEvidence(
+      InitialGameplayReleaseModel.InitialGameplayReleaseEvidence evidence) {
+    var sizeGuard = new EvidenceSizeGuard();
+    try {
+      objectMapper.writeValue(sizeGuard, evidence);
+    } catch (JacksonException failure) {
+      if (sizeGuard.exceeded) {
+        throw new IllegalArgumentException(
+            "Initial gameplay release evidence exceeds 4 MiB of JSON");
+      }
+      throw new IllegalArgumentException(
+          "Unable to encode initial gameplay release evidence", failure);
+    }
+  }
+
+  private static final class EvidenceSizeGuard extends OutputStream {
+    private int remaining = MAX_EVIDENCE_JSON_BYTES;
+    private boolean exceeded;
+
+    @Override
+    public void write(int value) throws IOException {
+      countBytes(1);
+    }
+
+    @Override
+    public void write(byte[] bytes, int offset, int length) throws IOException {
+      countBytes(length);
+    }
+
+    private void countBytes(int length) throws IOException {
+      if (length > remaining) {
+        exceeded = true;
+        throw new IOException("Recovery evidence size exceeded");
+      }
+      remaining -= length;
     }
   }
 

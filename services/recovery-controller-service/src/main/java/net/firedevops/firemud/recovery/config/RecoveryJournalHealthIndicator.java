@@ -108,6 +108,11 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                   WHERE a.attrelid = c.conrelid AND NOT a.attisdropped
                     AND a.attname IN ('outbox_id', 'attempt_id', 'attempt_ordinal')
                   ORDER BY CASE a.attname WHEN 'outbox_id' THEN 0 WHEN 'attempt_id' THEN 1 ELSE 2 END))
+            AND EXISTS (
+              SELECT 1 FROM pg_catalog.pg_attribute
+              WHERE attrelid = 'recovery_control.initial_gameplay_release_operation'::regclass
+                AND attname = 'target_namespace' AND NOT attisdropped AND attnotnull
+                AND atttypid = 'pg_catalog.varchar'::regtype AND atttypmod = 253 + 4)
             AND (SELECT count(DISTINCT a.attname) = 2
               FROM pg_catalog.pg_index i
               JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid
@@ -146,10 +151,10 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
                 AND attname = 'readback_identity' AND NOT attisdropped AND NOT attnotnull
                 AND atttypid = 'pg_catalog.text'::regtype)
-            AND EXISTS (
-              SELECT 1 FROM pg_catalog.pg_attribute
+            AND (SELECT count(*) = 2 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
-                AND attname = 'payload_digest' AND NOT attisdropped AND attnotnull
+                AND attname IN ('operation_tuple_digest', 'payload_digest')
+                AND NOT attisdropped AND attnotnull
                 AND atttypid = 'pg_catalog.bpchar'::regtype AND atttypmod = 68)
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute

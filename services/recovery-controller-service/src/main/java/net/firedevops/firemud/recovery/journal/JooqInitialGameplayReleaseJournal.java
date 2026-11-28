@@ -188,6 +188,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Objects.requireNonNull(now, "now must not be null");
     requireIndependentTransaction("readiness evidence binding");
     evidence.validateFor(scope);
+    tupleCodec.requireBoundedEvidence(evidence);
     if (!scopeDigest.equals(tupleCodec.digest(scope))
         || !evidenceDigest.equals(tupleCodec.digest(evidence))) {
       throw new InitialGameplayReleaseConflictException(
@@ -472,178 +473,188 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     UUID operationId = dispatch.effect().operationId();
     UUID effectId = dispatch.effect().effectId();
     UUID attemptId = dispatch.lastAttemptId();
-    return dsl.transactionResult(configuration -> {
-      DSLContext tx = DSL.using(configuration);
-      Operation operation = selectOperation(tx, operationId, true);
-      OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
-      tupleCodec.requireEffectMatchesOperation(current.effect(), operation);
-      if (dispatch.state() != EffectOutboxState.DISPATCHED
-          || attemptId == null
-          || !sameEffect(dispatch, current)) {
-        throw conflict("effect dispatch tuple changed");
-      }
-      if (!Objects.equals(current.lastAttemptId(), attemptId)) {
-        if (hasRetainedClosure(tx, current, attemptId, dispatch.attemptCount())
-            || hasRetainedOwnerRejection(tx, current, attemptId, dispatch.attemptCount())) {
-          return false;
-        }
-        throw conflict("effect attempt identity changed");
-      }
-      if (dispatch.attemptCount() != current.attemptCount()) {
-        throw conflict("effect dispatch generation changed");
-      }
-      if (current.state() == EffectOutboxState.ACKNOWLEDGED
-          || isPreparationHeldBeforeHandoff(operation, current)) {
-        return true;
-      }
-      if (current.state() == EffectOutboxState.RETRYABLE
-          && resultState == EffectOutboxState.AMBIGUOUS) {
-        // A transport uncertainty supersedes local no-send only. Exact owner closure
-        // and rejection remain authoritative, and the retained no-send row stays intact.
-        Record retained =
-            tx.fetchOne(
-                "SELECT retry_provenance, send_outcome_uncertain FROM "
-                    + OUTBOX_TABLE
-                    + " WHERE outbox_id = ?",
-                current.outboxId());
-        if (retained != null
-            && "local_no_send".equals(retained.get("retry_provenance", String.class))
-            && !Boolean.TRUE.equals(retained.get("send_outcome_uncertain", Boolean.class))) {
+    return independentTransaction(
+        "effect outcome",
+        "Unable to record recovery journal effect outcome",
+        configuration -> {
+          DSLContext tx = DSL.using(configuration);
+          Operation operation = selectOperation(tx, operationId, true);
+          OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
+          tupleCodec.requireEffectMatchesOperation(current.effect(), operation);
+          if (dispatch.state() != EffectOutboxState.DISPATCHED
+              || attemptId == null
+              || !sameEffect(dispatch, current)) {
+            throw conflict("effect dispatch tuple changed");
+          }
+          if (!Objects.equals(current.lastAttemptId(), attemptId)) {
+            if (hasRetainedClosure(tx, current, attemptId, dispatch.attemptCount())
+                || hasRetainedOwnerRejection(tx, current, attemptId, dispatch.attemptCount())) {
+              return false;
+            }
+            throw conflict("effect attempt identity changed");
+          }
+          if (dispatch.attemptCount() != current.attemptCount()) {
+            throw conflict("effect dispatch generation changed");
+          }
+          if (current.state() == EffectOutboxState.ACKNOWLEDGED
+              || isPreparationHeldBeforeHandoff(operation, current)) {
+            return true;
+          }
+          if (current.state() == EffectOutboxState.RETRYABLE
+              && resultState == EffectOutboxState.AMBIGUOUS) {
+            // A transport uncertainty supersedes local no-send only. Exact owner closure
+            // and rejection remain authoritative, and the retained no-send row stays intact.
+            Record retained =
+                tx.fetchOne(
+                    "SELECT retry_provenance, send_outcome_uncertain FROM "
+                        + OUTBOX_TABLE
+                        + " WHERE outbox_id = ?",
+                    current.outboxId());
+            if (retained != null
+                && "local_no_send".equals(retained.get("retry_provenance", String.class))
+                && !Boolean.TRUE.equals(retained.get("send_outcome_uncertain", Boolean.class))) {
+              requireQualifiedWriteSession(tx);
+              int changed =
+                  tx.execute(
+                      "UPDATE "
+                          + OUTBOX_TABLE
+                          + " SET send_outcome_uncertain = true WHERE outbox_id = ?",
+                      current.outboxId());
+              if (changed != 1) {
+                throw conflict("effect uncertainty compare-and-set lost");
+              }
+            }
+            return true;
+          }
+          if (current.state() != resultState
+              && current.state() != EffectOutboxState.DISPATCHED
+              && !(current.state() == EffectOutboxState.AMBIGUOUS
+                  && resultState == EffectOutboxState.RETRYABLE)) {
+            throw conflict("effect is not in a dispatchable attempt");
+          }
+          if (current.state() == resultState) {
+            if (resultState == EffectOutboxState.AMBIGUOUS) {
+              requireQualifiedWriteSession(tx);
+              int changed =
+                  tx.execute(
+                      "UPDATE "
+                          + OUTBOX_TABLE
+                          + " SET send_outcome_uncertain = true WHERE outbox_id = ?",
+                      current.outboxId());
+              if (changed != 1) {
+                throw conflict("effect uncertainty compare-and-set lost");
+              }
+            }
+            if (retrySource != null) {
+              Record origin =
+                  tx.fetchOne(
+                      "SELECT retry_provenance FROM " + OUTBOX_TABLE + " WHERE outbox_id = ?",
+                      current.outboxId());
+              String retainedSource =
+                  origin == null ? null : origin.get("retry_provenance", String.class);
+              if ("owner_closure".equals(retainedSource)) {
+                requireExactClosureBeforeRetry(tx, current);
+                return false;
+              }
+              if (!retryProvenance(retrySource).equals(retainedSource)) {
+                throw conflict("effect retry source changed for the exact dispatch");
+              }
+              requireExactClosureBeforeRetry(tx, current);
+            }
+            return true;
+          }
           requireQualifiedWriteSession(tx);
+          OffsetDateTime recordedAt = toOffsetDateTime(now);
+          if (retrySource == RetrySource.NOT_DISPATCHED) {
+            Record stored =
+                tx.fetchOne(
+                    "SELECT send_outcome_uncertain, last_dispatched_at,"
+                        + " readback_payload, readback_digest, readback_identity"
+                        + " FROM "
+                        + OUTBOX_TABLE
+                        + " WHERE outbox_id = ?",
+                    current.outboxId());
+            if (stored == null
+                || !Boolean.FALSE.equals(stored.get("send_outcome_uncertain", Boolean.class))
+                || (current.state() == EffectOutboxState.AMBIGUOUS
+                    ? !hasValidatedUnknownReadback(
+                        stored, stored.get("readback_digest", String.class), current)
+                    : stored.get("readback_payload", JSONB.class) != null
+                        || stored.get("readback_digest", String.class) != null
+                        || stored.get("readback_identity", String.class) != null)) {
+              throw conflict("local no-send proof requires the exact currently dispatched attempt");
+            }
+            OffsetDateTime dispatchedAt = stored.get("last_dispatched_at", OffsetDateTime.class);
+            if (dispatchedAt == null) {
+              throw conflict("effect dispatch timestamp is unavailable");
+            }
+            if (recordedAt.isBefore(dispatchedAt)) {
+              recordedAt = dispatchedAt;
+            }
+            int retained =
+                tx.execute(
+                    """
+                    INSERT INTO recovery_control.initial_gameplay_release_attempt_local_no_send
+                        (outbox_id, attempt_id, attempt_ordinal, dispatched_at, recorded_at)
+                    SELECT outbox_id, last_attempt_id, attempt_count, last_dispatched_at,
+                           CAST(? AS timestamptz)
+                    FROM recovery_control.initial_gameplay_release_outbox
+                    WHERE outbox_id = ? AND state IN ('dispatched', 'ambiguous') AND last_attempt_id = ?
+                      AND attempt_count = ? AND last_dispatched_at <= CAST(? AS timestamptz)
+                      AND send_outcome_uncertain = false
+                    """,
+                    recordedAt,
+                    current.outboxId(),
+                    attemptId,
+                    current.attemptCount(),
+                    recordedAt);
+            if (retained != 1) {
+              throw conflict("local no-send proof did not match the exact dispatch");
+            }
+          }
+          if (retrySource == RetrySource.OWNER_REJECTED) {
+            int retained =
+                tx.execute(
+                    """
+                    INSERT INTO recovery_control.initial_gameplay_release_attempt_rejection
+                        (outbox_id, attempt_id, attempt_ordinal)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT (outbox_id, attempt_id) DO NOTHING
+                    """,
+                    current.outboxId(),
+                    attemptId,
+                    dispatch.attemptCount());
+            if (retained != 1
+                && (retained != 0
+                    || !hasRetainedOwnerRejection(
+                        tx, current, attemptId, dispatch.attemptCount()))) {
+              throw conflict("owner rejection receipt does not match the exact dispatch");
+            }
+          }
           int changed =
               tx.execute(
-                  "UPDATE "
-                      + OUTBOX_TABLE
-                      + " SET send_outcome_uncertain = true WHERE outbox_id = ?",
-                  current.outboxId());
+                  """
+                  UPDATE recovery_control.initial_gameplay_release_outbox
+                  SET state = ?, last_outcome_code = ?, retry_provenance = ?,
+                      send_outcome_uncertain = CASE WHEN ? THEN true ELSE send_outcome_uncertain END,
+                      updated_at = CAST(? AS timestamptz)
+                  WHERE operation_id = ? AND effect_id = ? AND state IN ('dispatched', 'ambiguous')
+                      AND last_attempt_id = ?
+                  """,
+                  resultState.databaseValue(),
+                  outcomeCode,
+                  retrySource == null ? null : retryProvenance(retrySource),
+                  resultState == EffectOutboxState.AMBIGUOUS,
+                  recordedAt,
+                  operationId,
+                  effectId,
+                  attemptId);
           if (changed != 1) {
-            throw conflict("effect uncertainty compare-and-set lost");
+            throw conflict("effect outcome compare-and-set lost");
           }
-        }
-        return true;
-      }
-      if (current.state() != resultState
-          && current.state() != EffectOutboxState.DISPATCHED
-          && !(current.state() == EffectOutboxState.AMBIGUOUS
-              && resultState == EffectOutboxState.RETRYABLE)) {
-        throw conflict("effect is not in a dispatchable attempt");
-      }
-      if (current.state() == resultState) {
-        if (resultState == EffectOutboxState.AMBIGUOUS) {
-          requireQualifiedWriteSession(tx);
-          tx.execute(
-              "UPDATE " + OUTBOX_TABLE + " SET send_outcome_uncertain = true WHERE outbox_id = ?",
-              current.outboxId());
-        }
-        if (retrySource != null) {
-          Record origin =
-              tx.fetchOne(
-                  "SELECT retry_provenance FROM " + OUTBOX_TABLE + " WHERE outbox_id = ?",
-                  current.outboxId());
-          String retainedSource =
-              origin == null ? null : origin.get("retry_provenance", String.class);
-          if ("owner_closure".equals(retainedSource)) {
-            requireExactClosureBeforeRetry(tx, current);
-            return false;
-          }
-          if (!retryProvenance(retrySource).equals(retainedSource)) {
-            throw conflict("effect retry source changed for the exact dispatch");
-          }
-          requireExactClosureBeforeRetry(tx, current);
-        }
-        return true;
-      }
-      requireQualifiedWriteSession(tx);
-      OffsetDateTime recordedAt = toOffsetDateTime(now);
-      if (retrySource == RetrySource.NOT_DISPATCHED) {
-        Record stored =
-            tx.fetchOne(
-                "SELECT send_outcome_uncertain, last_dispatched_at,"
-                    + " readback_payload, readback_digest, readback_identity"
-                    + " FROM "
-                    + OUTBOX_TABLE
-                    + " WHERE outbox_id = ?",
-                current.outboxId());
-        if (stored == null
-            || !Boolean.FALSE.equals(stored.get("send_outcome_uncertain", Boolean.class))
-            || (current.state() == EffectOutboxState.AMBIGUOUS
-                ? !hasValidatedUnknownReadback(
-                    stored, stored.get("readback_digest", String.class), current)
-                : stored.get("readback_payload", JSONB.class) != null
-                    || stored.get("readback_digest", String.class) != null
-                    || stored.get("readback_identity", String.class) != null)) {
-          throw conflict("local no-send proof requires the exact currently dispatched attempt");
-        }
-        OffsetDateTime dispatchedAt = stored.get("last_dispatched_at", OffsetDateTime.class);
-        if (dispatchedAt == null) {
-          throw conflict("effect dispatch timestamp is unavailable");
-        }
-        if (recordedAt.isBefore(dispatchedAt)) {
-          recordedAt = dispatchedAt;
-        }
-        int retained =
-            tx.execute(
-                """
-                INSERT INTO recovery_control.initial_gameplay_release_attempt_local_no_send
-                    (outbox_id, attempt_id, attempt_ordinal, dispatched_at, recorded_at)
-                SELECT outbox_id, last_attempt_id, attempt_count, last_dispatched_at,
-                       CAST(? AS timestamptz)
-                FROM recovery_control.initial_gameplay_release_outbox
-                WHERE outbox_id = ? AND state IN ('dispatched', 'ambiguous') AND last_attempt_id = ?
-                  AND attempt_count = ? AND last_dispatched_at <= CAST(? AS timestamptz)
-                  AND send_outcome_uncertain = false
-                """,
-                recordedAt,
-                current.outboxId(),
-                attemptId,
-                current.attemptCount(),
-                recordedAt);
-        if (retained != 1) {
-          throw conflict("local no-send proof did not match the exact dispatch");
-        }
-      }
-      if (retrySource == RetrySource.OWNER_REJECTED) {
-        int retained =
-            tx.execute(
-                """
-                INSERT INTO recovery_control.initial_gameplay_release_attempt_rejection
-                    (outbox_id, attempt_id, attempt_ordinal)
-                VALUES (?, ?, ?)
-                ON CONFLICT (outbox_id, attempt_id) DO NOTHING
-                """,
-                current.outboxId(),
-                attemptId,
-                dispatch.attemptCount());
-        if (retained != 1
-            && (retained != 0
-                || !hasRetainedOwnerRejection(tx, current, attemptId, dispatch.attemptCount()))) {
-          throw conflict("owner rejection receipt does not match the exact dispatch");
-        }
-      }
-      int changed =
-          tx.execute(
-              """
-              UPDATE recovery_control.initial_gameplay_release_outbox
-              SET state = ?, last_outcome_code = ?, retry_provenance = ?,
-                  send_outcome_uncertain = CASE WHEN ? THEN true ELSE send_outcome_uncertain END,
-                  updated_at = CAST(? AS timestamptz)
-              WHERE operation_id = ? AND effect_id = ? AND state IN ('dispatched', 'ambiguous')
-                  AND last_attempt_id = ?
-              """,
-              resultState.databaseValue(),
-              outcomeCode,
-              retrySource == null ? null : retryProvenance(retrySource),
-              resultState == EffectOutboxState.AMBIGUOUS,
-              recordedAt,
-              operationId,
-              effectId,
-              attemptId);
-      if (changed != 1) {
-        throw conflict("effect outcome compare-and-set lost");
-      }
-      selectOutbox(tx, operationId, effectId, false);
-      return true;
-    });
+          selectOutbox(tx, operationId, effectId, false);
+          return true;
+        });
   }
 
   private static String retryProvenance(RetrySource source) {
@@ -747,7 +758,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
               requireValidExactStoredReadback(readback, stored, storedDigest, current);
               requireRetainedClosureMatchesStoredReadback(tx, current, stored, storedDigest);
               requireTerminalReplayWithinAttempt(readback, stored, now);
-              recoverOwnerClosureProvenance(tx, current);
+              recoverOwnerClosureProvenance(
+                  tx, current, stored.get("retry_provenance", String.class));
               return operation;
             }
             if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
@@ -755,7 +767,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                 && sameRetainedOutcome(readback, stored, storedDigest, "updated_at")) {
               requireRetainedClosureMatchesStoredReadback(tx, current, stored, storedDigest);
               requireTerminalReplayWithinAttempt(readback, stored, now);
-              recoverOwnerClosureProvenance(tx, current);
+              recoverOwnerClosureProvenance(
+                  tx, current, stored.get("retry_provenance", String.class));
               return operation;
             }
             String provenance =
@@ -930,14 +943,25 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         && dispatch.payloadDigest().equals(current.payloadDigest());
   }
 
-  private void recoverOwnerClosureProvenance(DSLContext tx, OutboxEntry current) {
+  private void recoverOwnerClosureProvenance(
+      DSLContext tx, OutboxEntry current, String provenance) {
+    if ("owner_closure".equals(provenance)) {
+      return;
+    }
+    if (provenance != null) {
+      throw conflict("retained effect retry source conflicts with owner closure");
+    }
     requireQualifiedWriteSession(tx);
-    tx.execute(
-        "UPDATE "
-            + OUTBOX_TABLE
-            + " SET retry_provenance = 'owner_closure'"
-            + " WHERE outbox_id = ? AND retry_provenance IS NULL",
-        current.outboxId());
+    int changed =
+        tx.execute(
+            "UPDATE "
+                + OUTBOX_TABLE
+                + " SET retry_provenance = 'owner_closure'"
+                + " WHERE outbox_id = ? AND retry_provenance IS NULL",
+            current.outboxId());
+    if (changed != 1) {
+      throw conflict("owner closure provenance compare-and-set lost");
+    }
   }
 
   @Override

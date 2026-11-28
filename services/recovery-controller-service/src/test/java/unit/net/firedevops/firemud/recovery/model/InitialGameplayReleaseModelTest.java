@@ -671,6 +671,32 @@ class InitialGameplayReleaseModelTest {
         .isEqualTo(InitialGameplayReleaseModel.EffectReadbackState.PROVEN_NO_EFFECT);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"\u20ac", "\\"})
+  void evidenceSizeGuardCountsUtf8AndJsonEscapes(String repeated) {
+    var scope = scope(UUID.randomUUID());
+    var original = evidence(scope);
+    var codec = new InitialGameplayReleaseTupleCodec();
+    var originalDigest = codec.digest(original);
+    codec.requireBoundedEvidence(original);
+    assertThat(codec.digest(original)).isEqualTo(originalDigest);
+
+    var oversized =
+        new InitialGameplayReleaseEvidence(
+            original.evidenceRef(),
+            repeated.repeat(2_097_153),
+            original.migration(),
+            original.issuerLayout(),
+            original.writerFencing(),
+            original.worldInitialization(),
+            original.entityInitialization(),
+            original.regionLease());
+    oversized.validateFor(scope);
+    assertThatThrownBy(() -> codec.requireBoundedEvidence(oversized))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Initial gameplay release evidence exceeds 4 MiB of JSON");
+  }
+
   @Test
   void journalEvidenceKeepsDefaultBytesWithSnakeCaseApplicationMapper() {
     var original = evidence(scope(UUID.randomUUID()));
