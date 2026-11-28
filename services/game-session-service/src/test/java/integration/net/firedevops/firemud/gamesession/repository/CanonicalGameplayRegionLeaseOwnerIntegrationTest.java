@@ -2392,14 +2392,15 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
       WorldFixture world = WorldFixture.open(runtimeTarget);
       try (var entitySource = EntityReferenceFixture.open()) {
         CanonicalGameplayRegionOwnerCompositionFixture.ExpiredGrantProof proof =
-            CanonicalGameplayRegionOwnerCompositionFixture.installAndBridgeThenExpiredGrantReplacementRefuses(
-                DSL.using(compositionPool, SQLDialect.POSTGRES),
-                REDIS.getHost(),
-                REDIS.getMappedPort(REDIS_PORT),
-                world.request(),
-                runtimeTarget.playableTarget(),
-                world.resolver(),
-                entitySource.client());
+            CanonicalGameplayRegionOwnerCompositionFixture
+                .installAndBridgeThenExpiredGrantReplacementRefuses(
+                    DSL.using(compositionPool, SQLDialect.POSTGRES),
+                    REDIS.getHost(),
+                    REDIS.getMappedPort(REDIS_PORT),
+                    world.request(),
+                    runtimeTarget.playableTarget(),
+                    world.resolver(),
+                    entitySource.client());
 
         assertThat(proof.acknowledgedBridge().exactLostReplyRetry()).isTrue();
         assertThat(proof.replacementRefused()).isTrue();
