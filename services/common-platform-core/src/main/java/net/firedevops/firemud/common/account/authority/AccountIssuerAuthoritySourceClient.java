@@ -15,6 +15,8 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.account.v1.AccountIssuerAuthoritySourceServiceGrpc;
 import net.firedevops.firemud.account.v1.AccountIssuerAuthoritySourceSnapshot;
+import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotGrpcCodec.ExactEventReadback;
+import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotGrpcCodec.ExactEventRequest;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -84,17 +86,7 @@ public final class AccountIssuerAuthoritySourceClient
    */
   public AccountIssuerSourceSnapshotEvidence read(
       AccountIssuerSourceSnapshotGrpcCodec.ReadRequest request) {
-    requireReadableLifecycle();
-    if (TransactionSynchronizationManager.isActualTransactionActive()
-        || TransactionSynchronizationManager.isSynchronizationActive()) {
-      throw new IllegalStateException(
-          "issuer-source read cannot run inside an ambient transaction or synchronization");
-    }
-    Objects.requireNonNull(request, "request is required");
-
-    // A hot-reloaded certificate must retain the exact client workload identity before any RPC is
-    // sent.
-    validateFileBackedMutualTls();
+    requireReadableCall(request);
     var wireRequest =
         AccountIssuerSourceSnapshotGrpcCodec.toRequest(
             request, configuredNamespace, clientWorkloadUri);
@@ -103,6 +95,20 @@ public final class AccountIssuerAuthoritySourceClient
             .withDeadlineAfter(RPC_DEADLINE.toMillis(), TimeUnit.MILLISECONDS)
             .readCurrentIssuerAuthoritySource(wireRequest);
     return decodeResponse(wireResponse, request, clientWorkloadUri);
+  }
+
+  /** Reads one immutable retained event and independently validates the current issuer snapshot. */
+  public ExactEventReadback readExactEvent(ExactEventRequest request) {
+    requireReadableCall(request);
+    var wireRequest =
+        AccountIssuerSourceSnapshotGrpcCodec.toExactEventRequest(
+            request, configuredNamespace, clientWorkloadUri);
+    var wireResponse =
+        stub()
+            .withDeadlineAfter(RPC_DEADLINE.toMillis(), TimeUnit.MILLISECONDS)
+            .readExactIssuerAuthorityEvent(wireRequest);
+    return AccountIssuerSourceSnapshotGrpcCodec.fromExactEventResponse(
+        wireResponse, request, clientWorkloadUri);
   }
 
   @Override
@@ -141,6 +147,20 @@ public final class AccountIssuerAuthoritySourceClient
       String authenticatedCallerWorkload) {
     return AccountIssuerSourceSnapshotGrpcCodec.fromResponse(
         wireResponse, request, authenticatedCallerWorkload);
+  }
+
+  private void requireReadableCall(Object request) {
+    requireReadableLifecycle();
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "issuer-source read cannot run inside an ambient transaction or synchronization");
+    }
+    Objects.requireNonNull(request, "request is required");
+
+    // A hot-reloaded certificate must retain the exact client workload identity before any RPC is
+    // sent.
+    validateFileBackedMutualTls();
   }
 
   private void requireReadableLifecycle() {

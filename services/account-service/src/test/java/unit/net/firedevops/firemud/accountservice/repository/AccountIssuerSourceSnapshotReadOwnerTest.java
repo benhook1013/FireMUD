@@ -21,8 +21,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.ReadCurrentIssuerAuthoritySourceRequest;
+import net.firedevops.firemud.account.v1.ReadExactIssuerAuthorityEventRequest;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.CanonicalIssuerEventReadback;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotEvidence;
 import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotGrpcCodec;
@@ -258,6 +260,79 @@ class AccountIssuerSourceSnapshotReadOwnerTest {
         () -> peer().call(() -> owner.read(request(UUID.randomUUID()))));
     verify(sourceRepository).readCurrentCanonicalIssuerSource(ISSUER);
     verify(sourceRepository, never()).initializeIssuerIfAbsent(any());
+  }
+
+  @Test
+  void readsSelectedHistoryAndCurrentSourceTogetherInTheOwnedTransaction() throws Exception {
+    var selected = issuerEvent();
+    var latest =
+        AccountAuthoritySourceEventV1Codec.sealIssuer(
+            new AccountAuthoritySourceEventV1Codec.IssuerPreimage(
+                "next-event", "next-event", STREAM, "2", ISSUER, "3", "3", "SIGNER_COMPROMISE"));
+    var current = sourceSnapshot(3, Optional.of(latest), Optional.of(latest));
+    when(sourceRepository.readExactCanonicalIssuerEvent(
+            ISSUER, 1L, selected.eventId(), selected.eventDigest()))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                  .isFalse();
+              return new CanonicalIssuerEventReadback(current, selected);
+            });
+    UUID operation = UUID.randomUUID();
+    var result = peer().call(() -> owner.readExactEvent(exactRequest(operation)));
+    assertThat(result.authenticatedCallerWorkload()).isEqualTo(CALLER);
+    var snapshot = result.readback().currentSnapshot();
+    assertThat(snapshot.reconciliationOperationId()).isEqualTo(operation);
+    assertThat(snapshot.lastCommittedOutboxSequence()).isEqualTo("2");
+    assertThat(snapshot.sourceEvent()).contains(latest.canonicalJson());
+    assertThat(result.readback().selectedEvent()).isEqualTo(selected);
+    verify(sourceRepository, never()).readCurrentCanonicalIssuerSource(any());
+    verify(transactionManager).commit(transactionStatus);
+  }
+
+  @Test
+  void exactHistoryAuthenticatesAndValidatesSelectorBeforeOpeningStorage() {
+    var request = exactRequest(UUID.randomUUID());
+    assertStatus(Status.Code.UNAUTHENTICATED, () -> owner.readExactEvent(null));
+    assertStatus(
+        Status.Code.PERMISSION_DENIED,
+        () ->
+            peer("spiffe://firemud/ns/other/sa/game-session-service")
+                .call(() -> owner.readExactEvent(request)));
+    var malformed = request.toBuilder().setOutboxSequence("01").build();
+    assertThatThrownBy(() -> peer().call(() -> owner.readExactEvent(malformed)))
+        .isInstanceOf(IllegalArgumentException.class);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    assertStatus(
+        Status.Code.FAILED_PRECONDITION, () -> peer().call(() -> owner.readExactEvent(request)));
+    verifyNoInteractions(sourceRepository, transactionManager);
+  }
+
+  @Test
+  void missingExactHistoryAndStorageFailureReturnNoReadback() {
+    var selected = issuerEvent();
+    var request = exactRequest(UUID.randomUUID());
+    when(sourceRepository.readExactCanonicalIssuerEvent(
+            ISSUER, 1L, selected.eventId(), selected.eventDigest()))
+        .thenThrow(
+            new AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException(),
+            new DataAccessException("database offline"));
+    assertStatus(
+        Status.Code.FAILED_PRECONDITION, () -> peer().call(() -> owner.readExactEvent(request)));
+    assertStatus(Status.Code.UNAVAILABLE, () -> peer().call(() -> owner.readExactEvent(request)));
+    verify(transactionManager, times(2)).rollback(transactionStatus);
+  }
+
+  private static ReadExactIssuerAuthorityEventRequest exactRequest(UUID operation) {
+    var selected = issuerEvent();
+    var scope =
+        new AccountIssuerSourceSnapshotGrpcCodec.ReadRequest(
+            operation, NAMESPACE, ISSUER, Optional.empty());
+    var request =
+        new AccountIssuerSourceSnapshotGrpcCodec.ExactEventRequest(
+            scope, 1L, selected.eventId(), selected.eventDigest());
+    return AccountIssuerSourceSnapshotGrpcCodec.toExactEventRequest(request, NAMESPACE, CALLER);
   }
 
   private static AccountAuthoritySourceEvidenceRepository.CanonicalIssuerSourceSnapshot
