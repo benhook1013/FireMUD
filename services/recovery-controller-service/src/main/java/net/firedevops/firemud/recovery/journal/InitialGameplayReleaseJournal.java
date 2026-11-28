@@ -1,8 +1,10 @@
 package net.firedevops.firemud.recovery.journal;
 
 import java.time.Instant;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectKind;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.InitialGameplayReleaseEvidence;
@@ -37,9 +39,16 @@ public interface InitialGameplayReleaseJournal {
    * to send again. A request for the already dispatched identity is rejected so a caller cannot
    * mistake a replay for a new claim. Reuse is intentional only after a proven local NOT_DISPATCHED
    * outcome and creates a new dispatch ordinal. A durable owner rejection or closure permanently
-   * retires that identity.
+   * retires that identity. The journal samples the supplied time after acquiring its claim locks
+   * and reading any required preparation observation.
    */
-  OutboxEntry claimEffect(UUID operationId, UUID effectId, UUID attemptId, Instant now);
+  OutboxEntry claimEffect(
+      UUID operationId, UUID effectId, UUID attemptId, Supplier<Instant> claimTime);
+
+  default OutboxEntry claimEffect(UUID operationId, UUID effectId, UUID attemptId, Instant now) {
+    Objects.requireNonNull(now, "now must not be null");
+    return claimEffect(operationId, effectId, attemptId, () -> now);
+  }
 
   /** False only for an exact dispatch superseded after definitive owner rejection or closure. */
   boolean recordRetryableEffectForDispatch(

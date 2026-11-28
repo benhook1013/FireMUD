@@ -13,6 +13,8 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
       """
       SELECT
         current_setting('transaction_read_only') = 'off'
+        AND current_setting('fsync') = 'on'
+        AND current_setting('synchronous_commit') IN ('on', 'local', 'remote_write', 'remote_apply')
         AND current_setting('log_error_verbosity') = 'terse'
         AND current_setting('log_parameter_max_length_on_error') = '0'
         AND current_setting('log_parameter_max_length') = '0'
@@ -136,6 +138,11 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
             AND kind.atttypid = 'pg_catalog.varchar'::regtype AND kind.atttypmod = 52)
         AND EXISTS (
           SELECT 1 FROM pg_catalog.pg_attribute
+          WHERE attrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
+            AND attname = 'tuple_digest' AND NOT attisdropped AND attnotnull
+            AND atttypid = 'pg_catalog.bpchar'::regtype AND atttypmod = 68)
+        AND EXISTS (
+          SELECT 1 FROM pg_catalog.pg_attribute
           WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
             AND attname = 'effect_id' AND NOT attisdropped AND attnotnull
             AND atttypid = 'pg_catalog.uuid'::regtype)
@@ -176,7 +183,7 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
           SELECT 1 FROM pg_catalog.pg_attribute
           WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
             AND attname = 'send_outcome_uncertain' AND NOT attisdropped AND NOT attnotnull
-            AND atttypid = 'pg_catalog.bool'::regtype)
+            AND NOT atthasdef AND atttypid = 'pg_catalog.bool'::regtype)
         AND EXISTS (
           SELECT 1
           FROM pg_catalog.pg_constraint c
@@ -188,6 +195,11 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
               || ' AND (last_attempt_id IS NOT NULL)'
               || ' AND (last_attempt_id <> ''00000000-0000-0000-0000-000000000000''::uuid)'
               || ' AND (last_dispatched_at IS NOT NULL)))')
+        AND EXISTS (
+          SELECT 1 FROM pg_catalog.pg_attribute
+          WHERE attrelid = 'recovery_control.initial_gameplay_release_attempt_closure'::regclass
+            AND attname = 'dispatched_at' AND NOT attisdropped AND attnotnull
+            AND atttypid = 'pg_catalog.timestamptz'::regtype AND atttypmod IN (-1, 6))
         AND (SELECT count(*) = 2
           FROM pg_catalog.pg_attribute
           WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass

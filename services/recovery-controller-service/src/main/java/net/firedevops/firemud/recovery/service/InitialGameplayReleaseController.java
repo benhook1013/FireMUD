@@ -141,10 +141,7 @@ public final class InitialGameplayReleaseController {
     UUID attemptId = UUID.randomUUID();
     OutboxEntry dispatched =
         journal.claimEffect(
-            operation.scope().operationId(),
-            outbox.effect().effectId(),
-            attemptId,
-            clock.instant());
+            operation.scope().operationId(), outbox.effect().effectId(), attemptId, clock::instant);
     if (dispatched.state() != EffectOutboxState.DISPATCHED
         || !attemptId.equals(dispatched.lastAttemptId())) {
       return requireOperation(operation.scope().operationId());

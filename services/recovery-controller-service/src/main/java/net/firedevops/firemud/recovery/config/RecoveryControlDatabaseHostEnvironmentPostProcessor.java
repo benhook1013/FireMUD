@@ -125,6 +125,10 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
       throw new SafeOverrideException(
           "spring.flyway.skip-executing-migrations must be disabled for the recovery migrations");
     }
+    if (Boolean.TRUE.equals(binder.bind("spring.flyway.mixed", Boolean.class).orElse(null))) {
+      throw new SafeOverrideException(
+          "spring.flyway.mixed must be disabled for the recovery migrations");
+    }
     if (Boolean.FALSE.equals(
         binder.bind("spring.flyway.execute-in-transaction", Boolean.class).orElse(null))) {
       throw new SafeOverrideException(
