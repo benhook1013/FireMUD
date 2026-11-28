@@ -4,9 +4,13 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.Objects;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import net.firedevops.firemud.account.v1.AccountIssuerAuthoritySourceServiceGrpc;
 import net.firedevops.firemud.account.v1.AccountIssuerAuthoritySourceSnapshot;
+import net.firedevops.firemud.account.v1.ExactIssuerAuthorityEventReadback;
 import net.firedevops.firemud.account.v1.ReadCurrentIssuerAuthoritySourceRequest;
+import net.firedevops.firemud.account.v1.ReadExactIssuerAuthorityEventRequest;
 import net.firedevops.firemud.accountservice.repository.AccountIssuerSourceSnapshotReadOwner;
 import net.firedevops.firemud.common.account.authority.AccountIssuerSourceSnapshotGrpcCodec;
 
@@ -23,9 +27,34 @@ public final class AccountIssuerAuthoritySourceGrpcService
   public void readCurrentIssuerAuthoritySource(
       ReadCurrentIssuerAuthoritySourceRequest request,
       StreamObserver<AccountIssuerAuthoritySourceSnapshot> observer) {
-    final AccountIssuerSourceSnapshotReadOwner.ReadResult result;
+    respond(
+        () -> owner.read(request),
+        result ->
+            AccountIssuerSourceSnapshotGrpcCodec.toResponse(
+                result.evidence(), result.request(), result.authenticatedCallerWorkload()),
+        observer);
+  }
+
+  @Override
+  public void readExactIssuerAuthorityEvent(
+      ReadExactIssuerAuthorityEventRequest request,
+      StreamObserver<ExactIssuerAuthorityEventReadback> observer) {
+    respond(
+        () -> owner.readExactEvent(request),
+        result ->
+            AccountIssuerSourceSnapshotGrpcCodec.toExactEventResponse(
+                result.readback().currentSnapshot(),
+                result.readback().selectedEvent(),
+                result.request(),
+                result.authenticatedCallerWorkload()),
+        observer);
+  }
+
+  private static <T, R> void respond(
+      Supplier<T> readOwner, Function<T, R> encode, StreamObserver<R> observer) {
+    final T result;
     try {
-      result = owner.read(request);
+      result = readOwner.get();
     } catch (StatusRuntimeException failure) {
       observer.onError(sanitize(failure));
       return;
@@ -43,11 +72,9 @@ public final class AccountIssuerAuthoritySourceGrpcService
       return;
     }
 
-    final AccountIssuerAuthoritySourceSnapshot response;
+    final R response;
     try {
-      response =
-          AccountIssuerSourceSnapshotGrpcCodec.toResponse(
-              result.evidence(), result.request(), result.authenticatedCallerWorkload());
+      response = encode.apply(result);
     } catch (RuntimeException invalidSource) {
       observer.onError(
           Status.FAILED_PRECONDITION
