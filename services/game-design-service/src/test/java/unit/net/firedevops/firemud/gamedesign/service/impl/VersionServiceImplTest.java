@@ -1408,7 +1408,8 @@ class VersionServiceImplTest {
 
   @ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
-  void publishPluginVersionRequiresPublishedBaseVersionAbilityDigestMatch(boolean hasOwnerEvidence) {
+  void publishPluginVersionRequiresPublishedBaseVersionAbilityDigestMatch(
+      boolean hasOwnerEvidence) {
     Version version = new Version();
     version.setId(7L);
     version.setTenantId("tenant-1");
@@ -1424,8 +1425,7 @@ class VersionServiceImplTest {
         .thenReturn(parsedPluginBundle("plugin-1", "plugin-v1", 7L, REQUESTED_ABILITY_DIGEST));
     when(publishedReleaseBundleService.getPublishedReleaseBundle("tenant-1", 7L))
         .thenReturn(
-            publishedReleaseBundle(
-                "tenant-1", 7L, hasOwnerEvidence ? LIVE_ABILITY_DIGEST : null));
+            publishedReleaseBundle("tenant-1", 7L, hasOwnerEvidence ? LIVE_ABILITY_DIGEST : null));
 
     IllegalArgumentException thrown =
         assertThrows(
@@ -1447,8 +1447,9 @@ class VersionServiceImplTest {
                     "notes"));
 
     assertTrue(
-        thrown.getMessage().contains(
-            hasOwnerEvidence ? "VALIDATION_FAILED_DESIGN" : "lacks exact Game Logic"));
+        thrown
+            .getMessage()
+            .contains(hasOwnerEvidence ? "VALIDATION_FAILED_DESIGN" : "lacks exact Game Logic"));
     verify(pluginBundleStorageService, never()).exportPluginAssets(any(), any(), any(), any());
   }
 

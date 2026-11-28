@@ -146,6 +146,38 @@ class VersionAssetExportSnapshotIntegrationTest {
   }
 
   @Test
+  void committedSnapshotSurvivesAnOuterOwnerCallerRollback() {
+    Fixture fixture = fixture();
+    var transactionManager = new DataSourceTransactionManager(fixture.dataSource);
+    var service =
+        new VersionAssetPublicationServiceImpl(
+            transactionManager, new VersionAssetPublicationRepository(fixture.dsl));
+    var caller = new TransactionTemplate(transactionManager);
+
+    var snapshot =
+        Objects.requireNonNull(
+            caller.execute(
+                status -> {
+                  fixture.dsl.execute("CREATE TABLE snapshot_caller_rollback_marker(id bigint)");
+                  var committed = service.freezeOrReadSnapshot(fixture.tenantId, 1);
+                  assertThat(independentSnapshot(fixture)).isEqualTo(committed);
+                  status.setRollbackOnly();
+                  return committed;
+                }));
+
+    var independent = DSL.using(fixture.dataSource, SQLDialect.POSTGRES);
+    assertThat(
+            independent
+                .fetchSingle("SELECT to_regclass('snapshot_caller_rollback_marker')::text")
+                .get(0, String.class))
+        .isNull();
+    assertThat(snapshot.items()).hasSize(1);
+    assertThat(independentSnapshot(fixture)).isEqualTo(snapshot);
+    assertThat(service.readFrozenAssetBytes(fixture.tenantId, 1, snapshot.items().getFirst()))
+        .containsExactly(SOURCE_BYTES);
+  }
+
+  @Test
   void springOwnerCommitsFoundedEmptySnapshotBeforeIndependentReadback() {
     Fixture fixture = foundedEmptyFixture();
     var service =

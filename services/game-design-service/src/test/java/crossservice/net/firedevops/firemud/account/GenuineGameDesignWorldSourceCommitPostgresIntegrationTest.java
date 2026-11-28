@@ -332,7 +332,8 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
             assertThat(recovered.request()).isEqualTo(claim.request());
             assertThat(recovered.acknowledgedReceipt().orElseThrow().receiptDigest())
                 .isEqualTo(committed.receiptDigest());
-            assertThat(intakes.read(NAMESPACE, claim.request().intakeRequestId())).contains(committed);
+            assertThat(intakes.read(NAMESPACE, claim.request().intakeRequestId()))
+                .contains(committed);
             assertThat(deliveries.read(source.operationId())).contains(recovered);
             assertThat(restartedDelivery.deliver(source.operationId())).isEqualTo(recovered);
             assertThat(intakeCalls).hasValue(2);
