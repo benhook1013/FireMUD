@@ -26,6 +26,12 @@ testing {
     }
 }
 
+tasks.named<Test>("integrationTest") {
+    val composeFile = rootProject.layout.projectDirectory.file("docker/docker-compose.yml")
+    inputs.file(composeFile).withPropertyName("assetProofComposeFile")
+    systemProperty("firemud.asset-proof.compose-file", composeFile.asFile.absolutePath)
+}
+
 dependencies {
     compileOnly(libs.spotbugs.annotations)
     implementation(libs.aws.sdk.s3)
