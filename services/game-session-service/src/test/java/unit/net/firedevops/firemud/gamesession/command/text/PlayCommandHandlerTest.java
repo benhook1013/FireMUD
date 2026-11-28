@@ -23,10 +23,13 @@ import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
+import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
+import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -38,11 +41,13 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
+import net.firedevops.firemud.gamesession.service.impl.DatabaseGameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -458,7 +463,8 @@ class PlayCommandHandlerTest {
             "ALLOW_NEW",
             1L,
             UUID.fromString("8845d6f0-e260-4ca2-99d7-8ced4387f96b"),
-            UUID.fromString("6c4da6d7-b29d-4a67-a465-b78007868653"));
+            UUID.fromString("6c4da6d7-b29d-4a67-a465-b78007868653"),
+            GameplayAdmissionPointerSnapshot.ORDINARY_REPRESENTATION_VERSION);
     when(authority.listPointers()).thenReturn(List.of(pointer), List.of());
     var localHandler =
         new PlayCommandHandler(
@@ -489,6 +495,72 @@ class PlayCommandHandlerTest {
     verify(authority, never()).listPointersByTenant(Mockito.anyLong());
     verify(authority, never())
         .findPointer(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
+  }
+
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(ints = {3, 99})
+  void playRejectsNonOrdinaryPointerBeforeAuthorityAndRoster(Integer representationVersion) {
+    var repository = Mockito.mock(GameplayAdmissionPointerRepository.class);
+    var pointer = new GameplayAdmissionPointer();
+    pointer.setWorldSlug("demo");
+    pointer.setWorldDisplayName("Demo World");
+    pointer.setRealmSlug("production");
+    pointer.setRealmDisplayName("Live Realm");
+    pointer.setTenantId(22L);
+    pointer.setGameInstanceId(1L);
+    pointer.setPointerVersion(1L);
+    pointer.setVisible(true);
+    pointer.setPublicProductionRealm(true);
+    pointer.setStateScope("SHARED");
+    pointer.setCharacterCreationPolicy("PRESEEDED_ONLY");
+    pointer.setCatalogRevision(1L);
+    pointer.setRealmId(UUID.randomUUID());
+    pointer.setPlayableStateNamespaceId(UUID.randomUUID());
+    pointer.setRepresentationVersion(representationVersion);
+    when(repository.findAllByOrderByWorldSlugAscRealmSlugAsc()).thenReturn(List.of(pointer));
+    var authority =
+        new DatabaseGameplayAdmissionPointerAuthorityService(
+            repository, Mockito.mock(GameplayAdmissionPointerEventRepository.class));
+    var localHandler =
+        new PlayCommandHandler(
+            sessionAuthenticationService,
+            sessionContextService,
+            sessionRoutingNormalizationService,
+            new GameplayWorldCatalog(authority),
+            gameLogicProperties,
+            accountClient,
+            entityManagementClient,
+            moderationPolicyClient,
+            firstPartyConnectContextRegistry,
+            gameplayPresenceLifecycleService,
+            scriptEventPublisher,
+            meterRegistry);
+    var gameDesignClient = tenantIdentity();
+    localHandler.setGameDesignClient(gameDesignClient);
+    var context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    var result = localHandler.handle("1", new TextCommandParser().parse("PLAY demo production"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo(GameplayStageCommandConstants.ADMISSION_POINTER_UNAVAILABLE_MESSAGE);
+    verify(repository).findAllByOrderByWorldSlugAscRealmSlugAsc();
+    Mockito.verifyNoMoreInteractions(repository);
+    verify(sessionAuthenticationService).resolveSessionContext("1");
+    verify(sessionContextService).findBySessionId(1L);
+    Mockito.verifyNoMoreInteractions(sessionAuthenticationService, sessionContextService);
+    Mockito.verifyNoInteractions(
+        gameDesignClient,
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        sessionRoutingNormalizationService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
   }
 
   @Test

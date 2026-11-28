@@ -7,6 +7,7 @@ import lombok.Data;
 @Data
 public class GameplayAdmissionPointer {
   private Long id;
+  private Integer representationVersion;
   private String worldSlug;
   private String worldDisplayName;
   private String realmSlug;
