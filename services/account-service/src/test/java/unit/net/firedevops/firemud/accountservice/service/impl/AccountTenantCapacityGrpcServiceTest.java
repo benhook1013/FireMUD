@@ -311,6 +311,8 @@ class AccountTenantCapacityGrpcServiceTest {
           var definition = invocation.getArgument(0, TransactionDefinition.class);
           assertThat(definition.getPropagationBehavior())
               .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+          assertThat(definition.getIsolationLevel())
+              .isEqualTo(TransactionDefinition.ISOLATION_REPEATABLE_READ);
           assertThat(definition.getTimeout()).isEqualTo(5);
           assertThat(definition.isReadOnly()).isTrue();
           TransactionSynchronizationManager.setActualTransactionActive(true);

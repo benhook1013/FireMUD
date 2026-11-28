@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(25);
+      assertThat(catalog.catalogEpoch()).isEqualTo(26);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -208,7 +208,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.11",
               "catalog-installation:1065.0.11.1",
               "catalog-installation:1065.0.11.2",
-              "catalog-installation:1065.0.11.3")
+              "catalog-installation:1065.0.11.3",
+              "catalog-installation:1065.0.11.4")
           .noneMatch(identity ->
               identity.contains(":1057:")
                   || identity.contains(":1058:")
@@ -234,7 +235,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   || identity.contains(":1065.0.11:")
                   || identity.contains(":1065.0.11.1:")
                   || identity.contains(":1065.0.11.2:")
-                  || identity.contains(":1065.0.11.3:"));
+                  || identity.contains(":1065.0.11.3:")
+                  || identity.contains(":1065.0.11.4:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -771,7 +773,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(25);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(26);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(fact ->
                 fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
@@ -940,7 +942,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "1065.0.11",
               "1065.0.11.1",
               "1065.0.11.2",
-              "1065.0.11.3")) {
+              "1065.0.11.3",
+              "1065.0.11.4")) {
         String columns =
             "installed_rank,version,description,type,script,checksum,installed_by,execution_time,success";
         var original =
@@ -985,7 +988,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           f.dsl.execute("DELETE FROM " + f.history + " WHERE installed_rank=10000");
         }
       }
-      assertThat(f.owner().capture(request()).catalog().catalogEpoch()).isEqualTo(25);
+      assertThat(f.owner().capture(request()).catalog().catalogEpoch()).isEqualTo(26);
     }
   }
 
@@ -2044,6 +2047,33 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void regionTransferSuccessorAndFenceReceiptUpgradePreservesEpochTwentyFive() {
+    try (Fixture f = fixture("1065.0.11.3")) {
+      assertCapacityCatalogGuardUpgrade(
+          f,
+          "1065.0.11.4",
+          25,
+          "V1065.0.11.4__qualify_region_transfer_successor_and_fence_receipts.sql",
+          Map.of(
+              "require_gs_region_transfer_successor_installation()",
+              List.of(
+                  "s.owner_service='game-session-service' AND NOT s.paused",
+                  "s.owner_instance_id=NEW.new_owner_id",
+                  "s.executor_fence=NEW.new_owner_fence",
+                  "s.lease_token_correlation=NEW.new_lease_correlation")),
+          Map.of(),
+          Map.of(
+              "game_session_region_owner_transfer_item.gs_region_fence_receipt_dispatch_incarnation",
+              List.of(
+                  "CHECK(fence_dispatch_id IS NULL OR ("
+                      + "fence_dispatch_id <> '00000000-0000-0000-0000-000000000000'::uuid"
+                      + " AND (fence_readback IS NULL OR (incarnation_digest IS NOT NULL"
+                      + " AND incarnation_digest = fence_dispatch_incarnation)))):true")),
+          Map.of());
+    }
+  }
+
   private static void assertCapacityCatalogGuardUpgrade(
       Fixture f,
       String target,
@@ -2127,6 +2157,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     var guards = f.guards();
     changedTriggers.keySet().forEach(guards::remove);
     var constraints = f.constraints();
+    addedConstraints.keySet().forEach(constraints::remove);
     var indexes = f.indexes();
     var routines = f.routines();
     var routineIdentities = List.copyOf(routines.keySet());

@@ -390,6 +390,18 @@ class AccountGameplayAdmissionLeaseClientTest {
       assertThat(serverEntryRemainingNanos.get(3)).isPositive().isLessThanOrEqualTo(3_000_000_000L);
       assertThat(dispatchedDeadlines.get(1)).isSameAs(requestedIssueDeadline);
       assertThat(dispatchedDeadlines.get(3)).isSameAs(requestedBoundedDeadline);
+      var longDeadline = Deadline.after(30, TimeUnit.SECONDS);
+      try (var longDeadlineCredential =
+          client.issueOriginalNewBoundGameplayCredential(JWT, originalLease, longDeadline)) {
+        assertThat(longDeadlineCredential.originalLeaseId()).isEqualTo(received.originalLeaseId());
+      }
+      var longDeadlineConfirmation =
+          client.confirmOriginalNewGameplayAdmission(JWT, originalLease, longDeadline);
+      assertThat(longDeadlineConfirmation).usingRecursiveComparison().isEqualTo(confirmation);
+      assertThat(dispatchedRemainingNanos.get(4)).isPositive().isLessThanOrEqualTo(5_000_000_000L);
+      assertThat(dispatchedRemainingNanos.get(5)).isPositive().isLessThanOrEqualTo(5_000_000_000L);
+      assertThat(serverEntryRemainingNanos.get(4)).isPositive().isLessThanOrEqualTo(5_000_000_000L);
+      assertThat(serverEntryRemainingNanos.get(5)).isPositive().isLessThanOrEqualTo(5_000_000_000L);
       received.close();
       boundedReceived.close();
       java.util.Arrays.fill(originalLease, (byte) 0);

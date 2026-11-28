@@ -312,17 +312,20 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         return Optional.empty();
       }
       if (current.phase != TimelinePreparationPhase.PREPARED) return Optional.empty();
+      UUID claimGeneration = UUID.randomUUID();
       int updated =
           transaction.execute(
               "UPDATE "
                   + PREPARATION_TABLE
-                  + " SET phase = 'INITIALIZING', updated_at = ?"
-                  + " WHERE initialization_operation_id = ? AND phase = 'PREPARED'",
+                  + " SET phase = 'INITIALIZING', initialization_claim_generation = ?,"
+                  + " updated_at = ? WHERE initialization_operation_id = ? AND phase = 'PREPARED'",
+              claimGeneration,
               java.sql.Timestamp.from(now),
               current.operationId);
       if (updated != 1) throw unavailable();
       return Optional.of(
-          new InitialInitializationPermit(current.operationId, current.sourceDigest()));
+          new InitialInitializationPermit(
+              current.operationId, current.sourceDigest(), claimGeneration));
     });
   }
 
@@ -1138,10 +1141,13 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
   static final class InitialInitializationPermit {
     private final UUID operationId;
     private final String sourceDigest;
+    private final UUID claimGeneration;
 
-    private InitialInitializationPermit(UUID operationId, String sourceDigest) {
+    private InitialInitializationPermit(
+        UUID operationId, String sourceDigest, UUID claimGeneration) {
       this.operationId = Objects.requireNonNull(operationId, "operationId");
       this.sourceDigest = Objects.requireNonNull(sourceDigest, "sourceDigest");
+      this.claimGeneration = Objects.requireNonNull(claimGeneration, "claimGeneration");
     }
 
     UUID operationId() {
@@ -1150,6 +1156,10 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
 
     String sourceDigest() {
       return sourceDigest;
+    }
+
+    UUID claimGeneration() {
+      return claimGeneration;
     }
   }
 

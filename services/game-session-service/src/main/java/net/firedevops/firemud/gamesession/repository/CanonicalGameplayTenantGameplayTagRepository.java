@@ -421,7 +421,7 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
                 : negative ? Set.of("PREPARED", "ABORTED") : TRANSITION_STATES)
             .contains(transitionState)
         || !(retainedAbort
-                ? Set.of("TERMINAL_UNRESOLVED", "TERMINAL")
+                ? Set.of("TERMINAL_UNRESOLVED")
                 : negative
                     ? Set.of("CANDIDATE_PREPARED", "TERMINAL_UNRESOLVED", "TERMINAL")
                     : INVENTORY_STATES)

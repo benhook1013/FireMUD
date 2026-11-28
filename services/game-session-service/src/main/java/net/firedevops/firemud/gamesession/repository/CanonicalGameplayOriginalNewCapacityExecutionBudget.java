@@ -561,6 +561,8 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
                     check();
                     return owned.proxy;
                   } catch (RuntimeException expired) {
+                    // The deadline can expire before the caller starts cancellation.
+                    owned.retire();
                     owned.release();
                     throw expired;
                   }
@@ -864,7 +866,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       // Detach cancellation before pool return, serialized against a cancellation already running.
       synchronized (resources) {
         if (returned || releaseAttempted) return;
-        if ((cancelled.get() || rollbackFailed) && !retired) retire();
+        if (cancelled.get() || rollbackFailed || retirementFailed) retire();
         releaseAttempted = true;
         if (activeConnection == this) {
           active = null;

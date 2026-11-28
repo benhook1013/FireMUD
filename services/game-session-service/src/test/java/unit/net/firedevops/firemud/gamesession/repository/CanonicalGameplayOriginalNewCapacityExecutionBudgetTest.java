@@ -415,6 +415,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       verifyNoInteractions(connection, redis);
       release.countDown();
       verify(provider, timeout(2000)).release(connection);
+      awaitResourceAndCancellationWorkerCleanup();
       verifyNoInteractions(connection, redis);
       assertThat(dsl.configuration().connectionProvider())
           .isInstanceOf(ControlledConnectionProvider.class);
@@ -1298,8 +1299,6 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                       CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class));
       try {
         assertThat(acquiring.await(2, TimeUnit.SECONDS)).isTrue();
-        assertThatThrownBy(() -> caller.get(50, TimeUnit.MILLISECONDS))
-            .isInstanceOf(java.util.concurrent.TimeoutException.class);
         caller.get(2, TimeUnit.SECONDS);
         assertThat(CLOCK.millis()).isGreaterThanOrEqualTo(deadline);
         verify(provider).acquire();

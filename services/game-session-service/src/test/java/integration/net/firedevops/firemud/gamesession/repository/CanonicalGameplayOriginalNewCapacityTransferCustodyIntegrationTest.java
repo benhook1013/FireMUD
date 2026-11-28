@@ -17,6 +17,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Refusal;
+import org.flywaydb.core.api.FlywayException;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
 import org.jooq.ExecuteListener;
@@ -1120,6 +1122,82 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
                       transfer)
                   .get(0, String.class))
           .isEqualTo("COMPLETED");
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void transferIncarnationUpgradePreservesRetainedDispatches(boolean conflictingIncarnations)
+      throws Exception {
+    try (var proof = new TransferSqlProof(MigrationVersion.fromVersion("1065.0.11.2"))) {
+      assertThat(
+              proof.sql
+                  .fetchSingle(
+                      "SELECT version FROM flyway_schema_history WHERE success"
+                          + " ORDER BY installed_rank DESC LIMIT 1")
+                  .get(0, String.class))
+          .isEqualTo("1065.0.11.2");
+      var first = proof.execution;
+      var second = proof.newIndependentControlledOriginExecution();
+      proof.seedUndeliveredDispatch(first);
+      proof.seedUndeliveredDispatch(second);
+      UUID transfer = proof.insertRawFrozenTransfer(proof.sql);
+      proof.insertRawTransferItem(proof.sql, transfer, 0, first);
+      proof.insertRawTransferItem(proof.sql, transfer, 1, second);
+
+      String dispatchSql =
+          "UPDATE game_session_region_owner_transfer_item"
+              + " SET fence_dispatch_id=?,fence_dispatch_incarnation=?"
+              + " WHERE transfer_id=? AND execution_digest=?";
+      String incarnation = "sha256:" + "a".repeat(64);
+      assertThat(
+              proof.sql.execute(
+                  dispatchSql, UUID.randomUUID(), incarnation, transfer, first.digest()))
+          .isEqualTo(1);
+      assertThat(
+              proof.sql.execute(
+                  dispatchSql,
+                  UUID.randomUUID(),
+                  conflictingIncarnations ? "sha256:" + "b".repeat(64) : incarnation,
+                  transfer,
+                  second.digest()))
+          .isEqualTo(1);
+      String parentSql =
+          "SELECT to_jsonb(t)::text||':'||xmin::text"
+              + " FROM game_session_region_owner_transfer t WHERE transfer_id=?";
+      String itemsSql =
+          "SELECT to_jsonb(i)::text||':'||xmin::text"
+              + " FROM game_session_region_owner_transfer_item i WHERE transfer_id=?"
+              + " ORDER BY target_ordinal";
+      var parentBefore = proof.sql.fetch(parentSql, transfer).getValues(0, String.class);
+      var itemsBefore = proof.sql.fetch(itemsSql, transfer).getValues(0, String.class);
+      String epochsSql =
+          "SELECT to_jsonb(e)::text||':'||xmin::text"
+              + " FROM game_session_runtime_family_catalog_epoch e ORDER BY catalog_epoch";
+      var epochsBefore = proof.sql.fetch(epochsSql).getValues(0, String.class);
+      var target = MigrationVersion.fromVersion("1065.0.11.3");
+      if (conflictingIncarnations) {
+        assertThatThrownBy(() -> proof.fixture.upgradeWithDefaultGameSessionMigrations(target))
+            .isInstanceOf(FlywayException.class)
+            .rootCause()
+            .isInstanceOfSatisfying(
+                org.postgresql.util.PSQLException.class,
+                failure -> {
+                  assertThat(failure.getSQLState()).isEqualTo("23514");
+                  assertThat(failure.getMessage())
+                      .contains("Retained region fence dispatches disagree on storage incarnation");
+                });
+        assertThat(proof.sql.fetch(epochsSql).getValues(0, String.class)).isEqualTo(epochsBefore);
+      } else {
+        assertThat(proof.fixture.upgradeWithDefaultGameSessionMigrations(target)).isEqualTo(1);
+        assertThat(proof.sql.fetch(epochsSql).getValues(0, String.class))
+            .hasSize(epochsBefore.size() + 1)
+            .startsWith(epochsBefore.toArray(String[]::new));
+      }
+      assertThat(proof.sql.fetch(parentSql, transfer).getValues(0, String.class))
+          .isEqualTo(parentBefore);
+      assertThat(proof.sql.fetch(itemsSql, transfer).getValues(0, String.class))
+          .isEqualTo(itemsBefore);
     }
   }
 

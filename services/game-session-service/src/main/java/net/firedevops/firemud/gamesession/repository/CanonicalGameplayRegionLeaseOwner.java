@@ -176,18 +176,12 @@ final class CanonicalGameplayRegionLeaseOwner {
                   incarnation)
               : statusRepository.matchesInstalledTimelineInitialization(
                   preparation, source, incarnation);
-      boolean resumablePhase =
-          sameInitializationAttempt
-              ? preparation.phase()
-                      == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
-                          .INSTALLED
-                  || preparation.phase()
-                      == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
-                          .REDIS_INITIALIZED
-              : preparation.phase()
-                  == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
-                      .INSTALLED;
-      if (!matchesInitialization || !resumablePhase) {
+      // An installation handle is issued only after the installed phase is durable.
+      // A partial SQL/Redis initialization remains held for original owner recovery.
+      if (!matchesInitialization
+          || preparation.phase()
+              != CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                  .INSTALLED) {
         throw unavailable();
       }
       requireReusableRegionGrant(
