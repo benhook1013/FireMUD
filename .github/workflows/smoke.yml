@@ -632,7 +632,7 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "fe87bbf9904be1b1c7874b170393d34679511c059e240034ba4f09416c2d98bc";
+            const canonicalRuntimeWorkflowSha256 = "bf6b01170a54fbd31a3c90f12fc8761adbec87d2aaa1f26ffd3eccff38b85a27";
             // Only authenticated default-branch refreshes may use retained successful definitions.
             // Keep the pre-rollout default and predecessor definitions for mixed-version runs.
             const canonicalCompatibleTrustedRefreshRuntimeWorkflowSha256 = new Set([
@@ -811,6 +811,35 @@ jobs:
               return earliestJobStart <= jobStart && jobStart <= jobEnd && jobEnd <= end;
             }
 
+            async function verifyTypedBaseClaim(source, identity, jobs) {
+              const metadata = jobs.filter(job => job?.name === "Derive Runtime Image Metadata");
+              if (metadata.length === 0) return null; // The exact jobs snapshot may still be converging.
+              const job = metadata[0];
+              if (metadata.length !== 1 || !positiveInteger(job.id) || job.run_id !== source.id ||
+                  job.head_sha !== source.head_sha ||
+                  (Object.hasOwn(job, "run_attempt") && job.run_attempt !== source.run_attempt) ||
+                  job.status !== "completed" || job.conclusion !== "success" || !Array.isArray(job.steps)) return false;
+              const markers = job.steps.filter(step => step?.name?.startsWith("Runtime refresh claim generation"));
+              const marker = markers[0];
+              const claim = /^Runtime refresh claim generation ([1-9][0-9]*) attempt ([1-9][0-9]*) tag ([0-9a-f]{40})$/.exec(marker?.name);
+              if (markers.length !== 1 || !claim || !positiveInteger(Number(claim[1])) ||
+                  Number(claim[2]) !== source.run_attempt ||
+                  marker.status !== "completed" || marker.conclusion !== "success") return false;
+              const baseRefHash = require("node:crypto").createHash("sha256").update(identity.baseRef, "utf8").digest("hex");
+              const ref = `tags/firemud-runtime-refresh-intent/v1/pr-${prNumber}/${identity.mergeSha}/${baseRefHash}/g${claim[1]}`;
+              try {
+                const { data: currentClaim } = await withTransientGitHubRetry(
+                  "current typed runtime claim ref lookup",
+                  () => github.rest.git.getRef({ owner, repo, ref })
+                );
+                return currentClaim?.ref === `refs/${ref}` && currentClaim.object?.type === "tag" &&
+                  currentClaim.object.sha === claim[3];
+              } catch (error) {
+                if ((error?.status ?? error?.response?.status) === 404) return false;
+                throw error;
+              }
+            }
+
             async function verifyCanonicalSmokeProducer(run, candidate, identity, requireTerminalSmokeProof = false) {
               if (!positiveInteger(run.id) || !positiveInteger(run.run_attempt)) return false;
               const exactSnapshotPending = requireTerminalSmokeProof && run.event === "repository_dispatch";
@@ -981,6 +1010,11 @@ jobs:
                   return pendingExactSnapshot();
                 }
                 if (job.steps.some((step) => !["success", "skipped"].includes(step.conclusion))) return false;
+              }
+              if (source.event === "repository_dispatch") {
+                const currentBaseClaim = await verifyTypedBaseClaim(source, identity, jobs);
+                if (currentBaseClaim === null) return pendingExactSnapshot();
+                if (!currentBaseClaim) return false;
               }
               const { data: latest } = await withTransientGitHubRetry(
                 "current runtime attempt lookup",
@@ -1208,6 +1242,11 @@ jobs:
                   if (definitionHash !== expectedHash) return false;
                 }
               }
+              if (source.event === "repository_dispatch") {
+                const currentBaseClaim = await verifyTypedBaseClaim(source, identity, jobs);
+                if (currentBaseClaim === null) incompleteSteps = true;
+                else if (!currentBaseClaim) return false;
+              }
               const { data: latest } = await withTransientGitHubRetry(
                 "current runtime attempt lookup",
                 () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: source.id })
@@ -1346,6 +1385,7 @@ jobs:
                 if (!Number.isFinite(markerStart) || !Number.isFinite(markerEnd) ||
                     markerStart < jobStart || markerEnd < markerStart || markerEnd > jobEnd) return false;
               }
+              if (!await verifyTypedBaseClaim(attempt, identity, data.jobs)) return false;
               const {data: latest} = await withTransientGitHubRetry("current failed typed attempt lookup",
                 () => github.rest.actions.getWorkflowRun({owner, repo, run_id: run.id}));
               return matchesSelected(latest);
@@ -1589,6 +1629,7 @@ jobs:
                 const currentBaseSha = currentBaseRefData.object?.sha;
                 const currentMergeSha = currentPullRequest.merge_commit_sha;
                 if (
+                  currentBaseRefData.ref !== `refs/heads/${baseRef}` ||
                   !/^[0-9a-f]{40}$/.test(currentBaseSha ?? "") ||
                   !/^[0-9a-f]{40}$/.test(currentMergeSha ?? "")
                 ) {

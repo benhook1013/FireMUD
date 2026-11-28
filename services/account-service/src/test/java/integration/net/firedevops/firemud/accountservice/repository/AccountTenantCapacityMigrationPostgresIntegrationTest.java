@@ -209,8 +209,8 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
               dsl.execute(
                   "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id,"
                       + " admission_id, capacity_rearm_fence, admission_attempt_id,"
-                      + " mutation_digest, canonical_payload, decision, decision_id) VALUES (?, ?,"
-                      + " ?, 1, ?, ?, ?, 'NO_ACCEPT', ?)",
+                      + " mutation_digest, canonical_payload, decision, decision_id, refusal_code)"
+                      + " VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?, 'CAPACITY_QUOTA_EXCEEDED')",
                   tenant.canonicalTenantId(),
                   UUID.randomUUID(),
                   UUID.randomUUID(),
@@ -222,6 +222,35 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
               org.jooq.exception.DataAccessException.class,
               failure -> assertThat(failure.sqlState()).isEqualTo("23505"));
       assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isEqualTo(3);
+      String insertRefusal =
+          "INSERT INTO account_capacity_origin_decisions (tenant_uuid, request_id, admission_id,"
+              + " capacity_rearm_fence, admission_attempt_id, mutation_digest, canonical_payload,"
+              + " decision, decision_id, refusal_code) VALUES (?, ?, ?, 1, ?, ?, ?, 'NO_ACCEPT', ?, ?)";
+      Object[] exact = {
+        tenant.canonicalTenantId(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "c".repeat(64),
+        new byte[] {3},
+        UUID.randomUUID(),
+        null
+      };
+      assertThatThrownBy(() -> dsl.execute(insertRefusal, exact))
+          .isInstanceOfSatisfying(
+              org.jooq.exception.DataAccessException.class,
+              failure -> {
+                assertThat(failure.sqlState()).isEqualTo("23514");
+                assertThat(failure)
+                    .hasMessageContaining("account_capacity_origin_refusal_cause_required");
+              });
+      assertThat(
+              dsl.fetchCount(
+                  DSL.table("account_capacity_origin_decisions"),
+                  DSL.field("refusal_code").isNull()))
+          .isEqualTo(3);
+      exact[exact.length - 1] = "CAPACITY_QUOTA_EXCEEDED";
+      assertThat(dsl.execute(insertRefusal, exact)).isEqualTo(1);
     } finally {
       new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
     }

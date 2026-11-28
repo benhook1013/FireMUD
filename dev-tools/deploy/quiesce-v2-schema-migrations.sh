@@ -287,8 +287,7 @@ for service in "${services[@]}"; do
   done
 done
 
-# An HPA or a concurrent controller can race the first observation. Scale all
-# owners before checking any Deployment or Pod so no writer can overlap apply.
+# Scale every writer before checking the first Deployment or Pod.
 deadline=$((SECONDS + 300))
 for service in "${services[@]}"; do
   if ! deployment_name="$(kubectl --request-timeout=10s -n "$namespace" get deployment "$service" --ignore-not-found -o name)"; then
@@ -301,6 +300,11 @@ for service in "${services[@]}"; do
 done
 
 verify_writer_quiescence "$deadline"
+
+# A writer may have changed while a later service was draining. Refuse to
+# reopen admission if the last readback cannot reestablish quiescence.
+verify_writer_autoscaling_absent
+verify_writer_quiescence "$SECONDS"
 
 # Restore only after every writer Deployment and Pod has been proven quiescent.
 # If any write/readback fails, the EXIT trap closes all three selectors again.

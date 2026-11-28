@@ -315,6 +315,25 @@ class AccountTenantCapacityGrpcServiceTest {
           return row;
         });
     PlatformTransactionManager transactions = mock();
+    Runnable endReadTransaction =
+        () -> {
+          TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+          TransactionSynchronizationManager.setActualTransactionActive(false);
+        };
+    doAnswer(
+            invocation -> {
+              endReadTransaction.run();
+              return null;
+            })
+        .when(transactions)
+        .commit(any());
+    doAnswer(
+            invocation -> {
+              endReadTransaction.run();
+              return null;
+            })
+        .when(transactions)
+        .rollback(any());
     when(transactions.getTransaction(any(TransactionDefinition.class)))
         .thenAnswer(invocation -> {
           var definition = invocation.getArgument(0, TransactionDefinition.class);
@@ -335,6 +354,20 @@ class AccountTenantCapacityGrpcServiceTest {
         new AccountTenantCapacityOwner(
             dsl, accounts, memberships, issuances, scopes, transactions, clock, "prod");
     StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return null;
+            })
+        .when(observer)
+        .onNext(any());
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return null;
+            })
+        .when(observer)
+        .onCompleted();
     try (var guards = quotaDenialReader(CapacityAdmissionTestFixture.PEER)) {
       new AccountTenantCapacityGrpcService(owner, "prod")
           .readTenantCapacityAdmissionDenial(

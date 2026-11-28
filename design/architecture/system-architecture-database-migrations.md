@@ -250,6 +250,8 @@ The trusted dev-demo classifier holds Account V1040.4 before namespace mutation.
 
 Account V1040.7 changes the retained refusal constraint to admit a new outcome. The trusted classifier holds that exact migration before namespace mutation, including when it appears in the same range as V1040.4. The deployment owner must establish an approved retained activation boundary with the affected writers and consumers stopped before enabling that path.
 
+Account V1040.9 requires a typed cause on newly written capacity refusal decisions. Its forward check leaves historical refusal rows and existing checksums unchanged. The hosted dev-demo classifier keeps this unlisted migration held before startup until the deployment owner qualifies its retained activation.
+
 Hosted candidate previews may activate a migration only when the trusted path independently proves both an isolated fresh database and absence of old writers. A newly recreated namespace or a manifest value is not database provenance when backing storage may be retained. If the preview credential cannot verify that proof, skip or fail the candidate activation before modifying its namespace; use the trusted post-merge quiesce path instead.
 
 Migration changes use the canonical [Validation and Runtime Proof](../developer-workflows/validation-and-runtime-proof.md) workflow to select formatting, checks, and runtime proof, with execution results recorded in PR/CI evidence and, when applicable, synchronized into the owning implementation tracker. This document does not duplicate that workflow or act as a validation ledger.

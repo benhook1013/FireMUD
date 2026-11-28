@@ -97,11 +97,15 @@ case "$*" in
     printf '%s\n' 'deployment/automation-scripting-service'
     ;;
   "-n contract get deployment account-service --ignore-not-found -o json")
-    observed=2
+    observed=2 replicas=0
     if [[ "${QUIESCE_MODE:-}" == unobserved-deployment ]]; then
       observed=1
     fi
-    printf '{"metadata":{"generation":2},"status":{"observedGeneration":%s},"spec":{"replicas":0}}\n' "$observed"
+    if [[ "${QUIESCE_MODE:-}" == rescaled-account ]] &&
+      grep -Fq 'get deployment game-session-service --ignore-not-found -o json' "$QUIESCE_CALLS"; then
+      replicas=1
+    fi
+    printf '{"metadata":{"generation":2},"status":{"observedGeneration":%s},"spec":{"replicas":%s}}\n' "$observed" "$replicas"
     ;;
   "-n contract get deployment game-session-service --ignore-not-found -o json"|\
   "-n contract get deployment automation-scripting-service --ignore-not-found -o json")
@@ -188,6 +192,14 @@ run_quiesce() {
 
 run_quiesce success >/dev/null
 run_quiesce typed-lists >/dev/null
+if run_quiesce rescaled-account >"$fixture_dir/rescaled-account.out" 2>&1; then
+  echo "quiescence accepted an Account writer that restarted during the drain" >&2
+  exit 1
+fi
+grep -Fq 'Deployment/account-service did not remain at zero replicas' "$fixture_dir/rescaled-account.out"
+for service in account-service game-session-service automation-scripting-service; do
+  [[ "$(<"$fixture_dir/state-rescaled-account/$service")" == firemud-v2-migration-quiesced ]]
+done
 for mode in success unrelated-pod unobserved-deployment unobserved-replicaset active-replicaset markerless-writer-pod; do
   calls="$fixture_dir/verify-calls-$mode"
   if QUIESCE_MODE="$mode" QUIESCE_CALLS="$calls" \
@@ -216,7 +228,7 @@ mkdir -p "$fixture_dir/state-registry-port-writer-pod"
 QUIESCE_MODE=registry-port-writer-pod QUIESCE_CALLS="$fixture_dir/calls-registry-port-writer-pod" \
   QUIESCE_STATE="$fixture_dir/state-registry-port-writer-pod" PATH="$fake_bin:$PATH" \
   bash "$helper" contract >/dev/null
-[[ "$(<"$fixture_dir/state-registry-port-writer-pod/pod-list-call-count")" == 5 ]] || {
+[[ "$(<"$fixture_dir/state-registry-port-writer-pod/pod-list-call-count")" == 8 ]] || {
   echo "registry-port writer Pod was not retained through the quiescence poll" >&2
   exit 1
 }

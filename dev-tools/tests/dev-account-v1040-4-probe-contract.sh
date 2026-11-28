@@ -156,11 +156,23 @@ export KUBECONFIG=fixture-runtime
 export DEV_NAMESPACE_MANAGER_KUBECONFIG=fixture-namespace-manager
 
 git() {
+  local directory=services/account-service/src/main/resources/db/migration
+  if [[ "${3:-}" == show && "${4:-}" == "$PROBE_FIXTURE_BASE:$directory/"* ]]; then
+    local migration="${4#*:}"
+    case "${PROBE_SCENARIO:-}:${migration##*/}" in
+      changed-baseline:V1040__*|changed-prefix-content:V1040.2__*)
+        printf '%s\n' '-- a different revision of the same qualified migration path'
+        ;;
+      *)
+        command git -C "$2" show "$PROBE_FIXTURE_HEAD:$migration"
+        ;;
+    esac
+    return
+  fi
   if [[ "${3:-}" != ls-tree ]]; then
     command git "$@"
     return
   fi
-  local directory=services/account-service/src/main/resources/db/migration
   [[ "${*:4}" == "-r --full-tree --name-only $PROBE_FIXTURE_BASE -- $directory" ]] || return 2
   printf '%s/%s\n' "$directory" V1040.1__account_capacity_origin_decisions.sql
   if [[ "${PROBE_SCENARIO:-}" != mismatched-migration-prefix ]]; then
@@ -357,6 +369,15 @@ for scenario in unapproved-postgres-repository unapproved-postgres-digest; do
     grep -Fq 'retained PostgreSQL image differs from the approved client image' "$temp_dir/error"
     [[ ! -s "$temp_dir/receipt" && ! -e "$PROBE_JOB_MANIFEST" && ! -e "$PROBE_DRY_RUN" ]]
   done
+done
+
+for scenario in changed-baseline changed-prefix-content; do
+  if PROBE_SCENARIO="$scenario" run_protected_probe --check-permissions >"$temp_dir/receipt" 2>"$temp_dir/error"; then
+    echo "Protected probe accepted unqualified deployed migration content for $scenario." >&2
+    exit 1
+  fi
+  grep -Fq 'deployed migration content differs from the qualified Flyway checksum' "$temp_dir/error"
+  [[ ! -s "$temp_dir/receipt" && ! -e "$PROBE_JOB_MANIFEST" && ! -e "$PROBE_DRY_RUN" ]]
 done
 
 run_protected_probe --check-permissions

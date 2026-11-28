@@ -884,6 +884,49 @@ if (
     or "/tmp/dev-demo-values.yaml" not in workflow_deploy_run
 ):
     raise SystemExit("dev-demo must invoke the staged rollout script with namespace, release, and values path")
+if deploy_by_name["Deploy dev-demo release"]["env"].get("RETAINED_ACTIVATION") != (
+    "${{ steps.v2-migration-mode.outputs.activation }}"
+):
+    raise SystemExit("the final writer readback must be bound to retained activation")
+with tempfile.TemporaryDirectory() as directory:
+    rollout_calls = Path(directory) / "rollout-calls"
+    rollout_command = workflow_deploy_run.replace(
+        "${{ needs.dev-demo-plan.outputs.namespace }}", "dev",
+    ).replace("${{ needs.dev-demo-plan.outputs.release_name }}", "dev")
+    fake_bash = """
+bash() {
+  case "$*" in
+    './dev-tools/deploy/quiesce-v2-schema-migrations.sh --verify-only dev')
+      echo verify >>"$ROLLOUT_CALLS"
+      [[ "$WRITER_STATE" == quiescent ]]
+      ;;
+    './dev-tools/hosted/dev-demo/deploy-staged-dev-demo.sh dev dev /tmp/dev-demo-values.yaml')
+      echo helm >>"$ROLLOUT_CALLS"
+      ;;
+    *) return 2 ;;
+  esac
+}
+"""
+    for retained, writer_state, expected_status, expected_calls in (
+        ("true", "quiescent", 0, ["verify", "helm"]),
+        ("true", "rescaled", 1, ["verify"]),
+        ("false", "rescaled", 0, ["helm"]),
+    ):
+        rollout_calls.write_text("", encoding="utf-8")
+        result = subprocess.run(
+            ["bash", "-c", fake_bash + rollout_command],
+            env={
+                **os.environ, "RETAINED_ACTIVATION": retained, "RUNTIME_NAMESPACE": "dev",
+                "WRITER_STATE": writer_state, "ROLLOUT_CALLS": str(rollout_calls),
+            },
+            capture_output=True,
+            check=False,
+        )
+        if (
+            result.returncode != expected_status
+            or rollout_calls.read_text(encoding="utf-8").splitlines() != expected_calls
+        ):
+            raise SystemExit("retained activation must stop before Helm if a writer restarts")
 if deploy_run.count("helm upgrade --install") != 2:
     raise SystemExit("dev-demo must use separate participant-first and publication restore chart upgrades")
 if deploy_run.count("game_design_service_index=") != 1 or "previewStack.services[3].replicaCount=0" in deploy_run:
@@ -1499,7 +1542,7 @@ kubectl() {
     '--request-timeout=10s create -f - -o json')
       cat > "$NAMESPACE_CREATE"
       [[ "$CREATE_ALLOWED" == true ]] || return 1
-      cat "$NAMESPACE_SNAPSHOT"
+      cat "$NAMESPACE_CREATED_SNAPSHOT"
       ;;
     *'annotate namespace dev'*)
       printf '%s\\n' "$#" "$@" >> "$ANNOTATION_CALLS"
@@ -1512,7 +1555,7 @@ kubectl() {
 
     def run_namespace_step(
         step, annotations, allowed=True, namespace_uid="namespace-uid", retained=True,
-        prepared_uid="namespace-uid", creating=True,
+        prepared_uid="namespace-uid", creating=True, created_uid=None,
     ):
         calls.write_text("", encoding="utf-8")
         creation = fixture / "create"
@@ -1525,6 +1568,11 @@ kubectl() {
                 **metadata, "uid": namespace_uid, "annotations": {**metadata["annotations"], **annotations},
             }
         }), encoding="utf-8")
+        created_snapshot = fixture / "created-snapshot.json"
+        created_snapshot.write_text(json.dumps({
+            "kind": "Namespace",
+            "metadata": {**metadata, "uid": created_uid if created_uid is not None else namespace_uid},
+        }), encoding="utf-8")
         result = subprocess.run(
             ["bash", "-e", "-c", fake_kubectl + step["run"]],
             env={
@@ -1533,6 +1581,7 @@ kubectl() {
                 "GITHUB_RUN_ATTEMPT": "2", "RUNTIME_NAMESPACE": "dev", "NAMESPACE_UID": prepared_uid,
                 "PREVIOUS_NAMESPACE_UID": "namespace-uid", "NAMESPACE_CREATE": str(creation),
                 "CREATE_ALLOWED": str(creating).lower(),
+                "NAMESPACE_CREATED_SNAPSHOT": str(created_snapshot),
                 "RETAINED_ACTIVATION": str(retained).lower(), "DEPLOYED_BASE_SHA": base_sha, "HEAD_SHA": target_sha,
                 "ANNOTATION_CALLS": str(calls), "NAMESPACE_SNAPSHOT": str(snapshot),
                 "ANNOTATION_ALLOWED": str(allowed).lower(),
@@ -1544,7 +1593,9 @@ kubectl() {
         return result.returncode, mutations
 
     fresh_uid = "fresh-namespace-uid"
-    if run_namespace_step(prepare_namespace, {}, retained=False, namespace_uid=fresh_uid) != (0, []):
+    if run_namespace_step(
+        prepare_namespace, {}, retained=False, namespace_uid="later-get-uid", created_uid=fresh_uid,
+    ) != (0, []):
         raise SystemExit("a clean deploy must bind the UID returned by Namespace creation")
     if (fixture / "out").read_text(encoding="utf-8") != f"namespace_uid={fresh_uid}\n":
         raise SystemExit("the clean-deploy UID must come from the Namespace creation response")
@@ -2059,10 +2110,14 @@ if not (
     )
 game_design_warning_run = game_design_warning.get("run", "")
 for required_warning in (
+    "firemud.dev/pending-dev-demo-deployment",
+    "the original Helm release and revision",
+    "the exact dev Namespace UID",
+    "retained Flyway history",
+    "current writer state",
     "may have left Game Design unavailable",
     "scaled to zero",
     "publication endpoints drained",
-    "Inspect and repair",
     "Game Design Deployment, Pods, Service, and EndpointSlices",
 ):
     if required_warning not in game_design_warning_run:
@@ -2090,7 +2145,8 @@ if quiesced_writer_warning.get("if") != expected_quiesced_writer_warning_conditi
 quiesced_writer_warning_run = quiesced_writer_warning.get("run", "")
 for required_warning in (
     "Account, Game Session, and Automation writer Deployments may be partially quiesced",
-    "Inspect their current state before retrying",
+    "as part of deployment-owner reconciliation",
+    "keep the unresolved deployment intent in place",
     "writer quiescence fails",
     "Helm deploy fails partway through",
     "a partial deployment may have re-enabled some writers",

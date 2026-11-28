@@ -1775,20 +1775,29 @@ jobs:
                 }
                 if (pendingVisibility.length > 0) {
                   const phase = "Native runtime producer visibility";
-                  const native = await readInventory(visibilitySince, ["pull_request"], visibilityDeadline, phase, () => {});
+                  // Native PR work may already have held the tuple's concurrency
+                  // group when the separate typed admission request was sent.
+                  const nativeSince = new Date(Date.parse(visibilitySince) - runtimeRunLookbackMilliseconds).toISOString();
+                  const native = await readInventory(nativeSince, ["pull_request"], visibilityDeadline, phase, () => {});
                   if (!native.complete) throw new Error("Native runtime producer visibility is incomplete; no retry issued");
+                  const options = request => withRequestDeadline(request, visibilityDeadline, phase);
                   for (let index = pendingVisibility.length - 1; index >= 0; index--) {
-                    const {tuple, dispatchSince} = pendingVisibility[index];
+                    const {tuple} = pendingVisibility[index];
                     const title = exactRuntimeProducerTitle(tuple);
-                    const newest = native.runs.filter(run => run.display_title === title && validTimestamp(run.created_at) &&
-                        Date.parse(run.created_at) >= Date.parse(dispatchSince))
+                    const newest = native.runs.filter(run => run.display_title === title && validTimestamp(run.created_at))
                       .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
                     const [candidate, rival] = newest;
                     if (!exactActiveNativeProducer(candidate, tuple, title) ||
                         (rival && Date.parse(candidate.created_at) === Date.parse(rival.created_at))) continue;
-                    const {data: current} = await github.rest.actions.getWorkflowRun(withRequestDeadline({
+                    const {data: base} = await github.rest.git.getRef(options({...context.repo, ref: `heads/${tuple.baseRef}`}));
+                    if (base?.ref !== `refs/heads/${tuple.baseRef}` || base.object?.sha !== tuple.baseSha) continue;
+                    const {data: pull} = await github.rest.pulls.get(options({...context.repo, pull_number: Number(tuple.prNumber)}));
+                    if (pull?.state !== "open" || pull.head?.sha !== tuple.headSha || pull.base?.ref !== tuple.baseRef ||
+                        pull.merge_commit_sha !== tuple.mergeSha || pull.head?.repo?.full_name !== expectedRepository ||
+                        pull.base?.repo?.full_name !== expectedRepository) continue;
+                    const {data: current} = await github.rest.actions.getWorkflowRun(options({
                       ...context.repo, run_id: candidate.id,
-                    }, visibilityDeadline, phase));
+                    }));
                     if (!exactActiveNativeProducer(current, tuple, title) || current.id !== candidate.id ||
                         current.run_attempt !== candidate.run_attempt || current.created_at !== candidate.created_at ||
                         current.head_branch !== candidate.head_branch) continue;

@@ -1013,7 +1013,7 @@ async function runDispatcher({
           }
           const branchError = typeof branchErrors[ref] === "function" ? branchErrors[ref](refRequests.length) : branchErrors[ref];
           if (branchError) throw Object.assign(new Error("fixture branch lookup failed"), { status: branchError });
-          return { data: { object: {
+          return { data: { ref: `refs/${ref}`, object: {
             sha: branchHeads[ref] ?? allTuples.find((tuple) => `heads/${tuple.baseRef}` === ref)?.baseSha ??
               callback.head_sha ?? currentBaseSha,
           } } };
@@ -1181,15 +1181,12 @@ async function runDispatcher({
         listWorkflowRuns: async (request) => {
           recordApiRequest("actions.listWorkflowRuns", request);
           if (request.workflow_id === 702) {
-            const workflow_runs = publication.inventory ?? [publication.run];
+            const workflow_runs = (publication.inventory ?? [publication.run])
+              .filter(run => request.event === undefined || run?.event === request.event);
             return {data: {total_count: publication.totalCount ?? workflow_runs.length, workflow_runs}};
           }
           inventoryCalls.push(request);
           observationPostCounts.push(dispatches.filter(item => item.event_type === "pr-runtime-base-refresh-request").length);
-          if (request.event === "pull_request" && observedNativeProducer && dispatches.length > 0 &&
-              request.created === "2026-01-08T00:00:00.000Z..*") {
-            return {data: {total_count: 1, workflow_runs: [observedNativeProducer]}};
-          }
           if (visibilityResponse && request.event === "repository_dispatch" && request.created === "2026-01-08T00:00:00.000Z..*") {
             const response = visibilityResponse(request, postedRuns);
             if (response) return {data: response};
@@ -1208,6 +1205,8 @@ async function runDispatcher({
             : refinement ? inventory.refined : inventory.initial ?? inventory.runs ?? [];
           const runs = [...suppliedRuns,
             ...lateProducers.filter(run => run.event === request.event),
+            ...(request.event === "pull_request" && observedNativeProducer && dispatches.length > 0 &&
+              !suppliedRuns.some(run => run.id === observedNativeProducer.id) ? [observedNativeProducer] : []),
             ...(request.event === "repository_dispatch" ? postedRuns : [])];
           const createdMatch = /^(.+)\.\.\*$/.exec(request.created ?? "");
           const createdFloor = createdMatch ? Date.parse(createdMatch[1]) : Number.NaN;
@@ -2045,6 +2044,9 @@ async function runDispatcher({
     ["publisher may still be running", {run: {...publisher, status: "in_progress", conclusion: null}}, []],
     ["publisher already succeeded", {run: {...publisher, conclusion: "success"}}, []],
     ["publisher could have written some tags", {job: {...publisherJob, steps: [{...noWrite, conclusion: "failure"}]}}, []],
+    ["sole callback proves failure before writing tags", {run: callbackPublisher, job: callbackJob}, ["101"]],
+    ["sole callback may have written tags", {run: callbackPublisher,
+      job: {...callbackJob, steps: [{...noWrite, started_at: "2026-01-01T12:12:12Z"}]}}, []],
     ["artifact is still retained", {artifact: {...artifact, expired: false}}, []],
     ["artifact is from a different upload window", {artifact: {...artifact, created_at: "2026-01-01T11:58:00Z"}}, []],
     ["two exact publishers cannot prove a unique pre-write failure", {inventory: [publisher, callbackPublisher],
@@ -2064,6 +2066,10 @@ async function runDispatcher({
       publication: {run: publisher, artifact, job: publisherJob, ...overrides}});
     assert.deepEqual(numbers(result), expected, disposition);
     assert.deepEqual(result.errors, []);
+    if (overrides.run === callbackPublisher) {
+      assert(result.apiRequestRecords.some(({name, options}) => name === "actions.listJobsForWorkflowRunAttempt" &&
+        options.run_id === callbackPublisher.id && options.attempt_number === callbackPublisher.run_attempt), disposition);
+    }
   }
   const artifactOnly = {...successfulJob, name: "PR Full-Stack Smoke (runtime-required=false)",
     steps: successfulJob.steps.filter(step => !["Run credential-free full-stack smoke", "Stop smoke stack",
@@ -2285,14 +2291,14 @@ async function runDispatcher({
   assert.equal(manyInvisible.timerPostCounts[0], 12, "all runtime POSTs precede the first visibility wait");
   assert.equal(manyInvisible.waitedMillis, 120000, "fan-out shares exactly one visibility window");
   const visibilityFloor = "2026-01-08T00:00:00.000Z..*";
-  const observations = manyInvisible.inventoryCalls.filter(request => request.created === visibilityFloor);
-  for (const event of ["repository_dispatch", "pull_request"]) {
-    const perEvent = observations.filter(request => request.event === event);
+  const nativeFloor = "2026-01-01T00:00:00.000Z..*";
+  for (const [event, floor] of [["repository_dispatch", visibilityFloor], ["pull_request", nativeFloor]]) {
+    const perEvent = manyInvisible.inventoryCalls.filter(request => request.event === event && request.created === floor);
     assert.equal(perEvent.length, 24, "each interval checks both progress paths within the shared window");
     assert(perEvent.every(request => request.page === 1 && request.per_page === 100));
   }
   const nativeProducer = producer(tuple, "pull_request", "in_progress", null, {
-    created_at: "2026-01-08T00:00:00Z",
+    created_at: "2026-01-07T23:59:59Z",
     pull_requests: [{number: Number(tuple.prNumber), head: {sha: tuple.headSha}, base: {sha: tuple.baseSha, ref: "develop"}}],
   });
   const nativeProgress = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true, observedNativeProducer: nativeProducer,
@@ -2314,8 +2320,8 @@ async function runDispatcher({
     assert.deepEqual(numbers(heldNative), ["101"]);
     assert(heldNative.errors.some(message => message.includes("visibility is unknown")));
   }
-  assert(manyInvisible.inventoryCalls.filter(request => request.created !== visibilityFloor)
-    .every(request => request.event === "repository_dispatch"), "admission proof inventory stays typed-only");
+  assert(manyInvisible.inventoryCalls.every((request, index) => request.event === "repository_dispatch" ||
+    manyInvisible.observationPostCounts[index] === 12), "native progress queries never replace typed-only admission proof");
   let earlierProofAvailable = false;
   const earlierBound = await runDispatcher({tuples: [tuple], hideDispatchVisibility: true,
     inventories: {repository_dispatch: [earlierRunning]},
@@ -4092,9 +4098,16 @@ const github = {
       }),
     },
     git: {
-      getRef: async () => {
+      getRef: async ({ref}) => {
+        if (ref.startsWith("tags/")) {
+          const baseRefHash = require("node:crypto").createHash("sha256").update(currentBaseRef).digest("hex");
+          if (ref !== `tags/firemud-runtime-refresh-intent/v1/pr-42/${currentMergeSha}/${baseRefHash}/g1`) {
+            throw Object.assign(new Error("unexpected fixture claim ref"), {status: 404});
+          }
+          return {data: {ref: `refs/${ref}`, object: {type: "tag", sha: "f".repeat(40)}}};
+        }
         currentBaseLookups += 1;
-        return { data: { object: { sha: liveBaseSha } } };
+        return { data: { ref: `refs/${ref}`, object: { sha: liveBaseSha } } };
       },
     },
     repos: {
@@ -4144,7 +4157,12 @@ const github = {
           {name: "Stop smoke stack", status: "completed", conclusion: "success"},
           {name: "Require successful runtime smoke and authenticated cleanup", status: "completed", conclusion: "success"},
         ] : [])],
-      }];
+      }, ...(typed ? [{
+        id: 882, name: "Derive Runtime Image Metadata", run_id: run.id, run_attempt: run.run_attempt,
+        head_sha: run.head_sha, status: "completed", conclusion: "success",
+        steps: [{name: `Runtime refresh claim generation 1 attempt ${run.run_attempt} tag ${"f".repeat(40)}`,
+          status: "completed", conclusion: "success"}],
+      }] : [])];
     }
     throw new Error("unexpected paginated method");
   },

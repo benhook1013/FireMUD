@@ -495,7 +495,14 @@ jobs:
         continue-on-error: true
         env:
           KUBECONFIG: ${{ runner.temp }}/dev-demo-runtime.kubeconfig
+          RUNTIME_NAMESPACE: ${{ needs.dev-demo-plan.outputs.namespace }}
+          RETAINED_ACTIVATION: ${{ steps.v2-migration-mode.outputs.activation }}
         run: |
+          set -euo pipefail
+          if [[ "$RETAINED_ACTIVATION" == true ]]; then
+            # Recheck the observed writer state immediately before the staged deploy.
+            bash ./dev-tools/deploy/quiesce-v2-schema-migrations.sh --verify-only "$RUNTIME_NAMESPACE"
+          fi
           bash ./dev-tools/hosted/dev-demo/deploy-staged-dev-demo.sh \
           "${{ needs.dev-demo-plan.outputs.namespace }}" \
           "${{ needs.dev-demo-plan.outputs.release_name }}" \
@@ -578,13 +585,14 @@ jobs:
             echo ""
             echo "### Game Design recovery"
             echo ""
-            echo "**Warning:** The participant-first Helm upgrade may have left Game Design unavailable (scaled to zero or with publication endpoints drained) because the staged dev-demo deploy did not complete. Inspect and repair the Game Design Deployment, Pods, Service, and EndpointSlices before retrying."
+            echo "**Deployment intent retained:** The \`firemud.dev/pending-dev-demo-deployment\` hold protects an unresolved attempt. The deployment owner must reconcile the original Helm release and revision, the exact dev Namespace UID, retained Flyway history, and the current writer state before clearing the intent or authorizing another deploy."
+            echo "**Warning:** The participant-first Helm upgrade may have left Game Design unavailable (scaled to zero or with publication endpoints drained). Include the Game Design Deployment, Pods, Service, and EndpointSlices in the owner reconciliation."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fail if dev-demo rollout did not complete
         if: ${{ always() && steps.cluster-access.outputs.available == 'true' && steps.deploy-release.outcome == 'failure' }}
         run: |
-          echo "Dev-demo rollout failed during helm upgrade/install."
+          echo "Dev-demo rollout did not complete. The deployment intent remains held."
           exit 1
 
       - name: Wait for dev-demo runtime rollouts
@@ -1321,7 +1329,7 @@ jobs:
             echo ""
             echo "### Migration writer recovery"
             echo ""
-            echo "**Warning:** The Account, Game Session, and Automation writer Deployments may be partially quiesced because migration activation did not complete. This can happen when writer quiescence fails or the Helm deploy fails partway through. Inspect their current state before retrying; a partial deployment may have re-enabled some writers."
+            echo "**Warning:** The Account, Game Session, and Automation writer Deployments may be partially quiesced because migration activation did not complete. This can happen when writer quiescence fails or the Helm deploy fails partway through, and a partial deployment may have re-enabled some writers. Confirm their current state as part of deployment-owner reconciliation and keep the unresolved deployment intent in place."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove dev-demo kubeconfigs

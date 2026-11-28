@@ -34,18 +34,38 @@ fi
   fail "the checked-out probe source does not match the target"
 
 migration_directory=services/account-service/src/main/resources/db/migration
+verify_deployed_migration() {
+  local path="$1" expected_sha="$2" actual_sha
+  actual_sha="$(git -C "$helper_dir" show "$deployed_sha:$path" | sha256sum | cut -d ' ' -f 1)" ||
+    fail "deployed migration content is unavailable for ${path##*/}"
+  [[ "$actual_sha" == "$expected_sha" ]] ||
+    fail "deployed migration content differs from the qualified Flyway checksum for ${path##*/}"
+}
+
 deployed_migrations="$(git -C "$helper_dir" ls-tree -r --full-tree --name-only "$deployed_sha" -- "$migration_directory")" ||
   fail "the deployed Account migration tree is unavailable"
+verify_deployed_migration "$migration_directory/V1040__account_tenant_capacity_owner.sql" \
+  b4f3d08e6272eb1757331fcfed187ab3035fdbc900274506b1d710ac5daf543e
 deployed_prefix=0
 while IFS= read -r migration; do
   case "${migration##*/}" in
-    V1040.1__account_capacity_origin_decisions.sql) next=1 ;;
-    V1040.2__bound_capacity_origin_refusals.sql) next=2 ;;
-    V1040.3__validate_only_inserted_refusal_budgets.sql) next=3 ;;
+    V1040.1__account_capacity_origin_decisions.sql)
+      next=1
+      migration_sha=a81c98c6f192abace2b98c7ebac89926f68978bd9d911077d0b2aa7a666e6aa0
+      ;;
+    V1040.2__bound_capacity_origin_refusals.sql)
+      next=2
+      migration_sha=fc049730afe251b4b7c79b282cc647ec88da0ecebb4c0041bbf3045fd2b0c7f3
+      ;;
+    V1040.3__validate_only_inserted_refusal_budgets.sql)
+      next=3
+      migration_sha=4a50e0c7e6ac24d7862daedd8448b0c793a1bd5b2664e8bce79e2461388fe3d6
+      ;;
     V1040.*__*.sql) fail "the deployed Account migration tree is outside the supported V1040 prefix" ;;
     *) continue ;;
   esac
   (( next == deployed_prefix + 1 )) || fail "the deployed Account migration prefix is incomplete"
+  verify_deployed_migration "$migration" "$migration_sha"
   deployed_prefix=$next
 done <<<"$deployed_migrations"
 [[ "$origin_prefix" == "$deployed_prefix" ]] ||

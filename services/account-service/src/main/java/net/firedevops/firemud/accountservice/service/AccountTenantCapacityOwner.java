@@ -344,9 +344,10 @@ public final class AccountTenantCapacityOwner {
         throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
       throw unavailable();
     }
-    if (!current.membershipExists()
-        || !current.gameplayAdmissionAllowed()
-        || !"ACTIVE".equals(current.membershipLifecycleState())) throw unavailable();
+    if (evidence.permitsCreation()
+        && (!current.membershipExists()
+            || !current.gameplayAdmissionAllowed()
+            || !"ACTIVE".equals(current.membershipLifecycleState()))) throw unavailable();
     return parsed;
   }
 

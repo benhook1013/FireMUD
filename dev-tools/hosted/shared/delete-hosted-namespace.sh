@@ -120,22 +120,38 @@ delete_status=0
 printf '%s\n' "$delete_options" |
   kubectl delete --raw "/api/v1/namespaces/${namespace}" -f - >/dev/null || delete_status=$?
 if ((delete_status != 0)); then
-  if [[ -n "$expected_namespace_uid" && -z "$expected_deployed_head" ]]; then
+  if [[ -n "$expected_deployed_head" ]]; then
+    if ! namespace_lookup="$(kubectl get namespace "$namespace" --ignore-not-found -o json)"; then
+      echo "unable to verify failed deletion of hosted namespace ${namespace}" >&2
+      exit 1
+    fi
+    if [[ -z "$namespace_lookup" ]]; then
+      echo "Hosted namespace ${namespace} is absent."
+      exit 0
+    fi
+    if ! jq -es --arg name "$namespace" --arg uid "$delete_uid" '
+      length == 1 and (.[0] | .metadata.name == $name and .metadata.uid == $uid
+        and (.metadata.deletionTimestamp | type == "string" and length > 0))
+    ' <<<"$namespace_lookup" >/dev/null; then
+      echo "unable to verify termination of the classified hosted namespace ${namespace}" >&2
+      exit "$delete_status"
+    fi
+    echo "Waiting for the classified hosted namespace ${namespace} to finish terminating."
+  elif [[ -n "$expected_namespace_uid" ]]; then
     echo "unable to request UID-fenced deletion of hosted namespace ${namespace}" >&2
     exit "$delete_status"
+  else
+    if ! namespace_lookup="$(kubectl get namespace "$namespace" --ignore-not-found -o name)"; then
+      echo "unable to verify failed deletion of hosted namespace ${namespace}" >&2
+      exit 1
+    fi
+    if [[ -z "$namespace_lookup" ]]; then
+      echo "Hosted namespace ${namespace} is absent."
+      exit 0
+    fi
+    echo "unable to request deletion of hosted namespace ${namespace}" >&2
+    exit "$delete_status"
   fi
-  if ! namespace_lookup="$(
-    kubectl get namespace "$namespace" --ignore-not-found -o name
-  )"; then
-    echo "unable to verify failed deletion of hosted namespace ${namespace}" >&2
-    exit 1
-  fi
-  if [[ -z "$namespace_lookup" ]]; then
-    echo "Hosted namespace ${namespace} is absent."
-    exit 0
-  fi
-  echo "unable to request deletion of hosted namespace ${namespace}" >&2
-  exit "$delete_status"
 fi
 
 wait_status=0

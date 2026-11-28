@@ -349,11 +349,22 @@ class AccountTenantCapacityClientMtlsTest {
     assertOriginalDenialRecovery(Failure.CAPACITY_QUOTA_EXCEEDED, true, true);
   }
 
+  @Test
+  void restartedClientRejectsRetainedDenialFromADifferentAttempt() throws Exception {
+    assertOriginalDenialRecovery(Failure.CAPACITY_QUOTA_EXCEEDED, true, false, true);
+  }
+
   private void assertOriginalDenialRecovery(Failure code, boolean receiptPresent) throws Exception {
     assertOriginalDenialRecovery(code, receiptPresent, false);
   }
 
   private void assertOriginalDenialRecovery(Failure code, boolean receiptPresent, boolean timeOut)
+      throws Exception {
+    assertOriginalDenialRecovery(code, receiptPresent, timeOut, false);
+  }
+
+  private void assertOriginalDenialRecovery(
+      Failure code, boolean receiptPresent, boolean timeOut, boolean differentAttempt)
       throws Exception {
     var clock = mock(Clock.class);
     var now = new AtomicReference<>(CapacityAdmissionTestFixture.NOW);
@@ -361,6 +372,22 @@ class AccountTenantCapacityClientMtlsTest {
     long originalDeadline = deadline();
     var tls = pki.clientProperties(directory, pki.identity("client"));
     var request = CapacityAdmissionTestFixture.playerRequest();
+    var denialRequest =
+        differentAttempt
+            ? new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
+                    request.identity(),
+                    UUID.randomUUID(),
+                    request.capacityRearmFence(),
+                    request.targetNamespace(),
+                    request.context(),
+                    request.operation(),
+                    request.priorShape(),
+                    request.requestedShape(),
+                    request.evidence(),
+                    request.capacityDelta(),
+                    null)
+                .withDigest()
+            : request;
     UUID denialId = receiptPresent ? UUID.randomUUID() : null;
     var commits = new AtomicInteger();
     var reads = new AtomicInteger();
@@ -386,7 +413,7 @@ class AccountTenantCapacityClientMtlsTest {
                 reads.incrementAndGet();
                 retainedRead.set(wire);
                 observer.onNext(
-                    TenantCapacityAdmissionGrpcCodec.toRefusal(request, code, denialId));
+                    TenantCapacityAdmissionGrpcCodec.toRefusal(denialRequest, code, denialId));
                 observer.onCompleted();
               }
             });
@@ -406,7 +433,7 @@ class AccountTenantCapacityClientMtlsTest {
       long readDeadline = now.get().plusSeconds(5).toEpochMilli();
       try (var restarted = client(server, tls, new GrpcChannelFactory(), clock)) {
         restarted.init();
-        if (receiptPresent) {
+        if (receiptPresent && !differentAttempt) {
           assertThat(restarted.readRetainedAdmissionDenial(request, readDeadline))
               .isEqualTo(new Refusal(code, denialId));
         } else {

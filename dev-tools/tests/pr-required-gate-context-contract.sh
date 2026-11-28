@@ -627,6 +627,17 @@ PY
 
 node - "$smoke_clock_fixture" <<'NODE'
 const assert = require("node:assert/strict");
+function claimJobFor(source) {
+  return {id: source.id + 1000000, run_id: source.id, run_attempt: source.run_attempt,
+    name: "Derive Runtime Image Metadata", head_sha: source.head_sha, status: "completed", conclusion: "success",
+    steps: [{name: `Runtime refresh claim generation 1 attempt ${source.run_attempt} tag ${"f".repeat(40)}`,
+      status: "completed", conclusion: "success"}]};
+}
+function currentClaim(ref, merge) {
+  const hash = require("node:crypto").createHash("sha256").update("develop").digest("hex");
+  assert.match(ref, new RegExp(`^tags/firemud-runtime-refresh-intent/v1/pr-[1-9][0-9]*/${merge}/${hash}/g1$`));
+  return {data: {ref: `refs/${ref}`, object: {type: "tag", sha: "f".repeat(40)}}};
+}
 const script = require("node:fs").readFileSync(process.argv[2], "utf8");
 const head = "a".repeat(40), base = "b".repeat(40), merge = "c".repeat(40);
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
@@ -743,7 +754,8 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single", t
         return {data: {type: "file", path, encoding: "base64", content: bytes.toString("base64"), size: bytes.length}};
       },
     },
-    git: {getRef: async () => ({data: {ref: "refs/heads/develop", object: {sha: base}}})},
+    git: {getRef: async ({ref}) => ref.startsWith("tags/") ? currentClaim(ref, merge) :
+      {data: {ref: "refs/heads/develop", object: {sha: base}}}},
     actions: { listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
       getWorkflow: async () => ({data: {id: 7, path: ".github/workflows/runtime-images.yml", name: "Build Runtime Images"}}),
       listJobsForWorkflowRunAttempt: async input => {
@@ -753,7 +765,7 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single", t
         if (selectionCase === "recoverable-ambiguous-failure") {
           job.steps.find(step => step.name.startsWith("Known canonical transition")).conclusion = null;
         }
-        return {data: {total_count: 1, jobs: [job]}};
+        return {data: {total_count: 2, jobs: [job, claimJobFor(failedTyped)]}};
       },
       getWorkflowRun: async ({run_id}) => {
         if (run_id === failedTyped.id && selectionCase.startsWith("recoverable-")) return {data: failedTyped};
@@ -795,7 +807,8 @@ async function scenario(outcome, completedAtMinutes, selectionCase = "single", t
     if (input.run_id === 44) {
       assert.ok([1, ...(selectionCase === "recoverable-replacement-rerun" ? [2] : [])].includes(input.attempt_number));
       typedJobAttempts.push(input.attempt_number);
-      return [smokeJob(44, input.attempt_number, input.attempt_number === 1 ? "success" : typedSmokeConclusion)];
+      return [smokeJob(44, input.attempt_number, input.attempt_number === 1 ? "success" : typedSmokeConclusion),
+        claimJobFor(refreshSource(input.attempt_number))];
     }
     return cancellationJobs(input.run_id);
   } };
@@ -957,6 +970,17 @@ NODE
 
 node - "$smoke_clock_fixture" "$ROOT_DIR/.github/workflows/runtime-images.yml" <<'NODE'
 const assert = require("node:assert/strict");
+function claimJobFor(source) {
+  return {id: source.id + 1000000, run_id: source.id, run_attempt: source.run_attempt,
+    name: "Derive Runtime Image Metadata", head_sha: source.head_sha, status: "completed", conclusion: "success",
+    steps: [{name: `Runtime refresh claim generation 1 attempt ${source.run_attempt} tag ${"f".repeat(40)}`,
+      status: "completed", conclusion: "success"}]};
+}
+function currentClaim(ref, merge) {
+  const hash = require("node:crypto").createHash("sha256").update("develop").digest("hex");
+  assert.match(ref, new RegExp(`^tags/firemud-runtime-refresh-intent/v1/pr-[1-9][0-9]*/${merge}/${hash}/g1$`));
+  return {data: {ref: `refs/${ref}`, object: {type: "tag", sha: "f".repeat(40)}}};
+}
 const fs = require("node:fs");
 const script = fs.readFileSync(process.argv[2], "utf8");
 const definition = fs.readFileSync(process.argv[3]);
@@ -1091,7 +1115,8 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
           afterFinalGet && kind === "ordinary-final-get-retarget" ? "other" : "develop", sha: moved ? movedBase : base},
         merge_commit_sha: moved ? movedMerge : merge}};
     }},
-    git: {getRef: async () => {
+    git: {getRef: async ({ref}) => {
+      if (ref.startsWith("tags/")) return currentClaim(ref, observedBaseMove ? movedMerge : merge);
       observedBaseMove ||= kind === "ordinary-final-get-ref-drift" && qualifiedAttemptReads >= 2;
       return {data: {ref: "refs/heads/develop", object: {sha: observedBaseMove ? movedBase : base}}};
     }},
@@ -1152,8 +1177,9 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
     assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
     if (ordinary) assert.equal(listedAttempt, 1, "attempt jobs cannot precede complete typed list identity");
     snapshots++;
+    const claimJobs = source.event === "repository_dispatch" ? [claimJobFor(source)] : [];
     if (kind === "ordinary-missing-smoke-step" || kind === "ordinary-delayed-smoke-step" && snapshots <= 2) {
-      return [{...job, steps: job.steps.filter(step => step.name !== "Run credential-free full-stack smoke")}];
+      return [{...job, steps: job.steps.filter(step => step.name !== "Run credential-free full-stack smoke")}, ...claimJobs];
     }
     if (kind === "lagging-cleanup" && snapshots <= 2) {
       return [{...job, steps: job.steps.filter(step => step.name !== "Stop smoke stack")}];
@@ -1191,7 +1217,7 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
       "failed-job": {conclusion: "failure"}, "pending-job": {status: "in_progress", conclusion: null},
     };
     return ["duplicate-jobs", "duplicate-attempt-jobs"].includes(kind)
-      ? [job, {...job, id: 101}] : [{...job, ...(mutations[kind] || {})}];
+      ? [job, {...job, id: 101}, ...claimJobs] : [{...job, ...(mutations[kind] || {})}, ...claimJobs];
   }};
   github.paginate.iterator = async function* (method, input) {
     assert.equal(method, listRuns);
@@ -4154,10 +4180,15 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
     definitions: {...classifierDefinitions,
       [workflowPath]: {type: "file", path: workflowPath, encoding: "base64", content: bytes.toString("base64"), size: bytes.length}}});
   if (event === "repository_dispatch") {
+    data.claimTag = "f".repeat(40);
+    data.claimBaseRef = "develop";
     data.run.event = data.source.event = data.latest.event = event;
     data.source.head_branch = data.latest.head_branch = "develop";
     data.source.head_sha = data.latest.head_sha = workflowSha;
     data.candidate.head_sha = data.jobs[0].head_sha = workflowSha;
+    data.jobs.push({id: 124, name: "Derive Runtime Image Metadata", run_id: data.source.id,
+      run_attempt: data.source.run_attempt, head_sha: workflowSha, status: "completed", conclusion: "success",
+      steps: [step(`Runtime refresh claim generation 1 attempt ${data.source.run_attempt} tag ${data.claimTag}`, "success")]});
   }
   if (!knownPlay) {
     data.candidate.steps.find(step => step.name ===
@@ -4172,7 +4203,16 @@ async function verify(mutate = () => {}, event = "pull_request", knownPlay = tru
   const github = {request: async () => ({data: data.source}), paginate: async () => data.jobs,
     rest: {actions: {getWorkflow: async () => ({data: {id: 7, path: workflowPath, name: "Build Runtime Images"}}),
       getWorkflowRun: async () => ({data: data.latest})}, pulls: {get: async () => ({data: data.currentPullRequest})},
-      git: {getRef: async ({ref}) => {assert.equal(ref, `heads/${data.identity.baseRef}`); return {data: data.currentBase};}},
+      git: {getRef: async ({ref}) => {
+        if (ref.startsWith("tags/")) {
+          const hash = require("node:crypto").createHash("sha256").update(data.claimBaseRef).digest("hex");
+          const expected = `tags/firemud-runtime-refresh-intent/v1/pr-${data.pr}/${data.identity.mergeSha}/${hash}/g1`;
+          if (ref !== expected) throw Object.assign(new Error("claim ref not found"), {status: 404});
+          return {data: {ref: `refs/${expected}`, object: {type: "tag", sha: data.claimTag}}};
+        }
+        assert.equal(ref, `heads/${data.identity.baseRef}`);
+        return {data: data.currentBase};
+      }},
       repos: {getContent: async ({owner, repo, path, ref}) => {
         assert.equal(`${owner}/${repo}`, repositoryName);
         assert.equal(ref, path === workflowPath && event === "repository_dispatch" ? workflowSha : data.identity.mergeSha,
@@ -4260,6 +4300,12 @@ async function recoveredFailure(options = {}, selectedRun = null, selectedIdenti
       });
       Object.assign(data.candidate, structuredClone(selectedCandidate));
       Object.assign(data.jobs[0], structuredClone(selectedCandidate));
+      const metadata = data.jobs[1];
+      metadata.run_id = data.source.id;
+      metadata.run_attempt = data.source.run_attempt;
+      metadata.steps[0].name =
+        `Runtime refresh claim generation 1 attempt ${data.source.run_attempt} tag ${data.claimTag}`;
+      data.claimBaseRef = selectedIdentity.baseRef;
       if (options.noProducer) data.jobs = [];
       data.currentPullRequest.head.sha = selectedIdentity.headSha;
       data.currentPullRequest.base.ref = selectedIdentity.baseRef;
@@ -4942,7 +4988,7 @@ async function refreshFinalIdentity(eventUnavailable = false) {
     base: {repo: {full_name: repositoryName}}, labels: [{name: "canonical-play-transition"}]};
   const resolve = execute((_label, call) => call(), {rest: {
     pulls: {get: async () => ({data: livePull})},
-    git: {getRef: async () => ({data: {object: {sha: movedBase}}})},
+    git: {getRef: async ({ref}) => ({data: {ref: `refs/${ref}`, object: {sha: movedBase}}})},
   }}, "benhook1013", "FireMUD", "3390", () => false, () => {}, TerminalGitHubRequestError,
     {info: () => {}, warning: () => {}}, identity.baseSha, identity.mergeSha, identity.headSha,
     identity.baseRef, async sha => {
@@ -5764,6 +5810,17 @@ function markerAccepted(overrides = {}) {
     d => {d.currentBase.ref = "refs/heads/main";},
     d => {delete d.currentBase.object;},
   ]) assert.equal(await verify(mutate, "repository_dispatch"), false, mutate.toString());
+  for (const knownPlay of [false, true]) {
+    assert.equal(await verify(data => {
+      data.identity.baseRef = data.currentPullRequest.base.ref = "main";
+      data.currentBase.ref = "refs/heads/main"; // All three object IDs remain unchanged.
+    }, "repository_dispatch", knownPlay), false,
+      "an otherwise exact typed attempt is not proof for another base ref at the same commit");
+    assert.equal(await verify(data => {
+      data.jobs.find(job => job.name === "Derive Runtime Image Metadata").steps[0].name =
+        "Runtime refresh claim generation 1 attempt 1 tag " + data.claimTag;
+    }, "repository_dispatch", knownPlay), false, "retained marker must bind the current native attempt");
+  }
   console.log("Canonical PLAY transition exception positive and negative contracts passed.");
 })().catch(error => {console.error(error); process.exitCode = 1;});
 NODE
@@ -6305,10 +6362,10 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   for (const scenario of ["typed-callback", "nested-callback", "fork", "success", "stale-attempt", "late-rerun", "ci-rerun", "ci-pending", "metadata", "late-drift", "second-page", "newer-original", "unclassified-newer", "pending-newer", "merge-unknown", "merge-conflict", "merge-drift"]) {
     assert.equal(await run(scenario), 0, scenario);
   }
-  for (const scenario of ["incomplete", "at-cap", "ambiguous-post", "invisible"]) {
+  for (const scenario of ["incomplete", "at-cap"]) {
     const state = {visible: false, posts: 0};
     await assert.rejects(run(scenario, state));
-    assert.equal(state.posts, ["incomplete", "at-cap"].includes(scenario) ? 0 : 1, "never retry unknown POST");
+    assert.equal(state.posts, 0, "incomplete inventory cannot authorize a POST");
     if (scenario === "at-cap") assert.deepEqual(state.inventoryPages.filter(call => call.workflow_id === "ci.yml").map(call => call.page), [1],
       "a coherent 1,000-row inventory is refused on page one, not because its page is short");
   }
@@ -6356,6 +6413,10 @@ async function run(kind, shared = {visible: false, posts: 0}) {
   await assert.rejects(run("rejected-post", rejectedPost), /validation rejected/);
   assert.equal(rejectedPost.posts, 1);
   assert.equal(rejectedPost.observations, undefined, "a documented rejection must not hold the mutex for observation");
+  const acceptedInvisible = {visible: false, posts: 0};
+  await assert.rejects(run("invisible", acceptedInvisible), /accepted but visibility is unknown/);
+  assert.equal(acceptedInvisible.posts, 1);
+  assert.equal(acceptedInvisible.observations, 24, "accepted invisible POST holds the lock for the existing bounded observation");
   const ambiguousInvisible = {visible: false, posts: 0};
   await assert.rejects(run("ambiguous-post", ambiguousInvisible), /attempted but visibility is unknown/);
   assert.equal(ambiguousInvisible.posts, 1);

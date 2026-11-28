@@ -1334,7 +1334,13 @@ async function runReconcile({
   const equivalentCi = await runReconcile({ciNativeRuns: {[ciRun.id]: {...ciRun, path: `${ciPath}@refs/pull/42/merge`}}});
   assert.equal(equivalentCi.failure, null);
   assert.equal(equivalentCi.postAttempts, 1, "exact native CI merge paths can differ from their bare inventory projection");
-  const legacyFailureHold = await runReconcile({preflightRefreshRuns: [typedRefresh, legacyFailedPlay]});
+  const legacyFailureHold = await runReconcile({preflightRefreshRuns: [typedRefresh, legacyFailedPlay],
+    refreshAttemptJobs: {[legacyFailedPlay.id]: {total_count: 1, jobs: [
+      {...failedJob, steps: [{...marker, conclusion: "success"}]},
+    ]}}});
+  assert(legacyFailureHold.requests.some(({name, options}) => name === "actions.listJobsForWorkflowRunAttempt" &&
+    options.run_id === legacyFailedPlay.id && options.attempt_number === legacyFailedPlay.run_attempt),
+  "the combined hold must inspect the legacy diagnostic's exact attempt jobs");
   assert.equal(legacyFailureHold.failure, null);
   assert.equal(legacyFailureHold.postAttempts, 0,
     "a legacy failed PLAY typed refresh retains its hold even alongside a verified cancelled result");

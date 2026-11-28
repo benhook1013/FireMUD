@@ -488,15 +488,7 @@ requalification = title == f"Publish PR Runtime Images requalification source-ru
 if requalification and (event != "repository_dispatch" or source_event != "pull_request"):
     unavailable("publication requalification requires an original pull_request source run")
 
-def prove_failed_requalification(failed_id, failed_attempt, failed_workflow):
-    failed_path = f"runs/{failed_id}/attempts/{failed_attempt}"
-    requalification_run = read_object(failed_path)
-    verify_run(requalification_run, failed_id, failed_attempt, failed_workflow, "repository_dispatch",
-               ".github/workflows/publish-pr-runtime-images.yml", "failure")
-    expected_title = f"Publish PR Runtime Images requalification source-run-{source_id} attempt-{source_attempt}"
-    if (requalification_run.get("display_title") != expected_title
-            or requalification_run.get("name") not in ("Publish PR Runtime Images", expected_title)):
-        unavailable("failed requalification does not bind the selected source")
+def prove_failed_requalification(requalification_run, failed_path):
     failed_jobs = read_jobs(requalification_run, failed_path)
     failed_publish_jobs = [job for job in failed_jobs if job.get("name") == "Publish Fixed PR Merge Image Tags"]
     if (len(failed_publish_jobs) != 1
@@ -540,14 +532,31 @@ if selection_reason != "latest":
     if not selection_reason.startswith(prefix) or event != "workflow_run" or source_event != "pull_request":
         unavailable("failed requalification selection is not bound to the publisher workflow")
     seen_failures = {run_id}
+    requalification_title = f"Publish PR Runtime Images requalification source-run-{source_id} attempt-{source_attempt}"
     for descriptor in failures:
         failed = re.fullmatch(r"([1-9][0-9]*):([1-9][0-9]*):([1-9][0-9]*)", descriptor)
         if not failed or failed[1] in seen_failures or failed[3] != workflow_id:
             unavailable("failed requalification selection is not bound to the publisher workflow")
-        seen_failures.add(failed[1])
-        expiry = prove_failed_requalification(*failed.groups())
-        if expiry:
-            retained_expiries.append(expiry)
+        failed_id, failed_attempt, failed_workflow = failed.groups()
+        seen_failures.add(failed_id)
+        requalification_identity = None
+        # The inventory exposes only the latest attempt for each run ID.
+        # Every native attempt must prove that it never reached the fixed tags.
+        for attempt_number in range(int(failed_attempt), 0, -1):
+            failed_path = f"runs/{failed_id}/attempts/{attempt_number}"
+            requalification_run = read_object(failed_path)
+            verify_run(requalification_run, failed_id, attempt_number, failed_workflow, "repository_dispatch",
+                       ".github/workflows/publish-pr-runtime-images.yml", "failure")
+            if (requalification_run.get("display_title") != requalification_title
+                    or requalification_run.get("name") not in ("Publish PR Runtime Images", requalification_title)):
+                unavailable("failed requalification does not bind the selected source")
+            workflow_revision = (requalification_run["head_branch"], requalification_run["head_sha"])
+            if requalification_identity is not None and workflow_revision != requalification_identity:
+                unavailable("failed requalification attempt history changed workflow revision")
+            requalification_identity = workflow_revision
+            expiry = prove_failed_requalification(requalification_run, failed_path)
+            if expiry:
+                retained_expiries.append(expiry)
 job = successful_job(publisher, publisher_path, ("Publish Fixed PR Merge Image Tags",))
 download = successful_step(job, "Download successful PR image artifacts")
 validate = successful_step(job, "Validate exact PR source and artifact before registry login")

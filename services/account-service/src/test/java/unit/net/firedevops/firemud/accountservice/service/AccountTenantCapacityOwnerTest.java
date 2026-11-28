@@ -1007,6 +1007,22 @@ class AccountTenantCapacityOwnerTest {
   }
 
   @Test
+  void exactNonCreatingMissingMembershipReturnsTheTypedBillingRefusal() throws Exception {
+    var f = new Fixture(false, CapacityAdmissionTestFixture.playerRequest(false));
+    f.existing = false;
+    f.retained = true;
+    qualifySources(f);
+    assertThatThrownBy(() -> f.owner.commit(f.request, CapacityAdmissionTestFixture.PEER))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> {
+              assertThat(failure.code()).isEqualTo(Failure.TENANT_BILLING_BLOCKED);
+              assertThat(failure.durableDenialId()).isNull();
+            });
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
   void nonCreatingEvidenceCannotStartRecoveryOrRearmWork() throws Exception {
     var f = new Fixture(false);
     var source =
@@ -1127,60 +1143,14 @@ class AccountTenantCapacityOwnerTest {
     var original = CapacityAdmissionTestFixture.playerRequest();
     var player = (TenantCapacityAdmission.PlayerContext) original.context();
     var target = (Map<String, Object>) original.evidence().fields().get("target");
-    var admitted =
-        CapacityAdmissionTestFixture.playerRequestFor(
-            player,
-            original.identity().admissionId(),
-            original.admissionAttemptId(),
-            "prod",
-            target,
-            CapacityAdmissionTestFixture.NOW);
-    if (creating) return admitted;
-    var fields = admitted.evidence().fields();
-    var parsed =
-        net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence
-            .parseCanonical(admitted.evidence().canonicalBytes());
-    Map<String, Object> facts = new java.util.LinkedHashMap<>();
-    for (String key :
-        java.util.List.of(
-            "sourceKind",
-            "subscriptionStatus",
-            "provisioningStatus",
-            "gameplayAvailable",
-            "allowPublicJoin",
-            "allowNewGameplayBindings",
-            "allowNewInstanceStarts",
-            "quotas",
-            "entitlementVersion",
-            "tenantBillingSequence",
-            "tenantAuthorityGeneration")) {
-      facts.put(key, fields.get(key));
-    }
-    facts.put("allowNewGameplayBindings", false);
-    var evidence =
-        net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence
-            .fromOwnerEvaluation(
-                player.requestId(),
-                admitted.evidence().callerWorkload(),
-                parsed.verifiedConnectScopeTokenHash(),
-                parsed.membershipSource(),
-                target,
-                facts,
-                (Map<String, Object>) fields.get("sourceReferences"),
-                CapacityAdmissionTestFixture.NOW);
-    return new Request(
-            admitted.identity(),
-            admitted.admissionAttemptId(),
-            1,
-            admitted.targetNamespace(),
-            admitted.context(),
-            admitted.operation(),
-            admitted.priorShape(),
-            admitted.requestedShape(),
-            TenantCapacityAdmission.Evidence.player(evidence),
-            1L,
-            null)
-        .withDigest();
+    return CapacityAdmissionTestFixture.playerRequestFor(
+        player,
+        original.identity().admissionId(),
+        original.admissionAttemptId(),
+        "prod",
+        target,
+        CapacityAdmissionTestFixture.NOW,
+        creating);
   }
 
   private static Instant sourceTokenExpiry(Request request) {

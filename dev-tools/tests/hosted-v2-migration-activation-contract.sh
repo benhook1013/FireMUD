@@ -63,10 +63,11 @@ assert_rejected() {
   delete_helper="$ROOT_DIR/dev-tools/hosted/shared/delete-hosted-namespace.sh"
   delete_request="$fixture_dir/delete-request.json"
   delete_attempt="$fixture_dir/delete-attempt"
+  delete_wait="$fixture_dir/delete-wait"
   base_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   namespace_for_head "$base_sha"
   RESET_NAMESPACE_JSON="$(jq -c '.metadata.resourceVersion = "7"' <<<"$FAKE_NAMESPACE_JSON")"
-  export RESET_NAMESPACE_JSON DELETE_REQUEST="$delete_request" DELETE_ATTEMPT="$delete_attempt"
+  export RESET_NAMESPACE_JSON DELETE_REQUEST="$delete_request" DELETE_ATTEMPT="$delete_attempt" DELETE_WAIT="$delete_wait"
   # shellcheck disable=SC2329 # Exported to the delete helper's child Bash as its kubectl mock.
   kubectl() {
     if [[ ${1:-} == delete ]]; then
@@ -74,7 +75,18 @@ assert_rejected() {
     fi
     case "$*" in
       'get namespace dev --ignore-not-found -o json')
-        [[ -s "$DELETE_REQUEST" ]] || printf '%s\n' "$RESET_NAMESPACE_JSON"
+        if [[ ! -s "$DELETE_REQUEST" ]]; then
+          printf '%s\n' "$RESET_NAMESPACE_JSON"
+        elif [[ ! -e "$DELETE_WAIT" ]]; then
+          case "${RESET_DELETE_OUTCOME:-success}" in
+            lost-response-active) printf '%s\n' "$RESET_NAMESPACE_JSON" ;;
+            lost-response-terminating)
+              jq -c '.metadata.deletionTimestamp = "2026-01-01T00:00:00Z"' <<<"$RESET_NAMESPACE_JSON" ;;
+            lost-response-replacement)
+              jq -c '.metadata.uid = "replacement" | .metadata.deletionTimestamp = "2026-01-01T00:00:00Z"' <<<"$RESET_NAMESPACE_JSON" ;;
+            lost-response-unavailable) return 1 ;;
+          esac
+        fi
         ;;
       'get namespace dev --ignore-not-found -o name')
         case "${RESET_DELETE_OUTCOME:-success}" in
@@ -84,7 +96,7 @@ assert_rejected() {
       'delete --raw /api/v1/namespaces/dev -f -')
         cat >"$DELETE_REQUEST"
         [[ "${RESET_DELETE_OUTCOME:-success}" == success ]] ;;
-      'wait --for=delete namespace/dev --timeout=180s') ;;
+      'wait --for=delete namespace/dev --timeout=180s') : >"$DELETE_WAIT" ;;
       *) return 2 ;;
     esac
   }
@@ -109,19 +121,24 @@ assert_rejected() {
   RESET_NAMESPACE_JSON="$clean_snapshot"
   bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" >"$fixture_dir/reset.stdout"
   jq -e '.preconditions == {uid:"fixture-dev-uid",resourceVersion:"7"}' "$delete_request" >/dev/null
-  for outcome in lost-response-absent lost-response-original lost-response-replacement lost-response-unavailable; do
-    rm "$delete_request"
+  for outcome in lost-response-absent lost-response-terminating lost-response-active lost-response-replacement lost-response-unavailable; do
+    rm -f -- "$delete_request" "$delete_wait"
     prior_attempts="$(wc -l <"$delete_attempt")"
     reset_status=0
     RESET_DELETE_OUTCOME="$outcome" bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" \
       >"$fixture_dir/reset.stdout" 2>"$fixture_dir/reset.stderr" || reset_status=$?
     [[ "$(wc -l <"$delete_attempt")" -eq $((prior_attempts + 1)) ]]
     jq -e '.preconditions == {uid:"fixture-dev-uid",resourceVersion:"7"}' "$delete_request" >/dev/null
-    if [[ "$outcome" == lost-response-absent ]]; then
+    if [[ "$outcome" == lost-response-absent || "$outcome" == lost-response-terminating ]]; then
       test "$reset_status" -eq 0
       grep -Fq 'Hosted namespace dev is absent.' "$fixture_dir/reset.stdout"
     else
       test "$reset_status" -ne 0
+    fi
+    if [[ "$outcome" == lost-response-terminating ]]; then
+      test -e "$delete_wait"
+    else
+      test ! -e "$delete_wait"
     fi
   done
   rm "$delete_request"

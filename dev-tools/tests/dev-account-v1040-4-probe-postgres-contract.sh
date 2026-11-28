@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset CDPATH
 # Focused physical companion to the mock-only probe contract. Never targets a deployed database.
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 probe="$root_dir/dev-tools/deploy/probe-dev-account-v1040-4.sh"

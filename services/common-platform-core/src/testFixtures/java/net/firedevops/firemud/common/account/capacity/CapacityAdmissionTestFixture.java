@@ -86,8 +86,21 @@ public final class CapacityAdmissionTestFixture {
       String namespace,
       Map<String, Object> target,
       Instant at) {
+    return playerRequestFor(player, admission, attempt, namespace, target, at, true);
+  }
+
+  public static TenantCapacityAdmission.Request playerRequestFor(
+      TenantCapacityAdmission.PlayerContext player,
+      UUID admission,
+      UUID attempt,
+      String namespace,
+      Map<String, Object> target,
+      Instant at,
+      boolean permitsCreation) {
     Map<String, Object> source = new LinkedHashMap<>(sources());
     source.put("callerTokenExpiresAt", at.plusSeconds(90).toString());
+    Map<String, Object> policy = new LinkedHashMap<>(facts());
+    policy.put("allowNewGameplayBindings", permitsCreation);
     var evidence =
         RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
             player.requestId(),
@@ -96,7 +109,7 @@ public final class CapacityAdmissionTestFixture {
             RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash("controlled-scope"),
             admittingMembership(player.accountId(), player.tenantId(), player.requestId()),
             target,
-            facts(),
+            policy,
             source,
             at);
     return new TenantCapacityAdmission.Request(
