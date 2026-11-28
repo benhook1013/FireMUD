@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.repository;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -433,6 +434,37 @@ public class AccountAuthoritySourceEvidenceRepository {
     return new CanonicalIssuerSourceSnapshot(current, latest);
   }
 
+  /** Reads the exact retained issuer event with the verified current source in one transaction. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public CanonicalIssuerEventReadback readExactCanonicalIssuerEvent(
+      String exactIssuerId, long sequence, String expectedEventId, String expectedEventDigest) {
+    if (!ACCOUNT_ISSUER.equals(exactIssuerId) || sequence <= 0L) {
+      throw new SourceEvidenceUnavailableException();
+    }
+    CanonicalIssuerSourceSnapshot current = readCurrentCanonicalIssuerSource(exactIssuerId);
+    SourceCheckpoint checkpoint = current.source().checkpoint();
+    if (sequence > checkpoint.sequence()) {
+      throw new SourceEvidenceUnavailableException();
+    }
+    Event stored =
+        outbox
+            .findEvent(checkpoint.outboxStreamKey(), sequence)
+            .orElseThrow(SourceEvidenceUnavailableException::new);
+    if (stored.outboxSequence() != sequence
+        || !stored.outboxStreamKey().equals(checkpoint.outboxStreamKey())
+        || !stored.eventId().equals(expectedEventId)
+        || !stored.eventDigest().equals(expectedEventDigest)) {
+      throw new SourceEvidenceUnavailableException();
+    }
+    IssuerEvent selected = verifyIssuerEvent(stored, current.source().scope());
+    String retainedSourcePosition = Long.toString(sequence + 1L);
+    if (!retainedSourcePosition.equals(selected.issuerAuthGeneration())
+        || !retainedSourcePosition.equals(selected.sourceVersion())) {
+      throw new SourceEvidenceUnavailableException();
+    }
+    return new CanonicalIssuerEventReadback(current, selected);
+  }
+
   /** Records an explicit issuer-wide mutation with exact event readback and no Account cutoff. */
   @Transactional(propagation = Propagation.MANDATORY)
   public CurrentSourceEvidence appendIssuerAuthorityChange(
@@ -477,7 +509,11 @@ public class AccountAuthoritySourceEvidenceRepository {
         outbox
             .findEvent(streamKey, expectedSequence(expected))
             .orElseThrow(() -> new SourceEvidenceUnavailableException());
-    IssuerEvent verified = verifyIssuerEvent(readback, scope, advanced);
+    IssuerEvent verified = verifyIssuerEvent(readback, scope);
+    if (advanced.generation() != Long.parseLong(verified.issuerAuthGeneration())
+        || advanced.sourceVersion() != Long.parseLong(verified.sourceVersion())) {
+      throw new SourceEvidenceUnavailableException();
+    }
     updateSourceHead(before, verified, advanced, null);
     return readCurrentSource(scope, advanced);
   }
@@ -1062,11 +1098,15 @@ public class AccountAuthoritySourceEvidenceRepository {
     return account;
   }
 
-  private static IssuerEvent verifyIssuerEvent(
-      Event event, AuthorityScope scope, ScopeState state) {
-    SourceEvent verified =
-        AccountAuthoritySourceEventV1Codec.verify(
-            new String(event.payload(), StandardCharsets.UTF_8));
+  private static IssuerEvent verifyIssuerEvent(Event event, AuthorityScope scope) {
+    byte[] payload = event.payload();
+    final SourceEvent verified;
+    try {
+      verified =
+          AccountAuthoritySourceEventV1Codec.verify(new String(payload, StandardCharsets.UTF_8));
+    } catch (IllegalArgumentException malformed) {
+      throw new SourceEvidenceUnavailableException();
+    }
     if (!(verified instanceof IssuerEvent issuer)
         || !issuer.issuerId().equals(scope.issuerId())
         || !event.eventId().equals(issuer.eventId())
@@ -1074,8 +1114,7 @@ public class AccountAuthoritySourceEvidenceRepository {
         || !event.outboxStreamKey().equals(issuer.outboxStreamKey())
         || event.outboxSequence() != Long.parseLong(issuer.outboxSequence())
         || !event.eventDigest().equals(issuer.eventDigest())
-        || state.generation() != Long.parseLong(issuer.issuerAuthGeneration())
-        || state.sourceVersion() != Long.parseLong(issuer.sourceVersion())) {
+        || !Arrays.equals(payload, issuer.canonicalJsonUtf8())) {
       throw new SourceEvidenceUnavailableException();
     }
     return issuer;
@@ -1429,6 +1468,9 @@ public class AccountAuthoritySourceEvidenceRepository {
       }
     }
   }
+
+  public record CanonicalIssuerEventReadback(
+      CanonicalIssuerSourceSnapshot currentSnapshot, IssuerEvent selectedEvent) {}
 
   public record IssuerAccountSourceSnapshot(
       CurrentSourceEvidence issuer,
