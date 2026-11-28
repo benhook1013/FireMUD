@@ -1197,14 +1197,21 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     var fixtureReconciler =
         new RunOwnedFixtureInitialAdmissionHoldReconciler(holds, source, gameSession);
 
-    var original = allRows(dsl).get("initial_admission_bind_hold");
+    var original = allRows(dsl);
     fixtureReconciler.reconcilePendingHold();
-    assertThat(allRows(dsl).get("initial_admission_bind_hold")).isEqualTo(original);
+    assertThat(allRows(dsl)).isEqualTo(original);
     var genericOwner = new WorldCanonicalInitialAdmissionHoldOwner(holds, identity -> committed);
     assertThatThrownBy(() -> genericOwner.settleFromAuthenticatedOwnerRead(hold))
         .hasStackTraceContaining(
             "World fixture hold requires its original activation and committed terminal");
-    assertThat(allRows(dsl).get("initial_admission_bind_hold")).isEqualTo(original);
+    assertThat(allRows(dsl)).isEqualTo(original);
+
+    assertThat(provenance).isNotEqualTo(VALID_DIGEST);
+    assertSqlState(
+        () -> FixtureHoldStorageTestAccess.settle(holds, hold, VALID_DIGEST, committed),
+        "23514",
+        "World fixture terminal differs from its exact hold or provenance");
+    assertThat(allRows(dsl)).isEqualTo(original);
 
     fixtureReconciler.reconcilePendingHold();
     var terminal =
