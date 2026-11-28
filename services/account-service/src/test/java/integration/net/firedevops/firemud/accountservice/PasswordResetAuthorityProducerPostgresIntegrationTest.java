@@ -20,9 +20,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
+import net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigest;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.PasswordResetToken;
@@ -32,6 +34,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository.LogoutAllReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.OperationConflictException;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.PasswordResetReceipt;
@@ -39,7 +42,11 @@ import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
 import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
+import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback.LatestSourceSnapshot;
+import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceReader;
+import net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducer;
+import net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducer.LogoutAllResult;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
@@ -58,6 +65,8 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -222,6 +231,127 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
         .isEqualTo(journalBeforeRetry.get("request_payload", byte[].class));
     assertThat(journalAfterRetry.get("source_change_binding", byte[].class))
         .isEqualTo(journalBeforeRetry.get("source_change_binding", byte[].class));
+  }
+
+  @ParameterizedTest(name = "preserves both cutoffs when password reset is first: {0}")
+  @ValueSource(booleans = {true, false})
+  void mixesActualResetAndLogoutAllProducersWithImmutableExactReplay(boolean resetFirst) {
+    Fixture fixture = newFixture();
+    Seed seed = seedAccountAndToken(fixture, "initial-password");
+    UUID logoutRequest = UUID.randomUUID();
+    // The unregistered producer takes already-verified caller evidence from its caller.
+    String logoutTokenHash = sha256Hex("synthetic logout token:" + logoutRequest);
+    String profile = "control-ui";
+    String logoutDigest =
+        AccountLogoutRequestDigest.accountLogoutAll(seed.accountUuid(), profile, logoutTokenHash);
+    String newPassword = "replacement-password";
+
+    var readback =
+        new AccountAuthoritySourceEventReadback(
+            fixture.outbox(),
+            fixture.operations(),
+            fixture.logoutAllOperations(),
+            fixture.securityStateOperations());
+    var sourceReader =
+        new AccountAuthoritySourceReader(
+            fixture.accounts(),
+            fixture.authority(),
+            fixture.outbox(),
+            readback,
+            fixture.transactionManager());
+    var logoutProducer =
+        new AccountLogoutAllAuthorityEventProducer(
+            fixture.accounts(),
+            fixture.authority(),
+            new AccountAuthoritySourceEvidenceRepository(
+                fixture.transactionDsl(), fixture.authority(), fixture.outbox()),
+            fixture.outbox(),
+            fixture.logoutAllOperations(),
+            readback,
+            fixture.transactionDsl(),
+            fixture.transactionManager());
+    BiFunction<UUID, ScopeState, LogoutAllResult> logout =
+        (request, expected) ->
+            logoutProducer.commit(
+                request,
+                1,
+                logoutDigest,
+                profile,
+                logoutTokenHash,
+                account(fixture, seed.accountId()),
+                expected);
+
+    var baseline = sourceReader.readCurrent(seed.accountUuid());
+    assertThat(baseline.outboxSequence()).isZero();
+    assertThat(baseline.latestEvent()).isEmpty();
+    assertCutoffState(baseline.sourceState(), seed.accountUuid(), 1L);
+
+    if (resetFirst) {
+      reset(fixture, seed.rawToken(), newPassword);
+    } else {
+      assertThat(logout.apply(logoutRequest, baseline.sourceState()))
+          .isEqualTo(LogoutAllResult.LOGOUT_ALL_COMMITTED);
+    }
+    var first = sourceReader.readCurrent(seed.accountUuid());
+    assertThat(first.outboxSequence()).isEqualTo(1L);
+    assertCutoffState(first.sourceState(), seed.accountUuid(), 2L);
+    var firstEvent = first.latestEvent().orElseThrow();
+    Object firstReceipt =
+        resetFirst ? resetReceipt(fixture, seed) : logoutReceipt(fixture, logoutRequest);
+
+    if (resetFirst) {
+      assertThat(logout.apply(logoutRequest, first.sourceState()))
+          .isEqualTo(LogoutAllResult.LOGOUT_ALL_COMMITTED);
+    } else {
+      reset(fixture, seed.rawToken(), newPassword);
+    }
+    var second = sourceReader.readCurrent(seed.accountUuid());
+    assertThat(second.outboxSequence()).isEqualTo(2L);
+    assertThat(second.outboxStreamKey()).isEqualTo(first.outboxStreamKey());
+    assertCutoffState(second.sourceState(), seed.accountUuid(), 3L);
+    assertThat(readAuthority(fixture, seed.accountUuid())).isEqualTo(second.sourceState());
+    assertThat(countEvents(fixture, second.outboxStreamKey())).isEqualTo(2L);
+    assertThat(tokenExists(fixture, seed.rawToken())).isFalse();
+
+    PasswordResetReceipt resetReceipt = resetReceipt(fixture, seed);
+    LogoutAllReceipt logoutReceipt = logoutReceipt(fixture, logoutRequest);
+    assertThat(firstReceipt).isEqualTo(resetFirst ? resetReceipt : logoutReceipt);
+    assertThat(resetReceipt.outboxSequence()).isEqualTo(resetFirst ? 1L : 2L);
+    assertThat(logoutReceipt.outboxSequence()).isEqualTo(resetFirst ? 2L : 1L);
+    assertThat(resetReceipt.issuanceFence()).isEqualTo(resetFirst ? 2L : 3L);
+    assertThat(resetReceipt.issuanceFenceSourceVersion()).isEqualTo(resetFirst ? 2L : 3L);
+    assertThat(logoutReceipt.issuanceFence()).isEqualTo(resetFirst ? 3L : 2L);
+    assertThat(logoutReceipt.issuanceFenceSourceVersion()).isEqualTo(resetFirst ? 3L : 2L);
+    var historical = sourceReader.readCommittedEvent(seed.accountUuid(), 1L);
+    assertThat(historical.currentSnapshot()).isEqualTo(second);
+    assertThat(historical.requestedEvent()).isEqualTo(firstEvent);
+    var secondEvent = second.latestEvent().orElseThrow();
+    assertThat(firstEvent.eventId())
+        .isEqualTo(resetFirst ? resetReceipt.eventId() : logoutReceipt.eventId());
+    assertThat(secondEvent.eventId())
+        .isEqualTo(resetFirst ? logoutReceipt.eventId() : resetReceipt.eventId());
+
+    StoredState committed = snapshot(fixture, seed);
+    reset(fixture, seed.rawToken(), newPassword);
+    assertThat(snapshot(fixture, seed)).isEqualTo(committed);
+    assertThat(sourceReader.readCommittedEvent(seed.accountUuid(), 1L)).isEqualTo(historical);
+    assertThat(resetReceipt(fixture, seed)).isEqualTo(resetReceipt);
+
+    assertThat(logout.apply(logoutRequest, second.sourceState()))
+        .isEqualTo(LogoutAllResult.LOGOUT_ALL_COMMITTED);
+    assertThat(snapshot(fixture, seed)).isEqualTo(committed);
+    assertThat(sourceReader.readCommittedEvent(seed.accountUuid(), 1L)).isEqualTo(historical);
+    assertThat(logoutReceipt(fixture, logoutRequest)).isEqualTo(logoutReceipt);
+
+    assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "different-password"))
+        .isInstanceOf(OperationConflictException.class);
+    assertThatThrownBy(() -> logout.apply(UUID.randomUUID(), second.sourceState()))
+        .isInstanceOf(AccountLogoutAllAuthorityEventProducer.OperationConflictException.class)
+        .hasMessageContaining("already bound to another logout-all request");
+    assertThat(snapshot(fixture, seed)).isEqualTo(committed);
+    assertThat(sourceReader.readCommittedEvent(seed.accountUuid(), 1L)).isEqualTo(historical);
+    assertThat(resetReceipt(fixture, seed)).isEqualTo(resetReceipt);
+    assertThat(logoutReceipt(fixture, logoutRequest)).isEqualTo(logoutReceipt);
   }
 
   @Test
@@ -1359,6 +1489,27 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
   private ScopeState readAuthority(Fixture fixture, UUID accountUuid) {
     return transaction(
         fixture.transaction(), () -> fixture.authority().read(AuthorityScope.account(accountUuid)));
+  }
+
+  private void assertCutoffState(ScopeState state, UUID accountUuid, long revision) {
+    assertThat(state.scope()).isEqualTo(AuthorityScope.account(accountUuid));
+    assertThat(state.generation()).isEqualTo(revision);
+    assertThat(state.sourceVersion()).isEqualTo(revision);
+    assertThat(state.issuanceFence().accountId()).isEqualTo(accountUuid);
+    assertThat(state.issuanceFence().value()).isEqualTo(revision);
+    assertThat(state.issuanceFence().sourceVersion()).isEqualTo(revision);
+  }
+
+  private PasswordResetReceipt resetReceipt(Fixture fixture, Seed seed) {
+    return transaction(
+        fixture.transaction(),
+        () -> fixture.operations().findByTokenHash(tokenHash(seed.rawToken())).orElseThrow());
+  }
+
+  private LogoutAllReceipt logoutReceipt(Fixture fixture, UUID request) {
+    return transaction(
+        fixture.transaction(),
+        () -> fixture.logoutAllOperations().findByRequestId(request).orElseThrow());
   }
 
   private boolean tokenExists(Fixture fixture, String rawToken) {
