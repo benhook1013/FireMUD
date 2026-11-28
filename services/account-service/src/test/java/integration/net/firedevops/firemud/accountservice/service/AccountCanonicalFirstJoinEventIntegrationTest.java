@@ -445,6 +445,82 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
   }
 
   @Test
+  void unavailableAttemptBlocksFirstJoinUntilExactPolicyRecoversAndCannotRewriteTerminal() {
+    Fixture fixture = newFixture();
+    var diagnosed =
+        fixture.inTransaction(
+            () ->
+                fixture.operations.recordCanonicalPolicyUnavailable(
+                    fixture.requestId,
+                    fixture.scope,
+                    fixture.callerBinding,
+                    "ENTITLEMENT_UNAVAILABLE"));
+    assertThat(diagnosed.status()).isEqualTo("PENDING");
+    assertThat(diagnosed.entitlementAuthorityAvailability()).isEqualTo("AVAILABLE");
+    assertThat(diagnosed.lastAttemptAuthorityAvailability()).isEqualTo("UNAVAILABLE");
+    assertThat(diagnosed.lastAttemptFailureCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    assertThat(diagnosed.terminalProof()).isNull();
+    String[] ownerTables = {
+      "account_join_operations",
+      "account_tenant_membership",
+      "account_tenant_membership_role_snapshots",
+      "account_membership_pair_authority",
+      "account_authority_outbox_events",
+      "account_audit_outbox"
+    };
+    var pending = fixture.rows(ownerTables);
+    assertThatThrownBy(fixture::commitFirstJoin)
+        .isInstanceOf(CanonicalJoinOperationConflictException.class)
+        .hasMessageContaining("no available positive public-join policy");
+    assertThat(fixture.rows(ownerTables)).isEqualTo(pending);
+
+    fixture.inTransaction(
+        () ->
+            fixture.operations.bindCanonicalPolicyEvidence(
+                fixture.requestId,
+                fixture.scope,
+                fixture.callerBinding,
+                true,
+                Objects.requireNonNull(diagnosed.entitlementVersion())));
+    var proof = fixture.commitFirstJoin();
+    var committed =
+        fixture.inTransaction(
+            () ->
+                fixture
+                    .operations
+                    .findCanonicalEvidenceByRequestId(fixture.requestId)
+                    .orElseThrow());
+    assertThat(committed.status()).isEqualTo("COMMITTED");
+    assertThat(committed.requestDigest()).isEqualTo(diagnosed.requestDigest());
+    assertThat(committed.entitlementVersion()).isEqualTo(diagnosed.entitlementVersion());
+    assertThat(committed.lastAttemptAuthorityAvailability()).isEqualTo("AVAILABLE");
+    assertThat(committed.lastAttemptFailureCode()).isNull();
+    assertThat(committed.terminalProof()).isEqualTo(proof);
+
+    var terminal = fixture.rows(ownerTables);
+    assertThatThrownBy(
+            () ->
+                fixture.inTransaction(
+                    () ->
+                        fixture.dsl.execute(
+                            "UPDATE account_join_operations SET last_attempt_authority_availability = "
+                                + "'UNAVAILABLE', last_attempt_failure_code = 'ENTITLEMENT_UNAVAILABLE' "
+                                + "WHERE request_id = ?",
+                            fixture.requestId)))
+        .isInstanceOf(RuntimeException.class)
+        .rootCause()
+        .isInstanceOfSatisfying(
+            java.sql.SQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23514");
+              assertThat(failure.getMessage())
+                  .contains("Terminal canonical JOIN receipt is immutable");
+            });
+    assertThat(fixture.commitFirstJoin()).isEqualTo(proof);
+    assertThat(fixture.rows(ownerTables)).isEqualTo(terminal);
+  }
+
+  @Test
   void terminalJournalFailureRollsBackMembershipEventPairAndAuditTogether() {
     Fixture fixture = newFixture();
     fixture.dsl.execute(
