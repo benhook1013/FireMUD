@@ -12,6 +12,8 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Clock;
@@ -66,6 +68,8 @@ import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidencePro
 import net.firedevops.firemud.recovery.service.OwnerBoundaryUnavailableException;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
+import org.flywaydb.core.api.callback.Callback;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.conf.Settings;
@@ -75,6 +79,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -536,6 +541,53 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     }
   }
 
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void packagedFlywayGuardRequiresTransactionalMigrations(@TempDir Path migrations)
+      throws Exception {
+    String database = "firemud_recovery_control";
+    dsl.execute("CREATE DATABASE " + database);
+    try (var application = startPackagedApplication(true)) {
+      var packaged = application.getBean(Flyway.class);
+      var callback = application.getBean("recoveryTransactionalMigrationCallback", Callback.class);
+      assertThat(packaged.getConfiguration().getCallbacks()).contains(callback);
+      Files.writeString(
+          migrations.resolve("V1__transactional_fixture.sql"),
+          """
+          CREATE TABLE sample (id integer);
+          LOCK TABLE sample IN ACCESS EXCLUSIVE MODE;
+          CREATE INDEX sample_ordinary_idx ON sample (id);
+          """);
+      var configuration =
+          Flyway.configure()
+              .dataSource(packaged.getConfiguration().getDataSource())
+              .schemas("transactional_fixture")
+              .locations("filesystem:" + migrations)
+              .callbacks(callback)
+              .executeInTransaction(true)
+              .mixed(false);
+      assertThat(configuration.load().migrate().migrationsExecuted).isEqualTo(1);
+      Files.writeString(
+          migrations.resolve("V2__requires_nontransactional_mode.sql"),
+          "CREATE INDEX CONCURRENTLY sample_concurrent_idx ON sample (id);");
+      assertThatThrownBy(() -> configuration.load().migrate())
+          .isInstanceOf(FlywayException.class)
+          .hasStackTraceContaining("Recovery migration does not support transactional execution");
+      try (var connection = configuration.getDataSource().getConnection()) {
+        var fixture = DSL.using(connection, SQLDialect.POSTGRES);
+        assertThat(
+                fixture
+                    .fetchSingle(
+                        "SELECT to_regclass('transactional_fixture.sample_ordinary_idx') IS NOT NULL"
+                            + " AND to_regclass('transactional_fixture.sample_concurrent_idx') IS NULL")
+                    .get(0, Boolean.class))
+            .isEqualTo(true);
+      }
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
   @ParameterizedTest(name = "interrupt after owner apply: {0}")
   @ValueSource(booleans = {false, true})
   @ResourceLock("packaged-recovery-control-fixture-database")
@@ -900,7 +952,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     "preparation_observation_payload, SET DEFAULT jsonb_build_object()",
     "preparation_observation_digest, SET DEFAULT 'a'",
     "effect_id, DROP NOT NULL",
-    "effect_id, TYPE text USING effect_id::text"
+    "effect_id, TYPE text USING effect_id::text",
+    "readback_identity, TYPE varchar(4)"
   })
   @ResourceLock("packaged-recovery-control-fixture-database")
   void outboxColumnsMustHaveRequiredShapeForJournalReadiness(String column, String alteration)
@@ -1124,7 +1177,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         "operation_key",
         "outbox_operation_kind_key",
         "preparation_key",
-        "preparation_digest_width"
+        "preparation_digest_width",
+        "preparation_single_receipt"
       })
   @ResourceLock("packaged-recovery-control-fixture-database")
   void journalReadinessRequiresCompleteTypedKeys(String drift) throws Exception {
@@ -1160,6 +1214,11 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 """
                 ALTER TABLE recovery_control.initial_gameplay_release_preparation_receipt
                   ALTER COLUMN identity_digest TYPE CHAR(63)
+                """;
+            case "preparation_single_receipt" ->
+                """
+                ALTER TABLE recovery_control.initial_gameplay_release_preparation_receipt
+                  ADD UNIQUE (outbox_id)
                 """;
             default -> throw new AssertionError("Unexpected test fixture key");
           });
@@ -2367,6 +2426,25 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .isEqualTo(recorded);
       assertThat(storedOutbox(operationId, effectId)).isEqualTo(replacement);
     }
+  }
+
+  @Test
+  void exactOwnerReceiptCanCloseDispatchWithinTheSameMillisecond() {
+    Instant base = Instant.now().truncatedTo(ChronoUnit.SECONDS).plusSeconds(60);
+    OutboxEntry dispatch = authorizedDispatch(base.plusNanos(500_000));
+    Instant observedAt = base.plusSeconds(4).plusNanos(800_000);
+    EffectReadback closure =
+        readbackFor(
+            dispatch,
+            dispatch.lastAttemptId(),
+            EffectReadbackState.PROVEN_NO_EFFECT,
+            "same-millisecond-owner-closure",
+            observedAt);
+
+    journal.recordEffectReadback(dispatch, closure, observedAt);
+
+    assertThat(storedOutbox(dispatch.effect().operationId(), dispatch.effect().effectId()))
+        .contains(tupleCodec.digest(closure));
   }
 
   @Test

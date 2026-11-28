@@ -8,6 +8,7 @@ import net.firedevops.firemud.recovery.service.DeniedInitialGameplayReleaseEvide
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseController;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEffectPort;
 import net.firedevops.firemud.recovery.service.InitialGameplayReleaseEvidenceProvider;
+import org.flywaydb.core.api.callback.Callback;
 import org.jooq.DSLContext;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureOrder;
@@ -18,6 +19,11 @@ import org.springframework.core.Ordered;
 @AutoConfiguration(afterName = "org.springframework.boot.jooq.autoconfigure.JooqAutoConfiguration")
 @AutoConfigureOrder(Ordered.LOWEST_PRECEDENCE)
 public class RecoveryControllerOwnerConfiguration {
+  @Bean
+  Callback recoveryTransactionalMigrationCallback() {
+    return new RecoveryTransactionalMigrationCallback();
+  }
+
   @Bean
   @ConditionalOnMissingBean(InitialGameplayReleaseEvidenceProvider.class)
   InitialGameplayReleaseEvidenceProvider deniedInitialGameplayReleaseEvidenceProvider() {
