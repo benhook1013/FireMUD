@@ -156,7 +156,7 @@ public class AccountGameplayAdmissionReceiversConfiguration {
             transactions,
             Clock.systemUTC(),
             namespace);
-    return new AccountPlayerAdmissionEntitlementGrpcService(owner, namespace)::bindProtectedService;
+    return new AccountPlayerAdmissionEntitlementGrpcService(owner, namespace)::bindService;
   }
 
   @Bean

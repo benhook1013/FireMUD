@@ -516,7 +516,7 @@ public final class AccountPlayerAdmissionSharedOwnerFixture {
         List.of(
             "/redis/scripts/account-game-session-delegation-pending-register.json",
             "/redis/scripts/account-game-session-delegation-activate-committed.json",
-            "/redis/scripts/account-game-session-delegation-authority-project-issuer.json",
+            "/redis/scripts/account-game-session-delegation-authority-project-issuer-v2.json",
             "/redis/scripts/account-initial-gameplay-login-dispose.json")) {
       try (var input =
           AccountPlayerAdmissionSharedOwnerFixture.class.getResourceAsStream(resource)) {

@@ -2,6 +2,8 @@ package net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.AdditionalAnswers.delegatesTo;
+import static org.mockito.Mockito.mock;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
@@ -10,6 +12,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -19,6 +22,9 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import javax.sql.DataSource;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionOriginalAckReceipt;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.SourceKind;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.TokenIdentity;
@@ -35,6 +41,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DelegatingDataSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.TransactionDefinition;
@@ -579,6 +586,79 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
   }
 
   @Test
+  void v144AndCurrentMigrationsPreservePreReceiptOperationsWithoutInventingAcknowledgement() {
+    var context = context("143");
+    var committed = pending(context, 15000);
+    UUID decision = UUID.randomUUID();
+    context
+        .transaction()
+        .execute(
+            status ->
+                new AccountGameplayAdmissionLeaseRepository(context.dsl())
+                    .recordCommitted(committed, decision));
+    var pending = pending(context, 15000);
+    assertThat(operation(context, committed).get("status")).isEqualTo("COMMITTED");
+    assertThat(operation(context, pending).get("status")).isEqualTo("PENDING");
+    var committedBefore = admissionOperationImage(context, committed);
+    var pendingBefore = admissionOperationImage(context, pending);
+    Integer originalRank =
+        context
+            .dsl()
+            .fetchSingle("SELECT max(installed_rank) FROM flyway_schema_history")
+            .get(0, Integer.class);
+    String retainedMigrations =
+        "SELECT to_jsonb(h)::text FROM flyway_schema_history h "
+            + "WHERE installed_rank <= ? ORDER BY installed_rank";
+    var historyBefore =
+        context.dsl().fetch(retainedMigrations, originalRank).getValues(0, String.class);
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(DSL.table("flyway_schema_history"), DSL.condition("version = '143'")))
+        .isOne();
+
+    Flyway.configure()
+        .dataSource(context.admin())
+        .schemas(context.schema())
+        .defaultSchema(context.schema())
+        .placeholders(Map.of("serviceSchema", context.schema()))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+
+    assertThat(context.dsl().fetch(retainedMigrations, originalRank).getValues(0, String.class))
+        .containsExactlyElementsOf(historyBefore);
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(DSL.table("flyway_schema_history"), DSL.condition("version = '144'")))
+        .isOne();
+    assertThat(admissionOperationImage(context, committed)).isEqualTo(committedBefore);
+    assertThat(admissionOperationImage(context, pending)).isEqualTo(pendingBefore);
+    var receiptTable = DSL.table("account_gameplay_admission_original_commit_ack_receipts");
+    assertThat(context.dsl().fetchCount(receiptTable)).isZero();
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalAckReceiptCommitExecutor(context.admin())
+                    .read(committed, decision))
+        .hasMessageContaining("Exact durable original Account acknowledgement receipt required");
+    assertThat(context.dsl().fetchCount(receiptTable)).isZero();
+    assertThat(admissionOperationImage(context, committed)).isEqualTo(committedBefore);
+    assertThat(admissionOperationImage(context, pending)).isEqualTo(pendingBefore);
+  }
+
+  private static String admissionOperationImage(
+      Context context, AccountGameplayAdmissionLeaseEvidence evidence) {
+    return context
+        .dsl()
+        .fetchSingle(
+            "SELECT to_jsonb(o)::text || '|xmin=' || o.xmin::text "
+                + "FROM account_gameplay_admission_lease_operations o WHERE request_id = ?",
+            request(evidence))
+        .get(0, String.class);
+  }
+
+  @Test
   void v1013QualifiesRetainedPg18ReceiptWithoutChangingHistoricalStorage() {
     var context = context("1012");
     var ack = finalized(context, 15000);
@@ -841,6 +921,46 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
                 new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
                     .execute(evidence, decision))
         .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
+  }
+
+  @Test
+  void lostPostAcknowledgementClockResponseCannotBeRemintedFromCommittedRetry() {
+    var context = context();
+    var evidence = pending(context, 15000);
+    long originalExpiryMs = Long.parseLong((String) evidence.carrier().get("expiresAt"));
+    UUID decision = UUID.randomUUID();
+    var sourcesBefore = sourceSnapshot(context);
+    var physicalCommits = new AtomicInteger();
+    var lostClockResponses = new AtomicInteger();
+    var source =
+        losePostCommitClockResponse(
+            context.admin(), originalExpiryMs, physicalCommits, lostClockResponses);
+
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(source)
+                    .execute(evidence, decision))
+        .hasMessageContaining("post-COMMIT clock unavailable")
+        .hasRootCauseMessage("Post-COMMIT clock response lost");
+
+    assertThat(physicalCommits.get()).isOne();
+    assertThat(lostClockResponses.get()).isOne();
+    var committed = operation(context, evidence);
+    assertThat(committed.get("status")).isEqualTo("COMMITTED");
+    assertThat(committed.get("binding_decision_id")).isEqualTo(decision);
+    assertThat((String) committed.get("finalization_xid")).matches("[1-9][0-9]{0,19}");
+    assertThat(committed.get("evidence_json")).isEqualTo(evidence.canonicalJson());
+    assertThat(committed.get("expires_at_ms")).isEqualTo(originalExpiryMs);
+    assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
+
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(context.admin())
+                    .execute(evidence, decision))
+        .hasMessageContaining("Fresh owned Account original COMMIT required");
+    assertThat(operation(context, evidence)).isEqualTo(committed);
+    assertThat(sourceSnapshot(context)).isEqualTo(sourcesBefore);
     assertThat(context.dsl().fetchCount(DSL.table(RECEIPTS))).isZero();
   }
 
@@ -1458,6 +1578,77 @@ class AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest {
         }
       }
     };
+  }
+
+  private static DataSource losePostCommitClockResponse(
+      DataSource delegate,
+      long originalExpiryMs,
+      AtomicInteger physicalCommits,
+      AtomicInteger lostClockResponses) {
+    return new DelegatingDataSource(delegate) {
+      @Override
+      public Connection getConnection() throws SQLException {
+        Connection physical = super.getConnection();
+        try {
+          var committed = new AtomicBoolean();
+          var physicalCalls = delegatesTo(physical);
+          return mock(
+              Connection.class,
+              call -> {
+                String method = call.getMethod().getName();
+                if ("commit".equals(method)) {
+                  physical.commit();
+                  physicalCommits.incrementAndGet();
+                  committed.set(true);
+                  return null;
+                }
+                if ("createStatement".equals(method)
+                    && call.getArguments().length == 0
+                    && committed.get()) {
+                  return withPostCommitClockResponseLoss(
+                      physical.createStatement(), originalExpiryMs, lostClockResponses);
+                }
+                return physicalCalls.answer(call);
+              });
+        } catch (RuntimeException | Error failure) {
+          try {
+            physical.close();
+          } catch (SQLException closeFailure) {
+            failure.addSuppressed(closeFailure);
+          }
+          throw failure;
+        }
+      }
+    };
+  }
+
+  private static Statement withPostCommitClockResponseLoss(
+      Statement physical, long originalExpiryMs, AtomicInteger lostClockResponses) {
+    try {
+      var physicalCalls = delegatesTo(physical);
+      return mock(
+          Statement.class,
+          call -> {
+            if ("executeQuery".equals(call.getMethod().getName())
+                && "SELECT ceil(extract(epoch FROM clock_timestamp()) * 1000)::bigint"
+                    .equals(call.getArgument(0))) {
+              try (var reply = physical.executeQuery(call.getArgument(0))) {
+                assertThat(reply.next()).isTrue();
+                assertThat(reply.getLong(1)).isPositive().isLessThan(originalExpiryMs);
+              }
+              lostClockResponses.incrementAndGet();
+              throw new SQLException("Post-COMMIT clock response lost", "08006");
+            }
+            return physicalCalls.answer(call);
+          });
+    } catch (RuntimeException | Error failure) {
+      try {
+        physical.close();
+      } catch (SQLException closeFailure) {
+        failure.addSuppressed(closeFailure);
+      }
+      throw failure;
+    }
   }
 
   private static OriginalCommitAcknowledgement finalized(Context context, long lifetime) {

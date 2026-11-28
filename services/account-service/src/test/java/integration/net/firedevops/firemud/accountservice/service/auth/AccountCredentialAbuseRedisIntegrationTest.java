@@ -88,13 +88,10 @@ class AccountCredentialAbuseRedisIntegrationTest {
         service.admit(source("192.0.2." + (i + 1)), "candidate" + i + "@example.test");
         assertEnvelope(inspector, policy);
       }
-      byte[][] pressureKeys =
-          inspector
-              .sync()
-              .keys(AccountCredentialAbuseSubjectKeys.PREFIX + "pressure:*")
-              .toArray(new byte[0][]);
-      if (pressureKeys.length > 0) {
-        inspector.sync().del(pressureKeys);
+      var pressureKeys =
+          inspector.sync().keys(AccountCredentialAbuseSubjectKeys.PREFIX + "pressure:*");
+      if (!pressureKeys.isEmpty()) {
+        inspector.sync().del(pressureKeys.toArray(byte[][]::new));
       }
       for (int i = 0; i < 24; i++) {
         service.admit(source("198.51.100." + (i + 1)), "new" + i + "@example.test");
@@ -293,6 +290,58 @@ class AccountCredentialAbuseRedisIntegrationTest {
   }
 
   @Test
+  void candidateFailureBudgetIsSharedAcrossSourcesAndClientReplicas() {
+    var policy = candidateBudgetPolicy(4_096);
+    String firstAddress = "198.51.100.41";
+    String secondAddress = "::ffff:198.51.100.42";
+    String normalizedSecondAddress = "198.51.100.42";
+    String candidate = "shared-candidate@example.test";
+    String unrelatedCandidate = "other-candidate@example.test";
+    RedisClient firstReplica = client(redis, true);
+    RedisClient secondReplica = client(redis, true);
+    try (var key = key();
+        var inspector = admin.connect(ByteArrayCodec.INSTANCE);
+        var firstConnection = firstReplica.connect(ByteArrayCodec.INSTANCE);
+        var secondConnection = secondReplica.connect(ByteArrayCodec.INSTANCE)) {
+      var firstService = service(policy, key, firstConnection);
+      var secondService = service(policy, key, secondConnection);
+
+      var firstAttempt = firstService.admit(source(firstAddress), candidate);
+      assertThat(firstAttempt.outcome()).isEqualTo(Outcome.ADMITTED);
+      assertThat(firstService.recordFailure(firstAttempt.permit()).outcome())
+          .isEqualTo(Outcome.FAILURE_RECORDED);
+
+      var secondAttempt = secondService.admit(source(secondAddress), candidate);
+      assertThat(secondAttempt.outcome()).isEqualTo(Outcome.ADMITTED);
+      assertThat(secondService.recordFailure(secondAttempt.permit()).outcome())
+          .isEqualTo(Outcome.FAILURE_RECORDED);
+
+      var keys = new AccountCredentialAbuseSubjectKeys(policy.scope(), key);
+      long window = Instant.now().toEpochMilli() / policy.window().toMillis();
+      assertThat(keys.source(firstAddress, window).redisKey())
+          .isNotEqualTo(keys.source(secondAddress, window).redisKey());
+      assertThat(keys.source(secondAddress, window).redisKey())
+          .isEqualTo(keys.source(normalizedSecondAddress, window).redisKey());
+      assertThat(firstService.admit(source(firstAddress), candidate).outcome())
+          .isEqualTo(Outcome.RETRY_LATER);
+      assertThat(firstService.admit(source(firstAddress), unrelatedCandidate).outcome())
+          .isEqualTo(Outcome.ADMITTED);
+
+      assertEnvelope(inspector, policy);
+      assertStoredStateOmitsRawInputs(
+          inspector,
+          firstAddress,
+          secondAddress,
+          normalizedSecondAddress,
+          candidate,
+          unrelatedCandidate);
+    } finally {
+      firstReplica.shutdown();
+      secondReplica.shutdown();
+    }
+  }
+
+  @Test
   void wrongPrincipalAndClusterTopologyRefuseWithoutAStandaloneFallback() {
     var policy = policy(4_096);
     try (var key = key();
@@ -409,13 +458,41 @@ class AccountCredentialAbuseRedisIntegrationTest {
   }
 
   private static AccountCredentialAbusePolicy policy(long bucketBytes) {
+    return policy(
+        bucketBytes,
+        List.of(
+            new AccountCredentialAbusePolicy.Rule(3, 2, 0, Duration.ofSeconds(1)),
+            new AccountCredentialAbusePolicy.Rule(3, 2, 10, Duration.ofSeconds(5))));
+  }
+
+  private static AccountCredentialAbusePolicy candidateBudgetPolicy(long bucketBytes) {
+    return policy(
+        bucketBytes,
+        List.of(
+            new AccountCredentialAbusePolicy.Rule(3, 0, 0, Duration.ofSeconds(1)),
+            new AccountCredentialAbusePolicy.Rule(0, 2, 0, Duration.ofSeconds(5)),
+            new AccountCredentialAbusePolicy.Rule(0, 2, 10, Duration.ofSeconds(10))),
+        Duration.ofMinutes(5),
+        Duration.ofMinutes(10));
+  }
+
+  private static AccountCredentialAbusePolicy policy(
+      long bucketBytes, List<AccountCredentialAbusePolicy.Rule> rules) {
+    return policy(bucketBytes, rules, Duration.ofSeconds(60), Duration.ofSeconds(120));
+  }
+
+  private static AccountCredentialAbusePolicy policy(
+      long bucketBytes,
+      List<AccountCredentialAbusePolicy.Rule> rules,
+      Duration window,
+      Duration timeToLive) {
     Instant now = Instant.now().truncatedTo(ChronoUnit.MILLIS);
     return new AccountCredentialAbusePolicy(
         "login-v1",
         now.minusSeconds(60),
         now.plusSeconds(3_600),
-        Duration.ofSeconds(60),
-        Duration.ofSeconds(120),
+        window,
+        timeToLive,
         2,
         8,
         POLICY_BYTES,
@@ -426,9 +503,7 @@ class AccountCredentialAbuseRedisIntegrationTest {
         Duration.ofSeconds(5),
         Duration.ofSeconds(10),
         Duration.ofSeconds(1),
-        List.of(
-            new AccountCredentialAbusePolicy.Rule(3, 2, 0, Duration.ofSeconds(1)),
-            new AccountCredentialAbusePolicy.Rule(3, 2, 10, Duration.ofSeconds(5))));
+        rules);
   }
 
   private static byte[] onlyCandidateKey(StatefulRedisConnection<byte[], byte[]> inspector) {
@@ -458,6 +533,22 @@ class AccountCredentialAbuseRedisIntegrationTest {
     // Observed RSS is separate evidence; the Docker memory cap is the fixture's hard process
     // boundary.
     assertThat(metric(memory, "used_memory_rss")).isLessThanOrEqualTo(PROCESS_BYTES);
+  }
+
+  private static void assertStoredStateOmitsRawInputs(
+      StatefulRedisConnection<byte[], byte[]> inspector, String... rawInputs) {
+    var keys = inspector.sync().keys(AccountCredentialAbuseSubjectKeys.PREFIX + "*");
+    assertThat(keys).isNotEmpty();
+    for (byte[] key : keys) {
+      String keyText = new String(key, StandardCharsets.US_ASCII);
+      byte[] value = inspector.sync().get(key);
+      assertThat(value).isNotNull();
+      String valueText = new String(value, StandardCharsets.US_ASCII);
+      for (String rawInput : rawInputs) {
+        assertThat(keyText).doesNotContain(rawInput);
+        assertThat(valueText).doesNotContain(rawInput);
+      }
+    }
   }
 
   private static long metric(String info, String name) {

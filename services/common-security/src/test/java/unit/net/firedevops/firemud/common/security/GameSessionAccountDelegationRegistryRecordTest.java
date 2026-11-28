@@ -99,6 +99,68 @@ class GameSessionAccountDelegationRegistryRecordTest {
   }
 
   @Test
+  void roundTripsMembershipAdvancedCompositeFenceWithoutInventingSecurityEvents() throws Exception {
+    for (long generation : new long[] {1L, 11L}) {
+      long fence = generation + 1L;
+      var cutoff =
+          generation == 1L
+              ? Optional.<AccountSecurityCutoff>empty()
+              : Optional.of(cutoff(generation, generation - 1L));
+      var snapshot =
+          new AccountAuthoritySnapshot(
+              UUID.fromString(ACCOUNT_ID), 7L, 7L, generation, generation, fence, fence, cutoff);
+      Map<String, Object> claims = new LinkedHashMap<>(claims());
+      claims.put(
+          "authorityTuple",
+          GameSessionAccountDelegationProfile.authorityTuple(7L, generation, cutoff));
+      claims.put("issuanceFence", Long.toString(fence));
+      var decoded =
+          GameSessionAccountDelegationRegistryRecord.decode(
+              GameSessionAccountDelegationRegistryRecord.fromAccountSignedCompactJwt(
+                      compact(claims),
+                      "5",
+                      binding(),
+                      snapshot,
+                      bundleReference(),
+                      NOW,
+                      MAX_RECORD_BYTES)
+                  .toCanonicalJsonBytes(MAX_RECORD_BYTES),
+              MAX_RECORD_BYTES);
+      assertThat(decoded.issuanceFence()).isEqualTo(fence);
+      Map<?, ?> tuple = (Map<?, ?>) decoded.fields().get("authorityTuple");
+      assertThat(tuple.get("accountAuthorityGeneration")).isEqualTo(Long.toString(generation));
+      assertThat(tuple.containsKey("accountSecurityCutoff")).isEqualTo(generation != 1L);
+      Map<?, ?> versions = (Map<?, ?>) decoded.fields().get("authoritySourceVersions");
+      assertThat(versions.get("accountSourceVersion")).isEqualTo(Long.toString(generation));
+      assertThat(versions.get("issuanceFenceSourceVersion")).isEqualTo(Long.toString(fence));
+      assertThatThrownBy(
+              () ->
+                  new AccountAuthoritySnapshot(
+                      UUID.fromString(ACCOUNT_ID),
+                      7L,
+                      7L,
+                      generation,
+                      generation,
+                      fence,
+                      fence + 1L,
+                      cutoff))
+          .isInstanceOf(GameSessionAccountDelegationRegistryRecord.InvalidRecordException.class);
+    }
+    assertThatThrownBy(
+            () ->
+                new AccountAuthoritySnapshot(
+                    UUID.fromString(ACCOUNT_ID),
+                    7L,
+                    7L,
+                    11L,
+                    11L,
+                    10L,
+                    10L,
+                    Optional.of(cutoff(11L, 10L))))
+        .isInstanceOf(GameSessionAccountDelegationRegistryRecord.InvalidRecordException.class);
+  }
+
+  @Test
   void roundTripsSmallAndLargestOwnerLongAuthorityCountersAsDecimalStrings() throws Exception {
     long large = Long.MAX_VALUE;
     AccountAuthoritySnapshot largeSnapshot =

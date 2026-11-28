@@ -263,6 +263,862 @@ class AccountGameplayDelegationRedisIntegrationTest {
     }
   }
 
+  @Test
+  void issuerOnlyPublishesRealBaselineAdvanceAndExactRetryWithoutAccountOrSqlMutation() {
+    TestContext database = newPostgresContext();
+    var dsl = database.dsl();
+    var sources =
+        new AccountAuthoritySourceEvidenceRepository(
+            dsl,
+            new AccountAuthorityGenerationRepository(dsl),
+            new AccountAuthorityOutboxRepository(dsl));
+    inTransaction(database, () -> sources.initializeIssuerIfAbsent(ACCOUNT_ISSUER));
+    RedisClient writer = redisClient(writerUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    String key =
+        net.firedevops.firemud.accountservice.service.IssuerGenerationProjection.keyForIssuer(
+            ACCOUNT_ISSUER);
+    try (var connection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE)) {
+      var admin = connection.sync();
+      assertThat(admin.get(ascii(key))).isNull();
+      String unrelatedAccountKey =
+          AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + UUID.randomUUID();
+      assertThat(admin.get(ascii(unrelatedAccountKey))).isNull();
+      byte[] unrelatedAccountBytes = ascii("test-only-unrelated-account-sentinel");
+      admin.set(ascii(unrelatedAccountKey), unrelatedAccountBytes);
+      try {
+        var publisher =
+            new net.firedevops.firemud.accountservice.service.session
+                .AccountIssuerGenerationProjectionPublisher(
+                sources, database.manager(), redisClient(new TrackedProvider(writer)));
+        var before = issuerOnlySqlRows(dsl);
+        var first = publisher.refreshCurrent(ACCOUNT_ISSUER);
+        assertThat(first.outcome())
+            .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+        assertThat(admin.get(ascii(key)))
+            .containsExactly(first.json().getBytes(StandardCharsets.UTF_8));
+        assertThat(admin.pttl(ascii(key))).isEqualTo(-1L);
+        assertThat(publisher.refreshCurrent(ACCOUNT_ISSUER).outcome())
+            .isEqualTo(
+                AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY);
+        assertThat(issuerOnlySqlRows(dsl)).isEqualTo(before);
+        inTransaction(
+            database,
+            () ->
+                sources.appendIssuerAuthorityChange(
+                    ACCOUNT_ISSUER, "SIGNER_COMPROMISE", "issuer-only-" + UUID.randomUUID()));
+        var advancedRows = issuerOnlySqlRows(dsl);
+        var advanced = publisher.refreshCurrent(ACCOUNT_ISSUER);
+        assertThat(advanced.json()).isNotEqualTo(first.json());
+        var exact =
+            inTransaction(database, () -> sources.readCurrentCanonicalIssuerSource(ACCOUNT_ISSUER));
+        assertThat(advanced.json())
+            .isEqualTo(
+                net.firedevops.firemud.accountservice.service.IssuerGenerationProjection.fromSource(
+                        exact)
+                    .toJson());
+        assertThat(admin.get(ascii(key)))
+            .containsExactly(advanced.json().getBytes(StandardCharsets.UTF_8));
+        assertThat(admin.pttl(ascii(key))).isEqualTo(-1L);
+        assertThat(publisher.refreshCurrent(ACCOUNT_ISSUER))
+            .isEqualTo(
+                new net.firedevops.firemud.accountservice.service.session
+                    .AccountIssuerGenerationProjectionPublisher.Publication(
+                    advanced.key(),
+                    advanced.json(),
+                    AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY));
+        assertThat(issuerOnlySqlRows(dsl)).isEqualTo(advancedRows);
+        assertThat(dsl.fetchSingle("SELECT count(*) FROM accounts").get(0, Long.class)).isZero();
+        assertThat(admin.get(ascii(unrelatedAccountKey))).containsExactly(unrelatedAccountBytes);
+        assertThat(admin.pttl(ascii(unrelatedAccountKey))).isEqualTo(-1L);
+      } finally {
+        admin.del(ascii(key));
+        admin.del(ascii(unrelatedAccountKey));
+      }
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "MALFORMED",
+        "TTL",
+        "AHEAD",
+        "CONFLICTING_EVENT",
+        "MISSING_EVENT",
+        "CHANGED_DIGEST"
+      })
+  void issuerOnlyRefusesRetainedRedisEvidenceWithoutRepair(String corruption) {
+    TestContext database = newPostgresContext();
+    var dsl = database.dsl();
+    var sources =
+        new AccountAuthoritySourceEvidenceRepository(
+            dsl,
+            new AccountAuthorityGenerationRepository(dsl),
+            new AccountAuthorityOutboxRepository(dsl));
+    inTransaction(database, () -> sources.initializeIssuerIfAbsent(ACCOUNT_ISSUER));
+    inTransaction(
+        database,
+        () ->
+            sources.appendIssuerAuthorityChange(
+                ACCOUNT_ISSUER, "SIGNER_COMPROMISE", "issuer-corruption-" + UUID.randomUUID()));
+    var sqlBefore = issuerOnlySqlRows(dsl);
+    var canonical =
+        inTransaction(database, () -> sources.readCurrentCanonicalIssuerSource(ACCOUNT_ISSUER));
+    byte[] genuine =
+        net.firedevops.firemud.accountservice.service.IssuerGenerationProjection.fromSource(
+                canonical)
+            .toJson()
+            .getBytes(StandardCharsets.UTF_8);
+    byte[] corrupt =
+        switch (corruption) {
+          case "MALFORMED" -> ascii("{not-json");
+          case "TTL" -> genuine;
+          case "AHEAD" -> projectionPair(UUID.randomUUID(), 3L, 1L, "ahead-owner", "unused")[0];
+          case "CONFLICTING_EVENT" ->
+              projectionPair(UUID.randomUUID(), 2L, 1L, "different-event", "unused")[0];
+          case "MISSING_EVENT" ->
+              ascii(
+                  new String(genuine, StandardCharsets.UTF_8)
+                      .replace("\"sourceEvent\":", "\"unrecognizedEvent\":"));
+          case "CHANGED_DIGEST" ->
+              ascii(
+                  new String(genuine, StandardCharsets.UTF_8)
+                      .replace(
+                          canonical.source().checkpoint().sourceEventDigest().orElseThrow(),
+                          "sha256:" + "0".repeat(64)));
+          default -> throw new IllegalArgumentException(corruption);
+        };
+    RedisClient writer = redisClient(writerUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    String key =
+        net.firedevops.firemud.accountservice.service.IssuerGenerationProjection.keyForIssuer(
+            ACCOUNT_ISSUER);
+    try (var connection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE)) {
+      var admin = connection.sync();
+      assertThat(admin.get(ascii(key))).isNull();
+      try {
+        admin.set(ascii(key), corrupt);
+        if ("TTL".equals(corruption)) admin.pexpire(ascii(key), 120_000L);
+        Long expiry = admin.pexpiretime(ascii(key));
+        var publisher =
+            new net.firedevops.firemud.accountservice.service.session
+                .AccountIssuerGenerationProjectionPublisher(
+                sources, database.manager(), redisClient(new TrackedProvider(writer)));
+        assertThatThrownBy(() -> publisher.refreshCurrent(ACCOUNT_ISSUER))
+            .isInstanceOf(
+                AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+        assertThat(admin.get(ascii(key))).containsExactly(corrupt);
+        assertThat(admin.pexpiretime(ascii(key))).isEqualTo(expiry);
+        assertThat(issuerOnlySqlRows(dsl)).isEqualTo(sqlBefore);
+      } finally {
+        admin.del(ascii(key));
+      }
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  @Test
+  void issuerOnlyCommittedAdvanceBetweenSqlReadsRequiresExplicitLaterRetry() {
+    TestContext database = newPostgresContext();
+    var dsl = database.dsl();
+    var sources =
+        new AccountAuthoritySourceEvidenceRepository(
+            dsl,
+            new AccountAuthorityGenerationRepository(dsl),
+            new AccountAuthorityOutboxRepository(dsl));
+    inTransaction(database, () -> sources.initializeIssuerIfAbsent(ACCOUNT_ISSUER));
+    var baseline =
+        inTransaction(database, () -> sources.readCurrentCanonicalIssuerSource(ACCOUNT_ISSUER));
+    RedisClient writer = redisClient(writerUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    String key =
+        net.firedevops.firemud.accountservice.service.IssuerGenerationProjection.keyForIssuer(
+            ACCOUNT_ISSUER);
+    try (var connection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE)) {
+      var admin = connection.sync();
+      assertThat(admin.get(ascii(key))).isNull();
+      try {
+        var redis = redisClient(new TrackedProvider(writer));
+        var changing =
+            new net.firedevops.firemud.accountservice.service.session
+                .AccountIssuerGenerationProjectionPublisher(
+                sources,
+                new BeforeSecondTransactionManager(
+                    database.manager(),
+                    () ->
+                        inTransaction(
+                            database,
+                            () ->
+                                sources.appendIssuerAuthorityChange(
+                                    ACCOUNT_ISSUER,
+                                    "SIGNER_COMPROMISE",
+                                    "issuer-race-" + UUID.randomUUID()))),
+                redis);
+        assertThatThrownBy(() -> changing.refreshCurrent(ACCOUNT_ISSUER))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Issuer source changed during projection; explicit retry required");
+        assertThat(admin.get(ascii(key)))
+            .containsExactly(
+                net.firedevops.firemud.accountservice.service.IssuerGenerationProjection.fromSource(
+                        baseline)
+                    .toJson()
+                    .getBytes(StandardCharsets.UTF_8));
+        var afterAdvance = issuerOnlySqlRows(dsl);
+        var stable =
+            new net.firedevops.firemud.accountservice.service.session
+                .AccountIssuerGenerationProjectionPublisher(sources, database.manager(), redis);
+        var retry = stable.refreshCurrent(ACCOUNT_ISSUER);
+        assertThat(retry.outcome())
+            .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+        assertThat(admin.get(ascii(key)))
+            .containsExactly(retry.json().getBytes(StandardCharsets.UTF_8));
+        assertThat(issuerOnlySqlRows(dsl)).isEqualTo(afterAdvance);
+        assertThat(dsl.fetchSingle("SELECT count(*) FROM accounts").get(0, Long.class)).isZero();
+      } finally {
+        admin.del(ascii(key));
+      }
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  @Test
+  void issuerOnlyMissingSqlSourceDeniesWithoutEnrollmentOrRedisWrite() {
+    TestContext database = newPostgresContext();
+    var dsl = database.dsl();
+    var sources =
+        new AccountAuthoritySourceEvidenceRepository(
+            dsl,
+            new AccountAuthorityGenerationRepository(dsl),
+            new AccountAuthorityOutboxRepository(dsl));
+    var original = issuerOnlySqlRows(dsl);
+    RedisClient writer = redisClient(writerUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    String key =
+        net.firedevops.firemud.accountservice.service.IssuerGenerationProjection.keyForIssuer(
+            ACCOUNT_ISSUER);
+    try (var connection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE)) {
+      var admin = connection.sync();
+      assertThat(admin.get(ascii(key))).isNull();
+      var provider = new TrackedProvider(writer);
+      var publisher =
+          new net.firedevops.firemud.accountservice.service.session
+              .AccountIssuerGenerationProjectionPublisher(
+              sources, database.manager(), redisClient(provider));
+      assertThatThrownBy(() -> publisher.refreshCurrent(ACCOUNT_ISSUER))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(provider.openedConnections()).isZero();
+      assertThat(admin.get(ascii(key))).isNull();
+      assertThat(issuerOnlySqlRows(dsl)).isEqualTo(original);
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void issuerOnlyContradictorySqlHistoryDeniesBeforeRedisWithoutMutatingOriginal(boolean missing) {
+    TestContext database = newPostgresContext();
+    var dsl = database.dsl();
+    var sources =
+        new AccountAuthoritySourceEvidenceRepository(
+            dsl,
+            new AccountAuthorityGenerationRepository(dsl),
+            new AccountAuthorityOutboxRepository(dsl));
+    inTransaction(database, () -> sources.initializeIssuerIfAbsent(ACCOUNT_ISSUER));
+    inTransaction(
+        database,
+        () ->
+            sources.appendIssuerAuthorityChange(
+                ACCOUNT_ISSUER, "SIGNER_COMPROMISE", "issuer-negative-clone-" + UUID.randomUUID()));
+    var original = issuerOnlySqlRows(dsl);
+    String schema = dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
+    var cloningManager =
+        new PlatformTransactionManager() {
+          @Override
+          public org.springframework.transaction.TransactionStatus getTransaction(
+              org.springframework.transaction.TransactionDefinition definition) {
+            var status = database.manager().getTransaction(definition);
+            try {
+              dsl.execute(
+                  "CREATE TEMP TABLE account_authority_outbox_events ON COMMIT DROP AS SELECT * FROM "
+                      + schema
+                      + ".account_authority_outbox_events");
+              assertThat(
+                      dsl.fetchSingle(
+                              "SELECT 'account_authority_outbox_events'::regclass::oid = "
+                                  + "'pg_temp.account_authority_outbox_events'::regclass::oid")
+                          .get(0, Boolean.class))
+                  .isTrue();
+              assertThat(
+                      sources
+                          .readCurrentCanonicalIssuerSource(ACCOUNT_ISSUER)
+                          .source()
+                          .generation())
+                  .isEqualTo(2L);
+              if (missing) {
+                assertThat(dsl.execute("DELETE FROM pg_temp.account_authority_outbox_events"))
+                    .isEqualTo(1);
+              } else {
+                assertThat(
+                        dsl.execute(
+                            "UPDATE pg_temp.account_authority_outbox_events SET event_digest=?",
+                            "sha256:" + "0".repeat(64)))
+                    .isEqualTo(1);
+              }
+              return status;
+            } catch (RuntimeException | Error failure) {
+              database.manager().rollback(status);
+              throw failure;
+            }
+          }
+
+          @Override
+          public void commit(org.springframework.transaction.TransactionStatus status) {
+            database.manager().commit(status);
+          }
+
+          @Override
+          public void rollback(org.springframework.transaction.TransactionStatus status) {
+            database.manager().rollback(status);
+          }
+        };
+    RedisClient writer = redisClient(writerUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    String key =
+        net.firedevops.firemud.accountservice.service.IssuerGenerationProjection.keyForIssuer(
+            ACCOUNT_ISSUER);
+    try (var connection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE)) {
+      var admin = connection.sync();
+      assertThat(admin.get(ascii(key))).isNull();
+      var provider = new TrackedProvider(writer);
+      var publisher =
+          new net.firedevops.firemud.accountservice.service.session
+              .AccountIssuerGenerationProjectionPublisher(
+              sources, cloningManager, redisClient(provider));
+      assertThatThrownBy(() -> publisher.refreshCurrent(ACCOUNT_ISSUER))
+          .isInstanceOf(
+              AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+      assertThat(provider.openedConnections()).isZero();
+      assertThat(admin.get(ascii(key))).isNull();
+      assertThat(issuerOnlySqlRows(dsl)).isEqualTo(original);
+      assertThat(
+              inTransaction(
+                      database, () -> sources.readCurrentCanonicalIssuerSource(ACCOUNT_ISSUER))
+                  .source()
+                  .generation())
+          .isEqualTo(2L);
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  @Test
+  void issuerOnlyCannotSubstituteFixtureAdministratorForAccountCoordinationPrincipal() {
+    TestContext database = newPostgresContext();
+    var dsl = database.dsl();
+    var sources =
+        new AccountAuthoritySourceEvidenceRepository(
+            dsl,
+            new AccountAuthorityGenerationRepository(dsl),
+            new AccountAuthorityOutboxRepository(dsl));
+    inTransaction(database, () -> sources.initializeIssuerIfAbsent(ACCOUNT_ISSUER));
+    var original = issuerOnlySqlRows(dsl);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    String key =
+        net.firedevops.firemud.accountservice.service.IssuerGenerationProjection.keyForIssuer(
+            ACCOUNT_ISSUER);
+    try (var connection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE)) {
+      var admin = connection.sync();
+      assertThat(admin.get(ascii(key))).isNull();
+      var provider = new TrackedProvider(fixtureAdmin);
+      var publisher =
+          new net.firedevops.firemud.accountservice.service.session
+              .AccountIssuerGenerationProjectionPublisher(
+              sources, database.manager(), redisClient(provider));
+      assertThatThrownBy(() -> publisher.refreshCurrent(ACCOUNT_ISSUER))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertThat(provider.openedConnections()).isEqualTo(1);
+      assertThat(provider.trace(0)).doesNotContain("scriptLoad", "evalsha", "dispatch");
+      assertThat(admin.get(ascii(key))).isNull();
+      assertThat(issuerOnlySqlRows(dsl)).isEqualTo(original);
+    } finally {
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  private static Map<String, List<Map<String, Object>>> issuerOnlySqlRows(DSLContext dsl) {
+    String schema = dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
+    var rows = new java.util.TreeMap<String, List<Map<String, Object>>>();
+    for (String table :
+        dsl.fetch("SELECT tablename FROM pg_tables WHERE schemaname=? ORDER BY tablename", schema)
+            .getValues(0, String.class)) {
+      rows.put(
+          table,
+          dsl.fetch(
+                  "SELECT to_jsonb(t)::text AS row,xmin::text AS xmin FROM "
+                      + schema
+                      + "."
+                      + table
+                      + " t ORDER BY 1,2")
+              .intoMaps());
+    }
+    return rows;
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({"false, true", "true, true", "true, false"})
+  void physicalOwnerAdvanceAcrossProjectionRoundTripNeverReturnsStaleSuccess(
+      boolean publish, boolean seedProjection) {
+    TestContext database = newPostgresContext();
+    DSLContext dsl = database.dsl();
+    var authorities = new AccountAuthorityGenerationRepository(dsl);
+    var outbox = new AccountAuthorityOutboxRepository(dsl);
+    var sources = new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
+    UUID accountId = createFreshAccount(database, sources);
+    RedisClient writer = redisClient(writerUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    String issuerKey =
+        AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX + ACCOUNT_ISSUER;
+    String accountKey = AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId;
+    try (var adminConnection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE)) {
+      var admin = adminConnection.sync();
+      assertThat(admin.get(ascii(issuerKey))).isNull();
+      assertThat(admin.get(ascii(accountKey))).isNull();
+      try {
+        var redis = redisClient(new TrackedProvider(writer));
+        var stable =
+            new AccountGameplayDelegationAuthorityProjection(sources, database.manager(), redis);
+        var initialSource =
+            inTransaction(
+                database, () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId));
+        byte[][] original =
+            AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(initialSource);
+        if (seedProjection) {
+          stable.publishCurrent(accountId);
+          assertProjectionBytes(admin, issuerKey, accountKey, original);
+          // Redis-only poisoning cannot authorize Account source advancement or an overwrite.
+          assertThat(initialSource.account().generation()).isEqualTo(1L);
+          byte[] aheadAccount = projectionPair(accountId, 1L, 2L, "unused", "ahead-cache")[1];
+          admin.set(ascii(accountKey), aheadAccount);
+          assertThatThrownBy(() -> stable.publishCurrent(accountId))
+              .isInstanceOf(
+                  AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+          assertThat(admin.get(ascii(accountKey))).containsExactly(aheadAccount);
+          assertThat(admin.get(ascii(issuerKey))).containsExactly(original[0]);
+          assertThat(admin.pttl(ascii(accountKey))).isEqualTo(-1L);
+          assertThat(
+                  inTransaction(
+                      database,
+                      () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId)))
+              .isEqualTo(initialSource);
+          assertThatThrownBy(() -> stable.observeCurrent(accountId))
+              .isInstanceOf(
+                  AccountGameplayDelegationAuthorityProjection.StaleProjectionException.class);
+          admin.set(ascii(accountKey), original[1]);
+        } else {
+          assertThat(publish).isTrue();
+          assertThat(admin.get(ascii(issuerKey))).isNull();
+          assertThat(admin.get(ascii(accountKey))).isNull();
+        }
+        var changingManager =
+            new BeforeSecondTransactionManager(
+                database.manager(),
+                () ->
+                    commitPasswordResetAuthorityChange(
+                        database, dsl, authorities, outbox, sources, accountId));
+        var changing =
+            new AccountGameplayDelegationAuthorityProjection(sources, changingManager, redis);
+        assertThatThrownBy(
+                () -> {
+                  if (publish) changing.publishCurrent(accountId);
+                  else changing.observeCurrent(accountId);
+                })
+            .isInstanceOf(
+                AccountGameplayDelegationAuthorityProjection.StaleProjectionException.class);
+        var current =
+            inTransaction(
+                database, () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId));
+        byte[][] advanced =
+            AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(current);
+        assertThat(advanced[1]).isNotEqualTo(original[1]);
+        assertProjectionBytes(admin, issuerKey, accountKey, original);
+        assertThatThrownBy(() -> stable.observeCurrent(accountId))
+            .isInstanceOf(
+                AccountGameplayDelegationAuthorityProjection.StaleProjectionException.class);
+        stable.publishCurrent(accountId);
+        assertProjectionBytes(admin, issuerKey, accountKey, advanced);
+        assertThat(stable.observeCurrent(accountId).accountGeneration())
+            .isEqualTo(current.account().generation());
+      } finally {
+        admin.del(ascii(issuerKey));
+        admin.del(ascii(accountKey));
+      }
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  @Test
+  void olderCapturedProjectionCannotOverwriteNewerCommittedOwnerPublication() {
+    TestContext database = newPostgresContext();
+    DSLContext dsl = database.dsl();
+    var authorities = new AccountAuthorityGenerationRepository(dsl);
+    var outbox = new AccountAuthorityOutboxRepository(dsl);
+    var sources = new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
+    UUID accountId = createFreshAccount(database, sources);
+    RedisClient writer = redisClient(writerUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    String issuerKey =
+        AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX + ACCOUNT_ISSUER;
+    String accountKey = AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId;
+    try (var adminConnection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE)) {
+      var admin = adminConnection.sync();
+      assertThat(admin.get(ascii(issuerKey))).isNull();
+      assertThat(admin.get(ascii(accountKey))).isNull();
+      try {
+        var stableRedis = redisClient(new TrackedProvider(writer));
+        var stable =
+            new AccountGameplayDelegationAuthorityProjection(
+                sources, database.manager(), stableRedis);
+        stable.publishCurrent(accountId);
+        byte[][] baseline = stableRedis.readAuthorityProjections(accountId);
+        AtomicInteger interleavings = new AtomicInteger();
+        TrackedProvider staleProvider = new TrackedProvider(writer);
+        var staleRedis =
+            redisClient(
+                () -> {
+                  assertThat(interleavings.incrementAndGet()).isEqualTo(1);
+                  assertThat(
+                          org.springframework.transaction.support.TransactionSynchronizationManager
+                              .isActualTransactionActive())
+                      .isFalse();
+                  commitPasswordResetAuthorityChange(
+                      database, dsl, authorities, outbox, sources, accountId);
+                  stable.publishCurrent(accountId);
+                  return staleProvider.openPinnedConnection();
+                });
+        var stale =
+            new AccountGameplayDelegationAuthorityProjection(
+                sources, database.manager(), staleRedis);
+        assertThatThrownBy(() -> stale.publishCurrent(accountId))
+            .isInstanceOf(
+                AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+        assertThat(interleavings.get()).isEqualTo(1);
+        assertThat(staleProvider.openedConnections()).isEqualTo(1);
+        var current =
+            inTransaction(
+                database, () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId));
+        byte[][] advanced =
+            AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(current);
+        assertThat(advanced[1]).isNotEqualTo(baseline[1]);
+        assertProjectionBytes(admin, issuerKey, accountKey, advanced);
+        assertThat(stable.observeCurrent(accountId).accountGeneration())
+            .isEqualTo(current.account().generation());
+      } finally {
+        admin.del(ascii(issuerKey));
+        admin.del(ascii(accountKey));
+      }
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  @Test
+  void resetThenLogoutProjectionPreservesExactCommittedSqlHistory() {
+    TestContext database = newPostgresContext();
+    DSLContext dsl = database.dsl();
+    var authorities = new AccountAuthorityGenerationRepository(dsl);
+    var outbox = new AccountAuthorityOutboxRepository(dsl);
+    var sources = new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
+    UUID accountId = createFreshAccount(database, sources);
+    var accounts = new AccountRepository(dsl, sources);
+    var resets = new AccountPasswordResetOperationRepository(dsl);
+    var logouts = new AccountLogoutAllOperationRepository(dsl);
+    var security = new AccountSecurityStateOperationRepository(dsl);
+    var logoutProducer =
+        new net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducer(
+            accounts,
+            authorities,
+            sources,
+            outbox,
+            logouts,
+            new net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback(
+                outbox, resets, logouts, security),
+            dsl,
+            database.manager());
+    RedisClient writer = redisClient(writerUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    String issuerKey =
+        AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX + ACCOUNT_ISSUER;
+    String accountKey = AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId;
+    try (var adminConnection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE)) {
+      var admin = adminConnection.sync();
+      assertThat(admin.get(ascii(issuerKey))).isNull();
+      assertThat(admin.get(ascii(accountKey))).isNull();
+      try {
+        var redis = redisClient(new TrackedProvider(writer));
+        var projection =
+            new AccountGameplayDelegationAuthorityProjection(sources, database.manager(), redis);
+        commitPasswordResetAuthorityChange(database, dsl, authorities, outbox, sources, accountId);
+        for (long expectedGeneration : List.of(2L, 3L)) {
+          if (expectedGeneration == 3L) {
+            var persisted =
+                inTransaction(database, () -> accounts.findByAccountUuid(accountId).orElseThrow());
+            var expected =
+                inTransaction(
+                    database,
+                    () ->
+                        authorities.readCompositeSnapshot(
+                            ACCOUNT_ISSUER, accountId, List.of(), List.of()));
+            String tokenHash = "ab".repeat(32);
+            String digest =
+                net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigest
+                    .accountLogoutAll(accountId, "control-ui", tokenHash);
+            assertThat(
+                    logoutProducer.commit(
+                        UUID.randomUUID(),
+                        1,
+                        digest,
+                        "control-ui",
+                        tokenHash,
+                        persisted,
+                        expected.account()))
+                .isEqualTo(
+                    net.firedevops.firemud.accountservice.service
+                        .AccountLogoutAllAuthorityEventProducer.LogoutAllResult
+                        .LOGOUT_ALL_COMMITTED);
+          }
+          var current =
+              inTransaction(
+                  database,
+                  () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId));
+          assertThat(current.account().generation()).isEqualTo(expectedGeneration);
+          assertThat(current.account().checkpoint().sequence()).isEqualTo(expectedGeneration - 1L);
+          var tables =
+              List.of(
+                  "accounts",
+                  "account_authority_generations",
+                  "account_authority_issuance_fences",
+                  "account_authority_outbox_streams",
+                  "account_authority_outbox_events",
+                  "account_password_reset_operation_receipts",
+                  "account_logout_all_operation_receipts");
+          Map<String, List<String>> committedRows = new java.util.LinkedHashMap<>();
+          for (String table : tables)
+            committedRows.put(
+                table,
+                dsl.fetch("SELECT row_to_json(t)::text FROM " + table + " t ORDER BY 1")
+                    .getValues(0, String.class));
+          projection.publishCurrent(accountId);
+          byte[][] expectedBytes =
+              AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(current);
+          assertProjectionBytes(admin, issuerKey, accountKey, expectedBytes);
+          assertThat(projection.observeCurrent(accountId).accountGeneration())
+              .isEqualTo(expectedGeneration);
+          projection.publishCurrent(accountId);
+          assertProjectionBytes(admin, issuerKey, accountKey, expectedBytes);
+          for (String table : tables)
+            assertThat(
+                    dsl.fetch("SELECT row_to_json(t)::text FROM " + table + " t ORDER BY 1")
+                        .getValues(0, String.class))
+                .isEqualTo(committedRows.get(table));
+        }
+      } finally {
+        admin.del(ascii(issuerKey));
+        admin.del(ascii(accountKey));
+      }
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  @Test
+  void committedResetSurvivesRedisAuthenticationFailureAndExactRetry() {
+    TestContext database = newPostgresContext();
+    DSLContext dsl = database.dsl();
+    var authorities = new AccountAuthorityGenerationRepository(dsl);
+    var outbox = new AccountAuthorityOutboxRepository(dsl);
+    var sources = new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
+    UUID accountId = createFreshAccount(database, sources);
+    Runnable exactReset =
+        commitPasswordResetAuthorityChange(database, dsl, authorities, outbox, sources, accountId);
+    var committed =
+        inTransaction(
+            database, () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId));
+    assertThat(committed.account().generation()).isEqualTo(2L);
+    assertThat(committed.account().checkpoint().sequence()).isEqualTo(1L);
+    var tables =
+        List.of(
+            "accounts",
+            "account_authority_generations",
+            "account_authority_issuance_fences",
+            "account_authority_outbox_streams",
+            "account_authority_outbox_events",
+            "account_password_reset_operation_receipts",
+            "password_reset_token");
+    Map<String, List<String>> committedRows = new java.util.LinkedHashMap<>();
+    for (String table : tables)
+      committedRows.put(
+          table,
+          dsl.fetch("SELECT row_to_json(t)::text FROM " + table + " t ORDER BY 1")
+              .getValues(0, String.class));
+    assertThat(committedRows.get("account_password_reset_operation_receipts")).hasSize(1);
+    assertThat(committedRows.get("account_authority_outbox_events")).hasSize(1);
+    RedisClient writer = redisClient(writerUri);
+    RedisClient denied =
+        redisClient(
+            writerUri.getHost(),
+            writerUri.getPort(),
+            ACCOUNT_IDENTITY,
+            "deliberately-invalid-test-credential");
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    String issuerKey =
+        AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX + ACCOUNT_ISSUER;
+    String accountKey = AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId;
+    try (var adminConnection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE)) {
+      var admin = adminConnection.sync();
+      assertThat(admin.get(ascii(issuerKey))).isNull();
+      assertThat(admin.get(ascii(accountKey))).isNull();
+      try {
+        AtomicInteger deniedAttempts = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicBoolean authenticationRefused =
+            new java.util.concurrent.atomic.AtomicBoolean();
+        var deniedRedis =
+            redisClient(
+                () -> {
+                  deniedAttempts.incrementAndGet();
+                  try {
+                    var unexpectedConnection = denied.connect(ByteArrayCodec.INSTANCE);
+                    unexpectedConnection.close();
+                    throw new AssertionError(
+                        "Invalid fixture credentials unexpectedly authenticated");
+                  } catch (RuntimeException failure) {
+                    assertThat(failure)
+                        .hasRootCauseInstanceOf(
+                            io.lettuce.core.RedisCommandExecutionException.class)
+                        .hasStackTraceContaining("WRONGPASS");
+                    authenticationRefused.set(true);
+                    throw failure;
+                  }
+                });
+        var unavailable =
+            new AccountGameplayDelegationAuthorityProjection(
+                sources, database.manager(), deniedRedis);
+        assertThatThrownBy(() -> unavailable.publishCurrent(accountId))
+            .isInstanceOf(
+                AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+        assertThat(deniedAttempts.get()).isEqualTo(1);
+        assertThat(authenticationRefused.get()).isTrue();
+        assertThat(admin.get(ascii(issuerKey))).isNull();
+        assertThat(admin.get(ascii(accountKey))).isNull();
+        for (String table : tables)
+          assertThat(
+                  dsl.fetch("SELECT row_to_json(t)::text FROM " + table + " t ORDER BY 1")
+                      .getValues(0, String.class))
+              .isEqualTo(committedRows.get(table));
+        exactReset.run();
+        var projection =
+            new AccountGameplayDelegationAuthorityProjection(
+                sources, database.manager(), redisClient(new TrackedProvider(writer)));
+        projection.publishCurrent(accountId);
+        assertCurrentOwnerProjection(projection, admin, accountId, committed);
+        for (String table : tables)
+          assertThat(
+                  dsl.fetch("SELECT row_to_json(t)::text FROM " + table + " t ORDER BY 1")
+                      .getValues(0, String.class))
+              .isEqualTo(committedRows.get(table));
+      } finally {
+        admin.del(ascii(issuerKey));
+        admin.del(ascii(accountKey));
+      }
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      denied.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  @Test
+  void unknownAccountProjectionFailsBeforeRedisAndLeavesOwnerRowsUnchanged() {
+    TestContext database = newPostgresContext();
+    DSLContext dsl = database.dsl();
+    var authorities = new AccountAuthorityGenerationRepository(dsl);
+    var outbox = new AccountAuthorityOutboxRepository(dsl);
+    var sources = new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
+    createFreshAccount(database, sources);
+    UUID unknownAccount = UUID.randomUUID();
+    assertThat(dsl.fetchCount(DSL.table("accounts"), DSL.field("account_uuid").eq(unknownAccount)))
+        .isZero();
+    var tables =
+        List.of(
+            "accounts",
+            "account_authority_generations",
+            "account_authority_issuance_fences",
+            "account_authority_outbox_streams",
+            "account_authority_outbox_events");
+    Map<String, List<String>> before = new java.util.LinkedHashMap<>();
+    for (String table : tables) {
+      before.put(
+          table,
+          dsl.fetch("SELECT row_to_json(t)::text FROM " + table + " t ORDER BY 1")
+              .getValues(0, String.class));
+    }
+    RedisClient writer = redisClient(writerUri);
+    try {
+      TrackedProvider provider = new TrackedProvider(writer);
+      var projection =
+          new AccountGameplayDelegationAuthorityProjection(
+              sources, database.manager(), redisClient(provider));
+      assertThatThrownBy(() -> projection.publishCurrent(unknownAccount))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Account authority snapshot requires its exact Account row");
+      assertThatThrownBy(() -> projection.observeCurrent(unknownAccount))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Account authority snapshot requires its exact Account row");
+      assertThat(provider.openedConnections()).isZero();
+      for (String table : tables) {
+        assertThat(
+                dsl.fetch("SELECT row_to_json(t)::text FROM " + table + " t ORDER BY 1")
+                    .getValues(0, String.class))
+            .isEqualTo(before.get(table));
+      }
+    } finally {
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
+  }
+
+  @Test
+  void accountCoordinationPrincipalRejectsRawEvalBeforeAnyScriptExecution() {
+    RedisClient writer = redisClient(writerUri);
+    try (var connection = writer.connect(ByteArrayCodec.INSTANCE)) {
+      var commands = connection.sync();
+      assertThat(commands.aclWhoami()).isEqualTo(ACCOUNT_IDENTITY);
+      assertThatThrownBy(
+              () ->
+                  commands.eval(
+                      "return 1", io.lettuce.core.ScriptOutputType.INTEGER, new byte[0][]))
+          .isInstanceOf(io.lettuce.core.RedisCommandExecutionException.class)
+          .hasMessageContaining("NOPERM");
+      assertThat(commands.ping()).isEqualTo("PONG");
+    } finally {
+      writer.shutdown();
+    }
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void pinnedRedisHelperRegistersPendingAndProjectsExactOwnerValues(boolean tenantBound)
@@ -438,7 +1294,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(writerProvider.trace(issuerRegressionConnection))
-          .containsExactly("aclWhoami", "scriptLoad", "evalsha", "close");
+          .containsExactly("aclWhoami", "get", "scriptLoad", "evalsha", "close");
       assertThat(admin.get(ascii(issuerKey))).containsExactly(initialProjection[0]);
       assertThat(admin.get(ascii(accountKey))).containsExactly(accountBeforeIssuerRegression);
       assertThat(admin.get(ascii(accountKey))).containsExactly(initialProjection[1]);
@@ -453,7 +1309,8 @@ class AccountGameplayDelegationRedisIntegrationTest {
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(writerProvider.trace(equalIssuerConflictConnection))
-          .doesNotContain("dispatch", "get");
+          .contains("get")
+          .doesNotContain("dispatch");
       assertProjectionBytes(admin, issuerKey, accountKey, initialProjection);
 
       byte[][] equalAccountConflict =
@@ -469,6 +1326,114 @@ class AccountGameplayDelegationRedisIntegrationTest {
           .contains("get")
           .doesNotContain("dispatch");
       assertProjectionBytes(admin, issuerKey, accountKey, initialProjection);
+
+      // The real current issuer owner refuses malformed retained evidence, even when a
+      // newer canonical candidate would pass the old Lua outer-shape/generation checks.
+      byte[][] newerProjection = projectionPair(accountId, 8L, 8L, "issuer-next", "account-next");
+      var malformedIssuer =
+          (tools.jackson.databind.node.ObjectNode) JSON.readTree(initialProjection[0]);
+      // Issuer projection canonical JSON is the owner's fixed insertion order, not RFC8785.
+      assertThat(JSON.writeValueAsBytes(malformedIssuer)).containsExactly(initialProjection[0]);
+      malformedIssuer.put("sourceEvent", "not-a-canonical-issuer-event");
+      var originalIssuer = JSON.readTree(initialProjection[0]);
+      for (String field :
+          List.of(
+              "schemaVersion",
+              "issuerId",
+              "issuerAuthGeneration",
+              "sourceVersion",
+              "outboxStreamKey",
+              "lastAppliedSourceOutboxSequence",
+              "lastAppliedSourceEventId",
+              "lastAppliedSourceEventDigest")) {
+        assertThat(malformedIssuer.get(field)).isEqualTo(originalIssuer.get(field));
+      }
+      byte[] malformedIssuerBytes = JSON.writeValueAsBytes(malformedIssuer);
+      admin.set(ascii(issuerKey), malformedIssuerBytes);
+      int malformedIssuerConnection = writerProvider.openedConnections();
+      assertThatThrownBy(
+              () ->
+                  redis.publishAuthorityProjections(
+                      accountId, newerProjection[0], newerProjection[1]))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertThat(writerProvider.trace(malformedIssuerConnection))
+          .containsExactly("aclWhoami", "get", "close");
+      assertThat(admin.get(ascii(issuerKey))).containsExactly(malformedIssuerBytes);
+      assertThat(admin.get(ascii(accountKey))).containsExactly(initialProjection[1]);
+      assertThat(admin.pttl(ascii(issuerKey))).isEqualTo(-1L);
+      admin.set(ascii(issuerKey), initialProjection[0]);
+
+      admin.pexpire(ascii(issuerKey), 60_000L);
+      Long originalIssuerExpiry = admin.pexpiretime(ascii(issuerKey));
+      assertThatThrownBy(
+              () ->
+                  redis.publishAuthorityProjections(
+                      accountId, newerProjection[0], newerProjection[1]))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertProjectionBytes(admin, issuerKey, accountKey, initialProjection);
+      assertThat(admin.pexpiretime(ascii(issuerKey))).isEqualTo(originalIssuerExpiry);
+      admin.set(ascii(issuerKey), initialProjection[0]);
+
+      // Mutate through an independent fixture-admin connection after the Java read, exactly
+      // before the actual Lua CAS. ABSENT, PRESENT and VERIFY must all refuse without overwrite.
+      byte[][] concurrentProjection =
+          projectionPair(accountId, 9L, 9L, "issuer-concurrent", "account-concurrent");
+      for (String mode : List.of("ABSENT", "PRESENT", "VERIFY")) {
+        if (mode.equals("ABSENT")) admin.del(ascii(issuerKey));
+        else admin.set(ascii(issuerKey), initialProjection[0]);
+        byte[][] candidate = mode.equals("VERIFY") ? initialProjection : newerProjection;
+        int raceConnection = writerProvider.openedConnections();
+        writerProvider.beforeNextEval(() -> admin.set(ascii(issuerKey), concurrentProjection[0]));
+        assertThatThrownBy(
+                () -> redis.publishAuthorityProjections(accountId, candidate[0], candidate[1]))
+            .isInstanceOf(
+                AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+        assertThat(writerProvider.trace(raceConnection))
+            .containsExactly("aclWhoami", "get", "scriptLoad", "evalsha", "close");
+        assertThat(admin.get(ascii(issuerKey))).containsExactly(concurrentProjection[0]);
+        assertThat(admin.get(ascii(accountKey))).containsExactly(initialProjection[1]);
+        assertThat(admin.pttl(ascii(issuerKey))).isEqualTo(-1L);
+      }
+      admin.set(ascii(issuerKey), initialProjection[0]);
+      assertThat(
+              redis.publishAuthorityProjections(accountId, newerProjection[0], newerProjection[1]))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      assertThat(
+              redis.publishAuthorityProjections(accountId, newerProjection[0], newerProjection[1]))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY);
+      assertProjectionBytes(admin, issuerKey, accountKey, newerProjection);
+      // Restore only these test-owned keys for the existing independent corruption vectors.
+      admin.set(ascii(issuerKey), initialProjection[0]);
+      admin.set(ascii(accountKey), initialProjection[1]);
+
+      // A corrupt or expiring stored projection is not permission to replace it.
+      byte[] malformedAccountProjection = ascii("{not-a-canonical-projection}");
+      admin.set(ascii(accountKey), malformedAccountProjection);
+      assertThatThrownBy(
+              () ->
+                  redis.publishAuthorityProjections(
+                      accountId, initialProjection[0], initialProjection[1]))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertThat(admin.get(ascii(accountKey))).containsExactly(malformedAccountProjection);
+      assertThat(admin.get(ascii(issuerKey))).containsExactly(initialProjection[0]);
+      admin.set(ascii(accountKey), initialProjection[1]);
+      admin.pexpire(ascii(accountKey), 60_000L);
+      Long originalAccountProjectionExpiry = admin.pexpiretime(ascii(accountKey));
+      assertThat(admin.pttl(ascii(accountKey))).isPositive();
+      assertThatThrownBy(
+              () ->
+                  redis.publishAuthorityProjections(
+                      accountId, initialProjection[0], initialProjection[1]))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertProjectionBytes(admin, issuerKey, accountKey, initialProjection);
+      assertThat(admin.pexpiretime(ascii(accountKey))).isEqualTo(originalAccountProjectionExpiry);
+      assertThat(admin.pttl(ascii(accountKey))).isPositive();
+      admin.set(ascii(accountKey), initialProjection[1]);
+      assertThat(admin.pttl(ascii(accountKey))).isEqualTo(-1L);
 
       byte[][] signedBigintBoundary =
           projectionPair(
@@ -503,7 +1468,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(writerProvider.trace(boundaryRegressionConnection))
-          .doesNotContain("dispatch", "get");
+          .containsExactly("aclWhoami", "get", "scriptLoad", "evalsha", "close");
       assertProjectionBytes(admin, issuerKey, accountKey, signedBigintBoundary);
 
       TrackedProvider wrongRoleProvider = new TrackedProvider(fixtureAdmin);
@@ -3073,7 +4038,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
         });
   }
 
-  private static void commitPasswordResetAuthorityChange(
+  private static Runnable commitPasswordResetAuthorityChange(
       TestContext context,
       DSLContext dsl,
       AccountAuthorityGenerationRepository authorities,
@@ -3136,14 +4101,19 @@ class AccountGameplayDelegationRedisIntegrationTest {
             null,
             null,
             context.manager());
-    inTransaction(
-        context,
-        () -> {
-          accountService.completePasswordReset(
-              new CompletePasswordResetRequest(
-                  rawToken, "active-transition-password-" + UUID.randomUUID()));
-          return null;
-        });
+    var request =
+        new CompletePasswordResetRequest(
+            rawToken, "active-transition-password-" + UUID.randomUUID());
+    Runnable exactReset =
+        () ->
+            inTransaction(
+                context,
+                () -> {
+                  accountService.completePasswordReset(request);
+                  return null;
+                });
+    exactReset.run();
+    return exactReset;
   }
 
   private String writeResponseKeyring() throws Exception {
@@ -3591,6 +4561,13 @@ class AccountGameplayDelegationRedisIntegrationTest {
   private static final class TrackedProvider
       implements AccountCoordinationPinnedConnectionProvider {
     private final RedisClient client;
+    private Runnable beforeNextEval;
+
+    private void beforeNextEval(Runnable action) {
+      if (beforeNextEval != null) throw new IllegalStateException("Unconsumed test CAS hook");
+      beforeNextEval = Objects.requireNonNull(action);
+    }
+
     private final List<List<String>> traces = new ArrayList<>();
     private final List<List<String>> dispatchedCommands = new ArrayList<>();
 
@@ -3627,7 +4604,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
     }
 
     @SuppressWarnings("unchecked")
-    private static StatefulRedisConnection<byte[], byte[]> observe(
+    private StatefulRedisConnection<byte[], byte[]> observe(
         StatefulRedisConnection<byte[], byte[]> delegate,
         List<String> trace,
         List<String> dispatches) {
@@ -3659,6 +4636,11 @@ class AccountGameplayDelegationRedisIntegrationTest {
                                 "pexpiretime")
                             .contains(name)) {
                           trace.add(name);
+                        }
+                        if (name.equals("evalsha") && beforeNextEval != null) {
+                          Runnable action = beforeNextEval;
+                          beforeNextEval = null;
+                          action.run();
                         }
                         return invoke(commands, commandMethod, commandArguments);
                       });

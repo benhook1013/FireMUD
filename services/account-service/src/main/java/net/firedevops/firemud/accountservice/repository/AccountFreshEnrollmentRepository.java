@@ -95,8 +95,17 @@ public final class AccountFreshEnrollmentRepository {
     // These guards compare each queued row image to the current source head. Validate the
     // complete baseline/first result before advancing it, retaining every intermediate check.
     // Only source constraints run here: both category results must still commit atomically.
-    dsl.execute("SET CONSTRAINTS " + SOURCE_CONSTRAINTS + " IMMEDIATE");
-    dsl.execute("SET CONSTRAINTS " + SOURCE_CONSTRAINTS + " DEFERRED");
+    // Historical pre-cutover schemas have no composite provenance table. Preserve their exact
+    // original source guards; once the table exists its constraint is mandatory, never optional.
+    Record provenance =
+        dsl.fetchSingle(
+            "SELECT to_regclass(quote_ident(current_schema()) || '.account_issuance_fence_provenance')");
+    String constraints = SOURCE_CONSTRAINTS;
+    if (provenance.get(0) != null) {
+      constraints += ", account_fence_provenance_consistent";
+    }
+    dsl.execute("SET CONSTRAINTS " + constraints + " IMMEDIATE");
+    dsl.execute("SET CONSTRAINTS " + constraints + " DEFERRED");
   }
 
   private Result readResult(Record enrollment) {

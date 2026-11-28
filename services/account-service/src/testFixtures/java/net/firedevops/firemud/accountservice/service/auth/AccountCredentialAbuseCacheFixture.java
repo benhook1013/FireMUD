@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.config.AccountCredentialAbuseConfiguration;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -35,7 +36,7 @@ public final class AccountCredentialAbuseCacheFixture implements AutoCloseable {
         .withStartupTimeout(Duration.ofSeconds(30))
         .withCreateContainerCmdModifier(
             command ->
-                java.util.Objects.requireNonNull(command.getHostConfig())
+                Objects.requireNonNull(command.getHostConfig())
                     .withMemory(PROCESS_BYTES)
                     .withMemorySwap(PROCESS_BYTES)
                     .withPidsLimit(128L))

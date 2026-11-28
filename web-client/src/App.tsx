@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import Button from '@mui/material/Button';
 import GameEditor from './GameEditor';
+import EmailLinkLanding from './EmailLinkLanding';
+import { emailLinkLanding } from './emailLinkLanding';
 import ScriptEditor from './ScriptEditor';
 import AccountCheckoutRoute, {
   type AccountCheckoutRouteProps,
@@ -23,6 +25,10 @@ function App({ accountCheckoutRouteProps }: AppProps = {}) {
     window.addEventListener('popstate', updatePathname);
     return () => window.removeEventListener('popstate', updatePathname);
   }, []);
+
+  if (emailLinkLanding) {
+    return <EmailLinkLanding route={emailLinkLanding} />;
+  }
 
   if (pathname.startsWith('/account/')) {
     return (

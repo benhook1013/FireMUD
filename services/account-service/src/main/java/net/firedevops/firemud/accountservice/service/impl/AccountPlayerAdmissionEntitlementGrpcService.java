@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
 import com.google.protobuf.Any;
+import io.grpc.BindableService;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.ServerServiceDefinition;
@@ -28,12 +29,10 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Unregistered Account owner receiver. No component annotation, capacity commit, World hold or
- * gameplay admission.
+ * Default-off Account owner receiver, available only through explicit private composition or the
+ * isolated receiving configuration. No capacity commit, World hold or gameplay admission.
  */
-public final class AccountPlayerAdmissionEntitlementGrpcService
-    extends AccountPlayerAdmissionEntitlementReadServiceGrpc
-        .AccountPlayerAdmissionEntitlementReadServiceImplBase {
+public final class AccountPlayerAdmissionEntitlementGrpcService implements BindableService {
   private final AccountPlayerAdmissionEntitlementOwner owner;
   private final String namespace;
   private final AccountPlayerAdmissionEntitlementWorkloadGuard guard;
@@ -59,16 +58,27 @@ public final class AccountPlayerAdmissionEntitlementGrpcService
             TlsServerCredentials.ClientAuth.REQUIRE,
             GrpcRequestBytePolicy.ordinary(),
             RuntimePlayerAdmissionEntitlementGrpcCodec.MAX_REQUEST_WIRE_BYTES);
-    factory.addService(bindProtectedService());
+    factory.addService(bindService());
     return factory.createServer();
   }
 
-  /** Binds the receiver and its method guard to the same private caller context. */
-  public ServerServiceDefinition bindProtectedService() {
-    return ServerInterceptors.interceptForward(this, guard);
+  /** Every registration path retains the exact TLS workload guard, including Spring discovery. */
+  @Override
+  public ServerServiceDefinition bindService() {
+    var handler =
+        new AccountPlayerAdmissionEntitlementReadServiceGrpc
+            .AccountPlayerAdmissionEntitlementReadServiceImplBase() {
+          @Override
+          public void readPlayerAdmissionEntitlement(
+              ReadPlayerAdmissionEntitlementRequest request,
+              StreamObserver<ReadPlayerAdmissionEntitlementResponse> observer) {
+            AccountPlayerAdmissionEntitlementGrpcService.this.readPlayerAdmissionEntitlement(
+                request, observer);
+          }
+        };
+    return ServerInterceptors.interceptForward(handler, guard);
   }
 
-  @Override
   public void readPlayerAdmissionEntitlement(
       ReadPlayerAdmissionEntitlementRequest wire,
       StreamObserver<ReadPlayerAdmissionEntitlementResponse> observer) {

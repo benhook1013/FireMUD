@@ -20,9 +20,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
+import net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigest;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.PasswordResetToken;
@@ -32,6 +34,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository.LogoutAllReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.OperationConflictException;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.PasswordResetReceipt;
@@ -39,7 +42,11 @@ import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
 import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
+import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback.LatestSourceSnapshot;
+import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceReader;
+import net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducer;
+import net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducer.LogoutAllResult;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
@@ -58,6 +65,8 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -224,6 +233,127 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
         .isEqualTo(journalBeforeRetry.get("source_change_binding", byte[].class));
   }
 
+  @ParameterizedTest(name = "preserves both cutoffs when password reset is first: {0}")
+  @ValueSource(booleans = {true, false})
+  void mixesActualResetAndLogoutAllProducersWithImmutableExactReplay(boolean resetFirst) {
+    Fixture fixture = newFixture();
+    Seed seed = seedAccountAndToken(fixture, "initial-password");
+    UUID logoutRequest = UUID.randomUUID();
+    // The unregistered producer takes already-verified caller evidence from its caller.
+    String logoutTokenHash = sha256Hex("synthetic logout token:" + logoutRequest);
+    String profile = "control-ui";
+    String logoutDigest =
+        AccountLogoutRequestDigest.accountLogoutAll(seed.accountUuid(), profile, logoutTokenHash);
+    String newPassword = "replacement-password";
+
+    var readback =
+        new AccountAuthoritySourceEventReadback(
+            fixture.outbox(),
+            fixture.operations(),
+            fixture.logoutAllOperations(),
+            fixture.securityStateOperations());
+    var sourceReader =
+        new AccountAuthoritySourceReader(
+            fixture.accounts(),
+            fixture.authority(),
+            fixture.outbox(),
+            readback,
+            fixture.transactionManager());
+    var logoutProducer =
+        new AccountLogoutAllAuthorityEventProducer(
+            fixture.accounts(),
+            fixture.authority(),
+            new AccountAuthoritySourceEvidenceRepository(
+                fixture.transactionDsl(), fixture.authority(), fixture.outbox()),
+            fixture.outbox(),
+            fixture.logoutAllOperations(),
+            readback,
+            fixture.transactionDsl(),
+            fixture.transactionManager());
+    BiFunction<UUID, ScopeState, LogoutAllResult> logout =
+        (request, expected) ->
+            logoutProducer.commit(
+                request,
+                1,
+                logoutDigest,
+                profile,
+                logoutTokenHash,
+                account(fixture, seed.accountId()),
+                expected);
+
+    var baseline = sourceReader.readCurrent(seed.accountUuid());
+    assertThat(baseline.outboxSequence()).isZero();
+    assertThat(baseline.latestEvent()).isEmpty();
+    assertCutoffState(baseline.sourceState(), seed.accountUuid(), 1L);
+
+    if (resetFirst) {
+      reset(fixture, seed.rawToken(), newPassword);
+    } else {
+      assertThat(logout.apply(logoutRequest, baseline.sourceState()))
+          .isEqualTo(LogoutAllResult.LOGOUT_ALL_COMMITTED);
+    }
+    var first = sourceReader.readCurrent(seed.accountUuid());
+    assertThat(first.outboxSequence()).isEqualTo(1L);
+    assertCutoffState(first.sourceState(), seed.accountUuid(), 2L);
+    var firstEvent = first.latestEvent().orElseThrow();
+    Object firstReceipt =
+        resetFirst ? resetReceipt(fixture, seed) : logoutReceipt(fixture, logoutRequest);
+
+    if (resetFirst) {
+      assertThat(logout.apply(logoutRequest, first.sourceState()))
+          .isEqualTo(LogoutAllResult.LOGOUT_ALL_COMMITTED);
+    } else {
+      reset(fixture, seed.rawToken(), newPassword);
+    }
+    var second = sourceReader.readCurrent(seed.accountUuid());
+    assertThat(second.outboxSequence()).isEqualTo(2L);
+    assertThat(second.outboxStreamKey()).isEqualTo(first.outboxStreamKey());
+    assertCutoffState(second.sourceState(), seed.accountUuid(), 3L);
+    assertThat(readAuthority(fixture, seed.accountUuid())).isEqualTo(second.sourceState());
+    assertThat(countEvents(fixture, second.outboxStreamKey())).isEqualTo(2L);
+    assertThat(tokenExists(fixture, seed.rawToken())).isFalse();
+
+    PasswordResetReceipt resetReceipt = resetReceipt(fixture, seed);
+    LogoutAllReceipt logoutReceipt = logoutReceipt(fixture, logoutRequest);
+    assertThat(firstReceipt).isEqualTo(resetFirst ? resetReceipt : logoutReceipt);
+    assertThat(resetReceipt.outboxSequence()).isEqualTo(resetFirst ? 1L : 2L);
+    assertThat(logoutReceipt.outboxSequence()).isEqualTo(resetFirst ? 2L : 1L);
+    assertThat(resetReceipt.issuanceFence()).isEqualTo(resetFirst ? 2L : 3L);
+    assertThat(resetReceipt.issuanceFenceSourceVersion()).isEqualTo(resetFirst ? 2L : 3L);
+    assertThat(logoutReceipt.issuanceFence()).isEqualTo(resetFirst ? 3L : 2L);
+    assertThat(logoutReceipt.issuanceFenceSourceVersion()).isEqualTo(resetFirst ? 3L : 2L);
+    var historical = sourceReader.readCommittedEvent(seed.accountUuid(), 1L);
+    assertThat(historical.currentSnapshot()).isEqualTo(second);
+    assertThat(historical.requestedEvent()).isEqualTo(firstEvent);
+    var secondEvent = second.latestEvent().orElseThrow();
+    assertThat(firstEvent.eventId())
+        .isEqualTo(resetFirst ? resetReceipt.eventId() : logoutReceipt.eventId());
+    assertThat(secondEvent.eventId())
+        .isEqualTo(resetFirst ? logoutReceipt.eventId() : resetReceipt.eventId());
+
+    StoredState committed = snapshot(fixture, seed);
+    reset(fixture, seed.rawToken(), newPassword);
+    assertThat(snapshot(fixture, seed)).isEqualTo(committed);
+    assertThat(sourceReader.readCommittedEvent(seed.accountUuid(), 1L)).isEqualTo(historical);
+    assertThat(resetReceipt(fixture, seed)).isEqualTo(resetReceipt);
+
+    assertThat(logout.apply(logoutRequest, second.sourceState()))
+        .isEqualTo(LogoutAllResult.LOGOUT_ALL_COMMITTED);
+    assertThat(snapshot(fixture, seed)).isEqualTo(committed);
+    assertThat(sourceReader.readCommittedEvent(seed.accountUuid(), 1L)).isEqualTo(historical);
+    assertThat(logoutReceipt(fixture, logoutRequest)).isEqualTo(logoutReceipt);
+
+    assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "different-password"))
+        .isInstanceOf(OperationConflictException.class);
+    assertThatThrownBy(() -> logout.apply(UUID.randomUUID(), second.sourceState()))
+        .isInstanceOf(AccountLogoutAllAuthorityEventProducer.OperationConflictException.class)
+        .hasMessageContaining("already bound to another logout-all request");
+    assertThat(snapshot(fixture, seed)).isEqualTo(committed);
+    assertThat(sourceReader.readCommittedEvent(seed.accountUuid(), 1L)).isEqualTo(historical);
+    assertThat(resetReceipt(fixture, seed)).isEqualTo(resetReceipt);
+    assertThat(logoutReceipt(fixture, logoutRequest)).isEqualTo(logoutReceipt);
+  }
+
   @Test
   void concurrentExactRetriesCommitOneSourceMutation() throws Exception {
     Fixture fixture = newFixture();
@@ -330,6 +460,45 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
     assertThat(sameIntentAfterConflict.get("request_payload", byte[].class))
         .isEqualTo(requestBytes);
 
+    var exactWaitingIntent =
+        fixture
+            .setupDsl()
+            .fetch(
+                "SELECT * FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                HexFormat.of().parseHex(tokenHash(seed.rawToken())));
+    var exactWaitingSource =
+        fixture
+            .setupDsl()
+            .fetch(
+                "SELECT * FROM account_draft_authorization_source_changes WHERE change_id = "
+                    + "(SELECT source_change_id FROM account_password_reset_draft_source_changes "
+                    + "WHERE token_hash = ?)",
+                HexFormat.of().parseHex(tokenHash(seed.rawToken())));
+    assertThat(exactWaitingIntent).hasSize(1);
+    assertThat(exactWaitingSource).hasSize(1);
+    assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "waiting-password"))
+        .isInstanceOf(
+            net.firedevops.firemud.accountservice.repository
+                .AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT * FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                    HexFormat.of().parseHex(tokenHash(seed.rawToken()))))
+        .isEqualTo(exactWaitingIntent);
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT * FROM account_draft_authorization_source_changes WHERE change_id = "
+                        + "(SELECT source_change_id FROM account_password_reset_draft_source_changes "
+                        + "WHERE token_hash = ?)",
+                    HexFormat.of().parseHex(tokenHash(seed.rawToken()))))
+        .isEqualTo(exactWaitingSource);
+    assertThat(snapshot(fixture, seed))
+        .isEqualTo(new StoredState(seed.originalVerifier(), 1L, 1L, 1L, 1L, 0L, 0L));
+
     transaction(
         fixture.transaction(),
         () -> {
@@ -381,6 +550,245 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
                     HexFormat.of().parseHex(tokenHash(seed.rawToken()))),
             "Committed V76 source change must remain readable");
     assertThat(committedV76Change.get("status", String.class)).isEqualTo("SOURCE_COMMITTED");
+  }
+
+  @Test
+  void mixedCommitOrderRetainsExactWaitingResetAndAllSourceBytesOnRetry() {
+    for (Outcome worldOutcome : List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED)) {
+      Fixture fixture = newFixture();
+      Seed seed = seedAccountAndToken(fixture, "initial-password");
+      DraftAuthorizationFenceBinding binding = draftBinding(seed);
+      transaction(
+          fixture.transaction(),
+          () -> {
+            fixture.fences().reserve(binding);
+            fixture.fences().claimCommitOrder(binding);
+            return null;
+          });
+      assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "held-password"))
+          .isInstanceOf(
+              net.firedevops.firemud.accountservice.repository
+                  .AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException
+                  .class);
+      var sourceBefore = snapshot(fixture, seed);
+      var intentBefore =
+          fixture
+              .setupDsl()
+              .fetch(
+                  "SELECT * FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                  HexFormat.of().parseHex(tokenHash(seed.rawToken())));
+      var changeBefore =
+          fixture.setupDsl().fetch("SELECT * FROM account_draft_authorization_source_changes");
+      assertThat(intentBefore).hasSize(1);
+      assertThat(intentBefore.getFirst().get("status", String.class)).isEqualTo("WAITING");
+      assertThat(changeBefore).hasSize(1);
+      Outcome designOutcome =
+          worldOutcome == Outcome.COMMITTED ? Outcome.DEFINITIVELY_ABORTED : Outcome.COMMITTED;
+      var world = ownerOutcome(binding, Owner.WORLD, worldOutcome);
+      var design = ownerOutcome(binding, Owner.GAME_DESIGN, designOutcome);
+      transaction(
+          fixture.transaction(),
+          () -> {
+            fixture.fences().recordOwnerReadback(binding, world);
+            fixture.fences().recordOwnerReadback(binding, design);
+            return null;
+          });
+      for (int retry = 0; retry < 2; retry++) {
+        assertThat(
+                transaction(fixture.transaction(), () -> fixture.fences().readSettlement(binding)))
+            .isEqualTo(DraftAuthorizationFenceRepository.Settlement.PENDING);
+        assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "held-password"))
+            .isInstanceOf(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException
+                    .class);
+        // The current owner must also refuse an explicit no-mutation terminal while mixed.
+        assertThatThrownBy(
+                () ->
+                    transaction(
+                        fixture.transaction(),
+                        () -> {
+                          var pending =
+                              fixture
+                                  .sourceChanges()
+                                  .findByTokenHash(tokenHash(seed.rawToken()))
+                                  .orElseThrow();
+                          fixture
+                              .sourceChanges()
+                              .markSourceAborted(
+                                  pending,
+                                  DraftAuthorizationFenceRepository.SourceChangeAbortReason
+                                      .DEFINITIVE_ABORT);
+                          return null;
+                        }))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Owner outcomes unresolved");
+        assertThat(snapshot(fixture, seed)).isEqualTo(sourceBefore);
+        assertThat(
+                fixture
+                    .setupDsl()
+                    .fetch(
+                        "SELECT * FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                        HexFormat.of().parseHex(tokenHash(seed.rawToken()))))
+            .isEqualTo(intentBefore);
+        assertThat(
+                fixture
+                    .setupDsl()
+                    .fetch("SELECT * FROM account_draft_authorization_source_changes"))
+            .isEqualTo(changeBefore);
+        assertThat(
+                transaction(
+                    fixture.transaction(),
+                    () ->
+                        fixture
+                            .fences()
+                            .readOwnerResult(binding, Owner.WORLD)
+                            .orElseThrow()
+                            .readback()))
+            .containsExactly(world.canonicalBytes());
+        assertThat(
+                transaction(
+                    fixture.transaction(),
+                    () ->
+                        fixture
+                            .fences()
+                            .readOwnerResult(binding, Owner.GAME_DESIGN)
+                            .orElseThrow()
+                            .readback()))
+            .containsExactly(design.canonicalBytes());
+      }
+    }
+  }
+
+  @Test
+  void mixedCommitOrderKeepsLogoutSourceIntentAndOriginalOwnerEvidenceUnchanged() {
+    // Reuse the real Account/source fixture. Presented token and owner authority are stipulated.
+    for (Outcome worldOutcome : List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED)) {
+      Fixture fixture = newFixture();
+      Seed seed = seedAccountAndToken(fixture, "initial-password");
+      DraftAuthorizationFenceBinding binding = draftBinding(seed);
+      transaction(
+          fixture.transaction(),
+          () -> {
+            fixture.fences().reserve(binding);
+            fixture.fences().claimCommitOrder(binding);
+            return null;
+          });
+      var account = fixture.accounts().findById(seed.accountId()).orElseThrow();
+      var expectedState = readAuthority(fixture, seed.accountUuid());
+      var producer =
+          new net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducer(
+              fixture.accounts(),
+              fixture.authority(),
+              new AccountAuthoritySourceEvidenceRepository(
+                  fixture.transactionDsl(), fixture.authority(), fixture.outbox()),
+              fixture.outbox(),
+              fixture.logoutAllOperations(),
+              new net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback(
+                  fixture.outbox(),
+                  fixture.operations(),
+                  fixture.logoutAllOperations(),
+                  fixture.securityStateOperations()),
+              fixture.transactionDsl(),
+              fixture.transactionManager());
+      UUID request = UUID.randomUUID();
+      String tokenHash = sha256Hex("synthetic logout token:" + request);
+      String requestDigest =
+          net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigest.accountLogoutAll(
+              seed.accountUuid(), "control-ui", tokenHash);
+      Runnable attempt =
+          () ->
+              producer.commit(
+                  request, 1, requestDigest, "control-ui", tokenHash, account, expectedState);
+      assertThatThrownBy(attempt::run)
+          .isInstanceOf(
+              net.firedevops.firemud.accountservice.service
+                  .AccountLogoutAllDraftSourceChangeRepository.PendingSourceChangeException.class);
+      var before = snapshot(fixture, seed);
+      var intent =
+          fixture
+              .setupDsl()
+              .fetch(
+                  "SELECT * FROM account_logout_all_draft_source_changes WHERE request_id = ?",
+                  request);
+      var changes =
+          fixture.setupDsl().fetch("SELECT * FROM account_draft_authorization_source_changes");
+      assertThat(intent).hasSize(1);
+      assertThat(intent.getFirst().get("status", String.class)).isEqualTo("WAITING");
+      assertThat(changes).hasSize(1);
+      var world = ownerOutcome(binding, Owner.WORLD, worldOutcome);
+      transaction(
+          fixture.transaction(),
+          () -> {
+            fixture.fences().recordOwnerReadback(binding, world);
+            return null;
+          });
+      assertThatThrownBy(attempt::run)
+          .isInstanceOf(
+              net.firedevops.firemud.accountservice.service
+                  .AccountLogoutAllDraftSourceChangeRepository.PendingSourceChangeException.class);
+      var originalWorld =
+          transaction(
+              fixture.transaction(),
+              () -> fixture.fences().readOwnerResult(binding, Owner.WORLD).orElseThrow());
+      var design =
+          ownerOutcome(
+              binding,
+              Owner.GAME_DESIGN,
+              worldOutcome == Outcome.COMMITTED ? Outcome.DEFINITIVELY_ABORTED : Outcome.COMMITTED);
+      transaction(
+          fixture.transaction(),
+          () -> {
+            fixture.fences().recordOwnerReadback(binding, design);
+            return null;
+          });
+      for (int retry = 0; retry < 2; retry++) {
+        assertThat(
+                transaction(fixture.transaction(), () -> fixture.fences().readSettlement(binding)))
+            .isEqualTo(DraftAuthorizationFenceRepository.Settlement.PENDING);
+        assertThatThrownBy(attempt::run)
+            .isInstanceOf(
+                net.firedevops.firemud.accountservice.service
+                    .AccountLogoutAllDraftSourceChangeRepository.PendingSourceChangeException
+                    .class);
+        assertThat(snapshot(fixture, seed)).isEqualTo(before);
+        assertThat(
+                fixture
+                    .setupDsl()
+                    .fetch(
+                        "SELECT * FROM account_logout_all_draft_source_changes WHERE request_id = ?",
+                        request))
+            .isEqualTo(intent);
+        assertThat(
+                fixture
+                    .setupDsl()
+                    .fetch("SELECT * FROM account_draft_authorization_source_changes"))
+            .isEqualTo(changes);
+        var retainedWorld =
+            transaction(
+                fixture.transaction(),
+                () -> fixture.fences().readOwnerResult(binding, Owner.WORLD).orElseThrow());
+        assertThat(retainedWorld.outcome()).isEqualTo(originalWorld.outcome());
+        assertThat(retainedWorld.readback()).containsExactly(world.canonicalBytes());
+        assertThat(retainedWorld.recordedAt()).isEqualTo(originalWorld.recordedAt());
+        assertThat(
+                transaction(
+                    fixture.transaction(),
+                    () ->
+                        fixture
+                            .fences()
+                            .readOwnerResult(binding, Owner.GAME_DESIGN)
+                            .orElseThrow()
+                            .readback()))
+            .containsExactly(design.canonicalBytes());
+        assertThat(
+                fixture
+                    .setupDsl()
+                    .fetchCount(org.jooq.impl.DSL.table("account_logout_all_operation_receipts")))
+            .isZero();
+        assertThat(countEvents(fixture, streamKey(seed.accountUuid()))).isZero();
+      }
+    }
   }
 
   @Test
@@ -531,6 +939,64 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
           fixture.fences().recordOwnerReadback(binding, ownerDenial(binding, Owner.WORLD));
           return null;
         });
+
+    var beforeAbortedTransaction =
+        fixture
+            .setupDsl()
+            .fetch(
+                "SELECT * FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                HexFormat.of().parseHex(tokenHash));
+    var beforeSourceAbort =
+        fixture
+            .setupDsl()
+            .fetch(
+                "SELECT * FROM account_draft_authorization_source_changes WHERE change_id = "
+                    + "(SELECT source_change_id FROM account_password_reset_draft_source_changes "
+                    + "WHERE token_hash = ?)",
+                HexFormat.of().parseHex(tokenHash));
+    assertThat(beforeAbortedTransaction).hasSize(1);
+    assertThat(beforeSourceAbort).hasSize(1);
+    assertThatThrownBy(
+            () ->
+                transaction(
+                    fixture.transaction(),
+                    () -> {
+                      var intent = fixture.sourceChanges().findByTokenHash(tokenHash).orElseThrow();
+                      fixture
+                          .sourceChanges()
+                          .markSourceAborted(
+                              intent,
+                              DraftAuthorizationFenceRepository.SourceChangeAbortReason.EXPIRED);
+                      assertThat(
+                              fixture
+                                  .sourceChanges()
+                                  .findByTokenHash(tokenHash)
+                                  .orElseThrow()
+                                  .status())
+                          .isEqualTo("SOURCE_ABORTED");
+                      throw new IllegalStateException("deliberate failure after source abort");
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("deliberate failure after source abort");
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT * FROM account_password_reset_draft_source_changes WHERE token_hash = ?",
+                    HexFormat.of().parseHex(tokenHash)))
+        .isEqualTo(beforeAbortedTransaction);
+    assertThat(
+            fixture
+                .setupDsl()
+                .fetch(
+                    "SELECT * FROM account_draft_authorization_source_changes WHERE change_id = "
+                        + "(SELECT source_change_id FROM account_password_reset_draft_source_changes "
+                        + "WHERE token_hash = ?)",
+                    HexFormat.of().parseHex(tokenHash)))
+        .isEqualTo(beforeSourceAbort);
+    assertThat(tokenExists(fixture, seed.rawToken())).isTrue();
+    assertThat(snapshot(fixture, seed))
+        .isEqualTo(new StoredState(seed.originalVerifier(), 1L, 1L, 1L, 1L, 0L, 0L));
 
     assertThatThrownBy(() -> reset(fixture, seed.rawToken(), "expired-password"))
         .isInstanceOf(IllegalArgumentException.class)
@@ -936,6 +1402,27 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
   private ScopeState readAuthority(Fixture fixture, UUID accountUuid) {
     return transaction(
         fixture.transaction(), () -> fixture.authority().read(AuthorityScope.account(accountUuid)));
+  }
+
+  private void assertCutoffState(ScopeState state, UUID accountUuid, long revision) {
+    assertThat(state.scope()).isEqualTo(AuthorityScope.account(accountUuid));
+    assertThat(state.generation()).isEqualTo(revision);
+    assertThat(state.sourceVersion()).isEqualTo(revision);
+    assertThat(state.issuanceFence().accountId()).isEqualTo(accountUuid);
+    assertThat(state.issuanceFence().value()).isEqualTo(revision);
+    assertThat(state.issuanceFence().sourceVersion()).isEqualTo(revision);
+  }
+
+  private PasswordResetReceipt resetReceipt(Fixture fixture, Seed seed) {
+    return transaction(
+        fixture.transaction(),
+        () -> fixture.operations().findByTokenHash(tokenHash(seed.rawToken())).orElseThrow());
+  }
+
+  private LogoutAllReceipt logoutReceipt(Fixture fixture, UUID request) {
+    return transaction(
+        fixture.transaction(),
+        () -> fixture.logoutAllOperations().findByRequestId(request).orElseThrow());
   }
 
   private boolean tokenExists(Fixture fixture, String rawToken) {

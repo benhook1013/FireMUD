@@ -47,7 +47,18 @@ class GatewayRoutesConfigurationTestProfileTest {
           "admin-sagas",
           "admin-tick-remediation",
           "design",
-          "account-auth",
+          "account-auth-login",
+          "account-auth-player-bootstrap",
+          "account-auth-bootstrap-worlds",
+          "account-auth-bootstrap-realms",
+          "account-auth-bootstrap-characters",
+          "account-auth-bootstrap-join",
+          "account-auth-connect-token",
+          "account-auth-request-password-reset",
+          "account-auth-complete-password-reset",
+          "account-auth-request-email-verification",
+          "account-auth-verify-email",
+          "account-auth-recover-username",
           "account-accounts",
           "account-profiles",
           "account-ping",
@@ -115,7 +126,7 @@ class GatewayRoutesConfigurationTestProfileTest {
 
     assertHasPath(gatewayProperties, "session-ping", "/api/session/ping");
 
-    assertHasPath(gatewayProperties, "account-auth", "/api/account/auth/**");
+    GatewayAuthRoutesTest.assertCatalog(gatewayProperties);
     assertHasPath(gatewayProperties, "account-accounts", "/api/account/accounts/**");
     assertHasPath(gatewayProperties, "account-profiles", "/api/account/profiles/**");
     assertHasPath(gatewayProperties, "account-ping", "/api/account/ping");
@@ -134,7 +145,7 @@ class GatewayRoutesConfigurationTestProfileTest {
     assertHasStripPrefix(gatewayProperties, "admin-sagas", "2");
     assertHasStripPrefix(gatewayProperties, "admin-tick-remediation", "2");
     assertHasStripPrefix(gatewayProperties, "design", "2");
-    assertHasStripPrefix(gatewayProperties, "account-auth", "2");
+    assertHasStripPrefix(gatewayProperties, "account-auth-login", "2");
     assertHasStripPrefix(gatewayProperties, "account-accounts", "2");
     assertHasStripPrefix(gatewayProperties, "account-profiles", "2");
     assertHasStripPrefix(gatewayProperties, "account-ping", "2");

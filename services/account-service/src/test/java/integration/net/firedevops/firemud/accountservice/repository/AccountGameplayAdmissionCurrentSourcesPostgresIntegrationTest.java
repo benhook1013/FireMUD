@@ -75,6 +75,8 @@ import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseResponse;
 import net.firedevops.firemud.account.v1.AccountGameplayAdmissionLeaseServiceGrpc;
 import net.firedevops.firemud.account.v1.AcquireGameplayAdmissionLeaseRequest;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionAbortResolution;
 import net.firedevops.firemud.accountservice.dto.AccountGameplayAdmissionLeaseOperation;
@@ -115,6 +117,8 @@ import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionL
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.State;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OriginKind;
@@ -260,6 +264,75 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     assertThat(fixture.sourceAndIssuanceImage()).isEqualTo(ownerImageBeforeOriginalCommit);
     assertThat(fixture.readCurrent(fixture.readCommittedCandidate()).leaseSourceFields())
         .isEqualTo(current.leaseSourceFields());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = SourceKind.class,
+      names = {"ACCOUNT", "GLOBAL_ROLES"})
+  void waitingGlobalIntentDeniesNewSourcesAndOriginalCommitButNotCallerOnlyRecovery(SourceKind kind)
+      throws Exception {
+    Fixture fixture = newFixture(null, "latest", false, false, null);
+    var candidate = fixture.readCommittedCandidate();
+    var current = fixture.readCurrent(candidate);
+    var lease = fixture.beginPendingAdmissionLease(current);
+    var change = fixture.retainWaitingSourceChange(kind, fixture.account.getAccountUuid());
+    var before = fixture.sourceAndIssuanceImage();
+
+    assertThatThrownBy(() -> fixture.readCurrent(candidate))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account gameplay admission current sources are unavailable");
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayAdmissionOriginalCommitExecutor(fixture.dataSource)
+                    .executeWithCurrentSources(lease, UUID.randomUUID(), TEST_NAMESPACE, candidate))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account gameplay admission current sources are unavailable");
+    assertThat(fixture.readLeaseOperation(lease).state())
+        .isEqualTo(AccountGameplayAdmissionLeaseOperation.State.PENDING);
+    assertThat(fixture.readLeaseOperation(lease).evidence().canonicalJson())
+        .isEqualTo(lease.canonicalJson());
+    fixture.inCurrentSources(
+        sources -> {
+          sources.requireCurrentAuthenticatedCallerOnly(candidate);
+          return null;
+        });
+    assertThat(fixture.sourceAndIssuanceImage()).isEqualTo(before);
+
+    fixture.transaction.execute(
+        status -> {
+          new DraftAuthorizationFenceRepository(fixture.dsl)
+              .markSourceAborted(
+                  change,
+                  DraftAuthorizationFenceRepository.SourceChangeAbortReason.DEFINITIVE_ABORT);
+          return null;
+        });
+    assertThat(fixture.readCurrent(candidate).leaseSourceFields())
+        .isEqualTo(current.leaseSourceFields());
+    assertThat(
+            new AccountGameplayAdmissionOriginalCommitExecutor(fixture.dataSource)
+                .executeWithCurrentSources(lease, UUID.randomUUID(), TEST_NAMESPACE, candidate)
+                .evidence())
+        .isEqualTo(lease);
+  }
+
+  @Test
+  void differentAccountAndTenantOnlyWaitingIntentDoNotBecomeGlobalAdmissionDenials()
+      throws Exception {
+    Fixture fixture = newFixture();
+    var current = fixture.readCurrent(fixture.committedCandidate);
+    Account other = new Account();
+    String suffix = UUID.randomUUID().toString();
+    other.setUsername("other-" + suffix);
+    other.setEmail("other-" + suffix + "@example.test");
+    other.setPasswordHash("controlled-fixture-password");
+    var persisted = fixture.transaction.execute(status -> fixture.accounts.save(other));
+    fixture.retainWaitingSourceChange(SourceKind.GLOBAL_ROLES, persisted.getAccountUuid());
+    fixture.retainWaitingSourceChange(SourceKind.TENANT, fixture.tenantUuid);
+    var before = fixture.sourceAndIssuanceImage();
+    assertThat(fixture.readCurrent(fixture.committedCandidate).leaseSourceFields())
+        .isEqualTo(current.leaseSourceFields());
+    assertThat(fixture.sourceAndIssuanceImage()).isEqualTo(before);
   }
 
   @Test
@@ -2126,6 +2199,16 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       boolean currentScope,
       boolean capacityBootstrap)
       throws Exception {
+    return newFixture(redisClient, migrationTarget, currentScope, capacityBootstrap, "player");
+  }
+
+  private Fixture newFixture(
+      AccountGameplayDelegationRedisClient redisClient,
+      String migrationTarget,
+      boolean currentScope,
+      boolean capacityBootstrap,
+      String legacyRole)
+      throws Exception {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     if (schema.length() > 63) throw new IllegalStateException("Generated schema name is too long");
     runOwnedSchemas.add(schema);
@@ -2150,7 +2233,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         temporaryDirectory,
         redisClient,
         currentScope,
-        capacityBootstrap);
+        capacityBootstrap,
+        legacyRole);
   }
 
   private static int awaitBackendBlockedBy(
@@ -2851,7 +2935,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         Path temporaryDirectory,
         AccountGameplayDelegationRedisClient redisClient,
         boolean currentScope,
-        boolean capacityBootstrap)
+        boolean capacityBootstrap,
+        String legacyRole)
         throws Exception {
       this.capacityBootstrap = capacityBootstrap;
       this.schema = schema;
@@ -2920,7 +3005,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       newAccount.setUsername("current-source-" + suffix);
       newAccount.setEmail("current-source-" + suffix + "@example.test");
       newAccount.setPasswordHash("integration-fixture-password-hash");
-      newAccount.setRole("player");
+      newAccount.setRole(legacyRole);
       this.account = transaction.execute(status -> accounts.save(newAccount));
       var retainedScope = canonicalJoinScope(account.getAccountUuid(), tenantUuid);
       this.joinScope =
@@ -3270,6 +3355,59 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
           sources ->
               sources.readCurrentPublicProductionNew(
                   tenantUuid, expectedCandidate.identity().tokenJti(), expectedCandidate));
+    }
+
+    /** Real durable scoped evidence; deliberately stops before any source mutation. */
+    private SourceChange retainWaitingSourceChange(SourceKind kind, UUID scopeId) {
+      return transaction.execute(
+          status -> {
+            SourceEvidence source;
+            if (kind == SourceKind.TENANT) {
+              var event = tenantAuthorityEvents.readCurrentByTenant(scopeId);
+              source =
+                  new SourceEvidence(
+                      kind,
+                      scopeId.toString(),
+                      Long.toString(event.tenantAuthorityGeneration()),
+                      Long.toString(event.tenantAuthoritySourceVersion()),
+                      event.outboxStreamKey(),
+                      Long.toString(event.outboxSequence()),
+                      event.payload());
+            } else {
+              var state = generations.read(AuthorityScope.account(scopeId));
+              var row =
+                  dsl.fetchSingle(
+                      "SELECT r.global_role_source_version, "
+                          + "to_jsonb(a)::text AS account_evidence, to_jsonb(r)::text AS role_evidence "
+                          + "FROM accounts a JOIN account_global_role_sources r USING (account_uuid) "
+                          + "WHERE a.account_uuid = ?",
+                      scopeId);
+              source =
+                  new SourceEvidence(
+                      kind,
+                      scopeId.toString(),
+                      kind == SourceKind.ACCOUNT ? Long.toString(state.generation()) : null,
+                      Long.toString(
+                          kind == SourceKind.ACCOUNT
+                              ? state.sourceVersion()
+                              : row.get("global_role_source_version", Long.class)),
+                      null,
+                      null,
+                      row.get(
+                              kind == SourceKind.ACCOUNT ? "account_evidence" : "role_evidence",
+                              String.class)
+                          .getBytes(StandardCharsets.UTF_8));
+            }
+            var change =
+                new SourceChange(
+                    UUID.randomUUID(),
+                    List.of(source),
+                    "controlled pending mutation".getBytes(StandardCharsets.UTF_8));
+            var fences = new DraftAuthorizationFenceRepository(dsl);
+            assertThat(fences.requestSourceChange(change)).isTrue();
+            assertThat(fences.readSourceChange(change).status()).isEqualTo("WAITING");
+            return change;
+          });
     }
 
     private <T> T inCurrentSources(
@@ -3949,7 +4087,16 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
                 } else if (key.equals(
                     AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
                         + GameSessionAccountDelegationProfile.ISSUER)) {
-                  authorityProjectionBytes[0] = arguments[0].clone();
+                  assertThat(arguments.length).isEqualTo(3);
+                  assertThat(arguments[1]).containsExactly(authorityProjectionBytes[0]);
+                  String mode = new String(arguments[0], StandardCharsets.US_ASCII);
+                  if ("VERIFY".equals(mode)) {
+                    assertThat(arguments[2]).isEmpty();
+                    return 0L;
+                  }
+                  assertThat(mode).isEqualTo("PRESENT");
+                  assertThat(arguments[2]).isNotEmpty();
+                  authorityProjectionBytes[0] = arguments[2].clone();
                 } else if (key.equals(
                     AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId)) {
                   if (arguments.length == 3 && arguments[2].length > 0) {
