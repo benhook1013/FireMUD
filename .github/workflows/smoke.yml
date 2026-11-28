@@ -2031,6 +2031,24 @@ jobs:
                   return;
                 }
                 if (replacementProof === "ordinary") {
+                  finalIdentity = await resolveCurrentIdentity("Fencing proven cancelled-run replacement", true);
+                  if (finalIdentity?.obsolete) return;
+                  if (!finalIdentity || identityKey({...finalIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
+                      identityKey(currentIdentity)) {
+                    if (finalIdentity) {
+                      cancelledRecoveryMoved = true;
+                      requireCurrentIdentity = true;
+                      currentIdentity = finalIdentity;
+                    }
+                    continue smokeGatePolling;
+                  }
+                  if (Date.now() >= sameTupleCancellationDeadline) {
+                    core.setFailed(
+                      `Cancelled runtime-images run ${cancelledRunId} has no freshly proven exact replacement ` +
+                      `after ${cancellationDiscoveryMs / 60000} minutes`
+                    );
+                    return;
+                  }
                   core.info(`Exact repository_dispatch replacement ${replacement.id}/${replacement.run_attempt} passed full-stack smoke and authenticated cleanup.`);
                   return;
                 }
@@ -2260,21 +2278,24 @@ jobs:
                             }
                             continue smokeGatePolling;
                           }
-                          if (!await isCurrentCanonicalAttempt(refreshProof.run)) {
-                            await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                            continue smokeGatePolling;
-                          }
-                          const finalIdentity = await resolveCurrentIdentity("Fencing exact passing typed smoke recovery", true);
-                          if (finalIdentity?.obsolete) return;
-                          if (!finalIdentity || identityKey({...finalIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
-                              identityKey(currentIdentity)) {
-                            if (finalIdentity) {
-                              requireCurrentIdentity = true;
-                              currentIdentity = finalIdentity;
+                          for (let fence = 0; fence < 2; fence++) {
+                            if (!await isCurrentCanonicalAttempt(refreshProof.run)) {
+                              await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                              continue smokeGatePolling;
                             }
-                            continue smokeGatePolling;
+                            if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                            const finalIdentity = await resolveCurrentIdentity("Fencing exact passing typed smoke recovery", true);
+                            if (finalIdentity?.obsolete) return;
+                            if (!finalIdentity || identityKey({...finalIdentity, sourceEvent: currentIdentity.sourceEvent}) !==
+                                identityKey(currentIdentity)) {
+                              if (finalIdentity) {
+                                requireCurrentIdentity = true;
+                                currentIdentity = finalIdentity;
+                              }
+                              continue smokeGatePolling;
+                            }
+                            if (Date.now() - started >= timeoutMs) break smokeGatePolling;
                           }
-                          if (Date.now() - started >= timeoutMs) break smokeGatePolling;
                           return;
                         }
                         knownPlayVerified = refreshProof?.status === "verified" &&
@@ -2470,6 +2491,18 @@ jobs:
                     continue smokeGatePolling;
                   }
                   if (proof === "ordinary") {
+                    if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                    if (!await isCurrentCanonicalAttempt(matching)) {
+                      await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                      continue smokeGatePolling;
+                    }
+                    if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                    freshIdentity = await resolveCurrentIdentity("Fencing moved cancelled-run recovery", true);
+                    if (freshIdentity?.obsolete) return;
+                    if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
+                      if (freshIdentity) currentIdentity = freshIdentity;
+                      continue smokeGatePolling;
+                    }
                     if (Date.now() - started >= timeoutMs) break smokeGatePolling;
                     return;
                   }
@@ -2858,20 +2891,24 @@ jobs:
                   );
                   continue smokeGatePolling;
                 }
-                if (typedRuntimeProof && !await isCurrentCanonicalAttempt(matching)) {
-                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
-                  continue smokeGatePolling;
-                }
                 if (typedRuntimeProof) {
-                  // The final attempt GET can itself overlap PR/base movement.
-                  const fencedIdentity = await fenceCompletedRuntimeIdentity("Stopping stale smoke gate before accepting full-stack proof");
-                  if (fencedIdentity?.obsolete) return;
-                  if (!fencedIdentity || identityKey(fencedIdentity) !== identityKey(currentIdentity)) {
-                    currentIdentity = fencedIdentity;
-                    core.info(`Runtime images run ${matching.id} was not accepted because its PR identity changed during the final attempt lookup.`);
-                    continue smokeGatePolling;
+                  // The first comparison can overlap a rerun; the last attempt
+                  // lookup can itself overlap movement of the PR comparison.
+                  for (let fence = 0; fence < 2; fence++) {
+                    if (!await isCurrentCanonicalAttempt(matching)) {
+                      await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                      continue smokeGatePolling;
+                    }
+                    if (Date.now() - started >= timeoutMs) break smokeGatePolling;
+                    const fencedIdentity = await fenceCompletedRuntimeIdentity("Stopping stale smoke gate before accepting full-stack proof");
+                    if (fencedIdentity?.obsolete) return;
+                    if (!fencedIdentity || identityKey(fencedIdentity) !== identityKey(currentIdentity)) {
+                      currentIdentity = fencedIdentity;
+                      core.info(`Runtime images run ${matching.id} was not accepted because its PR identity changed during the final attempt lookup.`);
+                      continue smokeGatePolling;
+                    }
+                    if (Date.now() - started >= timeoutMs) break smokeGatePolling;
                   }
-                  if (Date.now() - started >= timeoutMs) break smokeGatePolling;
                 }
                 return;
               }

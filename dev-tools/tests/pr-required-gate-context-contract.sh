@@ -1071,12 +1071,15 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
   const github = {rest: {
     pulls: {get: async () => {
       reads += 1;
-      const afterFinalGet = finalGetDrift && qualifiedAttemptReads >= 2;
+      const afterFinalGet = finalGetDrift && qualifiedAttemptReads >= 3;
       if (afterFinalGet) postAttemptIdentityReads++;
+      if (kind === "ordinary-final-comparison-deadline" && qualifiedAttemptReads === 3) {
+        now += 90 * 60 * 1000;
+      }
       const moved = kind === "ordinary-final-base-drift" && qualifiedAttemptReads > 0 ||
         kind === "ordinary-final-get-base-drift" && afterFinalGet;
       observedBaseMove ||= moved;
-      observedAttemptMove ||= kind === "ordinary-final-attempt-drift" && qualifiedAttemptReads > 0;
+      observedAttemptMove ||= kind === "ordinary-final-attempt-drift" && qualifiedAttemptReads >= 2;
       return {data: {state: afterFinalGet && kind === "ordinary-final-get-closed" ? "closed" : "open",
         head: {sha: afterFinalGet && kind === "ordinary-final-get-head" ? "e".repeat(40) : head},
         base: {ref: kind === "stale-final" && reads > 3 ||
@@ -1084,7 +1087,7 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
         merge_commit_sha: moved ? movedMerge : merge}};
     }},
     git: {getRef: async () => {
-      observedBaseMove ||= kind === "ordinary-final-get-ref-drift" && qualifiedAttemptReads >= 2;
+      observedBaseMove ||= kind === "ordinary-final-get-ref-drift" && qualifiedAttemptReads >= 3;
       return {data: {ref: "refs/heads/develop", object: {sha: observedBaseMove ? movedBase : base}}};
     }},
     repos: {
@@ -1267,6 +1270,11 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
   assert.equal(lateOrdinary.failures.length, 1);
   assert.match(lateOrdinary.failures[0], /^Timed out waiting for the exact runtime-images/,
     "an exact final attempt result after the overall deadline cannot pass the gate");
+  const lateComparison = await scenario("ordinary-final-comparison-deadline", "repository_dispatch");
+  assert.equal(lateComparison.waitedMillis, 0);
+  assert.equal(lateComparison.failures.length, 1);
+  assert.match(lateComparison.failures[0], /^Timed out waiting for the exact runtime-images/,
+    "an exact final comparison after the overall deadline cannot pass the gate");
   assert.equal(ordinary.infos.some(message => message.startsWith("Stopping stale smoke gate before accepting full-stack proof ")), false,
     "unchanged proof clears without the obsolete identity message");
   const delayedSmoke = await scenario("ordinary-delayed-smoke-step", "repository_dispatch");
@@ -5054,10 +5062,17 @@ function markerAccepted(overrides = {}) {
     assert.equal(finalReadOverrun.finalIdentityReads, 2);
     assert.equal(finalReadOverrun.finalAttemptReads, 1);
   }
-  const finalReadsWithinBudget = await sameTupleCancellation("completed", ["ordinary"], false,
+  const finalComparisonOverrun = await sameTupleCancellation("completed", ["ordinary"], false,
     {overallMs: 41, finalIdentityReadMs: 10, finalAttemptReadMs: 10});
+  assert.equal(finalComparisonOverrun.finalAttemptReads, 2);
+  assert.equal(finalComparisonOverrun.finalIdentityReads, 3);
+  assert.equal(finalComparisonOverrun.now, 50);
+  assert.match(finalComparisonOverrun.failures[0], /has no freshly proven exact replacement/,
+    "the final comparison also counts against the existing cancellation allowance");
+  const finalReadsWithinBudget = await sameTupleCancellation("completed", ["ordinary"], false,
+    {overallMs: 51, finalIdentityReadMs: 10, finalAttemptReadMs: 10});
   assert.deepEqual(finalReadsWithinBudget.failures, [], "the final deadline fence still accepts within the same allowance");
-  assert.equal(finalReadsWithinBudget.now, 40);
+  assert.equal(finalReadsWithinBudget.now, 50);
   const delayedSibling = await sameTupleCancellation("completed", [], false, {siblingConclusions: [null, "skipped"]});
   assert.deepEqual(delayedSibling.failures, []);
   assert.deepEqual(delayedSibling.outputs, [["known_play_exception", "true"]]);
