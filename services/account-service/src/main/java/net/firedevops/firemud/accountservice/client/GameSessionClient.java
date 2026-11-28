@@ -30,7 +30,8 @@ public class GameSessionClient
   private static final String ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE =
       "Gameplay routing authority unavailable; retry later";
   private static final String ADMISSION_POINTER_UNAVAILABLE_MESSAGE =
-      "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry";
+      "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying"
+          + " gameplay entry";
 
   public GameSessionClient(
       ServiceEndpointsProperties endpoints,
@@ -102,17 +103,11 @@ public class GameSessionClient
                       .build());
       if (response.hasError()) {
         String code = response.getError().getCode();
-        if ("INTERNAL".equals(code)
-            || "UNAVAILABLE".equals(code)
-            || "DEADLINE_EXCEEDED".equals(code)) {
-          throw new AuthenticationException(
-              "AUTH_UNAVAILABLE", ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE);
-        }
         if ("INVALID_ARGUMENT".equals(code) || "NOT_FOUND".equals(code)) {
           throw new AuthenticationException(
               "ADMISSION_POINTER_UNAVAILABLE", ADMISSION_POINTER_UNAVAILABLE_MESSAGE);
         }
-        throw new IllegalStateException("Admission pointer lookup failed: " + code);
+        throw discoveryFailure("Admission pointer lookup failed", code);
       }
       return response.getAdmissionPointer();
     } catch (StatusRuntimeException ex) {
@@ -125,8 +120,15 @@ public class GameSessionClient
   }
 
   private static RuntimeException discoveryFailure(String operation, String code) {
-    if ("INTERNAL".equals(code) || "UNAVAILABLE".equals(code) || "DEADLINE_EXCEEDED".equals(code)) {
+    if ("AUTH_UNAVAILABLE".equals(code)
+        || "INTERNAL".equals(code)
+        || "UNAVAILABLE".equals(code)
+        || "DEADLINE_EXCEEDED".equals(code)) {
       return new AuthenticationException("AUTH_UNAVAILABLE", ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE);
+    }
+    if ("ADMISSION_POINTER_UNAVAILABLE".equals(code)) {
+      return new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE", ADMISSION_POINTER_UNAVAILABLE_MESSAGE);
     }
     return new IllegalStateException(operation + ": " + code);
   }
