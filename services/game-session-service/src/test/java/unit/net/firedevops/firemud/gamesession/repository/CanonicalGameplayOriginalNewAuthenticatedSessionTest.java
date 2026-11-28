@@ -26,6 +26,9 @@ import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
@@ -83,8 +86,25 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
   void buildsNonPersistableTemplateAndAcceptsExactFinalCasReadback() throws Exception {
     try (Fixture fixture = fixture(claims -> {});
         var template = template(fixture)) {
+      var entitlement = fixture.capacityRequest.evidence().fields();
+      assertThat(entitlement)
+          .containsEntry("membershipExists", true)
+          .containsEntry("membershipLifecycleState", "ACTIVE")
+          .containsEntry("gameplayAdmissionAllowed", true);
+      assertThat((List<?>) entitlement.get("authoritySourceEvidence"))
+          .anySatisfy(source -> {
+            assertThat(source).isInstanceOf(Map.class);
+            String eventJson = (String) ((Map<?, ?>) source).get("canonicalEventJson");
+            assertThat(eventJson)
+                .contains("\"eventType\":\"MEMBERSHIP_CHANGED\"")
+                .contains("\"membershipLifecycleState\":\"ACTIVE\"")
+                .contains("\"gameplayAdmissionAllowed\":true");
+          });
       byte[] templateBytes = template.finalCasTemplateBytes();
       String templateJson = new String(templateBytes, StandardCharsets.UTF_8);
+      String executionDigest = execution(fixture).digest();
+      assertThat(JSON.readTree(templateBytes).path("capacityExecutionDigest").asText())
+          .isEqualTo(executionDigest);
       assertThat(templateJson)
           .contains("__ORIGINAL_NEW_ADMISSION_AT_MS__")
           .contains("__ORIGINAL_NEW_CONTINUITY_EXPIRES_AT_MS__")
@@ -98,6 +118,18 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
 
       long admissionAt = CLOCK.millis() + 100L;
       byte[] finalBytes = finalizeTemplate(templateBytes, admissionAt, SESSION_DURATION_MILLIS);
+      String wrongDigest =
+          "sha256:" + (executionDigest.charAt(7) == '0' ? "1" : "0") + executionDigest.substring(8);
+      byte[] differentExecution =
+          new String(finalBytes, StandardCharsets.UTF_8)
+              .replace(executionDigest, wrongDigest)
+              .getBytes(StandardCharsets.UTF_8);
+      try {
+        assertThatThrownBy(() -> template.requireFinalizedReadback(differentExecution))
+            .isInstanceOf(IllegalArgumentException.class);
+      } finally {
+        Arrays.fill(differentExecution, (byte) 0);
+      }
       try (var finalized = template.requireFinalizedReadback(finalBytes)) {
         assertThat(finalized.originalCandidate().bindingDecisionId())
             .isEqualTo(BINDING_DECISION_ID);
@@ -333,10 +365,40 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
         .hasMessage("Original NEW bound credential is invalid");
   }
 
+  private static net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution
+      execution(Fixture fixture) {
+    var request = fixture.capacityRequest;
+    var reservation =
+        new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result(
+            request.identity(),
+            request.admissionAttemptId(),
+            request.capacityRearmFence(),
+            request.mutationDigest(),
+            UUID.fromString("99999999-9999-4999-8999-999999999999"),
+            1,
+            request.evidence().expiresAt(),
+            net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State.RESERVED,
+            request.evidence().snapshotIdentity(),
+            request.evidence().evaluationIdentity());
+    return new net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution(
+        request,
+        reservation,
+        fixture.candidate.bindingDecisionId(),
+        "sha256:"
+            + net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution.sha256(
+                fixture.candidate.canonicalBytes()),
+        "controlled-owner",
+        1);
+  }
+
   private static CanonicalGameplayOriginalNewAuthenticatedSession.Template template(
       Fixture fixture) {
-    return CanonicalGameplayOriginalNewAuthenticatedSession.template(
-        fixture.candidate, fixture.credential, fixture.verifier, SESSION_DURATION_MILLIS);
+    var execution = execution(fixture);
+    try (var raw =
+        CanonicalGameplayOriginalNewAuthenticatedSession.template(
+            fixture.candidate, fixture.credential, fixture.verifier, SESSION_DURATION_MILLIS)) {
+      return raw.bindCapacityExecution(execution);
+    }
   }
 
   private static void assertDenied(byte[] bytes) {
@@ -377,8 +439,10 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
   private static Fixture fixture(
       java.util.function.Consumer<Map<String, Object>> mutateClaims, KeyPair signingKey)
       throws Exception {
-    AccountGameplayAdmissionLeaseEvidence lease = lease();
-    CanonicalGameplayOriginalNewCandidate candidate = candidate(lease);
+    var target = playableTarget();
+    var capacityRequest = capacityRequest(target);
+    AccountGameplayAdmissionLeaseEvidence lease = lease(capacityRequest);
+    CanonicalGameplayOriginalNewCandidate candidate = candidate(lease, target);
     Map<String, Object> claims = boundClaims(lease);
     mutateClaims.accept(claims);
     String compactJwt = sign(claims, signingKey);
@@ -396,11 +460,11 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
             1L,
             "42",
             checkpointsSha256);
-    return new Fixture(candidate, credential, compactJwt, verifier());
+    return new Fixture(candidate, capacityRequest, credential, compactJwt, verifier());
   }
 
   private static CanonicalGameplayOriginalNewCandidate candidate(
-      AccountGameplayAdmissionLeaseEvidence lease) {
+      AccountGameplayAdmissionLeaseEvidence lease, CanonicalPlayableTarget target) {
     CanonicalGameplayBindingIdentity binding =
         new CanonicalGameplayBindingIdentity(
             ACCOUNT_ID,
@@ -418,40 +482,6 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
             BigInteger.ONE,
             BigInteger.ONE,
             BigInteger.ONE);
-    CanonicalPlayableTarget target =
-        new CanonicalPlayableTarget(
-            NAMESPACE,
-            "tenant",
-            TENANT_ID,
-            "world",
-            "World",
-            REALM_ID,
-            "realm",
-            "Realm",
-            42L,
-            77L,
-            PLAYABLE_NAMESPACE_ID,
-            "SHARED",
-            GAME_INSTANCE_ID,
-            VERSION_ID,
-            3L,
-            5L,
-            6L,
-            "a".repeat(64),
-            1L,
-            REQUEST_ID.toString(),
-            "b".repeat(64),
-            OriginKind.NO_PRIOR_POINTER,
-            null,
-            OTHER_ID,
-            RESERVATION_FENCE,
-            "sha256:" + "c".repeat(64),
-            100L,
-            "sha256:" + "d".repeat(64),
-            Outcome.COMMITTED,
-            false,
-            Instant.parse("2026-10-26T00:00:00Z"),
-            "PRESEEDED_ONLY");
     var bindingRef = binding.bindingRef();
     var transition =
         new CanonicalGameplayOriginalNewCandidate.TransitionSource(
@@ -477,7 +507,79 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
         BINDING_DECISION_ID, lease, binding, target, transition, reservation);
   }
 
-  private static AccountGameplayAdmissionLeaseEvidence lease() {
+  private static CanonicalPlayableTarget playableTarget() {
+    return new CanonicalPlayableTarget(
+        NAMESPACE,
+        "tenant",
+        TENANT_ID,
+        "world",
+        "World",
+        REALM_ID,
+        "realm",
+        "Realm",
+        42L,
+        77L,
+        PLAYABLE_NAMESPACE_ID,
+        "SHARED",
+        GAME_INSTANCE_ID,
+        VERSION_ID,
+        3L,
+        5L,
+        6L,
+        "a".repeat(64),
+        1L,
+        REQUEST_ID.toString(),
+        "b".repeat(64),
+        OriginKind.NO_PRIOR_POINTER,
+        null,
+        OTHER_ID,
+        RESERVATION_FENCE,
+        "sha256:" + "c".repeat(64),
+        100L,
+        "sha256:" + "d".repeat(64),
+        Outcome.COMMITTED,
+        false,
+        Instant.parse("2026-10-26T00:00:00Z"),
+        "PRESEEDED_ONLY");
+  }
+
+  private static Request capacityRequest(CanonicalPlayableTarget target) {
+    var player =
+        new PlayerContext(
+            ACCOUNT_ID,
+            TENANT_ID,
+            PLAYABLE_NAMESPACE_ID,
+            GAME_INSTANCE_ID,
+            CHARACTER_ID,
+            SESSION_ID,
+            REALM_ID,
+            REQUEST_ID,
+            target.playableStateScope());
+    var now = CLOCK.instant();
+    var accountTarget =
+        Map.<String, Object>ofEntries(
+            Map.entry("targetClass", "PUBLIC_PRODUCTION"),
+            Map.entry("characterCreationPolicy", target.characterCreationPolicy()),
+            Map.entry("targetNamespace", target.targetNamespace()),
+            Map.entry("tenantId", target.canonicalTenantId().toString()),
+            Map.entry("tenantSlug", target.tenantSlug()),
+            Map.entry("worldSlug", target.worldSlug()),
+            Map.entry("realmId", target.realmId().toString()),
+            Map.entry("realmSlug", target.realmSlug()),
+            Map.entry("playableStateNamespaceId", target.playableStateNamespaceId().toString()),
+            Map.entry("playableStateScope", target.playableStateScope()),
+            Map.entry("gameInstanceId", target.canonicalGameInstanceId().toString()),
+            Map.entry("canonicalVersionId", target.canonicalVersionId().toString()),
+            Map.entry("catalogRevision", Long.toString(target.catalogRevision())),
+            Map.entry("pointerVersion", Long.toString(target.pointerVersion())),
+            Map.entry("activeWorldEpoch", Long.toString(target.activeWorldEpoch())),
+            Map.entry("evaluatedAt", now.minusSeconds(1).toString()),
+            Map.entry("connectScopeExpiresAt", now.plusSeconds(120).toString()));
+    return CapacityAdmissionTestFixture.playerRequestFor(
+        player, BINDING_DECISION_ID, LEASE_ID, target.targetNamespace(), accountTarget, now);
+  }
+
+  private static AccountGameplayAdmissionLeaseEvidence lease(Request capacityRequest) {
     Map<String, Object> value = new LinkedHashMap<>();
     value.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
     value.put("schemaVersion", "1");
@@ -505,14 +607,7 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
     scope.put("regionId", REGION_ID.toString());
     scope.put("regionEpoch", ONE);
     value.put("bindingScope", scope);
-    value.put(
-        "authorityTuple",
-        Map.of(
-            "issuerAuthGeneration", ONE,
-            "accountAuthorityGeneration", ONE,
-            "tenantAuthorityGeneration", Map.of(TENANT_ID.toString(), "2"),
-            "membershipAuthorityGeneration", Map.of(TENANT_ID.toString(), "3"),
-            "privateRealmGrantVersions", List.of()));
+    value.put("authorityTuple", capacityRequest.evidence().fields().get("authorityTuple"));
     value.put("issuanceFence", TOKEN_FENCE);
     value.put(
         "membershipBaseline",
@@ -520,9 +615,9 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
             "membershipLifecycleState",
             "ACTIVE",
             "membershipVersion",
-            Map.of(TENANT_ID.toString(), "9"),
+            capacityRequest.evidence().fields().get("membershipVersion"),
             "membershipAuthorityGeneration",
-            "3"));
+            capacityRequest.evidence().fields().get("membershipAuthorityGeneration")));
     value.put("outboxCheckpoints", checkpoints());
     value.put(
         "tokenIdentityEvidence",
@@ -557,7 +652,7 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
               "outboxStreamKey",
               "account:auth-authority:v1:" + suffix,
               "outboxSequence",
-              suffix.startsWith("membership/") || suffix.startsWith("tenant/") ? "9" : "0"));
+              suffix.startsWith("membership/") || suffix.startsWith("tenant/") ? "1" : "0"));
     }
     return List.copyOf(result);
   }
@@ -680,16 +775,19 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
 
   private static final class Fixture implements AutoCloseable {
     private final CanonicalGameplayOriginalNewCandidate candidate;
+    private final Request capacityRequest;
     private final AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential credential;
     private final String compactJwt;
     private final CanonicalGameplayOriginalNewBoundCredentialVerifier verifier;
 
     private Fixture(
         CanonicalGameplayOriginalNewCandidate candidate,
+        Request capacityRequest,
         AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential credential,
         String compactJwt,
         CanonicalGameplayOriginalNewBoundCredentialVerifier verifier) {
       this.candidate = candidate;
+      this.capacityRequest = capacityRequest;
       this.credential = credential;
       this.compactJwt = compactJwt;
       this.verifier = verifier;

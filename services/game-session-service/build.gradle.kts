@@ -227,7 +227,9 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("redis/lua/game-session-region-lease-read.lua")
         include("redis/scripts/game-session-region-lease-read.json")
         include("redis/lua/game-session-region-timeline-initialize.lua")
+        include("redis/lua/game-session-region-timeline-initialize-v2.lua")
         include("redis/scripts/game-session-region-timeline-initialize.json")
+        include("redis/scripts/game-session-region-timeline-initialize-v2.json")
         include("redis/lua/game-session-region-session-binding-bridge.lua")
         include("redis/scripts/game-session-region-session-binding-bridge.json")
     }
@@ -239,6 +241,7 @@ val gameSessionClassesProof by configurations.creating {
     extendsFrom(configurations.implementation.get())
     outgoing.artifact(gameSessionClassesProofJar)
 }
+
 
 // Published Flyway bytes remain immutable. Only jOOQ's disposable parsing input
 // exposes V1065.0.9's declarative columns/indexes while retaining its PL/pgSQL fence.

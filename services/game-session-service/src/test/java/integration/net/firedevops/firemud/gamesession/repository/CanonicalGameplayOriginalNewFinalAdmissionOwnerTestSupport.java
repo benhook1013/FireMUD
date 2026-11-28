@@ -183,6 +183,7 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerTestSupport {
         CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
             fixture.dsl(),
             ownerClient,
+            ownerUri,
             fixture.transitionId(),
             sources.request,
             sources.resolver,

@@ -28,6 +28,8 @@ import java.nio.file.Path;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -201,6 +203,81 @@ class CanonicalInitialPlayerLocationClientTest {
     assertThatThrownBy(() -> client.readInitialPlayerLocationRegion(request))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("incomplete or stale");
+  }
+
+  @Test
+  void defaultRegionReadUsesTwentySecondOptionsOnTheActualCall() throws Exception {
+    var request = request();
+    var region = regionResponse(request);
+    var channel = mock(ManagedChannel.class);
+    @SuppressWarnings("unchecked")
+    ClientCall<CanonicalInitialPlayerLocationRequest, CanonicalInitialPlayerLocationRegionResponse>
+        call = mock(ClientCall.class);
+    var ssl = mock(javax.net.ssl.SSLSession.class);
+    var certificate = mock(X509Certificate.class);
+    when(ssl.getPeerCertificates()).thenReturn(new java.security.cert.Certificate[] {certificate});
+    when(certificate.getSubjectAlternativeNames())
+        .thenReturn(List.of(List.of(6, EXPECTED_WORLD_PEER)));
+    when(call.getAttributes())
+        .thenReturn(
+            Attributes.newBuilder().set(io.grpc.Grpc.TRANSPORT_ATTR_SSL_SESSION, ssl).build());
+    doAnswer(
+            invocation -> {
+              ClientCall.Listener<CanonicalInitialPlayerLocationRegionResponse> listener =
+                  invocation.getArgument(0);
+              listener.onMessage(region);
+              listener.onClose(Status.OK, new Metadata());
+              return null;
+            })
+        .when(call)
+        .start(any(), any());
+    var method =
+        CanonicalInitialPlayerLocationServiceGrpc.getReadInitialPlayerLocationRegionMethod();
+    when(channel.newCall(org.mockito.ArgumentMatchers.eq(method), any())).thenReturn(call);
+    when(channels.buildChannel(anyString(), anyInt(), any(), anyBoolean())).thenReturn(channel);
+    var client = newClient();
+    client.init();
+
+    Deadline earliest = Deadline.after(20L, TimeUnit.SECONDS);
+    assertThat(client.readInitialPlayerLocationRegion(request)).isEqualTo(region);
+    Deadline latest = Deadline.after(20L, TimeUnit.SECONDS);
+
+    var optionsCaptor = org.mockito.ArgumentCaptor.forClass(CallOptions.class);
+    verify(channel).newCall(org.mockito.ArgumentMatchers.eq(method), optionsCaptor.capture());
+    var actual = optionsCaptor.getValue().getDeadline();
+    assertThat(actual).isNotNull();
+    assertThat(actual.compareTo(earliest)).isGreaterThanOrEqualTo(0);
+    assertThat(actual.compareTo(latest)).isLessThanOrEqualTo(0);
+  }
+
+  @Test
+  void deadlineBoundRegionReadDoesNotWaitForStalledTlsReload() throws Exception {
+    var request = request();
+    var stub = mockStub();
+    var region = regionResponse(request);
+    var deadlineApplied = new CountDownLatch(1);
+    var deadlineStub = mockStub();
+    when(stub.withDeadline(any(Deadline.class)))
+        .thenAnswer(invocation -> {
+          deadlineApplied.countDown();
+          return deadlineStub;
+        });
+    when(deadlineStub.readInitialPlayerLocationRegion(request)).thenReturn(region);
+    var client = clientWithStub(stub);
+    Deadline callerDeadline = Deadline.after(100L, TimeUnit.MILLISECONDS);
+
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      // TLS reload owns this monitor while it builds and publishes a replacement channel.
+      synchronized (client) {
+        var result =
+            executor.submit(() -> client.readInitialPlayerLocationRegion(request, callerDeadline));
+
+        assertThat(deadlineApplied.await(1L, TimeUnit.SECONDS)).isTrue();
+        assertThat(result.get(1L, TimeUnit.SECONDS)).isEqualTo(region);
+      }
+    }
+    verify(stub).withDeadline(callerDeadline);
+    verify(deadlineStub).readInitialPlayerLocationRegion(request);
   }
 
   @Test
@@ -609,6 +686,7 @@ class CanonicalInitialPlayerLocationClientTest {
             CanonicalInitialPlayerLocationServiceGrpc
                 .CanonicalInitialPlayerLocationServiceBlockingStub.class);
     when(stub.withDeadlineAfter(20L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.withDeadline(any(Deadline.class))).thenReturn(stub);
     when(stub.withMaxInboundMessageSize(8 * 1024)).thenReturn(stub);
     when(stub.withMaxOutboundMessageSize(16 * 1024)).thenReturn(stub);
     return stub;

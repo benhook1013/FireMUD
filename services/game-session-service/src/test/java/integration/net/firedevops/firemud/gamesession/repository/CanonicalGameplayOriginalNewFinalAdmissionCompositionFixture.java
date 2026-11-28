@@ -193,6 +193,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
             binding.dsl(),
             coordination,
+            coordinationUri,
             scripts,
             CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
                 ::controlledRegionIncarnation,

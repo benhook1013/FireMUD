@@ -1,7 +1,9 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import io.grpc.Context;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisFuture;
+import io.lettuce.core.RedisURI;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.async.RedisAsyncCommands;
@@ -11,14 +13,21 @@ import java.io.InputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Clock;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
@@ -31,10 +40,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 final class CanonicalGameplayRegionLeaseRedisOwner {
   private static final String PRINCIPAL = "gamesession_coord_app";
   private static final String SCHEMA = "gs_region_lease/v1";
+  private static final String DEADLINE_SCHEMA = "gs_region_lease/v2";
   private static final int MAX_SCRIPT_BYTES = 16 * 1024;
   private static final long COMMAND_TIMEOUT_MILLIS = 5_000L;
   private static final List<String> LEASE_ARGUMENTS =
-      List.of("schema", "token", "expectedRegionEpoch", "leaseTtlMs");
+      List.of("schema", "token", "expectedRegionEpoch", "leaseTtlMs", "absoluteDeadlineMillis");
   private static final List<String> READ_ARGUMENTS =
       List.of("schema", "token", "expectedRegionEpoch");
   private static final List<RedisScriptDescriptor.KeySpec> EXPECTED_KEYS =
@@ -46,6 +56,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
           new RedisScriptDescriptor.KeySpec(
               "regionMeta", "tick:", RedisScriptDescriptor.HashTagDeclaration.REQUIRED));
   private static final String TIMELINE_SCHEMA = "gs_region_timeline_init/v1";
+  private static final String TIMELINE_DEADLINE_SCHEMA = "gs_region_timeline_init/v2";
   private static final List<String> TIMELINE_ARGUMENTS =
       List.of(
           "schema",
@@ -56,6 +67,17 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
           "preparationDigest",
           "leaseTtlMs",
           "mayCreateFromAbsence");
+  private static final List<String> TIMELINE_DEADLINE_ARGUMENTS =
+      List.of(
+          "schema",
+          "action",
+          "token",
+          "expectedRegionEpoch",
+          "initializationOperationId",
+          "preparationDigest",
+          "leaseTtlMs",
+          "mayCreateFromAbsence",
+          "absoluteDeadlineMillis");
   private static final String BRIDGE_SCHEMA = "gs_region_binding_bridge/v1";
   private static final List<String> BRIDGE_ARGUMENTS =
       List.of(
@@ -77,11 +99,82 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
               "regionSessionBinding", "tick:", RedisScriptDescriptor.HashTagDeclaration.REQUIRED));
 
   private final RedisClient redisClient;
+  private final RedisURI coordinationUri;
   private final RedisScriptCatalog catalog;
+  private final Clock handoffClock;
+  private final long handoffDeadlineMillis;
+  private final CanonicalGameplayOriginalNewCapacityExecutionBudget installationBudget;
 
   CanonicalGameplayRegionLeaseRedisOwner(RedisClient redisClient, RedisScriptCatalog catalog) {
+    this(redisClient, null, catalog, null, 0L, null);
+  }
+
+  CanonicalGameplayRegionLeaseRedisOwner(
+      RedisClient redisClient, RedisURI coordinationUri, RedisScriptCatalog catalog) {
+    this(redisClient, Objects.requireNonNull(coordinationUri), catalog, null, 0L, null);
+  }
+
+  private CanonicalGameplayRegionLeaseRedisOwner(
+      RedisClient redisClient,
+      RedisURI coordinationUri,
+      RedisScriptCatalog catalog,
+      Clock handoffClock,
+      long deadline,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget installationBudget) {
+    this.installationBudget = installationBudget;
     this.redisClient = Objects.requireNonNull(redisClient, "Configured Coordination Redis client");
+    this.coordinationUri = coordinationUri;
     this.catalog = Objects.requireNonNull(catalog, "Installed region lease script catalog");
+    this.handoffClock = handoffClock;
+    this.handoffDeadlineMillis = deadline;
+  }
+
+  CanonicalGameplayRegionLeaseRedisOwner forHandoffDeadline(Clock clock, long deadline) {
+    return new CanonicalGameplayRegionLeaseRedisOwner(
+        redisClient,
+        Objects.requireNonNull(coordinationUri, "Configured Coordination Redis URI"),
+        catalog,
+        Objects.requireNonNull(clock),
+        deadline,
+        null);
+  }
+
+  CanonicalGameplayRegionLeaseRedisOwner forInstallation(Clock clock) {
+    return forInstallation(clock, Long.MAX_VALUE);
+  }
+
+  /** Borrow the composed installation's admission and frozen deadline; never reserve again. */
+  CanonicalGameplayRegionLeaseRedisOwner forInstallation(
+      Clock clock, CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    if (coordinationUri == null) return this;
+    long deadline = budget.absoluteDeadlineMillis();
+    if (handoffClock != null && handoffDeadlineMillis < deadline) throw unavailable();
+    return new CanonicalGameplayRegionLeaseRedisOwner(
+        redisClient, coordinationUri, catalog, clock, deadline, budget);
+  }
+
+  private CanonicalGameplayRegionLeaseRedisOwner forInstallation(
+      Clock clock, long installationDeadline) {
+    // URI-less owners are the explicitly unbudgeted ordinary installation composition.
+    if (coordinationUri == null) return this;
+    Context caller = Context.current();
+    if (caller.isCancelled()) throw unavailable();
+    long remainingMillis = COMMAND_TIMEOUT_MILLIS;
+    if (caller.getDeadline() != null) {
+      remainingMillis =
+          Math.min(remainingMillis, caller.getDeadline().timeRemaining(TimeUnit.MILLISECONDS));
+    }
+    if (remainingMillis <= 0) throw unavailable();
+    long deadline;
+    try {
+      deadline = Math.addExact(clock.millis(), remainingMillis);
+    } catch (ArithmeticException invalid) {
+      throw unavailable(invalid);
+    }
+    deadline = Math.min(deadline, installationDeadline);
+    if (handoffClock != null) deadline = Math.min(deadline, handoffDeadlineMillis);
+    if (deadline <= clock.millis()) throw unavailable();
+    return forHandoffDeadline(clock, deadline);
   }
 
   LeaseGrant acquire(
@@ -130,8 +223,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
             "PROBE",
             UUID.randomUUID(),
             incarnation.digest(),
-            1L,
-            false);
+            1L);
     if (outcome != 1L) throw unavailable();
     return new TimelineAbsenceProof(
         source,
@@ -144,6 +236,49 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
       Duration leaseTtl,
       RuntimeIdentity identity) {
+    if (installationBudget != null) {
+      var session =
+          prepareTimelineInitialization(preparation, leaseTtl, identity, installationBudget);
+      installationBudget.retainUntilAsyncClose(session.disposal);
+      return session;
+    }
+    if (handoffClock != null) {
+      requireNoAmbientTransaction();
+      Object handoffLock = new Object();
+      AtomicReference<PreparedTimelineInitialization> prepared = new AtomicReference<>();
+      boolean[] callerAbandoned = {false};
+      try {
+        return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+            handoffClock,
+            handoffDeadlineMillis,
+            budget -> {
+              PreparedTimelineInitialization session =
+                  prepareTimelineInitialization(preparation, leaseTtl, identity, budget);
+              budget.retainUntilAsyncClose(session.disposal);
+              synchronized (handoffLock) {
+                prepared.set(session);
+                if (!callerAbandoned[0]) return session;
+              }
+              session.closeBoundedConnection();
+              throw unavailable();
+            });
+      } catch (RuntimeException failure) {
+        synchronized (handoffLock) {
+          callerAbandoned[0] = true;
+          PreparedTimelineInitialization session = prepared.get();
+          if (session != null) session.close();
+        }
+        throw failure;
+      }
+    }
+    return prepareTimelineInitialization(preparation, leaseTtl, identity, null);
+  }
+
+  private PreparedTimelineInitialization prepareTimelineInitialization(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      Duration leaseTtl,
+      RuntimeIdentity identity,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(preparation, "preparation");
     CanonicalGameplayRegionRuntimeStatusRepository.Source source =
@@ -163,11 +298,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
             UUID.randomUUID().toString(),
             ownerService,
             ownerInstance);
-    RedisScriptDescriptor descriptor =
-        requireDescriptor(
-            CanonicalGameplayRegionLeaseRedisScriptContribution.TIMELINE_INITIALIZE_ID,
-            CanonicalGameplayRegionLeaseRedisScriptContribution.TIMELINE_INITIALIZE_PATH,
-            TIMELINE_ARGUMENTS);
+    boolean deadlineBound = budget != null;
+    RedisScriptDescriptor descriptor = timelineDescriptor(deadlineBound);
     byte[] script = scriptSource(descriptor);
     byte[][] keys =
         new byte[][] {
@@ -180,7 +312,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         };
     byte[][] arguments =
         new byte[][] {
-          ascii(TIMELINE_SCHEMA),
+          ascii(deadlineBound ? TIMELINE_DEADLINE_SCHEMA : TIMELINE_SCHEMA),
           ascii("INITIALIZE"),
           ascii(grant.token),
           ascii(Long.toString(preparation.regionEpoch())),
@@ -189,20 +321,106 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
           ascii(Long.toString(ttlMillis)),
           ascii("0")
         };
-    if (arguments.length != TIMELINE_ARGUMENTS.size()) throw unavailable();
+    if (deadlineBound) arguments = Arrays.copyOf(arguments, arguments.length + 1);
+    if (arguments.length
+        != (deadlineBound ? TIMELINE_DEADLINE_ARGUMENTS : TIMELINE_ARGUMENTS).size()) {
+      throw unavailable();
+    }
 
     StatefulRedisConnection<byte[], byte[]> connection = null;
     try {
-      connection = redisClient.connect(ByteArrayCodec.INSTANCE);
+      connection = openConnection(budget);
+      if (deadlineBound) requireStableConnection(connection);
       RedisAsyncCommands<byte[], byte[]> commands = connection.async();
-      requirePrincipal(await(commands.aclWhoami()));
-      String loadedSha = await(commands.scriptLoad(script));
+      requirePrincipal(await(commands::aclWhoami, budget));
+      String loadedSha = await(() -> commands.scriptLoad(script), budget);
       if (!digest("SHA-1", script).equals(loadedSha)) throw unavailable();
+      if (budget != null) {
+        // Keep one translated cutoff across the probe, source rechecks, SQL claim and dispatch.
+        arguments[arguments.length - 1] = redisDeadlineArgument(commands, budget);
+        byte[][] probe = arguments.clone();
+        probe[1] = ascii("PROBE");
+        Long result =
+            await(() -> commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, probe), budget);
+        if (result == null || (result != 0L && result != 1L)) throw unavailable();
+      }
       return new PreparedTimelineInitialization(
-          connection, commands, loadedSha, keys, arguments, grant, preparation);
+          connection, commands, loadedSha, keys, arguments, grant, preparation, budget);
     } catch (RuntimeException failure) {
-      if (connection != null) connection.close();
+      if (connection != null) {
+        if (budget == null) connection.close();
+        else
+          budget.awaitAsyncClose(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+      }
       throw unavailable(failure);
+    }
+  }
+
+  /** Recovers the same live first-owner grant; never acquires or replaces a lease. */
+  LeaseGrant readRetainedInitialGrant(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      CanonicalGameplayRegionRuntimeStatus status,
+      RuntimeIdentity identity) {
+    requireNoAmbientTransaction();
+    if (status.paused()
+        || status.regionEpoch() != 1L
+        || preparation.regionEpoch() != 1L
+        || !requireOwnerService(identity).equals(status.ownerService())
+        || !requireOwnerInstance(identity).equals(status.ownerInstanceId())
+        || !Objects.equals(preparation.leaseTokenCorrelation(), status.leaseTokenCorrelation())) {
+      throw unavailable();
+    }
+    if (installationBudget != null) {
+      return readRetainedInitialGrant(preparation, status, installationBudget);
+    }
+    if (handoffClock != null) {
+      return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+          handoffClock,
+          handoffDeadlineMillis,
+          budget -> readRetainedInitialGrant(preparation, status, budget));
+    }
+    return readRetainedInitialGrant(
+        preparation, status, (CanonicalGameplayOriginalNewCapacityExecutionBudget) null);
+  }
+
+  private LeaseGrant readRetainedInitialGrant(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      CanonicalGameplayRegionRuntimeStatus status,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    StatefulRedisConnection<byte[], byte[]> connection = null;
+    byte[] tokenBytes = null;
+    try {
+      connection = openConnection(budget);
+      var commands = connection.async();
+      requirePrincipal(await(commands::aclWhoami, budget));
+      var source = preparation.source();
+      byte[] key =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.lease(
+                  source.tenantId(), source.gameInstanceId(), source.regionId()));
+      tokenBytes = await(() -> commands.get(key), budget);
+      Long ttl = await(() -> commands.pttl(key), budget);
+      if (tokenBytes == null || tokenBytes.length != 36 || ttl == null || ttl <= 0)
+        throw unavailable();
+      String token = new String(tokenBytes, StandardCharsets.US_ASCII);
+      UUID parsed = UUID.fromString(token);
+      if (!parsed.toString().equals(token) || parsed.equals(new UUID(0L, 0L))) throw unavailable();
+      var grant =
+          new LeaseGrant(
+              source, status.regionEpoch(), token, status.ownerService(), status.ownerInstanceId());
+      if (!grant.tokenCorrelation().equals(status.leaseTokenCorrelation())) throw unavailable();
+      return grant;
+    } catch (RuntimeException failure) {
+      throw unavailable(failure);
+    } finally {
+      if (tokenBytes != null) Arrays.fill(tokenBytes, (byte) 0);
+      if (connection != null) {
+        if (budget == null) connection.close();
+        else
+          budget.awaitAsyncClose(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
+      }
     }
   }
 
@@ -217,7 +435,13 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     }
     long outcome =
         executeTimeline(
-            grant, "VERIFY", preparation.operationId(), preparation.sourceDigest(), 1L, false);
+            grant.source,
+            grant.regionEpoch,
+            grant.token,
+            "VERIFY",
+            preparation.operationId(),
+            preparation.sourceDigest(),
+            1L);
     if (outcome != 3L) throw unavailable();
   }
 
@@ -263,28 +487,48 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     if (outcome != 1L) throw unavailable();
   }
 
-  private long executeTimeline(
-      LeaseGrant grant,
-      String action,
-      UUID operationId,
-      String sourceDigest,
-      long ttlMillis,
-      boolean mayCreate) {
-    return executeTimeline(
-        grant.source,
-        grant.regionEpoch,
-        grant.token,
-        action,
-        operationId,
-        sourceDigest,
-        ttlMillis,
-        mayCreate);
-  }
-
   /**
    * Holds the one ACL-verified connection across the SQL creation-permission claim and its sole
    * timeline EVALSHA. Closing without initialize leaves the timeline untouched.
    */
+  static InitializationNoWriteProof revokeUndispatchedInitialization(
+      CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit) {
+    if (!Objects.requireNonNull(permit, "permit").consumeDispatch()) throw unavailable();
+    return new InitializationNoWriteProof(permit);
+  }
+
+  static final class InitializationNoWriteProof {
+    private final CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit;
+    private final AtomicBoolean consumed = new AtomicBoolean();
+
+    private InitializationNoWriteProof(
+        CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit) {
+      this.permit = permit;
+    }
+
+    UUID generation() {
+      return permit.generation();
+    }
+
+    void restoreAfterConfirmedRollback() {
+      consumed.set(false);
+    }
+
+    boolean consumedFor(
+        CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation) {
+      return consumed.get()
+          && permit.operationId().equals(preparation.operationId())
+          && permit.sourceDigest().equals(preparation.sourceDigest());
+    }
+
+    boolean consumeFor(
+        CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation) {
+      return permit.operationId().equals(preparation.operationId())
+          && permit.sourceDigest().equals(preparation.sourceDigest())
+          && consumed.compareAndSet(false, true);
+    }
+  }
+
   static final class PreparedTimelineInitialization implements AutoCloseable {
     private final StatefulRedisConnection<byte[], byte[]> connection;
     private final RedisAsyncCommands<byte[], byte[]> commands;
@@ -293,8 +537,12 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     private final byte[][] arguments;
     private final LeaseGrant grant;
     private final CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
+    private final CanonicalGameplayOriginalNewCapacityExecutionBudget budget;
+    private final CompletableFuture<Void> disposal = new CompletableFuture<>();
     private boolean initialized;
     private boolean closed;
+    private boolean initializationInFlight;
+    private CompletableFuture<Void> boundedClose;
 
     private PreparedTimelineInitialization(
         StatefulRedisConnection<byte[], byte[]> connection,
@@ -303,7 +551,8 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         byte[][] keys,
         byte[][] arguments,
         LeaseGrant grant,
-        CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation) {
+        CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+        CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
       this.connection = connection;
       this.commands = commands;
       this.loadedSha = loadedSha;
@@ -311,28 +560,102 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       this.arguments = arguments;
       this.grant = grant;
       this.preparation = preparation;
+      this.budget = budget;
     }
 
-    synchronized LeaseGrant initialize(
+    LeaseGrant initialize(
         CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit) {
-      requireNoAmbientTransaction();
-      if (closed || initialized) throw unavailable();
-      boolean mayCreate = permit != null;
-      if (mayCreate
-          && (!permit.operationId().equals(preparation.operationId())
-              || !permit.sourceDigest().equals(preparation.sourceDigest()))) {
-        throw unavailable();
+      return initialize(permit, ignored -> {});
+    }
+
+    LeaseGrant initialize(
+        CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit permit,
+        Consumer<InitializationNoWriteProof> noWriteRecovery) {
+      Objects.requireNonNull(noWriteRecovery, "noWriteRecovery");
+      byte[][] evalArguments;
+      synchronized (this) {
+        requireNoAmbientTransaction();
+        if (closed || initialized) throw unavailable();
+        boolean mayCreate = permit != null;
+        if (mayCreate
+            && (!permit.operationId().equals(preparation.operationId())
+                || !permit.sourceDigest().equals(preparation.sourceDigest()))) {
+          throw unavailable();
+        }
+        if (mayCreate && !permit.consumeDispatch()) throw unavailable();
+        initialized = true;
+        evalArguments = arguments.clone();
+        evalArguments[TIMELINE_ARGUMENTS.size() - 1] = ascii(mayCreate ? "1" : "0");
+        if (budget != null) initializationInFlight = true;
       }
-      initialized = true;
-      byte[][] evalArguments = arguments.clone();
-      evalArguments[evalArguments.length - 1] = ascii(mayCreate ? "1" : "0");
-      Long outcome;
+      if (budget == null) {
+        Long outcome;
+        try {
+          outcome =
+              await(commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, evalArguments));
+        } catch (RuntimeException failure) {
+          throw unavailable(failure);
+        }
+        if (outcome == null || (outcome != 1L && outcome != 2L)) throw unavailable();
+        return grant;
+      }
+
+      // Preparation already owns the retained background permit through disposal. Do not
+      // re-enter runBackground after the durable INITIALIZING claim and request another slot.
+      Context caller = Context.current();
+      AtomicReference<RedisFuture<Long>> initialization = new AtomicReference<>();
+      Context.CancellationListener listener =
+          ignored -> {
+            RedisFuture<Long> future = initialization.get();
+            if (future != null) future.cancel(true);
+          };
+      caller.addListener(listener, Runnable::run);
+      RuntimeException initializationFailure = null;
+      Long outcome = null;
+      boolean dispatchInvoked = false;
       try {
-        outcome = await(commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, evalArguments));
+        long timeout = Math.min(COMMAND_TIMEOUT_MILLIS, budget.remainingMillis());
+        // Set before invocation: a thrown dispatch can still have unknown remote effects.
+        dispatchInvoked = true;
+        RedisFuture<Long> future =
+            commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, evalArguments);
+        initialization.set(future);
+        if (caller.isCancelled()) future.cancel(true);
+        // Retain the actual response before a post-wait deadline check. Expiry after a
+        // completed no-write response cannot turn that known result into unknown effects.
+        outcome = await(future, timeout);
       } catch (RuntimeException failure) {
-        throw unavailable(failure);
+        initializationFailure = failure;
+      } finally {
+        try {
+          caller.removeListener(listener);
+          CompletableFuture<Void> closeAttempt = closeBoundedConnection();
+          budget.awaitAsyncClose(closeAttempt);
+          closeAttempt.join();
+        } catch (RuntimeException disposalFailure) {
+          if (initializationFailure == null) initializationFailure = disposalFailure;
+          else if (initializationFailure != disposalFailure)
+            initializationFailure.addSuppressed(disposalFailure);
+        }
       }
+      // A local refusal before dispatch or an explicit deadline/ACL refusal before
+      // either write proves no mutation. Unknown transport outcomes remain held.
+      if ((!dispatchInvoked
+              || Long.valueOf(-3L).equals(outcome)
+              || Long.valueOf(-4L).equals(outcome))
+          && permit != null) {
+        try {
+          noWriteRecovery.accept(new InitializationNoWriteProof(permit));
+        } catch (RuntimeException recoveryFailure) {
+          // Preserve the original failure while retaining the exact no-write proof at its owner.
+          if (initializationFailure == null) initializationFailure = recoveryFailure;
+          else if (initializationFailure != recoveryFailure)
+            initializationFailure.addSuppressed(recoveryFailure);
+        }
+      }
+      if (initializationFailure != null) throw unavailable(initializationFailure);
       if (outcome == null || (outcome != 1L && outcome != 2L)) throw unavailable();
+      budget.check();
       return grant;
     }
 
@@ -340,8 +663,23 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     public synchronized void close() {
       if (!closed) {
         closed = true;
-        connection.close();
+        if (budget == null) connection.close();
+        else if (!initializationInFlight) closeBoundedConnection();
       }
+    }
+
+    private synchronized CompletableFuture<Void> closeBoundedConnection() {
+      initializationInFlight = false;
+      closed = true;
+      if (boundedClose == null) {
+        boundedClose =
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection);
+        boundedClose.whenComplete((ignored, failure) -> {
+          if (failure == null) disposal.complete(null);
+          else disposal.completeExceptionally(failure);
+        });
+      }
+      return boundedClose;
     }
   }
 
@@ -352,14 +690,10 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       String action,
       UUID operationId,
       String sourceDigest,
-      long ttlMillis,
-      boolean mayCreate) {
+      long ttlMillis) {
     requireNoAmbientTransaction();
-    RedisScriptDescriptor descriptor =
-        requireDescriptor(
-            CanonicalGameplayRegionLeaseRedisScriptContribution.TIMELINE_INITIALIZE_ID,
-            CanonicalGameplayRegionLeaseRedisScriptContribution.TIMELINE_INITIALIZE_PATH,
-            TIMELINE_ARGUMENTS);
+    boolean deadlineBound = handoffClock != null;
+    RedisScriptDescriptor descriptor = timelineDescriptor(deadlineBound);
     byte[] script = scriptSource(descriptor);
     byte[][] keys =
         new byte[][] {
@@ -372,16 +706,30 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         };
     byte[][] arguments =
         new byte[][] {
-          ascii(TIMELINE_SCHEMA),
+          ascii(deadlineBound ? TIMELINE_DEADLINE_SCHEMA : TIMELINE_SCHEMA),
           ascii(action),
           ascii(token),
           ascii(Long.toString(regionEpoch)),
           ascii(operationId.toString()),
           ascii(sourceDigest),
           ascii(Long.toString(ttlMillis)),
-          ascii(mayCreate ? "1" : "0")
+          ascii("0")
         };
-    return executeInteger(script, keys, arguments);
+    if (!deadlineBound) return executeInteger(script, keys, arguments);
+    byte[][] deadlineArguments = Arrays.copyOf(arguments, arguments.length + 1);
+    return executeInteger(script, keys, deadlineArguments, true);
+  }
+
+  private RedisScriptDescriptor timelineDescriptor(boolean deadlineBound) {
+    return deadlineBound
+        ? requireDescriptor(
+            CanonicalGameplayRegionLeaseRedisScriptContribution.TIMELINE_INITIALIZE_DEADLINE_ID,
+            CanonicalGameplayRegionLeaseRedisScriptContribution.TIMELINE_INITIALIZE_DEADLINE_PATH,
+            TIMELINE_DEADLINE_ARGUMENTS)
+        : requireDescriptor(
+            CanonicalGameplayRegionLeaseRedisScriptContribution.TIMELINE_INITIALIZE_ID,
+            CanonicalGameplayRegionLeaseRedisScriptContribution.TIMELINE_INITIALIZE_PATH,
+            TIMELINE_ARGUMENTS);
   }
 
   private static String absenceProofDigest(
@@ -562,23 +910,100 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         };
     byte[][] arguments = grant.arguments(includeTtl ? ttlMillis : null);
     if (arguments.length != expectedArguments.size()) throw unavailable();
-    return executeInteger(source, keys, arguments);
+    return executeInteger(source, keys, arguments, includeTtl);
   }
 
   private long executeInteger(byte[] script, byte[][] keys, byte[][] arguments) {
+    return executeInteger(script, keys, arguments, false);
+  }
+
+  private long executeInteger(
+      byte[] script, byte[][] keys, byte[][] arguments, boolean hasDeadlineArgument) {
     requireNoAmbientTransaction();
-    try (StatefulRedisConnection<byte[], byte[]> connection =
-        redisClient.connect(ByteArrayCodec.INSTANCE)) {
+    if (installationBudget != null) {
+      return executeInteger(script, keys, arguments, hasDeadlineArgument, installationBudget);
+    }
+    if (handoffClock != null) {
+      return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+          handoffClock,
+          handoffDeadlineMillis,
+          budget -> executeInteger(script, keys, arguments, hasDeadlineArgument, budget));
+    }
+    return executeInteger(script, keys, arguments, false, null);
+  }
+
+  private long executeInteger(
+      byte[] script,
+      byte[][] keys,
+      byte[][] arguments,
+      boolean hasDeadlineArgument,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    if (budget != null) budget.check();
+    StatefulRedisConnection<byte[], byte[]> connection = openConnection(budget);
+    try {
+      if (hasDeadlineArgument) requireStableConnection(connection);
       RedisAsyncCommands<byte[], byte[]> commands = connection.async();
-      requirePrincipal(await(commands.aclWhoami()));
-      String loadedSha = await(commands.scriptLoad(script));
+      requirePrincipal(await(commands::aclWhoami, budget));
+      String loadedSha = await(() -> commands.scriptLoad(script), budget);
       if (!digest("SHA-1", script).equals(loadedSha)) throw unavailable();
-      Long result = await(commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, arguments));
+      if (hasDeadlineArgument) {
+        // Acquire's Lua script also caps its initial TTL at the remaining Redis time.
+        arguments[arguments.length - 1] = redisDeadlineArgument(commands, budget);
+      }
+      Long result =
+          await(
+              () -> commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, arguments), budget);
       if (result == null) throw unavailable();
       return result;
     } catch (RuntimeException failure) {
       throw unavailable(failure);
+    } finally {
+      if (budget == null) connection.close();
+      else
+        budget.awaitAsyncClose(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection));
     }
+  }
+
+  private StatefulRedisConnection<byte[], byte[]> openConnection(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    if (budget == null) {
+      return coordinationUri == null
+          ? redisClient.connect(ByteArrayCodec.INSTANCE)
+          : redisClient.connect(ByteArrayCodec.INSTANCE, coordinationUri);
+    }
+    RedisURI uri = Objects.requireNonNull(coordinationUri);
+    long timeout = Math.min(uri.getTimeout().toMillis(), budget.remainingMillis());
+    if (timeout < 1) throw unavailable();
+    RedisURI bounded = RedisURI.builder(uri).withTimeout(Duration.ofMillis(timeout)).build();
+    var pending = redisClient.connectAsync(ByteArrayCodec.INSTANCE, bounded);
+    try {
+      return pending.get(timeout, TimeUnit.MILLISECONDS);
+    } catch (InterruptedException interrupted) {
+      try {
+        awaitLateConnectionCleanup(pending, budget);
+      } finally {
+        Thread.currentThread().interrupt();
+      }
+      throw unavailable(interrupted);
+    } catch (TimeoutException expired) {
+      awaitLateConnectionCleanup(pending, budget);
+      throw unavailable(expired);
+    } catch (ExecutionException failure) {
+      throw unavailable(failure);
+    }
+  }
+
+  private static void awaitLateConnectionCleanup(
+      io.lettuce.core.ConnectionFuture<StatefulRedisConnection<byte[], byte[]>> pending,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    // The caller returns at the operation deadline. This worker keeps its admission permit
+    // until the pending handshake and any late connection close have finished.
+    var connection = pending.handle((opened, failure) -> opened).join();
+    if (connection == null) return;
+    var close = CanonicalGameplayOriginalNewCapacityExecutionBudget.startRedisClose(connection);
+    budget.retainUntilAsyncClose(close);
+    close.handle((ignored, failure) -> null).join();
   }
 
   private RedisScriptDescriptor requireBridgeDescriptor() {
@@ -677,9 +1102,50 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     if (!PRINCIPAL.equals(principal)) throw unavailable();
   }
 
+  private static void requireStableConnection(StatefulRedisConnection<byte[], byte[]> connection) {
+    // The TIME sample and script must address the same physical server connection.
+    if (connection.getOptions() == null || connection.getOptions().isAutoReconnect()) {
+      throw unavailable();
+    }
+  }
+
+  private static byte[] redisDeadlineArgument(
+      RedisAsyncCommands<byte[], byte[]> commands,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    // Read the remaining budget after TIME returns so sampling latency cannot extend it.
+    long redisNowMillis = redisTimeMillis(await(commands::time, budget));
+    long remainingMillis = TimeUnit.NANOSECONDS.toMillis(budget.remainingNanos());
+    if (remainingMillis <= 0) throw unavailable();
+    return ascii(Long.toString(Math.addExact(redisNowMillis, remainingMillis)));
+  }
+
+  private static long redisTimeMillis(List<byte[]> reply) {
+    if (reply == null || reply.size() != 2 || reply.get(0) == null || reply.get(1) == null) {
+      throw unavailable();
+    }
+    long seconds = Long.parseLong(new String(reply.get(0), StandardCharsets.US_ASCII));
+    long microseconds = Long.parseLong(new String(reply.get(1), StandardCharsets.US_ASCII));
+    if (seconds <= 0 || microseconds < 0 || microseconds >= 1_000_000L) throw unavailable();
+    return Math.addExact(Math.multiplyExact(seconds, 1_000L), microseconds / 1_000L);
+  }
+
   private static <T> T await(RedisFuture<T> future) {
+    return await(future, COMMAND_TIMEOUT_MILLIS);
+  }
+
+  private static <T> T await(
+      Supplier<RedisFuture<T>> operation,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    if (budget == null) return await(operation.get());
+    long timeout = Math.min(COMMAND_TIMEOUT_MILLIS, budget.remainingMillis());
+    T result = await(operation.get(), timeout);
+    budget.check();
+    return result;
+  }
+
+  private static <T> T await(RedisFuture<T> future, long timeoutMillis) {
     try {
-      return future.get(COMMAND_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+      return future.get(timeoutMillis, TimeUnit.MILLISECONDS);
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
       future.cancel(true);
@@ -763,7 +1229,11 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         return new byte[][] {ascii(SCHEMA), ascii(token), ascii(Long.toString(regionEpoch))};
       }
       return new byte[][] {
-        ascii(SCHEMA), ascii(token), ascii(Long.toString(regionEpoch)), ascii(ttlMillis.toString())
+        ascii(DEADLINE_SCHEMA),
+        ascii(token),
+        ascii(Long.toString(regionEpoch)),
+        ascii(ttlMillis.toString()),
+        ascii("0")
       };
     }
 

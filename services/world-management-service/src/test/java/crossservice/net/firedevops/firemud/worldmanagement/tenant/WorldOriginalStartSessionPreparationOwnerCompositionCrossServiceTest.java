@@ -4000,6 +4000,17 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             })
         .when(initialLocationClient)
         .readInitialPlayerLocationRegion(Mockito.any(CanonicalInitialPlayerLocationRequest.class));
+    Mockito.doAnswer(
+            invocation -> {
+              CanonicalInitialPlayerLocationRequest request = invocation.getArgument(0);
+              io.grpc.Deadline deadline = invocation.getArgument(1);
+              if (secondRequest.equals(request)) return secondObservation;
+              return actualInitialLocationClient.readInitialPlayerLocationRegion(request, deadline);
+            })
+        .when(initialLocationClient)
+        .readInitialPlayerLocationRegion(
+            Mockito.any(CanonicalInitialPlayerLocationRequest.class),
+            Mockito.any(io.grpc.Deadline.class));
     var lifecycleClient = Mockito.mock(WorldCanonicalInstanceLifecycleClient.class);
     Mockito.doAnswer(
             invocation -> {
@@ -4009,6 +4020,17 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             })
         .when(lifecycleClient)
         .read(Mockito.any(WorldCanonicalInstanceLifecycleEvidence.Request.class));
+    Mockito.doAnswer(
+            invocation -> {
+              WorldCanonicalInstanceLifecycleEvidence.Request request = invocation.getArgument(0);
+              io.grpc.Deadline deadline = invocation.getArgument(1);
+              if (secondLifecycleRequest.equals(request)) return secondLifecycleEvidence;
+              return actualLifecycleClient.read(request, deadline);
+            })
+        .when(lifecycleClient)
+        .read(
+            Mockito.any(WorldCanonicalInstanceLifecycleEvidence.Request.class),
+            Mockito.any(io.grpc.Deadline.class));
     var secondWorldRegionResolver =
         new CanonicalInitialPlayerLocationRegionResolver(
             initialLocationClient, new CanonicalRegionBootstrapAssignmentResolver(lifecycleClient));

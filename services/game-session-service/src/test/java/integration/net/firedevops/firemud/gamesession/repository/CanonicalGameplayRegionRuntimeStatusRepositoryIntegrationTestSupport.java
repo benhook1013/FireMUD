@@ -413,6 +413,7 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
             CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
                 sql,
                 redis,
+                coordinationUri,
                 fixture.transitionId(),
                 upstream.request,
                 upstream.resolver,

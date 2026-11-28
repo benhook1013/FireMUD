@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.world;
 
+import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
 import java.io.IOException;
 import java.util.Objects;
@@ -23,8 +24,8 @@ public final class WorldCanonicalInstanceLifecycleClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
+  private static final String UNAVAILABLE =
+      "World canonical lifecycle client is not initialized and available";
 
   public WorldCanonicalInstanceLifecycleClient(
       ServiceEndpointsProperties endpoints,
@@ -43,33 +44,37 @@ public final class WorldCanonicalInstanceLifecycleClient
   }
 
   /** Initializes only when the owning Game Session service explicitly starts this client. */
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) {
-      throw new IllegalStateException("World canonical lifecycle client is closed");
-    }
-    if (initialized) {
-      return;
-    }
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException("World canonical lifecycle client has no gRPC stub");
-    }
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce("World canonical lifecycle client is closed", UNAVAILABLE);
   }
 
   /** Reads and validates World-owned lifecycle evidence for this exact canonical request. */
   public WorldCanonicalInstanceLifecycleEvidence read(
       WorldCanonicalInstanceLifecycleEvidence.Request request) {
+    return read(request, null);
+  }
+
+  /** Reads the exact lifecycle owner evidence within the receiving operation's deadline. */
+  public WorldCanonicalInstanceLifecycleEvidence read(
+      WorldCanonicalInstanceLifecycleEvidence.Request request, Deadline operationDeadline) {
     Objects.requireNonNull(request, "request");
     if (!workloadNamespace.equals(request.targetNamespace())) {
       throw new IllegalArgumentException(
           "World canonical lifecycle request must use the configured workload namespace");
     }
+    var wireRequest = WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(request);
     var response =
-        requireStub()
-            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-            .readWorldCanonicalInstanceLifecycle(
-                WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(request));
+        withPublishedInitializedStub(
+            UNAVAILABLE,
+            stub -> {
+              var timedStub =
+                  operationDeadline == null
+                      ? stub.withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+                      : stub.withDeadline(
+                          operationDeadline.minimum(
+                              Deadline.after(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)));
+              return timedStub.readWorldCanonicalInstanceLifecycle(wireRequest);
+            });
     try {
       return WorldCanonicalInstanceLifecycleGrpcCodec.fromResponse(request, response);
     } catch (IllegalArgumentException invalid) {
@@ -98,26 +103,6 @@ public final class WorldCanonicalInstanceLifecycleClient
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private WorldCanonicalInstanceLifecycleReadServiceGrpc
-          .WorldCanonicalInstanceLifecycleReadServiceBlockingStub
-      requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new IllegalStateException(
-          "World canonical lifecycle client is not initialized and available");
-    }
-    return currentStub;
   }
 
   private static CommonGrpcClientProperties requireFileBackedMtls(

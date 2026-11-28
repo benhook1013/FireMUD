@@ -767,6 +767,34 @@ require_equal(
     "ci workflow",
 )
 
+spotbugs_reports_step = find_step(
+    module_ci, "build-and-test", "Upload SpotBugs Reports if Failed", "ci workflow"
+)
+gradle_checks_step = find_step(module_ci, "build-and-test", "Run Gradle Checks", "ci workflow")
+module_steps = module_ci["jobs"]["build-and-test"]["steps"]
+if module_steps.index(spotbugs_reports_step) <= module_steps.index(gradle_checks_step):
+    raise AssertionError("ci workflow: SpotBugs reports upload must follow Run Gradle Checks")
+require_equal(
+    spotbugs_reports_step, ("if",), "${{ failure() || cancelled() }}", "ci workflow"
+)
+require_equal(
+    spotbugs_reports_step,
+    ("uses",),
+    "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+    "ci workflow",
+)
+require_equal(
+    spotbugs_reports_step,
+    ("with",),
+    {
+        "name": "spotbugs-${{ matrix.module }}-${{ matrix.partition }}-reports-${{ github.sha }}-attempt-${{ github.run_attempt }}",
+        "path": "${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/reports/spotbugs/' || format('services/{0}/build/reports/spotbugs/', matrix.module) }}",
+        "if-no-files-found": "warn",
+        "retention-days": "14",
+    },
+    "ci workflow",
+)
+
 junit_results_step = find_step(
     module_ci, "build-and-test", "Upload JUnit Test Results", "ci workflow"
 )
@@ -1394,6 +1422,49 @@ require_equal(
 
 gradle_build = Path(sys.argv[6]).read_text(encoding="utf-8")
 root_configuration, subproject_configuration = gradle_build.split("subprojects {", 1)
+def live_spotbugs_kotlin(source):
+    # Mask literals as non-syntax tokens, except the exact ordinary XML argument.
+    # Kotlin block comments can nest and are replaced with separating whitespace.
+    token = re.compile(r'"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|//[^\n]*|/\*')
+    cursor = 0
+    output = []
+    while (match := token.search(source, cursor)) is not None:
+        output.append(source[cursor:match.start()])
+        cursor = match.end()
+        if match.group() == "/*":
+            depth = 1
+            while depth:
+                marker = re.search(r"/\*|\*/", source[cursor:])
+                if marker is None:
+                    raise AssertionError("Unterminated Kotlin block comment")
+                cursor += marker.end()
+                depth += 1 if marker.group() == "/*" else -1
+            output.append(" ")
+        elif match.group().startswith("//"):
+            output.append(" ")
+        else:
+            output.append(match.group() if match.group() == '"xml"' else "\x00")
+    output.append(source[cursor:])
+    return "".join(output)
+
+
+def has_spotbugs_xml_report(source):
+    return re.search(
+        r'tasks\.withType<SpotBugsTask>\(\)\.configureEach\s*\{\s*'
+        r'enabled = fullCheck\s*reports\.create\("xml"\)\s*\{\s*'
+        r'required\.set\(true\)\s*\}',
+        live_spotbugs_kotlin(source),
+    ) is not None
+
+
+spotbugs_fixture = 'tasks.withType<SpotBugsTask>().configureEach { enabled = fullCheck %s }'
+xml_fixture = 'reports.create("xml") { required.set(true) }'
+assert has_spotbugs_xml_report(spotbugs_fixture % xml_fixture)
+assert not has_spotbugs_xml_report(spotbugs_fixture % ("/* nested /* fixture */ " + xml_fixture + " */"))
+assert not has_spotbugs_xml_report('val example = """' + (spotbugs_fixture % xml_fixture) + '"""')
+assert not has_spotbugs_xml_report(spotbugs_fixture % ('"""' + xml_fixture + '"""'))
+if not has_spotbugs_xml_report(subproject_configuration):
+    raise SystemExit("Module SpotBugs tasks must emit XML reports for failed CI diagnostics")
 game_session_build = (
     Path(sys.argv[6]).resolve().parent / "services/game-session-service/build.gradle.kts"
 )

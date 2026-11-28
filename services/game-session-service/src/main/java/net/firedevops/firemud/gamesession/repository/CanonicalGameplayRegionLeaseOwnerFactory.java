@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Objects;
@@ -16,6 +17,7 @@ final class CanonicalGameplayRegionLeaseOwnerFactory {
   static CanonicalGameplayRegionLeaseOwner compose(
       DSLContext dsl,
       RedisClient coordinationRedis,
+      RedisURI coordinationUri,
       RedisScriptCatalog scriptCatalog,
       CanonicalGameplayRegionIncarnationSource incarnationSource,
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
@@ -24,16 +26,29 @@ final class CanonicalGameplayRegionLeaseOwnerFactory {
       Clock clock) {
     Objects.requireNonNull(dsl, "dsl");
     Objects.requireNonNull(coordinationRedis, "coordinationRedis");
+    var redisOptions = coordinationRedis.getOptions();
+    if (redisOptions == null || redisOptions.isAutoReconnect()) {
+      throw new IllegalArgumentException("coordinationRedis requires autoReconnect=false");
+    }
     Objects.requireNonNull(scriptCatalog, "scriptCatalog");
     Objects.requireNonNull(incarnationSource, "incarnationSource");
+    long installationMillis =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS;
+    Objects.requireNonNull(leaseTtl, "leaseTtl");
+    if (leaseTtl.compareTo(Duration.ofMillis(installationMillis + 1)) < 0) {
+      throw new IllegalArgumentException("leaseTtl must exceed the bounded installation window");
+    }
+    CanonicalGameplayOriginalNewCapacityExecutionBudget.requireRetireableSql(dsl);
     return new CanonicalGameplayRegionLeaseOwner(
         new CanonicalGameplayBindingInventoryRepository(dsl),
         new CanonicalGameplayRegionRuntimeStatusRepository(dsl),
-        new CanonicalGameplayRegionLeaseRedisOwner(coordinationRedis, scriptCatalog),
+        new CanonicalGameplayRegionLeaseRedisOwner(
+            coordinationRedis, coordinationUri, scriptCatalog),
         incarnationSource,
         Objects.requireNonNull(worldRegionResolver, "worldRegionResolver"),
         Objects.requireNonNull(runtimeIdentity, "runtimeIdentity"),
-        Objects.requireNonNull(leaseTtl, "leaseTtl"),
-        Objects.requireNonNull(clock, "clock"));
+        leaseTtl,
+        Objects.requireNonNull(clock, "clock"),
+        true);
   }
 }

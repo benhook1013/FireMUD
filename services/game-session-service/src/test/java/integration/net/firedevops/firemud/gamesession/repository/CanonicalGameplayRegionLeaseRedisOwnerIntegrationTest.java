@@ -12,16 +12,24 @@ import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -39,9 +47,120 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
       new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(PORT);
 
   @Test
+  void expiredTimelineProbeAndInitializeReturnNoWriteRefusal() throws Exception {
+    try (RedisFixture redis = RedisFixture.open();
+        var connection = redis.ownerClient().connect(ByteArrayCodec.INSTANCE);
+        var input =
+            getClass()
+                .getClassLoader()
+                .getResourceAsStream("redis/lua/game-session-region-timeline-initialize-v2.lua")) {
+      var commands = connection.sync();
+      String sha = commands.scriptLoad(input.readAllBytes());
+      assertThat(commands.aclWhoami()).isEqualTo(PRINCIPAL);
+      String token = UUID.randomUUID().toString();
+      String operationId = UUID.randomUUID().toString();
+      String sourceDigest = "a".repeat(64);
+      for (boolean live : java.util.List.of(false, true)) {
+        String region = (live ? "d" : "c").repeat(32);
+        String tag = "r1-" + "a".repeat(32) + "-" + "b".repeat(32) + "-" + region;
+        byte[][] keys = {
+          ascii("tick-executor-lease:{" + tag + "}"), ascii("tick:{" + tag + "}:meta")
+        };
+        assertThat(redis.admin().type(keys[0])).isEqualTo("none");
+        assertThat(redis.admin().type(keys[1])).isEqualTo("none");
+        var redisTime = commands.time();
+        long nowMillis =
+            Long.parseLong(new String(redisTime.get(0), StandardCharsets.US_ASCII)) * 1_000L
+                + Long.parseLong(new String(redisTime.get(1), StandardCharsets.US_ASCII)) / 1_000L;
+        String deadline = live ? Long.toString(nowMillis + 30_000L) : "1";
+        for (String action : java.util.List.of("PROBE", "INITIALIZE")) {
+          byte[][] args = {
+            ascii("gs_region_timeline_init/v2"),
+            ascii(action),
+            ascii(token),
+            ascii("1"),
+            ascii(operationId),
+            ascii(sourceDigest),
+            ascii("30000"),
+            ascii("1"),
+            ascii(deadline)
+          };
+          Long outcome =
+              commands.evalsha(sha, io.lettuce.core.ScriptOutputType.INTEGER, keys, args);
+          assertThat(outcome).isEqualTo(live ? 1L : -3L);
+          if (live && "INITIALIZE".equals(action)) {
+            assertThat(redis.admin().get(keys[0])).containsExactly(ascii(token));
+            assertThat(redis.admin().pttl(keys[0])).isPositive();
+            assertThat(redis.admin().hget(keys[1], ascii("first_timeline_operation_id")))
+                .containsExactly(ascii(operationId));
+            assertThat(redis.admin().hget(keys[1], ascii("first_timeline_source_digest")))
+                .containsExactly(ascii(sourceDigest));
+            assertThat(redis.admin().pttl(keys[1])).isEqualTo(-1L);
+          } else {
+            assertThat(redis.admin().type(keys[0])).isEqualTo("none");
+            assertThat(redis.admin().type(keys[1])).isEqualTo("none");
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  void handoffBudgetClosesAConnectionWhoseRedisHandshakeNeverReplies() throws Exception {
+    try (var listener = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))) {
+      listener.setSoTimeout(2_000);
+      var disconnected = new CompletableFuture<Boolean>();
+      Thread.ofVirtual()
+          .start(() -> {
+            try (var socket = listener.accept()) {
+              socket.setSoTimeout(2_000);
+              var input = socket.getInputStream();
+              boolean handshakeReceived = input.read() != -1;
+              while (input.read() != -1) {
+                // Read the handshake without answering it.
+              }
+              disconnected.complete(handshakeReceived);
+            } catch (IOException failure) {
+              disconnected.completeExceptionally(failure);
+            }
+          });
+      var uri =
+          RedisURI.Builder.redis("127.0.0.1", listener.getLocalPort())
+              .withTimeout(Duration.ofSeconds(10))
+              .build();
+      try (var client = RedisClient.create(uri)) {
+        var catalog =
+            RedisScriptCatalog.fromContributions(
+                java.util.List.of(new CanonicalGameplayRegionLeaseRedisScriptContribution()));
+        Clock clock = Clock.systemUTC();
+        var acquisitionStarted = new CompletableFuture<Void>();
+        var refusal =
+            CompletableFuture.runAsync(() -> {
+              var owner =
+                  new CanonicalGameplayRegionLeaseRedisOwner(client, uri, catalog)
+                      .forHandoffDeadline(clock, clock.millis() + 1_000L);
+              acquisitionStarted.complete(null);
+              assertThatThrownBy(() ->
+                      owner.acquire(
+                          source(GAME_INSTANCE_ID_A),
+                          7L,
+                          Duration.ofSeconds(30),
+                          identity("stalled")))
+                  .isInstanceOf(IllegalStateException.class);
+            });
+        acquisitionStarted.get(2, TimeUnit.SECONDS);
+        refusal.get(1500, TimeUnit.MILLISECONDS);
+        assertThat(disconnected.get(2, TimeUnit.SECONDS)).isTrue();
+      }
+    }
+  }
+
+  @Test
   void exactOpaqueLeaseGrantIsScopedRenewableAndFailsClosedAfterExpiry() {
     try (RedisFixture redis = RedisFixture.open()) {
-      var owner = new CanonicalGameplayRegionLeaseRedisOwner(redis.ownerClient(), redis.catalog());
+      var owner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.redisUri(PRINCIPAL, PASSWORD), redis.catalog());
       RuntimeIdentity firstIdentity = identity("instance-a");
       var firstSource = source(GAME_INSTANCE_ID_A);
       try {
@@ -95,10 +214,86 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(ints = {-30, 30})
+  void boundedAcquireAndRepeatedRenewalUseRedisTime(int applicationOffsetSeconds) {
+    try (RedisFixture redis = RedisFixture.open()) {
+      var owner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.redisUri(PRINCIPAL, PASSWORD), redis.catalog());
+      var source = source(GAME_INSTANCE_ID_A);
+      seedMeta(redis.admin(), source);
+      byte[] leaseKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.lease(
+                  TENANT_ID, GAME_INSTANCE_ID_A, OPERATIONAL_REGION_ID));
+      Clock applicationClock =
+          Clock.offset(Clock.systemUTC(), Duration.ofSeconds(applicationOffsetSeconds));
+      long handoffMillis = 4_000;
+      var boundedOwner =
+          owner.forHandoffDeadline(applicationClock, applicationClock.millis() + handoffMillis);
+
+      var grant = boundedOwner.acquire(source, 7L, Duration.ofSeconds(30), identity("bounded"));
+      long remainingLeaseMillis = redis.admin().pttl(leaseKey);
+      assertThat(remainingLeaseMillis).isPositive().isLessThanOrEqualTo(handoffMillis);
+      byte[] token = redis.admin().get(leaseKey);
+      assertThat(token).isNotNull();
+
+      boundedOwner.requireCurrent(grant);
+      boundedOwner.renew(grant, Duration.ofSeconds(30));
+      assertThat(redis.admin().pttl(leaseKey)).isGreaterThan(handoffMillis);
+      boundedOwner.renew(grant, Duration.ofSeconds(60));
+      assertThat(redis.admin().pttl(leaseKey)).isGreaterThan(30_000);
+      assertThat(redis.admin().get(leaseKey)).containsExactly(token);
+    }
+  }
+
+  @Test
+  void redisRefusesLateRenewalWithoutChangingTheLiveLease() throws IOException {
+    try (RedisFixture redis = RedisFixture.open();
+        var connection = redis.ownerClient().connect(ByteArrayCodec.INSTANCE);
+        var input =
+            getClass()
+                .getClassLoader()
+                .getResourceAsStream(
+                    CanonicalGameplayRegionLeaseRedisScriptContribution.RENEW_PATH)) {
+      var source = source(GAME_INSTANCE_ID_A);
+      seedMeta(redis.admin(), source);
+      var owner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.redisUri(PRINCIPAL, PASSWORD), redis.catalog());
+      var grant = owner.acquire(source, 7L, Duration.ofSeconds(30), identity("late-renewal"));
+      byte[] leaseKey = ascii(grant.key());
+      byte[] token = redis.admin().get(leaseKey);
+      long expiry = redis.admin().pexpiretime(leaseKey);
+      assertThat(token).isNotNull();
+      assertThat(redis.admin().pttl(leaseKey)).isPositive();
+
+      var commands = connection.sync();
+      String sha = commands.scriptLoad(input.readAllBytes());
+      byte[][] keys = {
+        leaseKey,
+        ascii(
+            CanonicalGameplayRegionRedisKeys.meta(
+                source.tenantId(), source.gameInstanceId(), source.regionId()))
+      };
+      // A deadline at the start of the Unix epoch is already elapsed in Redis time.
+      byte[][] args = {ascii("gs_region_lease/v2"), token, ascii("7"), ascii("60000"), ascii("1")};
+      Long result = commands.evalsha(sha, io.lettuce.core.ScriptOutputType.INTEGER, keys, args);
+
+      assertThat(result).isZero();
+      assertThat(redis.admin().get(leaseKey)).containsExactly(token);
+      assertThat(redis.admin().pexpiretime(leaseKey)).isEqualTo(expiry);
+      assertThat(redis.admin().pttl(leaseKey)).isPositive();
+    }
+  }
+
   @Test
   void acceptsTickZeroAndRejectsExpiringTimelineMetadata() {
     try (RedisFixture redis = RedisFixture.open()) {
-      var owner = new CanonicalGameplayRegionLeaseRedisOwner(redis.ownerClient(), redis.catalog());
+      var owner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.redisUri(PRINCIPAL, PASSWORD), redis.catalog());
       var source = source(GAME_INSTANCE_ID_A);
       String metaKey =
           CanonicalGameplayRegionRedisKeys.meta(
@@ -130,7 +325,9 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
   @Test
   void missingCurrentTickIdMakesLeaseAcquireReadAndRenewStaleWithoutChangingLeaseOrMeta() {
     try (RedisFixture redis = RedisFixture.open()) {
-      var owner = new CanonicalGameplayRegionLeaseRedisOwner(redis.ownerClient(), redis.catalog());
+      var owner =
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.redisUri(PRINCIPAL, PASSWORD), redis.catalog());
       var source = source(GAME_INSTANCE_ID_A);
       seedMeta(redis.admin(), source);
       var grant = owner.acquire(source, 7L, Duration.ofSeconds(30), identity("missing-tick-id"));
@@ -278,9 +475,11 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
               .addCommand(CommandType.EVALSHA)
               .addCommand(CommandType.TYPE)
               .addCommand(CommandType.HGET)
+              .addCommand(CommandType.HSET)
               .addCommand(CommandType.PTTL)
               .addCommand(CommandType.GET)
               .addCommand(CommandType.SET)
+              .addCommand(CommandType.TIME)
               .addCommand(CommandType.PEXPIRE));
       RedisClient ownerClient = createClient(PRINCIPAL, PASSWORD);
       RedisScriptCatalog catalog =
@@ -290,13 +489,17 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
     }
 
     private static RedisClient createClient(String username, String password) {
+      RedisClient client = RedisClient.create(redisUri(username, password));
+      client.setOptions(ClientOptions.builder().autoReconnect(false).build());
+      return client;
+    }
+
+    private static RedisURI redisUri(String username, String password) {
       RedisURI.Builder builder =
           RedisURI.Builder.redis(REDIS.getHost(), REDIS.getMappedPort(PORT))
               .withTimeout(Duration.ofSeconds(3));
       if (username != null) builder.withAuthentication(username, password);
-      RedisClient client = RedisClient.create(builder.build());
-      client.setOptions(ClientOptions.builder().autoReconnect(false).build());
-      return client;
+      return builder.build();
     }
 
     private RedisClient ownerClient() {

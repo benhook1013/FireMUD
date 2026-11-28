@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -21,18 +22,26 @@ import com.zaxxer.hikari.pool.HikariProxyConnection;
 import io.grpc.Context;
 import io.grpc.Deadline;
 import io.lettuce.core.ClientOptions;
+import io.lettuce.core.ConnectionFuture;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisFuture;
+import io.lettuce.core.RedisURI;
+import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
 import io.micrometer.core.instrument.Metrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.net.InetSocketAddress;
+import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -48,7 +57,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
 import org.awaitility.Awaitility;
 import org.jooq.ConnectionProvider;
 import org.jooq.DSLContext;
@@ -66,6 +77,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 /** Controlled acquisition/driver behavior, not database or owner-evidence qualification. */
 class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
   private static final Clock CLOCK = Clock.systemUTC();
+  private static final long REDIS_TIME_MILLIS = 1_700_000_000_123L;
 
   @AfterEach
   void awaitResourceAndCancellationWorkerCleanup() throws InterruptedException {
@@ -261,6 +273,639 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     }
   }
 
+  @Test
+  void retainedInitialGrantOnlyReadsSameLiveTokenAndRejectsReplacement() throws Exception {
+    RedisClient client = mock(RedisClient.class);
+    StatefulRedisConnection<byte[], byte[]> connection = mock();
+    RedisAsyncCommands<byte[], byte[]> commands = mock();
+    RedisFuture<String> principal = mock();
+    RedisFuture<byte[]> tokenRead = mock();
+    RedisFuture<Long> ttlRead = mock();
+    var source = mock(CanonicalGameplayRegionRuntimeStatusRepository.Source.class);
+    when(source.tenantId()).thenReturn(UUID.randomUUID());
+    when(source.gameInstanceId()).thenReturn(UUID.randomUUID());
+    when(source.regionId()).thenReturn(UUID.randomUUID());
+    var preparation =
+        mock(CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation.class);
+    when(preparation.source()).thenReturn(source);
+    when(preparation.regionEpoch()).thenReturn(1L);
+    var status =
+        mock(net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus.class);
+    String token = UUID.randomUUID().toString();
+    String correlation =
+        HexFormat.of()
+            .formatHex(
+                MessageDigest.getInstance("SHA-256")
+                    .digest(token.getBytes(java.nio.charset.StandardCharsets.US_ASCII)));
+    when(preparation.leaseTokenCorrelation()).thenReturn(correlation);
+    when(status.leaseTokenCorrelation()).thenReturn(correlation);
+    when(status.regionEpoch()).thenReturn(1L);
+    when(status.ownerService()).thenReturn("game-session-service");
+    when(status.ownerInstanceId()).thenReturn("same-instance");
+    var identity =
+        new RuntimeIdentity(
+            "game-session-service",
+            "same-instance",
+            "localhost",
+            CLOCK.instant(),
+            "test",
+            "test",
+            "test");
+    var owner = new CanonicalGameplayRegionLeaseRedisOwner(client, mock(RedisScriptCatalog.class));
+    when(client.connect(ByteArrayCodec.INSTANCE)).thenReturn(connection);
+    when(connection.async()).thenReturn(commands);
+    when(commands.aclWhoami()).thenReturn(principal);
+    when(principal.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn("gamesession_coord_app");
+    when(commands.get(any(byte[].class))).thenReturn(tokenRead);
+    when(tokenRead.get(anyLong(), eq(TimeUnit.MILLISECONDS)))
+        .thenAnswer(ignored -> token.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+    when(commands.pttl(any(byte[].class))).thenReturn(ttlRead);
+    when(ttlRead.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1000L);
+    assertThat(owner.readRetainedInitialGrant(preparation, status, identity).tokenCorrelation())
+        .isEqualTo(correlation);
+    when(ttlRead.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(-2L);
+    assertThatThrownBy(() -> owner.readRetainedInitialGrant(preparation, status, identity))
+        .isInstanceOf(IllegalStateException.class);
+    when(ttlRead.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1000L);
+    when(tokenRead.get(anyLong(), eq(TimeUnit.MILLISECONDS)))
+        .thenAnswer(ignored ->
+            UUID.randomUUID().toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+    assertThatThrownBy(() -> owner.readRetainedInitialGrant(preparation, status, identity))
+        .isInstanceOf(IllegalStateException.class);
+    when(status.ownerInstanceId()).thenReturn("replacement-instance");
+    assertThatThrownBy(() -> owner.readRetainedInitialGrant(preparation, status, identity))
+        .isInstanceOf(IllegalStateException.class);
+    verify(commands, org.mockito.Mockito.times(3)).aclWhoami();
+    byte[] expectedLeaseKey =
+        CanonicalGameplayRegionRedisKeys.lease(
+                source.tenantId(), source.gameInstanceId(), source.regionId())
+            .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    verify(commands, org.mockito.Mockito.times(3))
+        .get(org.mockito.AdditionalMatchers.aryEq(expectedLeaseKey));
+    verify(commands, org.mockito.Mockito.times(3))
+        .pttl(org.mockito.AdditionalMatchers.aryEq(expectedLeaseKey));
+    org.mockito.Mockito.verifyNoMoreInteractions(commands);
+  }
+
+  @Test
+  void manualFactoryEnablesPerInstallationDeadline() {
+    RedisClient client = mock();
+    when(client.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
+    var owner = composeManualLeaseOwner(client, Duration.ofSeconds(30));
+    assertThat(ReflectionTestUtils.getField(owner, "deadlineBoundInstallation")).isEqualTo(true);
+  }
+
+  @Test
+  void manualFactoryRejectsReconnectEnabledCoordinationClient() {
+    RedisClient client = mock();
+    when(client.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(true).build());
+    assertThatThrownBy(() -> composeManualLeaseOwner(client, Duration.ofSeconds(30)))
+        .isExactlyInstanceOf(IllegalArgumentException.class)
+        .hasMessage("coordinationRedis requires autoReconnect=false");
+  }
+
+  @Test
+  void manualFactoryRequiresLeaseToCoverTheInstallationWindow() {
+    RedisClient client = mock();
+    when(client.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
+    var installationWindow =
+        Duration.ofMillis(CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS);
+    assertThatThrownBy(() -> composeManualLeaseOwner(client, installationWindow))
+        .isExactlyInstanceOf(IllegalArgumentException.class)
+        .hasMessage("leaseTtl must exceed the bounded installation window");
+  }
+
+  @Test
+  void manualFactoryRefusesSqlConnectionsThatCannotBeRetired() {
+    RedisClient client = mock();
+    when(client.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
+    var unsupported =
+        DSL.using(
+            new org.springframework.jdbc.datasource.DriverManagerDataSource(), SQLDialect.POSTGRES);
+    assertThatThrownBy(() -> composeManualLeaseOwner(client, Duration.ofSeconds(30), unsupported))
+        .isExactlyInstanceOf(IllegalArgumentException.class)
+        .hasMessage("region lease SQL requires a retireable Hikari data source");
+  }
+
+  private static CanonicalGameplayRegionLeaseOwner composeManualLeaseOwner(
+      RedisClient client, Duration leaseTtl) {
+    return composeManualLeaseOwner(
+        client,
+        leaseTtl,
+        DSL.using(mock(com.zaxxer.hikari.HikariDataSource.class), SQLDialect.POSTGRES));
+  }
+
+  private static CanonicalGameplayRegionLeaseOwner composeManualLeaseOwner(
+      RedisClient client, Duration leaseTtl, DSLContext dsl) {
+    return CanonicalGameplayRegionLeaseOwnerFactory.compose(
+        dsl,
+        client,
+        RedisURI.create("redis://localhost:6379"),
+        mock(RedisScriptCatalog.class),
+        mock(CanonicalGameplayRegionIncarnationSource.class),
+        mock(
+            net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver
+                .class),
+        mock(RuntimeIdentity.class),
+        leaseTtl,
+        CLOCK);
+  }
+
+  @Test
+  void exhaustedInstallationWindowRefusesCleanupEvenWithFrozenWallClock() {
+    Clock frozen = Clock.fixed(CLOCK.instant(), java.time.ZoneOffset.UTC);
+    var cleanup = new AtomicBoolean();
+    var released = new AtomicBoolean();
+    assertThatThrownBy(() ->
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundCleanup(
+                frozen,
+                frozen.millis() + 5_000,
+                io.grpc.Deadline.after(0, TimeUnit.NANOSECONDS),
+                budget -> cleanup.getAndSet(true),
+                () -> released.set(true)))
+        .isExactlyInstanceOf(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
+    assertThat(cleanup.get()).isFalse();
+    assertThat(released.get()).isTrue();
+    released.set(false);
+    boolean liveCleanup =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundCleanup(
+            frozen,
+            frozen.millis() + 5_000,
+            io.grpc.Deadline.after(5, TimeUnit.SECONDS),
+            budget -> {
+              cleanup.set(true);
+              return true;
+            },
+            () -> released.set(true));
+    assertThat(liveCleanup).isTrue();
+    assertThat(cleanup.get()).isTrue();
+    assertThat(released.get()).isTrue();
+  }
+
+  @Test
+  void installationFreezesDeadlineAndNeverExtendsExistingBudget() {
+    Clock frozenClock = Clock.fixed(CLOCK.instant(), java.time.ZoneOffset.UTC);
+    RedisClient client = mock(RedisClient.class);
+    var owner =
+        new CanonicalGameplayRegionLeaseRedisOwner(
+            client, RedisURI.create("redis://localhost:6379"), mock(RedisScriptCatalog.class));
+    var bounded = owner.forInstallation(frozenClock);
+    assertThat(ReflectionTestUtils.getField(bounded, "handoffDeadlineMillis"))
+        .isEqualTo(frozenClock.millis() + 5000L);
+    var shorter =
+        owner
+            .forHandoffDeadline(frozenClock, frozenClock.millis() + 1000L)
+            .forInstallation(frozenClock);
+    assertThat(ReflectionTestUtils.getField(shorter, "handoffDeadlineMillis"))
+        .isEqualTo(frozenClock.millis() + 1000L);
+    try (var context = Context.current().withCancellation()) {
+      context.cancel(new IllegalStateException("cancelled before installation"));
+      context.run(() ->
+          assertThatThrownBy(() -> assertThat(owner.forInstallation(frozenClock)).isNotNull())
+              .isInstanceOf(IllegalStateException.class));
+    }
+    verifyNoInteractions(client);
+  }
+
+  @Test
+  void timedOutHandoffRedisConnectRetainsAdmissionThroughLateClose() throws Exception {
+    RedisClient redis = mock();
+    RedisURI uri = RedisURI.create("redis://localhost:6379");
+    var owner =
+        new CanonicalGameplayRegionLeaseRedisOwner(
+            redis, uri, RedisScriptCatalog.fromContributions(List.of()));
+    CompletableFuture<StatefulRedisConnection<byte[], byte[]>> handshake =
+        new CompletableFuture<>();
+    StatefulRedisConnection<byte[], byte[]> connection = mock();
+    CompletableFuture<Void> close = new CompletableFuture<>();
+    CountDownLatch connected = new CountDownLatch(1);
+    when(redis.connectAsync(eq(ByteArrayCodec.INSTANCE), any(RedisURI.class)))
+        .thenAnswer(invocation -> {
+          connected.countDown();
+          return ConnectionFuture.from(new InetSocketAddress("localhost", 6379), handshake);
+        });
+    when(connection.closeAsync()).thenReturn(close);
+    Semaphore permits =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "BACKGROUND_OPERATIONS"));
+    int maximum = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS;
+
+    var earliestDeadlineReturn = new AtomicLong();
+    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var caller =
+          executor.submit(() -> {
+            earliestDeadlineReturn.set(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(400));
+            assertThatThrownBy(() ->
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                        CLOCK,
+                        CLOCK.millis() + 500,
+                        budget ->
+                            ReflectionTestUtils.invokeMethod(owner, "openConnection", budget)))
+                .isInstanceOf(IllegalStateException.class);
+          });
+      try {
+        assertThat(connected.await(2, TimeUnit.SECONDS)).isTrue();
+        caller.get(2, TimeUnit.SECONDS);
+        assertThat(System.nanoTime()).isGreaterThanOrEqualTo(earliestDeadlineReturn.get());
+        assertThat(handshake.isDone()).isFalse();
+        assertPermitRemainsHeld(permits, maximum);
+
+        handshake.complete(connection);
+        verify(connection, timeout(1000)).closeAsync();
+        assertPermitRemainsHeld(permits, maximum);
+        verify(connection, never()).async();
+      } finally {
+        handshake.completeExceptionally(new IllegalStateException("test cleanup"));
+        close.complete(null);
+      }
+      assertThat(permits.tryAcquire(maximum, 2, TimeUnit.SECONDS)).isTrue();
+      permits.release(maximum);
+    }
+  }
+
+  @Test
+  void timelinePreparationRefusesReconnectBeforeQualifyingOrSubmittingRedisCommands() {
+    RedisClient redis = mock();
+    RedisURI uri = RedisURI.create("redis://localhost:6379");
+    var catalog =
+        RedisScriptCatalog.fromContributions(
+            List.of(new CanonicalGameplayRegionLeaseRedisScriptContribution()));
+    var owner = new CanonicalGameplayRegionLeaseRedisOwner(redis, uri, catalog);
+    StatefulRedisConnection<byte[], byte[]> connection = mock();
+    var source = mock(CanonicalGameplayRegionRuntimeStatusRepository.Source.class);
+    var preparation =
+        mock(CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation.class);
+    when(source.tenantId()).thenReturn(UUID.randomUUID());
+    when(source.gameInstanceId()).thenReturn(UUID.randomUUID());
+    when(source.regionId()).thenReturn(UUID.randomUUID());
+    when(preparation.source()).thenReturn(source);
+    when(preparation.operationId()).thenReturn(UUID.randomUUID());
+    when(preparation.sourceDigest()).thenReturn("a".repeat(64));
+    when(preparation.regionEpoch()).thenReturn(1L);
+    when(redis.connectAsync(eq(ByteArrayCodec.INSTANCE), any(RedisURI.class)))
+        .thenReturn(
+            ConnectionFuture.from(
+                new InetSocketAddress("localhost", 6379),
+                CompletableFuture.completedFuture(connection)));
+    when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(true).build());
+    when(connection.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
+    RuntimeIdentity identity =
+        new RuntimeIdentity(
+            "game-session-service",
+            "controlled-instance",
+            "localhost",
+            CLOCK.instant(),
+            "controlled-test",
+            "controlled-sha",
+            "controlled-image");
+
+    assertThatThrownBy(() ->
+            owner
+                .forHandoffDeadline(CLOCK, CLOCK.millis() + 4_000L)
+                .prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity))
+        .isInstanceOf(IllegalStateException.class);
+    verify(connection, atLeastOnce()).getOptions();
+    verify(connection, never()).async();
+    verify(connection).closeAsync();
+  }
+
+  @Test
+  void preparedTimelineRetainsAdmissionThroughRejectedCallersAsyncClose() throws Exception {
+    RedisClient redis = mock();
+    RedisURI uri = RedisURI.create("redis://localhost:6379");
+    var catalog =
+        RedisScriptCatalog.fromContributions(
+            List.of(new CanonicalGameplayRegionLeaseRedisScriptContribution()));
+    var owner = new CanonicalGameplayRegionLeaseRedisOwner(redis, uri, catalog);
+    StatefulRedisConnection<byte[], byte[]> connection = mock();
+    RedisAsyncCommands<byte[], byte[]> commands = mock();
+    RedisFuture<String> principal = mock();
+    RedisFuture<String> scriptLoad = mock();
+    CompletableFuture<Void> close = new CompletableFuture<>();
+    UUID tenantId = UUID.randomUUID();
+    UUID gameInstanceId = UUID.randomUUID();
+    UUID regionId = UUID.randomUUID();
+    var source = mock(CanonicalGameplayRegionRuntimeStatusRepository.Source.class);
+    var preparation =
+        mock(CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation.class);
+    UUID operationId = UUID.randomUUID();
+    String sourceDigest = "a".repeat(64);
+    when(source.tenantId()).thenReturn(tenantId);
+    when(source.gameInstanceId()).thenReturn(gameInstanceId);
+    when(source.regionId()).thenReturn(regionId);
+    when(preparation.source()).thenReturn(source);
+    when(preparation.operationId()).thenReturn(operationId);
+    when(preparation.sourceDigest()).thenReturn(sourceDigest);
+    when(preparation.regionEpoch()).thenReturn(1L);
+    when(redis.connectAsync(eq(ByteArrayCodec.INSTANCE), any(RedisURI.class)))
+        .thenReturn(
+            ConnectionFuture.from(
+                new InetSocketAddress("localhost", 6379),
+                CompletableFuture.completedFuture(connection)));
+    when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
+    when(connection.async()).thenReturn(commands);
+    when(commands.aclWhoami()).thenReturn(principal);
+    when(principal.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn("gamesession_coord_app");
+    when(commands.scriptLoad(any(byte[].class))).thenReturn(scriptLoad);
+    var descriptor =
+        catalog.require(
+            CanonicalGameplayRegionLeaseRedisScriptContribution.TIMELINE_INITIALIZE_DEADLINE_ID);
+    byte[] script;
+    try (var scriptResource =
+        CanonicalGameplayRegionLeaseRedisOwner.class
+            .getClassLoader()
+            .getResourceAsStream(descriptor.resourcePath())) {
+      assertThat(scriptResource).isNotNull();
+      script = scriptResource.readAllBytes();
+    }
+    String loadedSha = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(script));
+    when(scriptLoad.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(loadedSha);
+    stubRedisTime(commands);
+    when(connection.closeAsync()).thenReturn(close);
+    RedisFuture<Long> probed = mock();
+    when(commands.<Long>evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
+        .thenReturn(probed);
+    when(probed.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1L);
+    RuntimeIdentity identity =
+        new RuntimeIdentity(
+            "game-session-service",
+            "controlled-instance",
+            "localhost",
+            CLOCK.instant(),
+            "controlled-test",
+            "controlled-sha",
+            "controlled-image");
+    Semaphore operations =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    int operationMaximum =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
+    Semaphore background =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "BACKGROUND_OPERATIONS"));
+    int backgroundMaximum =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS;
+
+    CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization prepared = null;
+    ExecutorService closer = Executors.newSingleThreadExecutor();
+    try {
+      prepared =
+          owner
+              .forHandoffDeadline(CLOCK, CLOCK.millis() + 4000)
+              .prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity);
+      assertPermitRemainsHeld(operations, operationMaximum);
+      assertPermitRemainsHeld(background, backgroundMaximum);
+
+      var preparedInitialization = prepared;
+      closer.submit(preparedInitialization::close).get(1, TimeUnit.SECONDS);
+      verify(connection, timeout(1000)).closeAsync();
+      assertPermitRemainsHeld(operations, operationMaximum);
+      assertPermitRemainsHeld(background, backgroundMaximum);
+      var probeArguments = org.mockito.ArgumentCaptor.forClass(byte[][].class);
+      verify(commands, org.mockito.Mockito.times(1))
+          .evalsha(any(), any(), any(), probeArguments.capture());
+      verify(commands).time();
+      assertThat(probeArguments.getValue()[1])
+          .containsExactly("PROBE".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+
+      close.complete(null);
+      assertThat(operations.tryAcquire(operationMaximum, 2, TimeUnit.SECONDS)).isTrue();
+      operations.release(operationMaximum);
+      assertThat(background.tryAcquire(backgroundMaximum, 2, TimeUnit.SECONDS)).isTrue();
+      background.release(backgroundMaximum);
+      verify(connection, org.mockito.Mockito.times(1)).closeAsync();
+      // Closing must not dispatch INITIALIZE or repeat the preparation probe.
+      verify(commands, org.mockito.Mockito.times(1))
+          .evalsha(any(), any(), any(), any(byte[][].class));
+    } finally {
+      close.complete(null);
+      closer.shutdown();
+      try {
+        assertThat(closer.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      } finally {
+        if (prepared != null) prepared.close();
+      }
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void timelineInitializationUsesPreparedPermitWhileOtherBackgroundSlotIsOccupied(boolean composed)
+      throws Exception {
+    RedisClient redis = mock();
+    RedisURI uri = RedisURI.create("redis://localhost:6379");
+    var catalog =
+        RedisScriptCatalog.fromContributions(
+            List.of(new CanonicalGameplayRegionLeaseRedisScriptContribution()));
+    var owner = new CanonicalGameplayRegionLeaseRedisOwner(redis, uri, catalog);
+    StatefulRedisConnection<byte[], byte[]> connection = mock();
+    RedisAsyncCommands<byte[], byte[]> commands = mock();
+    RedisFuture<String> principal = mock();
+    RedisFuture<String> scriptLoad = mock();
+    RedisFuture<Long> initialized = mock();
+    CompletableFuture<Void> close = new CompletableFuture<>();
+    UUID tenantId = UUID.randomUUID();
+    UUID gameInstanceId = UUID.randomUUID();
+    UUID regionId = UUID.randomUUID();
+    var source = mock(CanonicalGameplayRegionRuntimeStatusRepository.Source.class);
+    var preparation =
+        mock(CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation.class);
+    UUID operationId = UUID.randomUUID();
+    String sourceDigest = "a".repeat(64);
+    when(source.tenantId()).thenReturn(tenantId);
+    when(source.gameInstanceId()).thenReturn(gameInstanceId);
+    when(source.regionId()).thenReturn(regionId);
+    when(preparation.source()).thenReturn(source);
+    when(preparation.operationId()).thenReturn(operationId);
+    when(preparation.sourceDigest()).thenReturn(sourceDigest);
+    when(preparation.regionEpoch()).thenReturn(1L);
+    when(redis.connectAsync(eq(ByteArrayCodec.INSTANCE), any(RedisURI.class)))
+        .thenReturn(
+            ConnectionFuture.from(
+                new InetSocketAddress("localhost", 6379),
+                CompletableFuture.completedFuture(connection)));
+    when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
+    when(connection.async()).thenReturn(commands);
+    when(commands.aclWhoami()).thenReturn(principal);
+    when(principal.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn("gamesession_coord_app");
+    when(commands.scriptLoad(any(byte[].class))).thenReturn(scriptLoad);
+    var descriptor =
+        catalog.require(
+            CanonicalGameplayRegionLeaseRedisScriptContribution.TIMELINE_INITIALIZE_DEADLINE_ID);
+    byte[] script;
+    try (var scriptResource =
+        CanonicalGameplayRegionLeaseRedisOwner.class
+            .getClassLoader()
+            .getResourceAsStream(descriptor.resourcePath())) {
+      assertThat(scriptResource).isNotNull();
+      script = scriptResource.readAllBytes();
+    }
+    String loadedSha = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(script));
+    when(scriptLoad.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(loadedSha);
+    var localMillis = new AtomicLong(CLOCK.millis());
+    var sampledTime = new java.util.concurrent.atomic.AtomicBoolean();
+    Clock delayedSampleClock = mock();
+    when(delayedSampleClock.millis()).thenAnswer(ignored -> localMillis.get());
+    when(delayedSampleClock.instant())
+        .thenAnswer(ignored -> Instant.ofEpochMilli(localMillis.get()));
+    long samplingDelayMillis = 2_000L;
+    RedisFuture<List<byte[]>> redisTime = mock();
+    when(commands.time()).thenReturn(redisTime);
+    when(redisTime.get(anyLong(), eq(TimeUnit.MILLISECONDS)))
+        .thenAnswer(ignored -> {
+          localMillis.addAndGet(samplingDelayMillis);
+          sampledTime.set(true);
+          return List.of(
+              "1700000000".getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+              "123456".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        });
+    when(connection.closeAsync()).thenReturn(close);
+    when(commands.<Long>evalsha(any(), any(), any(byte[][].class), any(byte[][].class)))
+        .thenReturn(initialized);
+    when(initialized.get(anyLong(), eq(TimeUnit.MILLISECONDS))).thenReturn(1L);
+    RuntimeIdentity identity =
+        new RuntimeIdentity(
+            "game-session-service",
+            "controlled-instance",
+            "localhost",
+            CLOCK.instant(),
+            "controlled-test",
+            "controlled-sha",
+            "controlled-image");
+    var permitConstructor =
+        CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit.class
+            .getDeclaredConstructor(UUID.class, String.class);
+    permitConstructor.setAccessible(true);
+    var permit = permitConstructor.newInstance(operationId, sourceDigest);
+    Semaphore operations =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    int operationMaximum =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
+    Semaphore background =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "BACKGROUND_OPERATIONS"));
+    int backgroundMaximum =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS;
+    CountDownLatch otherBackgroundStarted = new CountDownLatch(1);
+    CountDownLatch releaseOtherBackground = new CountDownLatch(1);
+
+    CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization prepared = null;
+    CompletableFuture<Boolean> otherBackground = null;
+    CompletableFuture<?> initialization = null;
+    long handoffBudgetMillis = 4_000L;
+    long handoffDeadline = delayedSampleClock.millis() + handoffBudgetMillis;
+    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      try {
+        otherBackground =
+            CompletableFuture.supplyAsync(
+                () ->
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                        delayedSampleClock,
+                        handoffDeadline,
+                        budget -> {
+                          otherBackgroundStarted.countDown();
+                          awaitUninterruptibly(releaseOtherBackground);
+                          return true;
+                        }),
+                executor);
+        assertThat(otherBackgroundStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        if (composed) {
+          initialization =
+              CompletableFuture.supplyAsync(
+                  () ->
+                      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                          delayedSampleClock,
+                          handoffDeadline,
+                          budget -> {
+                            try (var session =
+                                owner
+                                    .forInstallation(delayedSampleClock, budget)
+                                    .prepareTimelineInitialization(
+                                        preparation, Duration.ofSeconds(30), identity)) {
+                              return session.initialize(permit);
+                            }
+                          }),
+                  executor);
+        } else {
+          prepared =
+              owner
+                  .forHandoffDeadline(delayedSampleClock, handoffDeadline)
+                  .prepareTimelineInitialization(preparation, Duration.ofSeconds(30), identity);
+          var session = prepared;
+          initialization =
+              CompletableFuture.supplyAsync(() -> session.initialize(permit), executor);
+        }
+        verify(connection, timeout(1000)).closeAsync();
+        verify(commands).time();
+        var scriptArguments = org.mockito.ArgumentCaptor.forClass(byte[][].class);
+        verify(commands, org.mockito.Mockito.times(2))
+            .evalsha(
+                any(),
+                eq(ScriptOutputType.INTEGER),
+                any(byte[][].class),
+                scriptArguments.capture());
+        byte[][] probe = scriptArguments.getAllValues().getFirst();
+        byte[][] arguments = scriptArguments.getValue();
+        assertThat(new String(probe[1], java.nio.charset.StandardCharsets.US_ASCII))
+            .isEqualTo("PROBE");
+        assertThat(new String(arguments[1], java.nio.charset.StandardCharsets.US_ASCII))
+            .isEqualTo("INITIALIZE");
+        assertThat(new String(arguments[7], java.nio.charset.StandardCharsets.US_ASCII))
+            .isEqualTo("1");
+        assertThat(arguments[8]).containsExactly(probe[8]);
+        long redisDeadline =
+            Long.parseLong(new String(arguments[8], java.nio.charset.StandardCharsets.US_ASCII));
+        assertThat(sampledTime).isTrue();
+        assertThat(redisDeadline)
+            .isBetween(
+                REDIS_TIME_MILLIS + 1,
+                REDIS_TIME_MILLIS + handoffBudgetMillis - samplingDelayMillis);
+        assertThat(initialization.isDone()).isFalse();
+        assertThat(background.availablePermits()).isZero();
+        assertThat(operations.availablePermits()).isEqualTo(operationMaximum - 2);
+
+        close.complete(null);
+        assertThat(initialization.get(2, TimeUnit.SECONDS)).isNotNull();
+        releaseOtherBackground.countDown();
+        assertThat(otherBackground.get(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(operations.tryAcquire(operationMaximum, 2, TimeUnit.SECONDS)).isTrue();
+        operations.release(operationMaximum);
+        assertThat(background.tryAcquire(backgroundMaximum, 2, TimeUnit.SECONDS)).isTrue();
+        background.release(backgroundMaximum);
+        verify(connection).closeAsync();
+      } finally {
+        releaseOtherBackground.countDown();
+        if (prepared != null) prepared.close();
+        close.complete(null);
+      }
+    }
+  }
+
+  private static void stubRedisTime(RedisAsyncCommands<byte[], byte[]> commands) throws Exception {
+    RedisFuture<List<byte[]>> redisTime = mock();
+    when(commands.time()).thenReturn(redisTime);
+    when(redisTime.get(anyLong(), eq(TimeUnit.MILLISECONDS)))
+        .thenReturn(
+            List.of(
+                "1700000000".getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+                "123456".getBytes(java.nio.charset.StandardCharsets.US_ASCII)));
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void transferReadbackRetainsAdmissionUntilAsyncRedisCloseCompletes(boolean cancelCaller)
@@ -326,6 +971,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       try {
         assertThat(readbackReturned.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(closeStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        assertPermitRemainsHeld(operations, operationMaximum);
+        assertPermitRemainsHeld(background, backgroundMaximum);
         assertThat(close).isNotDone();
         assertThat(caller.isDone()).isFalse();
         assertThat(operations.availablePermits()).isEqualTo(operationMaximum - 1);
@@ -353,6 +1000,13 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       }
     }
     verify(connection).closeAsync();
+  }
+
+  private static void assertPermitRemainsHeld(Semaphore permits, int maximum)
+      throws InterruptedException {
+    boolean acquired = permits.tryAcquire(maximum, 100, TimeUnit.MILLISECONDS);
+    if (acquired) permits.release(maximum);
+    assertThat(acquired).isFalse();
   }
 
   @Test
@@ -720,6 +1374,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       var autoCommitFailure = new AtomicReference<Throwable>();
       var borrowed = new AtomicReference<Connection>();
       var logicalFinishes = new AtomicInteger();
+      var savepoint = mock(java.sql.Savepoint.class);
       try {
         assertThatThrownBy(() ->
                 CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundCleanup(
@@ -733,9 +1388,18 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                       Connection proxy = java.util.Objects.requireNonNull(scoped.acquire());
                       scoped.acquire();
                       borrowed.set(proxy);
+                      try {
+                        proxy.rollback(savepoint);
+                        assertThat(budget.jdbcConfirmedRollbacks()).isZero();
+                        proxy.rollback();
+                      } catch (java.sql.SQLException failure) {
+                        throw new AssertionError(failure);
+                      }
+                      assertThat(budget.jdbcConfirmedRollbacks()).isEqualTo(1);
                       if (!fatalCleanup) {
                         assertThatThrownBy(() -> scoped.release(proxy))
                             .hasMessage("Controlled uncertain pool return");
+                        assertThat(budget.jdbcConfirmedRollbacks()).isEqualTo(1);
                         rollbackFailure.set(
                             org.assertj.core.api.Assertions.catchThrowable(proxy::rollback));
                         autoCommitFailure.set(
@@ -748,6 +1412,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             .isInstanceOf(IllegalStateException.class);
         assertThat(logicalFinishes).hasValue(1);
         if (fatalCleanup) {
+          assertThat(captured.get().jdbcConfirmedRollbacks()).isEqualTo(1);
           Connection proxy = borrowed.get();
           rollbackFailure.set(org.assertj.core.api.Assertions.catchThrowable(proxy::rollback));
           autoCommitFailure.set(
@@ -768,7 +1433,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                 (AtomicInteger)
                     ReflectionTestUtils.getField(captured.get(), "outstandingConnections"))
             .hasValue(2);
-        verify(first, never()).rollback();
+        verify(first).rollback(savepoint);
+        verify(first).rollback();
         verify(first, never()).setAutoCommit(true);
         verify(provider).release(first);
         verify(provider).release(second);

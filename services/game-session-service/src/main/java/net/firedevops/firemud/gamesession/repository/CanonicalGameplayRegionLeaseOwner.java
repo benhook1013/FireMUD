@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import io.grpc.Deadline;
 import java.math.BigInteger;
 import java.time.Clock;
 import java.time.Duration;
@@ -8,6 +9,8 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
@@ -34,6 +37,162 @@ final class CanonicalGameplayRegionLeaseOwner {
   private final RuntimeIdentity runtimeIdentity;
   private final Duration leaseTtl;
   private final Clock clock;
+  private final boolean deadlineBoundInstallation;
+  // Reserve before claiming Redis creation permission: never generate a proof we cannot retain.
+  private final java.util.Map<UUID, RetainedNoWriteRecovery> noWriteRecoveries =
+      new java.util.HashMap<>();
+  private static final int MAX_NO_WRITE_RECOVERIES = 64;
+
+  static final class RetainedNoWriteRecovery {
+    private boolean inUse;
+    private boolean cleanupActive;
+    CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof;
+    CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
+  }
+
+  RetainedNoWriteRecovery reserveNoWriteRecovery(UUID operation) {
+    synchronized (noWriteRecoveries) {
+      var retained = noWriteRecoveries.get(operation);
+      if (retained == null) {
+        if (noWriteRecoveries.size() >= MAX_NO_WRITE_RECOVERIES) throw unavailable();
+        retained = new RetainedNoWriteRecovery();
+        noWriteRecoveries.put(operation, retained);
+      }
+      if (retained.inUse || retained.cleanupActive) throw unavailable();
+      retained.inUse = true;
+      return retained;
+    }
+  }
+
+  void releaseNoWriteRecovery(UUID operation, RetainedNoWriteRecovery retained) {
+    synchronized (noWriteRecoveries) {
+      retained.inUse = false;
+      if (!retained.cleanupActive && retained.proof == null) {
+        noWriteRecoveries.remove(operation, retained);
+      }
+    }
+  }
+
+  void retainNoWriteProof(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      RetainedNoWriteRecovery retained,
+      CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof) {
+    synchronized (noWriteRecoveries) {
+      retained.preparation = Objects.requireNonNull(preparation, "preparation");
+      retained.proof = Objects.requireNonNull(proof, "proof");
+    }
+  }
+
+  /** Cleanup has no admission authority and remains possible after the binding was aborted. */
+  void recoverRetainedNoWriteForTransition(UUID transitionId) {
+    recoverRetainedNoWriteForTransition(transitionId, Long.MAX_VALUE, null);
+  }
+
+  private void recoverRetainedNoWriteForTransition(
+      UUID transitionId, long installationDeadline, Deadline monotonicDeadline) {
+    Objects.requireNonNull(transitionId, "transitionId");
+    RetainedNoWriteRecovery selected = null;
+    synchronized (noWriteRecoveries) {
+      for (var retained : noWriteRecoveries.values()) {
+        if (retained.proof != null
+            && retained.preparation != null
+            && retained.preparation.transitionId().equals(transitionId)) {
+          if (retained.inUse || retained.cleanupActive) throw unavailable();
+          retained.inUse = true;
+          selected = retained;
+          break;
+        }
+      }
+    }
+    if (selected == null) return;
+    try {
+      if (installationDeadline == Long.MAX_VALUE) {
+        recoverNoWrite(selected.preparation, selected);
+      } else {
+        // This pre-install wait belongs to the new caller's budget, not the prior operation.
+        recoverNoWrite(
+            selected.preparation, selected, clock, installationDeadline, monotonicDeadline);
+      }
+    } finally {
+      releaseNoWriteRecovery(selected.preparation.operationId(), selected);
+    }
+  }
+
+  boolean recoverRetainedNoWriteForPreparation(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation current,
+      CanonicalGameplayRegionRuntimeStatusRepository budgetedStatusRepository) {
+    UUID operation = current.operationId();
+    RetainedNoWriteRecovery retained;
+    synchronized (noWriteRecoveries) {
+      retained = noWriteRecoveries.get(operation);
+      if (retained == null || retained.proof == null) return false;
+      if (retained.inUse || retained.cleanupActive) throw unavailable();
+      retained.inUse = true;
+    }
+    try {
+      if (!deadlineBoundInstallation) {
+        recoverNoWrite(retained.preparation, retained);
+        return true;
+      }
+      // The current scoped row selects the original operation. The repository still checks
+      // the retained immutable preparation and generation under the region lock.
+      budgetedStatusRepository.releaseInitialTimelineNoWrite(
+          retained.preparation, retained.proof, clock.instant());
+      synchronized (noWriteRecoveries) {
+        retained.proof = null;
+      }
+      return true;
+    } finally {
+      releaseNoWriteRecovery(operation, retained);
+    }
+  }
+
+  void recoverNoWrite(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      RetainedNoWriteRecovery retained) {
+    io.grpc.Context previous = io.grpc.Context.ROOT.attach();
+    try {
+      recoverNoWrite(preparation, retained, Clock.systemUTC(), Long.MAX_VALUE, null);
+    } finally {
+      io.grpc.Context.ROOT.detach(previous);
+    }
+  }
+
+  private void recoverNoWrite(
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      RetainedNoWriteRecovery retained,
+      Clock cleanupClock,
+      long cleanupDeadline,
+      Deadline monotonicDeadline) {
+    CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof;
+    synchronized (noWriteRecoveries) {
+      proof = retained.proof;
+      if (proof == null) return;
+      if (retained.cleanupActive) throw unavailable();
+      retained.cleanupActive = true;
+    }
+    var cleanupSucceeded = new java.util.concurrent.atomic.AtomicBoolean();
+    Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, Void> cleanupWork =
+        cleanup -> {
+          this.statusRepository
+              .forBudget(cleanup)
+              .releaseInitialTimelineNoWrite(preparation, proof, clock.instant());
+          cleanupSucceeded.set(true);
+          return null;
+        };
+    Runnable release =
+        () -> {
+          synchronized (noWriteRecoveries) {
+            if (cleanupSucceeded.get()) retained.proof = null;
+            retained.cleanupActive = false;
+            if (!retained.inUse && retained.proof == null) {
+              noWriteRecoveries.remove(preparation.operationId(), retained);
+            }
+          }
+        };
+    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundCleanup(
+        cleanupClock, cleanupDeadline, monotonicDeadline, cleanupWork, release);
+  }
 
   CanonicalGameplayRegionLeaseOwner(
       CanonicalGameplayBindingInventoryRepository bindingInventory,
@@ -44,6 +203,29 @@ final class CanonicalGameplayRegionLeaseOwner {
       RuntimeIdentity runtimeIdentity,
       Duration leaseTtl,
       Clock clock) {
+    this(
+        bindingInventory,
+        statusRepository,
+        redisOwner,
+        incarnationSource,
+        worldRegionResolver,
+        runtimeIdentity,
+        leaseTtl,
+        clock,
+        false);
+  }
+
+  CanonicalGameplayRegionLeaseOwner(
+      CanonicalGameplayBindingInventoryRepository bindingInventory,
+      CanonicalGameplayRegionRuntimeStatusRepository statusRepository,
+      CanonicalGameplayRegionLeaseRedisOwner redisOwner,
+      CanonicalGameplayRegionIncarnationSource incarnationSource,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      RuntimeIdentity runtimeIdentity,
+      Duration leaseTtl,
+      Clock clock,
+      boolean deadlineBoundInstallation) {
+    this.deadlineBoundInstallation = deadlineBoundInstallation;
     this.bindingInventory = Objects.requireNonNull(bindingInventory, "bindingInventory");
     this.statusRepository = Objects.requireNonNull(statusRepository, "statusRepository");
     this.redisOwner = Objects.requireNonNull(redisOwner, "redisOwner");
@@ -72,11 +254,61 @@ final class CanonicalGameplayRegionLeaseOwner {
       UUID transitionId,
       CanonicalInitialPlayerLocationRequest worldRequest) {
     requireNoAmbientTransaction();
+    if (!deadlineBoundInstallation) {
+      recoverRetainedNoWriteForTransition(transitionId);
+      return installForTransition(
+          existingRegionInstallation,
+          transitionId,
+          worldRequest,
+          bindingInventory,
+          statusRepository,
+          redisOwner,
+          null);
+    }
+    long maximum = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_OPERATION_MILLIS;
+    Deadline monotonicDeadline = Deadline.after(maximum, TimeUnit.MILLISECONDS);
+    long installationDeadline = deadlineAfter(clock, maximum);
+    recoverRetainedNoWriteForTransition(transitionId, installationDeadline, monotonicDeadline);
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundWithin(
+        clock,
+        installationDeadline,
+        monotonicDeadline,
+        budget ->
+            installForTransition(
+                existingRegionInstallation,
+                transitionId,
+                worldRequest,
+                bindingInventory.forBudget(budget),
+                statusRepository.forBudget(budget),
+                redisOwner.forInstallation(clock, budget),
+                budget.operationDeadline()),
+        null);
+  }
+
+  private static long deadlineAfter(Clock clock, long millis) {
+    if (millis <= 0) throw unavailable();
+    try {
+      return Math.addExact(clock.millis(), millis);
+    } catch (ArithmeticException invalid) {
+      throw unavailable();
+    }
+  }
+
+  private Installation installForTransition(
+      Installation existingRegionInstallation,
+      UUID transitionId,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalGameplayBindingInventoryRepository bindingInventory,
+      CanonicalGameplayRegionRuntimeStatusRepository statusRepository,
+      CanonicalGameplayRegionLeaseRedisOwner redisOwner,
+      io.grpc.Deadline operationDeadline) {
+    requireNoAmbientTransaction();
     Objects.requireNonNull(transitionId, "transitionId");
     Objects.requireNonNull(worldRequest, "worldRequest");
     CanonicalGameplayBindingProvisionalCasEvidence evidence =
-        readCurrentProvisionalEvidence(transitionId);
-    ResolvedBridgeSource initialResolved = resolveExactBridgeSource(worldRequest, evidence);
+        readCurrentProvisionalEvidence(transitionId, bindingInventory);
+    ResolvedBridgeSource initialResolved =
+        resolveExactBridgeSource(worldRequest, evidence, operationDeadline);
     CanonicalGameplayRegionRuntimeStatusRepository.Source source = initialResolved.source;
     CanonicalGameplayRegionIncarnationSource.StableEvidence incarnation =
         readCurrentIncarnation(source);
@@ -89,9 +321,18 @@ final class CanonicalGameplayRegionLeaseOwner {
     CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
     CanonicalGameplayRegionLeaseRedisOwner.LeaseGrant grant;
     boolean reusingRegionGrant = false;
+    boolean recoveringInitialGrant = false;
     if (prior == null) {
       if (existingRegionInstallation != null) throw unavailable();
       preparation = statusRepository.findTimelinePreparation(source).orElse(null);
+      // Use the retry's budgeted repository without taking another background permit.
+      if (preparation != null
+          && recoverRetainedNoWriteForPreparation(preparation, statusRepository)) {
+        preparation =
+            statusRepository
+                .findTimelinePreparation(source)
+                .orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
+      }
       if (preparation == null) {
         CanonicalGameplayRegionLeaseRedisOwner.TimelineAbsenceProof absenceProof =
             redisOwner.requireTimelineAbsent(source, incarnation);
@@ -119,34 +360,60 @@ final class CanonicalGameplayRegionLeaseOwner {
       }
       try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization session =
           redisOwner.prepareTimelineInitialization(preparation, leaseTtl, runtimeIdentity)) {
-        CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
-            readCurrentProvisionalEvidence(transitionId);
-        bindingInventory.requireSameProvisionalSource(evidence, beforeClaimEvidence);
-        ResolvedBridgeSource beforeClaimWorld =
-            resolveExactBridgeSource(worldRequest, beforeClaimEvidence);
-        requireSameSource(source, beforeClaimWorld.source);
-        CanonicalGameplayRegionIncarnationSource.StableEvidence beforeClaimIncarnation =
-            readCurrentIncarnation(source);
-        requireSameIncarnation(incarnation, beforeClaimIncarnation);
-        if (!statusRepository.matchesTimelinePreparation(
-            preparation,
-            beforeClaimEvidence,
-            worldRequest,
-            beforeClaimWorld.resolvedRegion,
-            source,
-            beforeClaimIncarnation)) {
-          throw unavailable();
+        var retained = reserveNoWriteRecovery(preparation.operationId());
+        try {
+          // A concurrent attempt can retain a proof after this retry read the scoped row.
+          // Let the next retry reconcile it before opening a prepared Redis session.
+          if (retained.proof != null) throw unavailable();
+          // Any recovery wait belongs before the last source/incarnation qualification.
+          CanonicalGameplayBindingProvisionalCasEvidence beforeClaimEvidence =
+              readCurrentProvisionalEvidence(transitionId, bindingInventory);
+          bindingInventory.requireSameProvisionalSource(evidence, beforeClaimEvidence);
+          ResolvedBridgeSource beforeClaimWorld =
+              resolveExactBridgeSource(worldRequest, beforeClaimEvidence, operationDeadline);
+          requireSameSource(source, beforeClaimWorld.source);
+          CanonicalGameplayRegionIncarnationSource.StableEvidence beforeClaimIncarnation =
+              readCurrentIncarnation(source);
+          requireSameIncarnation(incarnation, beforeClaimIncarnation);
+          if (!statusRepository.matchesTimelinePreparation(
+              preparation,
+              beforeClaimEvidence,
+              worldRequest,
+              beforeClaimWorld.resolvedRegion,
+              source,
+              beforeClaimIncarnation)) {
+            throw unavailable();
+          }
+          var claimedPreparation = preparation;
+          Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
+              permit =
+                  statusRepository.beginInitialTimeline(
+                      preparation,
+                      clock.instant(),
+                      bindingInventory,
+                      beforeClaimEvidence,
+                      proof -> {
+                        retainNoWriteProof(claimedPreparation, retained, proof);
+                        recoverNoWrite(claimedPreparation, retained);
+                      });
+          grant =
+              session.initialize(
+                  permit.orElse(null),
+                  proof -> {
+                    retainNoWriteProof(claimedPreparation, retained, proof);
+                    recoverNoWrite(claimedPreparation, retained);
+                  });
+        } finally {
+          releaseNoWriteRecovery(preparation.operationId(), retained);
         }
-        Optional<CanonicalGameplayRegionRuntimeStatusRepository.InitialInitializationPermit>
-            permit = statusRepository.beginInitialTimeline(preparation, clock.instant());
-        grant = session.initialize(permit.orElse(null));
       }
       redisOwner.verifyInitializedTimeline(grant, preparation);
       requireSameIncarnation(incarnation, readCurrentIncarnation(source));
-      ResolvedBridgeSource afterInitWorld = resolveExactBridgeSource(worldRequest, evidence);
+      ResolvedBridgeSource afterInitWorld =
+          resolveExactBridgeSource(worldRequest, evidence, operationDeadline);
       requireSameSource(source, afterInitWorld.source);
       bindingInventory.requireSameProvisionalSource(
-          evidence, readCurrentProvisionalEvidence(transitionId));
+          evidence, readCurrentProvisionalEvidence(transitionId, bindingInventory));
       preparation =
           statusRepository.markRedisInitialized(
               preparation,
@@ -157,8 +424,6 @@ final class CanonicalGameplayRegionLeaseOwner {
                   preparation.sourceDigest()),
               clock.instant());
     } else {
-      // This slice can reuse current owner custody but cannot issue a replacement grant.
-      if (existingRegionInstallation == null) throw unavailable();
       preparation =
           statusRepository
               .findTimelinePreparation(source)
@@ -176,18 +441,46 @@ final class CanonicalGameplayRegionLeaseOwner {
                   incarnation)
               : statusRepository.matchesInstalledTimelineInitialization(
                   preparation, source, incarnation);
-      // An installation handle is issued only after the installed phase is durable.
-      // A partial SQL/Redis initialization remains held for original owner recovery.
-      if (!matchesInitialization
-          || preparation.phase()
-              != CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
-                  .INSTALLED) {
+      boolean installedPreparation =
+          preparation.phase()
+              == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase.INSTALLED;
+      // Only a generation-qualified original attempt may finish a partial installation.
+      boolean recoverableOriginalPreparation =
+          existingRegionInstallation == null
+              && sameInitializationAttempt
+              && preparation.phase()
+                  == CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparationPhase
+                      .REDIS_INITIALIZED
+              && preparation.hasInitializationClaimGeneration();
+      if (!matchesInitialization || (!installedPreparation && !recoverableOriginalPreparation)) {
         throw unavailable();
       }
-      requireReusableRegionGrant(
-          existingRegionInstallation, source, incarnation, prior, expectedRegionEpoch);
-      grant = existingRegionInstallation.grant;
-      reusingRegionGrant = true;
+      if (existingRegionInstallation == null) {
+        // Only recover the exact original live grant after a lost installation completion.
+        // No new token, lease acquisition or durable executor fence is permitted here.
+        if (!sameInitializationAttempt || expectedRegionEpoch != 1L) throw unavailable();
+        grant = redisOwner.readRetainedInitialGrant(preparation, prior, runtimeIdentity);
+        redisOwner.requireCurrent(grant);
+        redisOwner.verifyInitializedTimeline(grant, preparation);
+        if (!prior.equals(
+            statusRepository
+                .find(source)
+                .orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable))) {
+          throw unavailable();
+        }
+        recoveringInitialGrant = true;
+      } else {
+        requireReusableRegionGrant(
+            existingRegionInstallation,
+            source,
+            incarnation,
+            prior,
+            expectedRegionEpoch,
+            statusRepository,
+            redisOwner);
+        grant = existingRegionInstallation.grant;
+        reusingRegionGrant = true;
+      }
     }
     if (reusingRegionGrant) {
       redisOwner.requireGrantScope(
@@ -196,23 +489,36 @@ final class CanonicalGameplayRegionLeaseOwner {
       redisOwner.requireGrantScope(grant, source, expectedRegionEpoch, runtimeIdentity);
     }
     CanonicalGameplayRegionRuntimeStatusRepository.Source afterAcquire =
-        resolveExactSource(worldRequest, readCurrentProvisionalEvidence(transitionId));
+        resolveExactSource(
+            worldRequest,
+            readCurrentProvisionalEvidence(transitionId, bindingInventory),
+            operationDeadline);
     requireSameSource(source, afterAcquire);
-    redisOwner.renew(grant, leaseTtl);
+    if (!recoveringInitialGrant) {
+      if (prior == null && operationDeadline != null) {
+        // Redis begins the renewal after this local observation. The earlier local deadline
+        // conservatively bounds how long the grant covers the pending SQL transaction.
+        Deadline guaranteedRenewal = Deadline.after(leaseTtl.toMillis(), TimeUnit.MILLISECONDS);
+        if (!operationDeadline.isBefore(guaranteedRenewal)) throw unavailable();
+      }
+      redisOwner.renew(grant, leaseTtl);
+    }
     redisOwner.requireCurrent(grant);
     requireSameIncarnation(incarnation, readCurrentIncarnation(source));
     redisOwner.verifyInitializedTimeline(grant, preparation);
 
     Instant installedAt = clock.instant();
     CanonicalGameplayRegionRuntimeStatus installed =
-        statusRepository.installOwner(
-            source,
-            expectedRegionEpoch,
-            prior,
-            grant.tokenCorrelation(),
-            grant.ownerService(),
-            grant.ownerInstanceId(),
-            installedAt);
+        recoveringInitialGrant
+            ? prior
+            : statusRepository.installOwner(
+                source,
+                expectedRegionEpoch,
+                prior,
+                grant.tokenCorrelation(),
+                grant.ownerService(),
+                grant.ownerInstanceId(),
+                installedAt);
 
     redisOwner.requireCurrent(grant);
     redisOwner.verifyInitializedTimeline(grant, preparation);
@@ -220,7 +526,10 @@ final class CanonicalGameplayRegionLeaseOwner {
         statusRepository.find(source).orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
     if (!installed.equals(observed) || observed.paused()) throw unavailable();
     CanonicalGameplayRegionRuntimeStatusRepository.Source afterInstall =
-        resolveExactSource(worldRequest, readCurrentProvisionalEvidence(transitionId));
+        resolveExactSource(
+            worldRequest,
+            readCurrentProvisionalEvidence(transitionId, bindingInventory),
+            operationDeadline);
     requireSameSource(source, afterInstall);
     redisOwner.requireCurrent(grant);
     requireSameIncarnation(incarnation, readCurrentIncarnation(source));
@@ -230,10 +539,16 @@ final class CanonicalGameplayRegionLeaseOwner {
     redisOwner.verifyInitializedTimeline(grant, preparation);
     requireSameIncarnation(incarnation, readCurrentIncarnation(source));
     requireSameSource(
-        source, resolveExactSource(worldRequest, readCurrentProvisionalEvidence(transitionId)));
+        source,
+        resolveExactSource(
+            worldRequest,
+            readCurrentProvisionalEvidence(transitionId, bindingInventory),
+            operationDeadline));
     CanonicalGameplayRegionRuntimeStatus finalStatus =
         statusRepository.find(source).orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
     if (!installed.equals(finalStatus) || finalStatus.paused()) throw unavailable();
+    // The last World and SQL reads may outlast the recovered grant. Never renew or replace it.
+    if (recoveringInitialGrant) redisOwner.requireCurrent(grant);
     return new Installation(
         transitionId, worldRequest, evidence, source, incarnation, preparation, grant, installed);
   }
@@ -244,6 +559,24 @@ final class CanonicalGameplayRegionLeaseOwner {
       CanonicalGameplayRegionIncarnationSource.StableEvidence currentIncarnation,
       CanonicalGameplayRegionRuntimeStatus currentStatus,
       long expectedRegionEpoch) {
+    requireReusableRegionGrant(
+        existing,
+        candidateSource,
+        currentIncarnation,
+        currentStatus,
+        expectedRegionEpoch,
+        statusRepository,
+        redisOwner);
+  }
+
+  private void requireReusableRegionGrant(
+      Installation existing,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source candidateSource,
+      CanonicalGameplayRegionIncarnationSource.StableEvidence currentIncarnation,
+      CanonicalGameplayRegionRuntimeStatus currentStatus,
+      long expectedRegionEpoch,
+      CanonicalGameplayRegionRuntimeStatusRepository statusRepository,
+      CanonicalGameplayRegionLeaseRedisOwner redisOwner) {
     if (existing == null
         || !existing.owner.equals(this)
         || !CanonicalGameplayRegionRuntimeStatusRepository.sameRegionSource(
@@ -283,7 +616,7 @@ final class CanonicalGameplayRegionLeaseOwner {
   BridgeContext currentBridgeContext(Installation installation) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(installation, "installation");
-    if (!installation.owner.equals(this)) throw unavailable();
+    if (!installation.owner.equals(this) || installation.evidence == null) throw unavailable();
     CanonicalGameplayBindingProvisionalCasEvidence evidence =
         readCurrentProvisionalEvidence(installation.transitionId);
     bindingInventory.requireSameProvisionalSource(installation.evidence, evidence);
@@ -316,7 +649,7 @@ final class CanonicalGameplayRegionLeaseOwner {
     Objects.requireNonNull(installation, "installation");
     Objects.requireNonNull(finalAdmissionSource, "finalAdmissionSource");
     Objects.requireNonNull(reference, "runtimeReference");
-    if (!installation.owner.equals(this)) throw unavailable();
+    if (!installation.owner.equals(this) || installation.evidence == null) throw unavailable();
 
     CanonicalGameplayOriginalNewCandidate candidate = finalAdmissionSource.candidate();
     CanonicalGameplayBindingRegionBridgeObligation acknowledgement =
@@ -642,6 +975,11 @@ final class CanonicalGameplayRegionLeaseOwner {
 
   private CanonicalGameplayBindingProvisionalCasEvidence readCurrentProvisionalEvidence(
       UUID transitionId) {
+    return readCurrentProvisionalEvidence(transitionId, bindingInventory);
+  }
+
+  private CanonicalGameplayBindingProvisionalCasEvidence readCurrentProvisionalEvidence(
+      UUID transitionId, CanonicalGameplayBindingInventoryRepository bindingInventory) {
     requireNoAmbientTransaction();
     CanonicalGameplayBindingProvisionalCasEvidence evidence =
         bindingInventory.readProvisionalCasEvidence(transitionId);
@@ -661,13 +999,21 @@ final class CanonicalGameplayRegionLeaseOwner {
 
   private CanonicalGameplayRegionRuntimeStatusRepository.Source resolveExactSource(
       CanonicalInitialPlayerLocationRequest request,
-      CanonicalGameplayBindingProvisionalCasEvidence evidence) {
-    return resolveExactBridgeSource(request, evidence).source;
+      CanonicalGameplayBindingProvisionalCasEvidence evidence,
+      io.grpc.Deadline operationDeadline) {
+    return resolveExactBridgeSource(request, evidence, operationDeadline).source;
   }
 
   private ResolvedBridgeSource resolveExactBridgeSource(
       CanonicalInitialPlayerLocationRequest request,
       CanonicalGameplayBindingProvisionalCasEvidence evidence) {
+    return resolveExactBridgeSource(request, evidence, null);
+  }
+
+  private ResolvedBridgeSource resolveExactBridgeSource(
+      CanonicalInitialPlayerLocationRequest request,
+      CanonicalGameplayBindingProvisionalCasEvidence evidence,
+      io.grpc.Deadline operationDeadline) {
     requireNoAmbientTransaction();
     var identity = evidence.candidate().identity();
     var target = request.getExpectedTarget();
@@ -684,7 +1030,9 @@ final class CanonicalGameplayRegionLeaseOwner {
     }
 
     CanonicalInitialPlayerLocationRegionResolver.ResolvedRegion resolved =
-        worldRegionResolver.resolve(request);
+        operationDeadline == null
+            ? worldRegionResolver.resolve(request)
+            : worldRegionResolver.resolve(request, operationDeadline);
     var assignment = resolved.lifecycleAssignment();
     if (!identity.tenantId().equals(assignment.request().canonicalTenantId())
         || !identity.gameInstanceId().equals(assignment.request().canonicalGameInstanceId())

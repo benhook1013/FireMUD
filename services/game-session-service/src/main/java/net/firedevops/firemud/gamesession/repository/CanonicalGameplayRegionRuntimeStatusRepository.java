@@ -10,6 +10,9 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
@@ -28,13 +31,25 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 final class CanonicalGameplayRegionRuntimeStatusRepository {
   private static final String TABLE = "game_session_region_runtime_status";
   private static final String PREPARATION_TABLE = "game_session_region_timeline_preparation";
-  private static final String FENCE_SEQUENCE = "game_session_region_executor_fence_seq";
   private static final String TRANSFER_TABLE = "game_session_region_owner_transfer";
-
+  private static final String FENCE_SEQUENCE = "game_session_region_executor_fence_seq";
   private final DSLContext dsl;
 
+  private final CanonicalGameplayOriginalNewCapacityExecutionBudget installationBudget;
+
   CanonicalGameplayRegionRuntimeStatusRepository(DSLContext dsl) {
+    this(dsl, null);
+  }
+
+  private CanonicalGameplayRegionRuntimeStatusRepository(
+      DSLContext dsl, CanonicalGameplayOriginalNewCapacityExecutionBudget installationBudget) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
+    this.installationBudget = installationBudget;
+  }
+
+  CanonicalGameplayRegionRuntimeStatusRepository forBudget(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    return new CanonicalGameplayRegionRuntimeStatusRepository(budget.sql(dsl), budget);
   }
 
   static boolean hasFrozenTransfer(
@@ -283,50 +298,220 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
   /** The durable PREPARED-to-INITIALIZING transition grants the sole permission to create meta. */
   Optional<InitialInitializationPermit> beginInitialTimeline(
       TimelinePreparation preparation, Instant now) {
+    return beginInitialTimeline(preparation, now, ignored -> {});
+  }
+
+  Optional<InitialInitializationPermit> beginInitialTimeline(
+      TimelinePreparation preparation,
+      Instant now,
+      Consumer<CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof> noWriteRecovery) {
+    return claimInitialTimeline(preparation, now, noWriteRecovery, null, null);
+  }
+
+  Optional<InitialInitializationPermit> beginInitialTimeline(
+      TimelinePreparation preparation,
+      Instant now,
+      CanonicalGameplayBindingInventoryRepository bindingInventory,
+      CanonicalGameplayBindingProvisionalCasEvidence expectedBinding,
+      Consumer<CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof> noWriteRecovery) {
+    Objects.requireNonNull(bindingInventory, "bindingInventory");
+    Objects.requireNonNull(expectedBinding, "expectedBinding");
+    if (!preparation.transitionId.equals(expectedBinding.transition().transitionId())
+        || !Arrays.equals(preparation.bindingRef, expectedBinding.candidate().bindingRef().bytes())
+        || !preparation.bindingGeneration.equals(expectedBinding.candidate().bindingGeneration())) {
+      throw unavailable();
+    }
+    return claimInitialTimeline(
+        preparation, now, noWriteRecovery, bindingInventory, expectedBinding);
+  }
+
+  private Optional<InitialInitializationPermit> claimInitialTimeline(
+      TimelinePreparation preparation,
+      Instant now,
+      Consumer<CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof> noWriteRecovery,
+      CanonicalGameplayBindingInventoryRepository bindingInventory,
+      CanonicalGameplayBindingProvisionalCasEvidence expectedBinding) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(preparation, "preparation");
     Objects.requireNonNull(now, "now");
-    return dsl.transactionResult(configuration -> {
-      DSLContext transaction = DSL.using(configuration);
-      lockRegionScope(transaction, preparation.tenantRegionTag);
-      if (transaction.fetchOne(
-              "SELECT 1 FROM "
-                  + TABLE
-                  + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ? FOR UPDATE",
-              preparation.source.tenantId(),
-              preparation.source.gameInstanceId(),
-              preparation.source.regionId())
-          != null) {
-        throw unavailable();
+    Objects.requireNonNull(noWriteRecovery, "noWriteRecovery");
+    var issued = new AtomicReference<InitialInitializationPermit>();
+    try {
+      return dsl.transactionResult(configuration -> {
+        DSLContext transaction = DSL.using(configuration);
+        // Match bridge authorization: inventory and instance runtime before region, then binding.
+        if (bindingInventory != null) {
+          bindingInventory.lockInitialTimelineBindingScope(transaction, expectedBinding);
+        }
+        lockRegionScope(transaction, preparation.tenantRegionTag);
+        if (transaction.fetchOne(
+                "SELECT 1 FROM "
+                    + TABLE
+                    + " WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ? FOR UPDATE",
+                preparation.source.tenantId(),
+                preparation.source.gameInstanceId(),
+                preparation.source.regionId())
+            != null) {
+          throw unavailable();
+        }
+        Record row =
+            transaction.fetchOne(
+                "SELECT * FROM "
+                    + PREPARATION_TABLE
+                    + " WHERE initialization_operation_id = ? FOR UPDATE",
+                preparation.operationId);
+        if (row == null) throw unavailable();
+        TimelinePreparation current = toTimelinePreparation(row);
+        if (!samePreparation(preparation, current)) throw unavailable();
+        if (current.phase != TimelinePreparationPhase.PREPARED) return Optional.empty();
+        if (bindingInventory != null) {
+          bindingInventory.requireCurrentInitialTimelineBinding(transaction, expectedBinding);
+        }
+        // Lock waits and source checks cannot consume the installation deadline and still
+        // grant irreversible permission to create Redis meta.
+        if (installationBudget != null) installationBudget.check();
+        var permit = new InitialInitializationPermit(current.operationId, current.sourceDigest());
+        issued.set(permit);
+        int updated =
+            transaction.execute(
+                "UPDATE "
+                    + PREPARATION_TABLE
+                    + " SET phase = 'INITIALIZING', initialization_claim_generation = ?, updated_at = ?"
+                    + " WHERE initialization_operation_id = ? AND phase = 'PREPARED'",
+                permit.generation(),
+                java.sql.Timestamp.from(now),
+                current.operationId);
+        if (updated != 1) throw unavailable();
+        return Optional.of(permit);
+      });
+    } catch (RuntimeException failure) {
+      // A failed transaction call cannot have returned the permit to the Redis owner.
+      // Revoke it and let the locked SQL row establish whether this exact claim committed.
+      InitialInitializationPermit unreturnedPermit = issued.get();
+      if (unreturnedPermit != null) {
+        try {
+          noWriteRecovery.accept(
+              CanonicalGameplayRegionLeaseRedisOwner.revokeUndispatchedInitialization(
+                  unreturnedPermit));
+        } catch (RuntimeException recoveryFailure) {
+          if (failure != recoveryFailure) failure.addSuppressed(recoveryFailure);
+        }
       }
-      Record row =
-          transaction.fetchOne(
-              "SELECT * FROM "
-                  + PREPARATION_TABLE
-                  + " WHERE initialization_operation_id = ? FOR UPDATE",
-              preparation.operationId);
-      if (row == null) throw unavailable();
-      TimelinePreparation current = toTimelinePreparation(row);
-      if (!samePreparation(preparation, current)) throw unavailable();
-      if (current.phase == TimelinePreparationPhase.INSTALLED) {
-        return Optional.empty();
-      }
-      if (current.phase != TimelinePreparationPhase.PREPARED) return Optional.empty();
-      UUID claimGeneration = UUID.randomUUID();
-      int updated =
-          transaction.execute(
-              "UPDATE "
-                  + PREPARATION_TABLE
-                  + " SET phase = 'INITIALIZING', initialization_claim_generation = ?,"
-                  + " updated_at = ? WHERE initialization_operation_id = ? AND phase = 'PREPARED'",
-              claimGeneration,
-              java.sql.Timestamp.from(now),
-              current.operationId);
-      if (updated != 1) throw unavailable();
-      return Optional.of(
-          new InitialInitializationPermit(
-              current.operationId, current.sourceDigest(), claimGeneration));
-    });
+      throw failure;
+    }
+  }
+
+  /** Releases only the exact durable generation covered by a definitive no-write proof. */
+  void releaseInitialTimelineNoWrite(
+      TimelinePreparation preparation,
+      CanonicalGameplayRegionLeaseRedisOwner.InitializationNoWriteProof proof,
+      Instant now) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(preparation, "preparation");
+    Objects.requireNonNull(now, "now");
+    if (proof == null) throw unavailable();
+    var consumedHere = new java.util.concurrent.atomic.AtomicBoolean();
+    var provider = dsl.configuration().transactionProvider();
+    var guardedProvider =
+        new org.jooq.TransactionProvider() {
+          private volatile boolean commitAttempted;
+
+          @Override
+          public void begin(org.jooq.TransactionContext context) {
+            provider.begin(context);
+          }
+
+          @Override
+          public void commit(org.jooq.TransactionContext context) {
+            if (installationBudget == null) {
+              commitAttempted = true;
+              provider.commit(context);
+              return;
+            }
+            long previousCommits = installationBudget.jdbcCommitInvocations();
+            try {
+              provider.commit(context);
+            } finally {
+              commitAttempted = installationBudget.jdbcCommitInvocations() != previousCommits;
+            }
+          }
+
+          @Override
+          public void rollback(org.jooq.TransactionContext context) {
+            if (installationBudget == null) {
+              provider.rollback(context);
+              if (consumedHere.get() && !commitAttempted) proof.restoreAfterConfirmedRollback();
+              return;
+            }
+            long previousRollbacks = installationBudget.jdbcConfirmedRollbacks();
+            try {
+              provider.rollback(context);
+            } finally {
+              // The driver can confirm rollback before the provider throws on pool return.
+              // An attempted commit remains ambiguous even if the driver later rolls back.
+              if (consumedHere.get()
+                  && !commitAttempted
+                  && installationBudget.jdbcConfirmedRollbacks() != previousRollbacks) {
+                proof.restoreAfterConfirmedRollback();
+              }
+            }
+          }
+        };
+    DSL.using(dsl.configuration().derive(guardedProvider))
+        .transaction(configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+          lockRegionScope(transaction, preparation.tenantRegionTag);
+          Record row =
+              transaction.fetchOne(
+                  "SELECT * FROM "
+                      + PREPARATION_TABLE
+                      + " WHERE initialization_operation_id = ? FOR UPDATE",
+                  preparation.operationId);
+          if (row == null) throw unavailable();
+          TimelinePreparation current = toTimelinePreparation(row);
+          if (!samePreparation(preparation, current)
+              || transaction.fetchExists(
+                  DSL.selectOne()
+                      .from(DSL.table(TABLE))
+                      .where(DSL.field("tenant_id").eq(preparation.source.tenantId()))
+                      .and(DSL.field("game_instance_id").eq(preparation.source.gameInstanceId()))
+                      .and(DSL.field("region_id").eq(preparation.source.regionId()))))
+            throw unavailable();
+          // A rolled-back claim (or a cleanup with lost acknowledgement) can leave PREPARED.
+          if (current.phase == TimelinePreparationPhase.PREPARED) {
+            if (proof.consumeFor(preparation)) {
+              consumedHere.set(true);
+            } else if (!proof.consumedFor(preparation)) {
+              throw unavailable();
+            }
+            return;
+          }
+          if (current.phase != TimelinePreparationPhase.INITIALIZING
+              || !proof
+                  .generation()
+                  .equals(row.get("initialization_claim_generation", UUID.class))) {
+            throw unavailable();
+          }
+          // This fresh read under the same lock proves any preceding cleanup finished without
+          // releasing this generation. The no-write proof still applies to the exact claim.
+          if (proof.consumeFor(preparation)) {
+            consumedHere.set(true);
+          } else if (!proof.consumedFor(preparation)) {
+            throw unavailable();
+          }
+          int changed =
+              transaction.execute(
+                  "UPDATE "
+                      + PREPARATION_TABLE
+                      + " SET phase = 'PREPARED', initialization_claim_generation = NULL,"
+                      + " updated_at = ? WHERE initialization_operation_id = ?"
+                      + " AND phase = 'INITIALIZING' AND initialization_claim_generation = ?",
+                  java.sql.Timestamp.from(now),
+                  preparation.operationId,
+                  proof.generation());
+          if (changed != 1) throw unavailable();
+        });
   }
 
   TimelinePreparation markRedisInitialized(
@@ -415,6 +600,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
           nextPhase = "REDIS_INITIALIZED";
         } else {
           if (currentStatus == null
+              || !Objects.equals(
+                  preparation.initializationClaimGeneration, current.initializationClaimGeneration)
               || (current.phase != TimelinePreparationPhase.REDIS_INITIALIZED
                   && current.phase != TimelinePreparationPhase.INSTALLED)) {
             throw unavailable();
@@ -425,6 +612,12 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
               || status.executorFence().longValueExact() != executorFence
               || !status.leaseTokenCorrelation().equals(leaseTokenCorrelation)) {
             throw unavailable();
+          }
+          if (current.phase == TimelinePreparationPhase.INSTALLED
+              && status.executorFence().equals(current.executorFence)
+              && leaseTokenCorrelation.equals(current.leaseTokenCorrelation)
+              && redisMetaDigest.equals(current.redisMetaDigest)) {
+            return current;
           }
           nextPhase = "INSTALLED";
         }
@@ -639,6 +832,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         row.get("region_epoch", Long.class),
         row.get("last_committed_tick_id", Long.class),
         TimelinePreparationPhase.valueOf(row.get("phase", String.class)),
+        row.get("initialization_claim_generation", UUID.class),
         row.get("lease_token_correlation", String.class),
         fence == null ? null : BigInteger.valueOf(fence),
         row.get("redis_meta_digest", String.class),
@@ -992,6 +1186,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     private final long regionEpoch;
     private final long lastCommittedTickId;
     private final TimelinePreparationPhase phase;
+    private final UUID initializationClaimGeneration;
     private final String leaseTokenCorrelation;
     private final BigInteger executorFence;
     private final String redisMetaDigest;
@@ -1026,6 +1221,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
         long regionEpoch,
         long lastCommittedTickId,
         TimelinePreparationPhase phase,
+        UUID initializationClaimGeneration,
         String leaseTokenCorrelation,
         BigInteger executorFence,
         String redisMetaDigest,
@@ -1072,6 +1268,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       this.regionEpoch = regionEpoch;
       this.lastCommittedTickId = lastCommittedTickId;
       this.phase = Objects.requireNonNull(phase, "phase");
+      this.initializationClaimGeneration = initializationClaimGeneration;
       this.leaseTokenCorrelation = leaseTokenCorrelation;
       this.executorFence = executorFence;
       this.redisMetaDigest = redisMetaDigest;
@@ -1114,6 +1311,11 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       return phase;
     }
 
+    boolean hasInitializationClaimGeneration() {
+      return initializationClaimGeneration != null
+          && !initializationClaimGeneration.equals(new UUID(0L, 0L));
+    }
+
     String leaseTokenCorrelation() {
       return leaseTokenCorrelation;
     }
@@ -1141,25 +1343,28 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
   static final class InitialInitializationPermit {
     private final UUID operationId;
     private final String sourceDigest;
-    private final UUID claimGeneration;
+    private final UUID generation = UUID.randomUUID();
+    private final AtomicBoolean dispatched = new AtomicBoolean();
 
-    private InitialInitializationPermit(
-        UUID operationId, String sourceDigest, UUID claimGeneration) {
+    boolean consumeDispatch() {
+      return dispatched.compareAndSet(false, true);
+    }
+
+    private InitialInitializationPermit(UUID operationId, String sourceDigest) {
       this.operationId = Objects.requireNonNull(operationId, "operationId");
       this.sourceDigest = Objects.requireNonNull(sourceDigest, "sourceDigest");
-      this.claimGeneration = Objects.requireNonNull(claimGeneration, "claimGeneration");
     }
 
     UUID operationId() {
       return operationId;
     }
 
-    String sourceDigest() {
-      return sourceDigest;
+    UUID generation() {
+      return generation;
     }
 
-    UUID claimGeneration() {
-      return claimGeneration;
+    String sourceDigest() {
+      return sourceDigest;
     }
   }
 
