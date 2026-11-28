@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import static net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot.ORDINARY_REPRESENTATION_VERSION;
+
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -270,7 +272,8 @@ public class PlayCommandHandler {
 
       GameplayWorldCatalog.RealmView selectedRealm = maybeRealm.orElseThrow();
       String selectedTenantTag = Long.toString(selectedRealm.tenantId());
-      if (!catalogSnapshot.hasValidPublicProductionRealm(selectedRealm.tenantId())) {
+      if (!Objects.equals(selectedRealm.representationVersion(), ORDINARY_REPRESENTATION_VERSION)
+          || !catalogSnapshot.hasValidPublicProductionRealm(selectedRealm.tenantId())) {
         return admissionPointerUnavailableFailure(
             selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()));
       }

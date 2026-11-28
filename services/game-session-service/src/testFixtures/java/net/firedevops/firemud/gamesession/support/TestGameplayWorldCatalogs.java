@@ -136,7 +136,8 @@ public final class TestGameplayWorldCatalogs {
         pointer.characterCreationPolicy(),
         pointer.catalogRevision(),
         pointer.realmId(),
-        pointer.playableStateNamespaceId());
+        pointer.playableStateNamespaceId(),
+        pointer.representationVersion());
   }
 
   private static List<GameplayWorldCatalog.WorldView> toWorldViews(
@@ -180,6 +181,10 @@ public final class TestGameplayWorldCatalogs {
         input.isPublicProductionRealm(),
         input.isRequiresCharacterSelection(),
         stateScope,
-        characterCreationPolicy);
+        characterCreationPolicy,
+        0L,
+        null,
+        null,
+        GameplayAdmissionPointerSnapshot.ORDINARY_REPRESENTATION_VERSION);
   }
 }

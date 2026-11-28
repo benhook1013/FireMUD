@@ -85,6 +85,9 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
             service.findPointer(10L, "demo", "preview").orElseThrow());
 
     assertThat(service.listPointers()).containsExactlyElementsOf(expected);
+    assertThat(service.listPointers())
+        .extracting(GameplayAdmissionPointerSnapshot::representationVersion)
+        .containsOnly(1);
     assertThat(service.listPointersForTenants(List.of(20L, 10L)))
         .containsExactlyElementsOf(expected);
     assertThat(service.listPointersForTenants(List.of(10L, 20L)))
