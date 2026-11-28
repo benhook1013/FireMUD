@@ -166,8 +166,9 @@ class AccountRuntimeStubServerTest {
         var retained =
             stub.getProfile(
                 GetProfileRequest.newBuilder().setTenantId("1").setAccountId(accountUuid).build());
-        assertThat(AccountProfileJson.parse(retained.getProfileJson(), "FRIENDS_ONLY")
-                .presenceVisibilityPolicy())
+        assertThat(
+                AccountProfileJson.parse(retained.getProfileJson(), "FRIENDS_ONLY")
+                    .presenceVisibilityPolicy())
             .isEqualTo("PRIVATE");
       } finally {
         channel.shutdownNow();
