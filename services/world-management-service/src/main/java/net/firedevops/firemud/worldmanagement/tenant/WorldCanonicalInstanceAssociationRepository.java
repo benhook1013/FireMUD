@@ -1011,12 +1011,14 @@ public final class WorldCanonicalInstanceAssociationRepository {
           dsl.fetchOne(
                   "SELECT 1 FROM world_run_owned_fixture_activation WHERE world_instance_id = ? "
                       + "AND canonical_game_instance_id = ? AND fixture_binding_sha256 = ? "
-                      + "AND expected_lifecycle_epoch = ? AND result_lifecycle_epoch = ?",
+                      + "AND expected_lifecycle_epoch = ? AND result_lifecycle_epoch = ? "
+                      + "AND result_row_version = ?",
                   association.worldInstanceId(),
                   association.identity().canonicalGameInstanceId(),
                   bindingSha256,
                   preparingEpoch,
-                  preparingEpoch + 1L)
+                  preparingEpoch + 1L,
+                  rowVersion)
               != null;
       if (!retained
           || lifecycleEpoch != preparingEpoch + 1L
@@ -1024,6 +1026,11 @@ public final class WorldCanonicalInstanceAssociationRepository {
         throw new IllegalStateException(
             "LIFECYCLE_EPOCH_MISMATCH: fixture activation replay differs from the retained activation");
       }
+      dsl.fetchOne(
+          "SELECT world_require_run_owned_fixture_activation_preset(?::bigint, ?::uuid, ?::text)",
+          association.worldInstanceId(),
+          association.identity().canonicalGameInstanceId(),
+          bindingSha256);
       return false;
     }
     if (!"PREPARING".equals(status)

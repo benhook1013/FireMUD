@@ -1,14 +1,18 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
+import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Arrays;
+import java.util.Base64;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProofCodec;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
@@ -25,9 +29,13 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Durable typed owner rows for canonical World initial-admission holds. */
 public final class WorldCanonicalInitialAdmissionHoldRepository {
+  private static final String FIXTURE_TERMINAL_SCHEMA =
+      "world-run-owned-fixture-admission-terminal/v1";
+  private static final JsonMapper JSON = JsonMapper.builder().build();
   private final DSLContext dsl;
   private final TransactionTemplate writeTransaction;
   private final TransactionTemplate readTransaction;
@@ -97,6 +105,12 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
                   "Retained canonical World hold has an unsupported status");
             }
             return identity;
+          }
+          if (association.isRunOwnedFixture()
+              && request.initialAdmissionOrigin()
+                  != WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER) {
+            throw new InvalidHoldEvidenceException(
+                "Fixture first OPEN supports NO_PRIOR_POINTER only");
           }
           if (!"ACTIVE".equals(lockedLifecycle.status())
               || lockedLifecycle.epoch() != request.activeLifecycleEpoch()) {
@@ -241,8 +255,57 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
         });
   }
 
+  /** Selects the pending hold owned by the configured fixed fixture. */
+  Optional<HoldIdentity> readPendingFixtureHold(
+      String targetNamespace, UUID canonicalTenant, String requestId, String fixtureProvenance) {
+    requireNoAmbientTransaction("World fixture pending hold read");
+    return readTransaction.execute(
+        status -> {
+          Record row =
+              dsl.fetchOne(
+                  """
+              SELECT h.* FROM initial_admission_bind_hold h
+              JOIN world_canonical_instance_association a
+                  ON a.canonical_game_instance_id = h.canonical_game_instance_id
+                 AND a.canonical_target_namespace = h.canonical_target_namespace
+                 AND a.canonical_tenant_id = h.canonical_tenant_id
+                 AND a.canonical_realm_id = h.realm_uuid
+              WHERE h.canonical_target_namespace = ? AND h.canonical_tenant_id = ?
+                AND h.initial_admission_request_id = ? AND h.status = 'PENDING'
+                AND h.canonical_request_bytes IS NOT NULL
+                AND a.canonical_authority_kind = 'RUN_OWNED_FIXTURE'
+                AND a.fixture_provenance_digest = ?
+              """,
+                  targetNamespace,
+                  canonicalTenant,
+                  requestId,
+                  fixtureProvenance);
+          return row == null
+              ? Optional.empty()
+              : Optional.of(
+                  requireStoredIdentity(
+                      row,
+                      Request.fromStored(required(row, "canonical_request_bytes", byte[].class))));
+        });
+  }
+
   /** Applies only an exact terminal Game Session owner proof through the guarded SQL finalizer. */
   void settle(HoldIdentity identity, GameSessionCanonicalInitialAdmissionOwnerProof proof) {
+    settle(identity, proof, null);
+  }
+
+  void settleFixture(
+      HoldIdentity identity,
+      String fixtureProvenance,
+      GameSessionCanonicalInitialAdmissionOwnerProof proof) {
+    Objects.requireNonNull(fixtureProvenance, "fixtureProvenance");
+    settle(identity, proof, fixtureProvenance);
+  }
+
+  private void settle(
+      HoldIdentity identity,
+      GameSessionCanonicalInitialAdmissionOwnerProof proof,
+      String fixtureProvenance) {
     Objects.requireNonNull(identity, "identity");
     Objects.requireNonNull(proof, "proof");
     requireNoAmbientTransaction("Canonical World hold settlement");
@@ -253,8 +316,15 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
     if (proof.outcome() == GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING) {
       return;
     }
+    if (fixtureProvenance != null
+        && proof.outcome() != GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED) {
+      throw new InvalidHoldEvidenceException("Fixture terminal outcome must be COMMITTED");
+    }
     requireTerminalProof(identity, proof);
-    byte[] proofBytes = GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(proof);
+    byte[] proofBytes =
+        fixtureProvenance == null
+            ? GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(proof)
+            : fixtureTerminalBytes(identity, fixtureProvenance, proof);
     String proofBytesDigest = prefixedDigest(proofBytes);
     String ownerProofDigest = proof.proofDigest().substring("sha256:".length());
 
@@ -306,6 +376,32 @@ public final class WorldCanonicalInitialAdmissionHoldRepository {
               proofBytes,
               proofBytesDigest);
         });
+  }
+
+  private static byte[] fixtureTerminalBytes(
+      HoldIdentity identity,
+      String provenance,
+      GameSessionCanonicalInitialAdmissionOwnerProof proof) {
+    var fields =
+        Map.ofEntries(
+            Map.entry("schema", FIXTURE_TERMINAL_SCHEMA),
+            Map.entry("authorityKind", "RUN_OWNED_FIXTURE"),
+            Map.entry("fixturePolicySealEvidenceDigest", provenance),
+            Map.entry(
+                "selectorBytesBase64",
+                Base64.getEncoder().encodeToString(identity.request().canonicalRequestBytes())),
+            Map.entry("holdId", identity.holdId().toString()),
+            Map.entry("holdFence", identity.holdFence().toString()),
+            Map.entry("outcome", proof.outcome().name()),
+            Map.entry("pointerVersion", proof.committedPointerVersion().toString()),
+            Map.entry("auditEventId", proof.auditEventId().toString()),
+            Map.entry("proofDigest", proof.proofDigest()),
+            Map.entry("terminalAt", proof.terminalAt().toString()));
+    try {
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(fields));
+    } catch (IOException impossible) {
+      throw new IllegalStateException("Fixture terminal proof cannot be encoded", impossible);
+    }
   }
 
   private static void requireTerminalProof(

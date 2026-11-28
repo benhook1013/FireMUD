@@ -4,7 +4,9 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
+import java.util.Set;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationException;
@@ -72,6 +74,13 @@ import tools.jackson.databind.ObjectMapper;
 public class WorldManagementGrpcService
     extends WorldManagementServiceGrpc.WorldManagementServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(WorldManagementGrpcService.class);
+  private static final Set<String> GAME_SESSION_LIFECYCLE_METHODS =
+      Set.of(
+          WorldManagementServiceGrpc.getPrepareWorldInstanceMethod().getFullMethodName(),
+          WorldManagementServiceGrpc.getActivatePreparedWorldInstanceMethod().getFullMethodName(),
+          WorldManagementServiceGrpc.getFailPreparedWorldInstanceMethod().getFullMethodName(),
+          WorldManagementServiceGrpc.getTerminateWorldInstanceMethod().getFullMethodName());
+  private static final String GAME_SESSION_SERVICE = "game-session-service";
   private final PingService pingService;
   private final RoomService roomService;
   private final WorldInstanceActivationService worldInstanceActivationService;
@@ -173,6 +182,8 @@ public class WorldManagementGrpcService
       StreamObserver<PrepareWorldInstanceResponse> responseObserver) {
     PrepareWorldInstanceResponse.Builder builder = PrepareWorldInstanceResponse.newBuilder();
     try {
+      requireGameSessionLifecycleCaller(
+          WorldManagementServiceGrpc.getPrepareWorldInstanceMethod().getFullMethodName());
       var snapshot =
           worldInstanceActivationService.prepareWorldInstance(
               new PreparedWorldInstanceRequest(
@@ -193,6 +204,10 @@ public class WorldManagementGrpcService
                   request.getVersionStateEpoch(),
                   request.getRemapSetId().isBlank() ? null : request.getRemapSetId()));
       builder.setWorldInstance(toProto(snapshot));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "PrepareWorldInstance", "PERMISSION_DENIED", ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -212,6 +227,8 @@ public class WorldManagementGrpcService
     ActivatePreparedWorldInstanceResponse.Builder builder =
         ActivatePreparedWorldInstanceResponse.newBuilder();
     try {
+      requireGameSessionLifecycleCaller(
+          WorldManagementServiceGrpc.getActivatePreparedWorldInstanceMethod().getFullMethodName());
       var snapshot =
           worldInstanceActivationService.activatePreparedWorldInstance(
               RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
@@ -219,6 +236,14 @@ public class WorldManagementGrpcService
                   request.getGameInstanceId(), "gameInstanceId"),
               request.getExpectedLifecycleEpoch());
       builder.setWorldInstance(toProto(snapshot));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "ActivatePreparedWorldInstance",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -243,6 +268,8 @@ public class WorldManagementGrpcService
     FailPreparedWorldInstanceResponse.Builder builder =
         FailPreparedWorldInstanceResponse.newBuilder();
     try {
+      requireGameSessionLifecycleCaller(
+          WorldManagementServiceGrpc.getFailPreparedWorldInstanceMethod().getFullMethodName());
       var snapshot =
           worldInstanceActivationService.failPreparedWorldInstance(
               RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
@@ -251,6 +278,14 @@ public class WorldManagementGrpcService
               request.getExpectedLifecycleEpoch(),
               request.getReason());
       builder.setWorldInstance(toProto(snapshot));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "FailPreparedWorldInstance",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -357,6 +392,8 @@ public class WorldManagementGrpcService
       StreamObserver<TerminateWorldInstanceResponse> responseObserver) {
     TerminateWorldInstanceResponse.Builder builder = TerminateWorldInstanceResponse.newBuilder();
     try {
+      requireGameSessionLifecycleCaller(
+          WorldManagementServiceGrpc.getTerminateWorldInstanceMethod().getFullMethodName());
       builder.setWorldInstance(
           toProto(
               worldInstanceActivationService.terminateWorldInstance(
@@ -366,6 +403,14 @@ public class WorldManagementGrpcService
                   request.getExpectedLifecycleEpoch(),
                   request.getTerminationRequestId(),
                   request.getReason())));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "TerminateWorldInstance",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -459,6 +504,22 @@ public class WorldManagementGrpcService
     }
     publicationReadGuard.requirePublicationRead(
         PublicationReadGuard.WORLD_MANAGEMENT_DIGEST_METHOD);
+  }
+
+  private void requireGameSessionLifecycleCaller(String fullMethodName) {
+    GrpcPeerIdentity peerIdentity = GrpcPeerIdentity.current();
+    String trustedNamespace =
+        publicationReadGuard == null ? null : publicationReadGuard.trustedNamespace();
+    if (!GAME_SESSION_LIFECYCLE_METHODS.contains(fullMethodName)
+        || !GrpcPeerIdentity.isValidNamespace(trustedNamespace)
+        || peerIdentity == null
+        || !peerIdentity.isService(GAME_SESSION_SERVICE)
+        || !peerIdentity.isInNamespace(trustedNamespace)
+        || SessionContext.hasAuthenticatedCallerContext()) {
+      throw new AdminAuthorizationException(
+          "World lifecycle RPC requires only the authenticated same-namespace Game Session "
+              + "workload peer identity");
+    }
   }
 
   @Override

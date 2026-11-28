@@ -35,6 +35,7 @@ import io.grpc.stub.ServerCalls;
 import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -42,6 +43,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -50,6 +52,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -64,6 +67,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.accountservice.client.WorldGameplayAdmissionHoldClient;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository;
@@ -82,6 +86,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountStartSession
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementService;
 import net.firedevops.firemud.common.account.AccountActorStagingEligibilityEvidence;
 import net.firedevops.firemud.common.account.RuntimeAccountIdentityEvidence;
+import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.startsession.AccountInitialAdmissionSettlementReadGrpcCodec;
 import net.firedevops.firemud.common.account.startsession.AccountInitialAdmissionSettlementReadInput;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionAcquisitionClient;
@@ -94,7 +99,6 @@ import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdm
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionRequest;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationAcquisitionClient;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationHistoricalReadClient;
-import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationSettlementInput;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountInitialAdmissionSettlementReadClient;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionAcquisitionClient;
 import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionSettlementClient;
@@ -145,6 +149,7 @@ import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldCanonicalPlayerAdmissionHoldEvidence;
 import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTerminalEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminalReadClient;
@@ -179,6 +184,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionIntentSna
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
 import net.firedevops.firemud.gamesession.repository.AccountInitialAdmissionProtectionBindingRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
@@ -239,6 +245,7 @@ import org.flywaydb.core.Flyway;
 import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -263,6 +270,7 @@ import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
 import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.DefaultTransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
@@ -288,7 +296,10 @@ import tools.jackson.databind.json.JsonMapper;
  * this does not establish genuine Human issuer/environment authority, production PKI, registered
  * endpoint activation, or runtime admission. The small test-only World socket invokes the typed
  * preparation owner directly, not assembly. The exact runtime installation artifact and held source
- * below are synthetic fixtures, not genuine external installation/custody evidence.
+ * below are synthetic fixtures, not genuine external installation/custody evidence. The dedicated
+ * serving-player hold case uses that guarded ACTIVE state with a synthetic player lease and
+ * controlled Account peer context; it qualifies neither hold-transport mTLS nor actual Account
+ * player-lease issuance, admission or release.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -394,6 +405,12 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   @Test
+  void protectedActivationManifestRejectsSubstitutionsAndRollsBackOnHeldAuthorityLoss()
+      throws Exception {
+    compose(Refusal.NONE, ActivationFailure.POST_INSERT_AUTHORITY_LOSS);
+  }
+
+  @Test
   void transientLifecycleCasRollbackRetriesWithinOriginalActivationInvocation() throws Exception {
     compose(Refusal.NONE, ActivationFailure.TRANSIENT_ROLLBACK_ONCE);
   }
@@ -443,6 +460,22 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   @Test
+  void actualProtectedActiveWorldServingPlayerHoldReplaysAcrossOwnerReconstructionWithoutMutation()
+      throws Exception {
+    compose(
+        Refusal.NONE,
+        9_007_199_254_740_993L,
+        temporary,
+        ActivationFailure.NONE,
+        false,
+        false,
+        false,
+        false,
+        false,
+        ActiveWorldCheck.SERVING_PLAYER_HOLD);
+  }
+
+  @Test
   void actualStartingCanonicalAdmissionCompletesAndCommitsAcrossWorldGameSessionAndAccountOwners()
       throws Exception {
     compose(Refusal.NONE, 9_007_199_254_740_993L, temporary, ActivationFailure.NONE, false, true);
@@ -479,6 +512,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
 
   private enum ActivationFailure {
     NONE,
+    POST_INSERT_AUTHORITY_LOSS,
     TRANSIENT_ROLLBACK_ONCE,
     TRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE,
     TRANSIENT_AFTER_COMMIT_ONCE,
@@ -487,6 +521,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     TRANSIENT_ROLLBACK_ALWAYS_FINAL_READBACK_FAILURE,
     NONTRANSIENT_ROLLBACK_ONCE,
     NONTRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE
+  }
+
+  private enum ActiveWorldCheck {
+    NONE,
+    SERVING_PLAYER_HOLD
   }
 
   private void compose(Refusal refusal) throws Exception {
@@ -581,6 +620,31 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       boolean abortCanonicalInitialAdmission,
       boolean playerCreatedPlacement,
       boolean advanceInstallationBeforeRetry)
+      throws Exception {
+    compose(
+        refusal,
+        reservationClaimFence,
+        proofDirectory,
+        activationFailure,
+        exerciseCanonicalInitialAdmissionHold,
+        exerciseCoupledCanonicalInitialAdmission,
+        abortCanonicalInitialAdmission,
+        playerCreatedPlacement,
+        advanceInstallationBeforeRetry,
+        ActiveWorldCheck.NONE);
+  }
+
+  private void compose(
+      Refusal refusal,
+      long reservationClaimFence,
+      Path proofDirectory,
+      ActivationFailure activationFailure,
+      boolean exerciseCanonicalInitialAdmissionHold,
+      boolean exerciseCoupledCanonicalInitialAdmission,
+      boolean abortCanonicalInitialAdmission,
+      boolean playerCreatedPlacement,
+      boolean advanceInstallationBeforeRetry,
+      ActiveWorldCheck activeWorldCheck)
       throws Exception {
     if (abortCanonicalInitialAdmission && !exerciseCoupledCanonicalInitialAdmission) {
       throw new IllegalArgumentException("Admission abort proof requires the coupled owner path");
@@ -1024,6 +1088,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           var terminalReadbackFault = new ActivationTerminalReadbackFault();
           var activationTransactionFault =
               activationFailure == ActivationFailure.NONE
+                      || activationFailure == ActivationFailure.POST_INSERT_AUTHORITY_LOSS
                   ? null
                   : new ActivationTransactionFault(
                       world.manager(), world.dsl(), activationFailure, terminalReadbackFault);
@@ -1369,13 +1434,64 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 .isEqualTo(protectedAccount);
             assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
                 .isEqualTo(gsBefore);
+            UUID settlementRequestId = UUID.randomUUID();
+            var originalRecoveryIdentity = identity.get();
             var participationSettlement =
-                worldParticipationSettlement.settle(
-                    new AccountStartSessionWorldParticipationSettlementInput(
-                        NAMESPACE,
-                        UUID.randomUUID(),
-                        identity.get().accountWorldParticipationId(),
-                        identity.get().accountWorldParticipationFence()));
+                new WorldOriginalOperationSettlementRecovery(service, worldParticipationSettlement)
+                    .recover(originalRecoveryIdentity, settlementRequestId)
+                    .orElseThrow();
+            // Recreate the recovery service and every outbound recovery client, preserving only
+            // the original lookup/correlation and actual owner storage. This is component restart,
+            // not an operating-system crash or a restarted database/server deployment.
+            var worldRowsBeforeRecoveryReplay = orderedRowFingerprints(world.dsl());
+            var accountRowsBeforeRecoveryReplay = orderedRowFingerprints(issuer.sourceDsl());
+            var gameSessionRowsBeforeRecoveryReplay = orderedRowFingerprints(gs.dsl());
+            try (var restartedSettlement =
+                    new GrpcAccountStartSessionWorldParticipationSettlementClient(
+                        accountEndpoints,
+                        pki.client("world-management-service"),
+                        factory,
+                        NAMESPACE);
+                var restartedAccountHistory =
+                    new AccountStartSessionWorldParticipationHistoricalReadClient(
+                        accountEndpoints,
+                        pki.client("world-management-service"),
+                        factory,
+                        NAMESPACE);
+                var restartedGameSessionHistory =
+                    new HistoricalOriginalStartSessionOwnerEvidenceReadClient(
+                        gsEndpoints, pki.client("world-management-service"), factory, NAMESPACE)) {
+              restartedSettlement.init();
+              restartedAccountHistory.init();
+              restartedGameSessionHistory.init();
+              var restartedPreparation =
+                  new WorldCanonicalInstancePreparationService(
+                      repository,
+                      (supplied, suppliedOperation) -> {
+                        throw new AssertionError(
+                            "Historical recovery must not reacquire World participation");
+                      },
+                      new WorldCanonicalInstanceOriginalOperationRecoveryVerifier(
+                          restartedAccountHistory, restartedGameSessionHistory),
+                      world.installationRegistry());
+              var restartedRecovery =
+                  new WorldOriginalOperationSettlementRecovery(
+                      restartedPreparation, restartedSettlement);
+              var replay =
+                  restartedRecovery
+                      .recover(originalRecoveryIdentity, settlementRequestId)
+                      .orElseThrow();
+              assertThat(replay.settlementRequestId()).isEqualTo(settlementRequestId);
+              assertThat(replay.terminal().canonicalBytes())
+                  .containsExactly(participationSettlement.terminal().canonicalBytes());
+              assertThat(replay.settledAt()).isEqualTo(participationSettlement.settledAt());
+            }
+            assertThat(orderedRowFingerprints(world.dsl()))
+                .isEqualTo(worldRowsBeforeRecoveryReplay);
+            assertThat(orderedRowFingerprints(issuer.sourceDsl()))
+                .isEqualTo(accountRowsBeforeRecoveryReplay);
+            assertThat(orderedRowFingerprints(gs.dsl()))
+                .isEqualTo(gameSessionRowsBeforeRecoveryReplay);
             assertThat(participationSettlement.terminal().canonicalBytes())
                 .containsExactly(recovered.get().canonicalBytes());
             byte[] participationTerminalBytes =
@@ -1596,6 +1712,33 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                           issuer.sourceDsl(),
                           activationAccountBefore.keySet().toArray(String[]::new)))
                   .isEqualTo(accountAfterDenial);
+              return;
+            }
+
+            if (activationFailure == ActivationFailure.POST_INSERT_AUTHORITY_LOSS) {
+              var protection = worldProtectionAcquisition.acquire(activationInput);
+              String[] accountProtectionTables = {
+                "account_start_session_activation_protections",
+                "account_start_session_activation_protection_sources",
+                "account_start_session_activation_protection_settlements"
+              };
+              var heldAccountRows = rows(issuer.sourceDsl(), accountProtectionTables);
+              assertThat(heldAccountRows.get(accountProtectionTables[0])).hasSize(1);
+              assertThat(heldAccountRows.get(accountProtectionTables[1])).isNotEmpty();
+              assertThat(heldAccountRows.get(accountProtectionTables[2])).isEmpty();
+
+              assertProtectedManifestRefusalsAndAuthorityLoss(
+                  world.dsl(), activationService, protection);
+
+              var stableWorldTables = new TreeMap<>(activationWorldBefore);
+              stableWorldTables.remove("world_canonical_instance_activation_fence");
+              assertThat(rows(world.dsl(), stableWorldTables.keySet().toArray(String[]::new)))
+                  .isEqualTo(stableWorldTables);
+              assertThat(rows(gs.dsl(), activationGsBefore.keySet().toArray(String[]::new)))
+                  .isEqualTo(activationGsBefore);
+              assertThat(rows(issuer.sourceDsl(), accountProtectionTables))
+                  .isEqualTo(heldAccountRows);
+              assertThat(activationProtectionAcquisitionCalls.get()).isEqualTo(1);
               return;
             }
 
@@ -1880,6 +2023,26 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             assertThat(
                     finalAccountRows.get("account_start_session_activation_protection_settlements"))
                 .hasSize(1);
+            if (activeWorldCheck == ActiveWorldCheck.SERVING_PLAYER_HOLD) {
+              boundWorld.addService(
+                  new WorldCanonicalPlayerAdmissionHoldGrpcService(
+                          servingPlayerHoldService(world), NAMESPACE)
+                      .bindService());
+              try (var accountHoldClient =
+                  new WorldGameplayAdmissionHoldClient(
+                      worldEndpoints, pki.client("account-service"), factory, NAMESPACE)) {
+                accountHoldClient.init();
+                exerciseServingPlayerAdmissionHold(
+                    world,
+                    gs,
+                    association,
+                    lifecycleRepository,
+                    active,
+                    accountHoldClient,
+                    pki,
+                    factory);
+              }
+            }
             if (exerciseCanonicalInitialAdmissionHold) {
               exerciseCanonicalInitialAdmissionHold(
                   world, association, lifecycleRepository, activeReadRequest);
@@ -1960,6 +2123,320 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         identity.holdId(),
         identity.holdFence(),
         identity.holdBindingDigest());
+  }
+
+  private static void exerciseServingPlayerAdmissionHold(
+      Database world,
+      Database gs,
+      WorldCanonicalInstanceAssociationRepository associations,
+      WorldCanonicalInstanceLifecycleReadRepository lifecycles,
+      WorldCanonicalInstanceLifecycleEvidence active,
+      WorldGameplayAdmissionHoldClient accountHoldClient,
+      WorldOriginalStartSessionPreparationProofPki pki,
+      GrpcChannelFactory factory)
+      throws Exception {
+    var association =
+        associations.readOwnerAssociation(active.request().canonicalGameInstanceId()).orElseThrow();
+    assertThat(association.isRunOwnedFixture()).isFalse();
+    assertThat(active.lifecycleStatus()).isEqualTo("ACTIVE");
+    assertThat(world.dsl().fetchCount(DSL.table("initial_admission_bind_hold"))).isZero();
+    assertThat(world.dsl().fetchCount(DSL.table("world_canonical_player_admission_hold"))).isZero();
+    var target = association.identity();
+    var catalog =
+        new GameSessionCanonicalRealmCatalogRepository(gs.dsl())
+            .readByRealm(
+                target.targetNamespace(), target.canonicalTenantId(), target.canonicalRealmId())
+            .orElseThrow();
+    assertThat(catalog.catalogRevision()).isEqualTo(target.catalogRevision());
+    assertThat(catalog.worldSlug()).isEqualTo(active.request().worldSlug());
+    assertThat(catalog.playableStateNamespaceId())
+        .isEqualTo(active.request().playableStateNamespaceId());
+    assertThat(catalog.stateScope()).isEqualTo(active.request().playableStateScope());
+    assertThat(catalog.publicProduction()).isTrue();
+    String lifecycleImage =
+        "SELECT to_jsonb(w)::text, w.xmin::text FROM world_instance w WHERE id=?";
+    var lifecycleBefore = world.dsl().fetchSingle(lifecycleImage, association.worldInstanceId());
+
+    // The original Account lease is synthetic, not Account issuance/currentness or a real player
+    // binding. Only its namespace/catalog/World target comes from the actual owners above.
+    var lease = syntheticServingPlayerLease(catalog, active);
+    long epoch = active.lifecycleEpoch();
+    long version = active.rowVersion();
+    var request = new WorldCanonicalPlayerAdmissionHoldEvidence.Request(lease, epoch, version);
+    assertServingPlayerHoldRefusesWrongWorldPeer(request, pki, factory);
+    assertUnresolvedServingPlayerHold(() -> accountHoldClient.read(request));
+    WorldCanonicalPlayerAdmissionHoldEvidence held;
+    try (var repeatableRead = world.pool().getConnection();
+        var serializable = world.pool().getConnection()) {
+      repeatableRead.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+      serializable.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
+      for (Connection stale : List.of(repeatableRead, serializable)) {
+        stale.setAutoCommit(false);
+        DSLContext snapshot = DSL.using(stale, SQLDialect.POSTGRES);
+        assertThat(
+                snapshot
+                    .fetchSingle(lifecycleImage, association.worldInstanceId())
+                    .get(1, String.class))
+            .isEqualTo(lifecycleBefore.get(1, String.class));
+        assertThat(snapshot.fetchCount(DSL.table("world_canonical_player_admission_hold")))
+            .isZero();
+      }
+      held = accountHoldClient.acquire(request);
+      for (Connection stale : List.of(repeatableRead, serializable)) {
+        DSLContext snapshot = DSL.using(stale, SQLDialect.POSTGRES);
+        assertThatThrownBy(
+                () ->
+                    snapshot.execute(
+                        "UPDATE world_instance SET row_version = row_version + 1 WHERE id = ?",
+                        association.worldInstanceId()))
+            .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("40001"));
+        stale.rollback();
+      }
+    }
+    assertThat(held.request().sameBinding(request)).isTrue();
+    assertThat(held.worldEvidence().canonicalBytes())
+        .containsExactly(
+            lifecycles.read(held.worldEvidence().request()).orElseThrow().canonicalBytes());
+    var stored = world.dsl().fetchSingle("SELECT * FROM world_canonical_player_admission_hold");
+    assertThat(stored.get("hold_id", UUID.class)).isEqualTo(held.holdId());
+    assertThat(stored.get("hold_fence", UUID.class)).isEqualTo(held.holdFence());
+    assertThat(stored.get("hold_state", String.class)).isEqualTo("HELD");
+    assertThat(stored.get("lease_sha256", String.class)).isEqualTo(lease.sha256());
+    assertThat(stored.get("lease_bytes", byte[].class))
+        .containsExactly(lease.canonicalJson().getBytes(StandardCharsets.UTF_8));
+    assertThat(stored.get("world_evidence_bytes", byte[].class))
+        .containsExactly(held.worldEvidence().canonicalBytes());
+    // The new physical tuple excludes stale lifecycle writer snapshots.
+    var lifecycleAfter = world.dsl().fetchSingle(lifecycleImage, association.worldInstanceId());
+    assertThat(lifecycleAfter.get(0, String.class)).isEqualTo(lifecycleBefore.get(0, String.class));
+    assertThat(lifecycleAfter.get(1, String.class))
+        .isNotEqualTo(lifecycleBefore.get(1, String.class));
+    assertThatThrownBy(
+            () ->
+                world
+                    .dsl()
+                    .execute(
+                        "UPDATE world_instance SET row_version = row_version + 1 WHERE id = ?",
+                        association.worldInstanceId()))
+        .hasMessageContaining("World lifecycle is fenced by a retained player-admission hold");
+    var retainedRows =
+        rows(
+            world.dsl(),
+            "world_canonical_player_admission_hold",
+            "world_instance",
+            "world_canonical_instance_association",
+            "world_canonical_instance_preparation",
+            "world_canonical_instance_activation_fence",
+            "world_canonical_instance_activation_operation",
+            "initial_admission_bind_hold");
+    assertThat(accountHoldClient.acquire(request).canonicalBytes())
+        .containsExactly(held.canonicalBytes());
+
+    // A separate socket and reconstructed World repositories recover the original durable hold.
+    var reconstructed =
+        server(
+            "world-management-service",
+            pki,
+            new WorldCanonicalPlayerAdmissionHoldGrpcService(
+                servingPlayerHoldService(world), NAMESPACE));
+    try {
+      var endpoints = new ServiceEndpointsProperties();
+      endpoints.setWorldManagementService("localhost:" + reconstructed.getPort());
+      try (var recoveryClient =
+          new WorldGameplayAdmissionHoldClient(
+              endpoints, pki.client("account-service"), factory, NAMESPACE)) {
+        recoveryClient.init();
+        var readback = recoveryClient.readExact(held);
+        assertThat(readback.canonicalBytes()).containsExactly(held.canonicalBytes());
+        assertThat(readback.sha256()).isEqualTo(held.sha256());
+        assertThat(recoveryClient.acquire(request).canonicalBytes())
+            .containsExactly(held.canonicalBytes());
+
+        var changedCarrier = new LinkedHashMap<>(lease.carrier());
+        changedCarrier.put("leaseFence", "2");
+        var changedLease = AccountGameplayAdmissionLeaseEvidence.fromCarrier(changedCarrier);
+        for (var changed :
+            List.of(
+                new WorldCanonicalPlayerAdmissionHoldEvidence.Request(changedLease, epoch, version),
+                new WorldCanonicalPlayerAdmissionHoldEvidence.Request(lease, epoch, version + 1))) {
+          assertUnresolvedServingPlayerHold(() -> recoveryClient.acquire(changed));
+          assertUnresolvedServingPlayerHold(() -> recoveryClient.read(changed));
+        }
+      }
+    } finally {
+      shutdown(reconstructed);
+    }
+    assertThat(world.dsl().fetchCount(DSL.table("world_canonical_player_admission_hold")))
+        .isEqualTo(1);
+    assertThat(rows(world.dsl(), retainedRows.keySet().toArray(String[]::new)))
+        .isEqualTo(retainedRows);
+  }
+
+  private static void assertUnresolvedServingPlayerHold(Runnable operation) {
+    assertThatThrownBy(operation::run)
+        .isInstanceOfSatisfying(
+            StatusRuntimeException.class,
+            failure ->
+                assertThat(failure.getStatus().getCode())
+                    .isEqualTo(Status.Code.FAILED_PRECONDITION));
+  }
+
+  private static void assertServingPlayerHoldRefusesWrongWorldPeer(
+      WorldCanonicalPlayerAdmissionHoldEvidence.Request request,
+      WorldOriginalStartSessionPreparationProofPki pki,
+      GrpcChannelFactory factory)
+      throws Exception {
+    var deliveries = new AtomicInteger();
+    var wrongPeer =
+        buildServer(
+            "game-session-service",
+            pki,
+            0,
+            () ->
+                ServerInterceptors.intercept(
+                    new WorldCanonicalPlayerAdmissionHoldGrpcService(
+                        Mockito.mock(WorldCanonicalPlayerAdmissionHoldService.class), NAMESPACE),
+                    new ServerInterceptor() {
+                      @Override
+                      public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+                          ServerCall<ReqT, RespT> call,
+                          io.grpc.Metadata headers,
+                          ServerCallHandler<ReqT, RespT> next) {
+                        deliveries.incrementAndGet();
+                        return next.startCall(call, headers);
+                      }
+                    }));
+    try {
+      var endpoints = new ServiceEndpointsProperties();
+      endpoints.setWorldManagementService("localhost:" + wrongPeer.getPort());
+      try (var client =
+          new WorldGameplayAdmissionHoldClient(
+              endpoints, pki.client("account-service"), factory, NAMESPACE)) {
+        client.init();
+        assertThatThrownBy(() -> client.acquire(request))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode())
+                        .isEqualTo(Status.Code.UNAUTHENTICATED));
+      }
+      assertThat(deliveries).hasValue(0);
+    } finally {
+      shutdown(wrongPeer);
+    }
+  }
+
+  private static WorldCanonicalPlayerAdmissionHoldService servingPlayerHoldService(Database world) {
+    var associations =
+        new WorldCanonicalInstanceAssociationRepository(
+            world.dsl(),
+            new WorldCompleteLaunchBindingRepository(world.dsl()),
+            new WorldAuthoredSourceIntakeRepository(world.dsl()),
+            new WorldAuthoredVersionIdentityRepository(world.dsl()));
+    return new WorldCanonicalPlayerAdmissionHoldService(
+        new WorldCanonicalPlayerAdmissionHoldRepository(
+            world.dsl(),
+            world.manager(),
+            NAMESPACE,
+            associations,
+            new WorldCanonicalInstanceLifecycleReadRepository(
+                world.dsl(), world.manager(), associations)),
+        NAMESPACE);
+  }
+
+  /**
+   * Donor #3084 carrier shape only; no current Account or player-admission authority is claimed.
+   */
+  private static AccountGameplayAdmissionLeaseEvidence syntheticServingPlayerLease(
+      CanonicalRealmCatalogSnapshot catalog, WorldCanonicalInstanceLifecycleEvidence active) {
+    var identity = active.request();
+    String account = UUID.randomUUID().toString();
+    String tenant = identity.canonicalTenantId().toString();
+    Map<String, Object> scope = new LinkedHashMap<>();
+    scope.put("accountId", account);
+    scope.put("tenantId", tenant);
+    scope.put("realmId", catalog.realmId().toString());
+    scope.put("worldSlug", identity.worldSlug());
+    scope.put("realmSlug", catalog.realmSlug());
+    scope.put("playableStateNamespaceId", identity.playableStateNamespaceId().toString());
+    scope.put("playableStateScope", identity.playableStateScope());
+    scope.put("gameInstanceId", identity.canonicalGameInstanceId().toString());
+    for (String key : List.of("characterId", "sessionId"))
+      scope.put(key, UUID.randomUUID().toString());
+    scope.put(
+        "regionId", active.operationalRegionAssignments().values().iterator().next().toString());
+    for (String key : List.of("bindingGeneration", "pointerVersion", "regionEpoch"))
+      scope.put(key, "9007199254740993");
+    scope.put("catalogRevision", Long.toString(catalog.catalogRevision()));
+    Map<String, Object> value = new LinkedHashMap<>();
+    value.put("schema", AccountGameplayAdmissionLeaseEvidence.SCHEMA);
+    value.put("schemaVersion", "1");
+    value.put("mode", "PUBLIC_PRODUCTION");
+    value.put("targetNamespace", identity.targetNamespace());
+    value.put(
+        "callerWorkload",
+        "spiffe://firemud/ns/" + identity.targetNamespace() + "/sa/game-session-service");
+    value.put("requestId", UUID.randomUUID().toString());
+    value.put("leaseId", UUID.randomUUID().toString());
+    value.put("leaseFence", "1");
+    value.put("leaseKind", "NEW_BINDING");
+    value.put("bindingScope", scope);
+    value.put(
+        "authorityTuple",
+        Map.of(
+            "issuerAuthGeneration",
+            "1",
+            "accountAuthorityGeneration",
+            "1",
+            "tenantAuthorityGeneration",
+            Map.of(tenant, "1"),
+            "membershipAuthorityGeneration",
+            Map.of(tenant, "1"),
+            "privateRealmGrantVersions",
+            List.of()));
+    value.put("issuanceFence", "1");
+    value.put(
+        "membershipBaseline",
+        Map.of(
+            "membershipLifecycleState",
+            "ACTIVE",
+            "membershipVersion",
+            Map.of(tenant, "1"),
+            "membershipAuthorityGeneration",
+            "1"));
+    value.put(
+        "outboxCheckpoints",
+        List.of(
+            servingPlayerCheckpoint("account/" + account, "0"),
+            servingPlayerCheckpoint("issuer/firemud-account-service", "0"),
+            servingPlayerCheckpoint("membership/" + account + "/" + tenant, "1"),
+            servingPlayerCheckpoint("tenant/" + tenant, "1")));
+    long now = System.currentTimeMillis();
+    value.put(
+        "tokenIdentityEvidence",
+        Map.ofEntries(
+            Map.entry("accountId", account),
+            Map.entry("operationId", UUID.randomUUID().toString()),
+            Map.entry("issuanceRequestId", UUID.randomUUID().toString()),
+            Map.entry("tokenJti", UUID.randomUUID().toString()),
+            Map.entry("tokenSHA256", "a".repeat(64)),
+            Map.entry("tokenGeneration", "1"),
+            Map.entry("issuanceFence", "1"),
+            Map.entry("tokenIdentityFence", "1"),
+            Map.entry("tokenProfile", "game-session-account-delegation"),
+            Map.entry("issuedAt", Long.toString(now / 1000 - 2)),
+            Map.entry("notBefore", Long.toString(now / 1000 - 2)),
+            Map.entry("expiresAt", Long.toString(now / 1000 + 300))));
+    value.put("evaluatedAt", Long.toString(now));
+    value.put(
+        "expiresAt",
+        Long.toString(now + AccountGameplayAdmissionLeaseEvidence.MAX_DURATION_MILLIS));
+    return AccountGameplayAdmissionLeaseEvidence.fromCarrier(value);
+  }
+
+  private static Map<String, Object> servingPlayerCheckpoint(String suffix, String sequence) {
+    return Map.of(
+        "outboxStreamKey", "account:auth-authority:v1:" + suffix, "outboxSequence", sequence);
   }
 
   private static void exerciseCanonicalInitialAdmissionHold(
@@ -3520,6 +3997,25 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                           .CANONICAL_INITIAL_PLAYER_LOCATION_OUTCOME_APPLIED);
               var placementRetry = initialLocationClient.placeInitialPlayer(placementRequest);
               assertThat(placementRetry.toByteArray()).containsExactly(placed.toByteArray());
+              UUID placementId = UUID.fromString(placementRequest.getPlacementOperationUuid());
+              var retainedPlacement = placementSnapshot(world.dsl(), placementId);
+              for (var changed :
+                  List.of(
+                      placementRequest.toBuilder()
+                          .setCharacterUuid(UUID.randomUUID().toString())
+                          .build(),
+                      placementRequest.toBuilder()
+                          .setAssignmentUuid(UUID.randomUUID().toString())
+                          .setAssignmentIntentDigest("c".repeat(64))
+                          .build())) {
+                assertThatThrownBy(() -> initialLocationClient.placeInitialPlayer(changed))
+                    .isInstanceOfSatisfying(
+                        StatusRuntimeException.class,
+                        failure ->
+                            assertThat(failure.getStatus().getCode())
+                                .isEqualTo(Status.Code.FAILED_PRECONDITION));
+              }
+              assertThat(placementSnapshot(world.dsl(), placementId)).isEqualTo(retainedPlacement);
 
               var regionResolver =
                   new CanonicalInitialPlayerLocationRegionResolver(
@@ -3890,7 +4386,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 .isEqualTo(retained.runtimeRoomInstanceId());
             assertThat(location.get("initial_runtime_room_instance_id", Long.class))
                 .isEqualTo(retained.runtimeRoomInstanceId());
-            var beforeRetry = createdPlacementSnapshot(world.dsl(), placementId);
+            var beforeRetry = placementSnapshot(world.dsl(), placementId);
             assertThat(client.placeInitialPlayer(request).toByteArray())
                 .containsExactly(placed.toByteArray());
             assertThat(client.readInitialPlayerLocation(request).toByteArray())
@@ -3899,7 +4395,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             var region = client.readInitialPlayerLocationRegion(request);
             assertThat(region.getPlacementResult().toByteArray())
                 .containsExactly(placed.toByteArray());
-            assertThat(createdPlacementSnapshot(world.dsl(), placementId)).isEqualTo(beforeRetry);
+            assertThat(placementSnapshot(world.dsl(), placementId)).isEqualTo(beforeRetry);
             assertThat(reads.get()).isEqualTo(4);
           }
         } finally {
@@ -3911,7 +4407,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     }
   }
 
-  private static List<String> createdPlacementSnapshot(DSLContext dsl, UUID placementId) {
+  private static List<String> placementSnapshot(DSLContext dsl, UUID placementId) {
     // Include all retained bytes, room columns and physical row versions, not just row counts.
     return dsl.fetch(
             "SELECT to_jsonb(o)::text || ':' || o.xmin::text AS snapshot "
@@ -4773,6 +5269,112 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
   }
 
+  private static void assertProtectedManifestRefusalsAndAuthorityLoss(
+      DSLContext world,
+      WorldCanonicalInstanceActivationService service,
+      AccountStartSessionActivationProtectionEvidence protection) {
+    var request = protection.request().worldActivationRequest();
+    String heldAuthorityLoss = "TEST_ONLY local activation authority lost after manifest insertion";
+    var held =
+        new WorldCanonicalInstanceActivationService.HeldActivationAuthority() {
+          @Override
+          public void requireHeld() {
+            if (!TransactionSynchronizationManager.isActualTransactionActive()) return;
+            var manifest =
+                world.fetchOne(
+                    "SELECT world_instance_id FROM world_canonical_activation_execution_manifest "
+                        + "WHERE activation_request_id=? AND transaction_id=txid_current()",
+                    request.activationRequestId());
+            if (manifest == null) return;
+            long worldInstanceId = manifest.get(0, Long.class);
+
+            var preparing =
+                world.fetchSingle(
+                    "SELECT w.status,w.lifecycle_epoch,w.row_version,o.outcome "
+                        + "FROM world_instance w "
+                        + "JOIN world_canonical_instance_activation_operation o "
+                        + "ON o.world_instance_id=w.id WHERE w.id=? AND o.activation_request_id=?",
+                    worldInstanceId,
+                    request.activationRequestId());
+            assertThat(preparing.get("status", String.class)).isEqualTo("PREPARING");
+            assertThat(preparing.get("lifecycle_epoch", Long.class))
+                .isEqualTo(request.expectedLifecycleEpoch());
+            assertThat(preparing.get("row_version", Long.class))
+                .isEqualTo(request.expectedRowVersion());
+            assertThat(preparing.get("outcome", String.class)).isEqualTo("COMMITTED");
+            for (String substitution :
+                List.of(
+                    "transaction_id=transaction_id+1",
+                    "world_instance_id=world_instance_id+1",
+                    "expected_old=expected_old || '{\"extra\":true}'::jsonb",
+                    "expected_new=expected_new || '{\"extra\":true}'::jsonb")) {
+              assertActivationManifestDeniesUpdate(
+                  world, request.activationRequestId(), worldInstanceId, substitution, 1, 1);
+            }
+            assertActivationManifestDeniesUpdate(
+                world, request.activationRequestId(), worldInstanceId, null, 2, 1);
+            assertActivationManifestDeniesUpdate(
+                world, request.activationRequestId(), worldInstanceId, null, 1, 2);
+            throw new WorldCanonicalInstanceActivationService.ActivationDeniedException(
+                heldAuthorityLoss);
+          }
+
+          @Override
+          public void close() {}
+        };
+
+    assertThatThrownBy(() -> service.activateProtected(protection, held))
+        .isInstanceOf(WorldCanonicalInstanceActivationService.ActivationDeniedException.class)
+        .hasMessage(heldAuthorityLoss);
+    assertPendingActivationState(world);
+    var pending =
+        world.fetchSingle(
+            "SELECT account_protection_evidence_bytes FROM world_canonical_instance_activation_fence "
+                + "WHERE activation_request_id=?",
+            request.activationRequestId());
+    assertThat(pending.get(0, byte[].class)).containsExactly(protection.canonicalBytes());
+    assertThat(service.readTerminalEvidence(protection)).isEmpty();
+  }
+
+  private static void assertActivationManifestDeniesUpdate(
+      DSLContext world,
+      UUID activationRequestId,
+      long worldInstanceId,
+      String manifestSubstitution,
+      int epochAdvance,
+      int rowVersionAdvance) {
+    world.execute("SAVEPOINT activation_manifest_probe");
+    try {
+      // Alter only the manifest minted by the real operation; the World guard stays enabled.
+      if (manifestSubstitution != null) {
+        assertThat(
+                world.execute(
+                    "UPDATE world_canonical_activation_execution_manifest SET "
+                        + manifestSubstitution
+                        + " WHERE activation_request_id=? AND transaction_id=txid_current()",
+                    activationRequestId))
+            .isEqualTo(1);
+      }
+      assertThatThrownBy(
+              () ->
+                  world.execute(
+                      "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+?,"
+                          + "row_version=row_version+?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                      epochAdvance,
+                      rowVersionAdvance,
+                      worldInstanceId))
+          .as(
+              "manifest %s, lifecycle epoch +%s, row version +%s",
+              manifestSubstitution, epochAdvance, rowVersionAdvance)
+          .isInstanceOf(DataAccessException.class)
+          .hasMessageContaining("no exact transaction execution manifest")
+          .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"));
+    } finally {
+      world.execute("ROLLBACK TO SAVEPOINT activation_manifest_probe");
+      world.execute("RELEASE SAVEPOINT activation_manifest_probe");
+    }
+  }
+
   private static void assertPendingActivationState(DSLContext world) {
     assertThat(world.fetch("SELECT status FROM world_instance").getValues("status", String.class))
         .containsExactly("PREPARING");
@@ -4783,6 +5385,76 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         .containsExactly("PENDING");
     assertThat(world.fetchCount(DSL.table("world_canonical_instance_activation_operation")))
         .isZero();
+    assertThat(world.fetchCount(DSL.table("world_canonical_activation_execution_manifest")))
+        .isZero();
+  }
+
+  private record TableFingerprint(long rowCount, String sha256) {}
+
+  private static Map<String, TableFingerprint> orderedRowFingerprints(DSLContext sql) {
+    return sql.connectionResult(
+        connection -> {
+          // pgJDBC needs a transaction and a positive fetch size to use a server cursor.
+          if (!connection.getAutoCommit()) {
+            throw new SQLException("Owner-pair fingerprint requires its own read-only transaction");
+          }
+          boolean originalReadOnly = connection.isReadOnly();
+          connection.setReadOnly(true);
+          try {
+            connection.setAutoCommit(false);
+            try {
+              return readOrderedRowFingerprints(connection);
+            } finally {
+              connection.rollback();
+              connection.setAutoCommit(true);
+            }
+          } finally {
+            connection.setReadOnly(originalReadOnly);
+          }
+        });
+  }
+
+  private static Map<String, TableFingerprint> readOrderedRowFingerprints(Connection connection)
+      throws SQLException {
+    var tables = new ArrayList<String>();
+    try (var statement = connection.createStatement();
+        var result =
+            statement.executeQuery(
+                "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename")) {
+      while (result.next()) {
+        tables.add(result.getString(1));
+      }
+    }
+    var fingerprints = new TreeMap<String, TableFingerprint>();
+    try (var statement =
+        connection.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
+      statement.setFetchSize(1);
+      var frame = ByteBuffer.allocate(Integer.BYTES);
+      var sha256 = MessageDigest.getInstance("SHA-256");
+      for (String table : tables) {
+        sha256.reset();
+        long count = 0;
+        String quotedTable = "\"" + table.replace("\"", "\"\"") + "\"";
+        try (var result =
+            statement.executeQuery(
+                "SELECT row_to_json(t)::text || '|xmin=' || t.xmin::text AS body FROM "
+                    + quotedTable
+                    + " t ORDER BY row_to_json(t)::text,t.xmin::text")) {
+          while (result.next()) {
+            byte[] row = result.getString(1).getBytes(StandardCharsets.UTF_8);
+            frame.putInt(0, row.length);
+            sha256.update(frame.array());
+            sha256.update(row);
+            count++;
+          }
+        }
+        fingerprints.put(
+            table, new TableFingerprint(count, HexFormat.of().formatHex(sha256.digest())));
+      }
+    } catch (NoSuchAlgorithmException e) {
+      throw new IllegalStateException("SHA-256 unavailable", e);
+    }
+    return fingerprints;
   }
 
   private static Map<String, List<String>> rows(DSLContext dsl, String... tables) {
@@ -5130,7 +5802,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             attempt == 1;
         case TRANSIENT_ROLLBACK_ALWAYS, TRANSIENT_ROLLBACK_ALWAYS_FINAL_READBACK_FAILURE ->
             attempt <= 3;
-        case NONE -> false;
+        case NONE, POST_INSERT_AUTHORITY_LOSS -> false;
       };
     }
 
@@ -5142,6 +5814,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             attempt == 1;
         case TRANSIENT_ROLLBACK_ALWAYS_FINAL_READBACK_FAILURE -> attempt == 3;
         case NONE,
+            POST_INSERT_AUTHORITY_LOSS,
             TRANSIENT_ROLLBACK_ONCE,
             TRANSIENT_AFTER_COMMIT_ONCE,
             TRANSIENT_ROLLBACK_ALWAYS,

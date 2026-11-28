@@ -55,3 +55,17 @@ gradlePlugin {
         }
     }
 }
+
+dependencies {
+    testImplementation(gradleTestKit())
+    testImplementation("junit:junit:4.13.2")
+}
+
+tasks.test {
+    val proofInputs = layout.projectDirectory.file("../gradle/world-proof-migration-inputs.gradle")
+    val worldBuild = layout.projectDirectory.file("../services/world-management-service/build.gradle.kts")
+    inputs.files(proofInputs, worldBuild).withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("firemud.proofInputsScript", proofInputs.asFile.absolutePath)
+    systemProperty("firemud.worldBuildScript", worldBuild.asFile.absolutePath)
+    systemProperty("firemud.testGradleHome", gradle.gradleHomeDir!!.absolutePath)
+}

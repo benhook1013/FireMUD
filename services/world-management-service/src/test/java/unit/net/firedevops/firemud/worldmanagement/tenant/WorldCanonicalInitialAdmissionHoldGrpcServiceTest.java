@@ -2,6 +2,7 @@ package net.firedevops.firemud.worldmanagement.tenant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -10,16 +11,27 @@ import com.google.protobuf.ByteString;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.security.cert.X509Certificate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult;
+import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec.Capability;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec.LaunchReadEvidence;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidenceProvider;
 import net.firedevops.firemud.worldmanagement.v1.AcquireCanonicalInitialAdmissionHoldRequest;
 import net.firedevops.firemud.worldmanagement.v1.AcquireCanonicalInitialAdmissionHoldResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldIdentityRequest;
@@ -38,6 +50,8 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
   private static final UUID HOLD_ID = uuid("66666666-6666-4666-8666-666666666666");
   private static final UUID HOLD_FENCE = uuid("77777777-7777-4777-8777-777777777777");
   private static final String NAMESPACE = "test";
+  private static final UUID FIXTURE_OPERATION = uuid("12345678-1234-4789-9876-123456789abc");
+  private static final UUID READ_ID = uuid("88888888-8888-4888-8888-888888888888");
 
   @AfterEach
   void clearSessionContext() {
@@ -186,6 +200,163 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
     verifyNoInteractions(owner);
   }
 
+  @Test
+  void fixtureRegistrationChecksLeafAndReceiptBeforeAnyHoldOwnerRead() throws Exception {
+    var owner = mock(WorldCanonicalInitialAdmissionHoldOwner.class);
+    var sources = mock(RunOwnedCanonicalWorldLaunchEvidenceProvider.class);
+    var service = new WorldCanonicalInitialAdmissionHoldGrpcService(owner, NAMESPACE, sources);
+    var sessionPeer = peer("game-session-service", NAMESPACE);
+    var exactLeaf = certificateEvidence((byte) 1);
+    var receipt = fixtureReceipt(exactLeaf, sessionPeer);
+    when(sources.requireConfiguredFixtureReceipt()).thenReturn(receipt);
+
+    var malformed = AcquireCanonicalInitialAdmissionHoldRequest.getDefaultInstance();
+    assertThat(callAcquire(service, malformed, sessionPeer).error)
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+    Context.current()
+        .withValue(GrpcPeerCertificateEvidence.CONTEXT_KEY, certificateEvidence((byte) 2))
+        .run(
+            () -> {
+              assertThat(callAcquire(service, malformed, sessionPeer).error)
+                  .isEqualTo(Status.Code.PERMISSION_DENIED);
+              assertThat(
+                      callIdentity(
+                              service,
+                              ReadCanonicalInitialAdmissionHoldIdentityRequest.getDefaultInstance(),
+                              sessionPeer)
+                          .error)
+                  .isEqualTo(Status.Code.PERMISSION_DENIED);
+              assertThat(
+                      callState(
+                              service,
+                              ReadCanonicalInitialAdmissionHoldStateRequest.getDefaultInstance(),
+                              sessionPeer)
+                          .error)
+                  .isEqualTo(Status.Code.PERMISSION_DENIED);
+            });
+
+    Request otherOperation = holdRequest(NAMESPACE);
+    Request exactOperation = fixtureHoldRequest();
+    Context.current()
+        .withValue(GrpcPeerCertificateEvidence.CONTEXT_KEY, exactLeaf)
+        .run(
+            () -> {
+              assertThat(callAcquire(service, acquire(otherOperation), sessionPeer).error)
+                  .isEqualTo(Status.Code.PERMISSION_DENIED);
+              assertThat(
+                      callIdentity(service, identityRead(otherOperation, READ_ID), sessionPeer)
+                          .error)
+                  .isEqualTo(Status.Code.PERMISSION_DENIED);
+              assertThat(
+                      callIdentity(
+                              service, identityRead(exactOperation, FIXTURE_OPERATION), sessionPeer)
+                          .error)
+                  .isEqualTo(Status.Code.INVALID_ARGUMENT);
+              assertThat(
+                      callIdentity(service, identityRead(exactOperation, READ_ID), sessionPeer)
+                          .error)
+                  .isEqualTo(Status.Code.NOT_FOUND);
+            });
+    verify(owner).readIdentity(exactOperation);
+    verify(owner, never()).readIdentity(otherOperation);
+    verify(sources, never()).requireAuthenticatedEvidence();
+  }
+
+  @Test
+  void fixtureAcquireRequiresFreshExactGameSessionAllocationBeforeEnteringWorld() throws Exception {
+    var owner = mock(WorldCanonicalInitialAdmissionHoldOwner.class);
+    var sources = mock(RunOwnedCanonicalWorldLaunchEvidenceProvider.class);
+    var service = new WorldCanonicalInitialAdmissionHoldGrpcService(owner, NAMESPACE, sources);
+    var sessionPeer = peer("game-session-service", NAMESPACE);
+    var leaf = certificateEvidence((byte) 1);
+    var receipt = fixtureReceipt(leaf, sessionPeer);
+    var evidence = mock(RunOwnedCanonicalWorldLaunchEvidence.class);
+    var capability = mock(Capability.class);
+    var allocation = mock(FixtureResult.class);
+    when(sources.requireConfiguredFixtureReceipt()).thenReturn(receipt);
+    when(sources.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.sourceReceipt()).thenReturn(receipt);
+    when(evidence.gameSessionAssociation()).thenReturn(allocation);
+    when(evidence.capability()).thenReturn(capability);
+    when(capability.stateScope()).thenReturn("SHARED");
+    when(allocation.gameInstanceUuid()).thenReturn(GAME_INSTANCE);
+    when(allocation.canonicalRealmId()).thenReturn(REALM);
+    when(allocation.playableStateNamespaceId()).thenReturn(PLAYABLE_NAMESPACE);
+    when(allocation.catalogRevision()).thenReturn(2L, 3L);
+    Request request = fixtureHoldRequest();
+    var lifecycle = lifecycleRequest(request, READ_ID);
+    var identity = new HoldIdentity(request, HOLD_ID, HOLD_FENCE);
+    when(owner.acquire(request, lifecycle)).thenReturn(identity);
+
+    Context.current()
+        .withValue(GrpcPeerCertificateEvidence.CONTEXT_KEY, leaf)
+        .run(
+            () -> {
+              assertThat(callAcquire(service, acquire(request), sessionPeer).error)
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION);
+              verifyNoInteractions(owner);
+              var valid = callAcquire(service, acquire(request), sessionPeer);
+              assertThat(valid.error).isNull();
+              assertThat(valid.value.getHoldIdentityBytes().toByteArray())
+                  .isEqualTo(identity.canonicalBytes());
+            });
+    verify(owner).acquire(request, lifecycle);
+  }
+
+  private static SourceReceipt fixtureReceipt(
+      GrpcPeerCertificateEvidence leaf, GrpcPeerIdentity principal) {
+    var receipt = mock(SourceReceipt.class);
+    var source = mock(AuthoredWorldSourceEvidence.class);
+    var launch = mock(LaunchReadEvidence.class);
+    when(receipt.sourceEvidence()).thenReturn(source);
+    when(receipt.launchReadEvidence()).thenReturn(launch);
+    when(receipt.fixtureOperationId()).thenReturn(FIXTURE_OPERATION.toString());
+    when(receipt.gameSessionUriSan()).thenReturn(principal.uri());
+    when(receipt.gameSessionLeafSha256()).thenReturn(leaf.leafSha256());
+    when(receipt.fixturePolicySeal())
+        .thenReturn(
+            new FixturePolicySeal(
+                "fixture",
+                "game-session-service",
+                FIXTURE_OPERATION,
+                "sha256:" + "4".repeat(64),
+                "sha256:" + "3".repeat(64)));
+    when(source.targetNamespace()).thenReturn(NAMESPACE);
+    when(source.canonicalTenantId()).thenReturn(TENANT);
+    when(source.worldSlug()).thenReturn("starter-world");
+    when(launch.publishedReleaseBundle())
+        .thenReturn(
+            PublishedReleaseBundle.newBuilder().setCanonicalVersionId(VERSION.toString()).build());
+    return receipt;
+  }
+
+  private static GrpcPeerCertificateEvidence certificateEvidence(byte certificateByte)
+      throws Exception {
+    var leaf = mock(X509Certificate.class);
+    when(leaf.getEncoded()).thenReturn(new byte[] {certificateByte});
+    return GrpcPeerCertificateEvidence.fromCertificate(leaf).orElseThrow();
+  }
+
+  private static Request fixtureHoldRequest() {
+    return holdRequest(NAMESPACE, "run-owned-fixture-" + FIXTURE_OPERATION);
+  }
+
+  private static AcquireCanonicalInitialAdmissionHoldRequest acquire(Request hold) {
+    return AcquireCanonicalInitialAdmissionHoldRequest.newBuilder()
+        .setCanonicalHoldRequestBytes(ByteString.copyFrom(hold.canonicalRequestBytes()))
+        .setCanonicalLifecycleReadRequestBytes(
+            ByteString.copyFrom(lifecycleRequest(hold, READ_ID).canonicalBytes()))
+        .build();
+  }
+
+  private static ReadCanonicalInitialAdmissionHoldIdentityRequest identityRead(
+      Request hold, UUID id) {
+    return ReadCanonicalInitialAdmissionHoldIdentityRequest.newBuilder()
+        .setReadRequestId(id.toString())
+        .setCanonicalHoldRequestBytes(ByteString.copyFrom(hold.canonicalRequestBytes()))
+        .build();
+  }
+
   private static Collector<AcquireCanonicalInitialAdmissionHoldResponse> callAcquire(
       WorldCanonicalInitialAdmissionHoldGrpcService service,
       AcquireCanonicalInitialAdmissionHoldRequest request,
@@ -227,6 +398,10 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
   }
 
   private static Request holdRequest(String namespace) {
+    return holdRequest(namespace, "initial-admission-request");
+  }
+
+  private static Request holdRequest(String namespace, String operation) {
     return new Request(
         namespace,
         TENANT,
@@ -237,7 +412,7 @@ class WorldCanonicalInitialAdmissionHoldGrpcServiceTest {
         GAME_INSTANCE,
         VERSION,
         7L,
-        "initial-admission-request",
+        operation,
         "a".repeat(64),
         WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER,
         3L,

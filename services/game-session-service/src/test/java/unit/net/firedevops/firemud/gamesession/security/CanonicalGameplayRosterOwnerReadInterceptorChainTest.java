@@ -304,6 +304,7 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
         .containsExactly(
             "game_session.v1.GameSessionService/Ping",
             "game_session.v1.GameSessionControlPlaneService/GetRunOwnedFixtureLaunchAssociation",
+            "game_session.v1.RunOwnedFixtureInitialAdmissionOwnerReadService/ReadRunOwnedFixtureInitialAdmissionOwner",
             REFERENCE_METHOD,
             ACK_METHOD,
             CONFIRM_METHOD,

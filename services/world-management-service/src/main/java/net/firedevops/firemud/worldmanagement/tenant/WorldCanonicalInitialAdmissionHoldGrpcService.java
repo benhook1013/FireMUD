@@ -3,15 +3,21 @@ package net.firedevops.firemud.worldmanagement.tenant;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Message;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidenceProvider;
 import net.firedevops.firemud.worldmanagement.v1.AcquireCanonicalInitialAdmissionHoldRequest;
 import net.firedevops.firemud.worldmanagement.v1.AcquireCanonicalInitialAdmissionHoldResponse;
 import net.firedevops.firemud.worldmanagement.v1.ReadCanonicalInitialAdmissionHoldIdentityRequest;
@@ -26,7 +32,7 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Explicitly unregistered same-namespace Game Session boundary for canonical World holds. */
+/** Same-namespace Game Session boundary for canonical World holds. */
 public final class WorldCanonicalInitialAdmissionHoldGrpcService
     extends WorldCanonicalInitialAdmissionHoldServiceGrpc
         .WorldCanonicalInitialAdmissionHoldServiceImplBase {
@@ -36,15 +42,24 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
 
   private final WorldCanonicalInitialAdmissionHoldOwner owner;
   private final String trustedNamespace;
+  private final RunOwnedCanonicalWorldLaunchEvidenceProvider fixtureSources;
 
   public WorldCanonicalInitialAdmissionHoldGrpcService(
       WorldCanonicalInitialAdmissionHoldOwner owner,
       @Value("${firemud.grpc.workload-namespace:}") String trustedNamespace) {
+    this(owner, trustedNamespace, null);
+  }
+
+  public WorldCanonicalInitialAdmissionHoldGrpcService(
+      WorldCanonicalInitialAdmissionHoldOwner owner,
+      String trustedNamespace,
+      RunOwnedCanonicalWorldLaunchEvidenceProvider fixtureSources) {
     this.owner = Objects.requireNonNull(owner, "owner");
     if (!GrpcPeerIdentity.isValidNamespace(trustedNamespace)) {
       throw new IllegalArgumentException("World workload namespace is invalid");
     }
     this.trustedNamespace = trustedNamespace;
+    this.fixtureSources = fixtureSources;
   }
 
   @Override
@@ -57,11 +72,19 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
     Request holdRequest;
     WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest;
     try {
+      SourceReceipt fixture = requireConfiguredFixturePeer();
       requireNoUnknownFields(request, "AcquireCanonicalInitialAdmissionHoldRequest");
       holdRequest = decodeHoldRequest(request.getCanonicalHoldRequestBytes());
       lifecycleRequest = decodeLifecycleRequest(request.getCanonicalLifecycleReadRequestBytes());
       requireTrustedNamespace(holdRequest.targetNamespace());
       requireSameTarget(holdRequest, lifecycleRequest);
+      requireFixtureTarget(fixture, holdRequest, lifecycleRequest);
+      if (fixture != null) {
+        requireFreshFixtureAllocation(fixture, holdRequest);
+      }
+    } catch (StatusRuntimeException rejected) {
+      responseObserver.onError(rejected);
+      return;
     } catch (IllegalArgumentException malformed) {
       fail(responseObserver, Status.INVALID_ARGUMENT, "Canonical World hold request is malformed");
       return;
@@ -126,10 +149,16 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
     Request holdRequest;
     UUID readRequestId;
     try {
+      SourceReceipt fixture = requireConfiguredFixturePeer();
       requireNoUnknownFields(request, "ReadCanonicalInitialAdmissionHoldIdentityRequest");
       readRequestId = parseReadRequestId(request.getReadRequestId());
       holdRequest = decodeHoldRequest(request.getCanonicalHoldRequestBytes());
       requireTrustedNamespace(holdRequest.targetNamespace());
+      requireFixtureTarget(fixture, holdRequest, null);
+      requireFixtureReadCorrelation(fixture, readRequestId);
+    } catch (StatusRuntimeException rejected) {
+      responseObserver.onError(rejected);
+      return;
     } catch (IllegalArgumentException malformed) {
       fail(
           responseObserver,
@@ -201,6 +230,7 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
     WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest;
     UUID readRequestId;
     try {
+      SourceReceipt fixture = requireConfiguredFixturePeer();
       requireNoUnknownFields(request, "ReadCanonicalInitialAdmissionHoldStateRequest");
       readRequestId = parseReadRequestId(request.getReadRequestId());
       identity = decodeHoldIdentity(request.getHoldIdentityBytes());
@@ -211,6 +241,11 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
         throw new IllegalArgumentException(
             "Lifecycle read request must use the hold-state correlation UUID");
       }
+      requireFixtureTarget(fixture, identity.request(), lifecycleRequest);
+      requireFixtureReadCorrelation(fixture, readRequestId);
+    } catch (StatusRuntimeException rejected) {
+      responseObserver.onError(rejected);
+      return;
     } catch (IllegalArgumentException malformed) {
       fail(
           responseObserver,
@@ -288,6 +323,94 @@ public final class WorldCanonicalInitialAdmissionHoldGrpcService
         Status.PERMISSION_DENIED,
         "Only the verified same-namespace Game Session workload without end-user context is allowed");
     return false;
+  }
+
+  private SourceReceipt requireConfiguredFixturePeer() {
+    if (fixtureSources == null) {
+      return null;
+    }
+    GrpcPeerCertificateEvidence certificate = GrpcPeerCertificateEvidence.current();
+    if (certificate == null) {
+      throw fixedFixturePeerRequired();
+    }
+
+    SourceReceipt receipt;
+    try {
+      receipt = fixtureSources.requireConfiguredFixtureReceipt();
+    } catch (IllegalArgumentException unavailable) {
+      throw Status.UNAVAILABLE
+          .withDescription("Run-owned World fixture receipt is unavailable")
+          .asRuntimeException();
+    }
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (!peer.uri().equals(receipt.gameSessionUriSan())
+        || !certificate.leafSha256().equals(receipt.gameSessionLeafSha256())) {
+      throw fixedFixturePeerRequired();
+    }
+    return receipt;
+  }
+
+  private static StatusRuntimeException fixedFixturePeerRequired() {
+    return Status.PERMISSION_DENIED
+        .withDescription("World fixture holds require the exact configured Game Session peer")
+        .asRuntimeException();
+  }
+
+  private static void requireFixtureTarget(
+      SourceReceipt receipt,
+      Request request,
+      WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest) {
+    if (receipt == null) {
+      return;
+    }
+    var source = receipt.sourceEvidence();
+    if (!request.targetNamespace().equals(source.targetNamespace())
+        || !request.canonicalTenantId().equals(source.canonicalTenantId())
+        || !request.worldSlug().equals(source.worldSlug())
+        || !request
+            .canonicalVersionId()
+            .toString()
+            .equals(receipt.launchReadEvidence().publishedReleaseBundle().getCanonicalVersionId())
+        || !request
+            .initialAdmissionRequestId()
+            .equals("run-owned-fixture-" + receipt.fixtureOperationId())
+        || request.initialAdmissionOrigin() != InitialAdmissionOrigin.NO_PRIOR_POINTER
+        || (lifecycleRequest != null
+            && !lifecycleRequest
+                .expectedReleaseAttestationDigest()
+                .equals(receipt.fixturePolicySeal().evidenceDigest()))) {
+      throw Status.PERMISSION_DENIED
+          .withDescription("World hold differs from the configured fixture receipt")
+          .asRuntimeException();
+    }
+  }
+
+  private static void requireFixtureReadCorrelation(SourceReceipt receipt, UUID readRequestId) {
+    if (receipt != null && readRequestId.toString().equals(receipt.fixtureOperationId())) {
+      throw new IllegalArgumentException("Fixture operation is not a fresh hold read correlation");
+    }
+  }
+
+  private void requireFreshFixtureAllocation(SourceReceipt receipt, Request request) {
+    RunOwnedCanonicalWorldLaunchEvidence evidence;
+    try {
+      evidence = fixtureSources.requireAuthenticatedEvidence();
+    } catch (StatusRuntimeException | IllegalArgumentException unavailable) {
+      throw Status.UNAVAILABLE
+          .withDescription("Authenticated World fixture allocation is unavailable")
+          .asRuntimeException();
+    }
+    var allocation = evidence.gameSessionAssociation();
+    if (!receipt.fixturePolicySeal().equals(evidence.sourceReceipt().fixturePolicySeal())
+        || !request.canonicalGameInstanceId().equals(allocation.gameInstanceUuid())
+        || !request.realmId().equals(allocation.canonicalRealmId())
+        || !request.playableStateNamespaceId().equals(allocation.playableStateNamespaceId())
+        || !request.playableStateScope().equals(evidence.capability().stateScope())
+        || request.expectedCatalogRevision() != allocation.catalogRevision()) {
+      throw Status.FAILED_PRECONDITION
+          .withDescription("World hold differs from the authenticated fixture allocation")
+          .asRuntimeException();
+    }
   }
 
   private static boolean requireIndependentOwnerOperation(StreamObserver<?> responseObserver) {

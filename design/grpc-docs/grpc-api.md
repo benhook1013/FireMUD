@@ -39,6 +39,15 @@ for conventions on schema evolution and error handling. See each service's
 
     - [AccountGameplayAdmissionLeaseService](#account-v1-AccountGameplayAdmissionLeaseService)
 
+- [account/v1/account_public_jwks_read.proto](#account_v1_account_public_jwks_read-proto)
+    - [AccountPublicJwksSourceIdentity](#account-v1-AccountPublicJwksSourceIdentity)
+    - [GetCurrentAccountPublicJwksRequest](#account-v1-GetCurrentAccountPublicJwksRequest)
+    - [GetCurrentAccountPublicJwksResponse](#account-v1-GetCurrentAccountPublicJwksResponse)
+
+    - [GetCurrentAccountPublicJwksResponse.Disposition](#account-v1-GetCurrentAccountPublicJwksResponse-Disposition)
+
+    - [AccountPublicJwksReadService](#account-v1-AccountPublicJwksReadService)
+
 - [account/v1/account_service.proto](#account_v1_account_service-proto)
     - [AuthenticateRequest](#account-v1-AuthenticateRequest)
     - [AuthenticateResponse](#account-v1-AuthenticateResponse)
@@ -110,6 +119,15 @@ for conventions on schema evolution and error handling. See each service's
     - [ReadOriginalCharacterCreateResponse](#account-v1-ReadOriginalCharacterCreateResponse)
 
     - [CharacterCreateSourceService](#account-v1-CharacterCreateSourceService)
+
+- [account/v1/control_ui_authentication.proto](#account_v1_control_ui_authentication-proto)
+    - [AuthLoginRequest](#account-v1-AuthLoginRequest)
+    - [AuthLoginResponse](#account-v1-AuthLoginResponse)
+
+    - [AccountControlUiAuthLoginStatus](#account-v1-AccountControlUiAuthLoginStatus)
+    - [AccountControlUiCredentialTransportClass](#account-v1-AccountControlUiCredentialTransportClass)
+
+    - [AccountControlUiAuthenticationService](#account-v1-AccountControlUiAuthenticationService)
 
 - [account/v1/draft_commit_order_service.proto](#account_v1_draft_commit_order_service-proto)
     - [ReadHeldOriginalCommitOrderRequest](#account-v1-ReadHeldOriginalCommitOrderRequest)
@@ -206,6 +224,14 @@ for conventions on schema evolution and error handling. See each service's
     - [RefundPaymentResponse](#account-v1-RefundPaymentResponse)
 
     - [PaymentService](#account-v1-PaymentService)
+
+- [account/v1/player_admission_entitlement_read.proto](#account_v1_player_admission_entitlement_read-proto)
+    - [PlayerAdmissionEntitlementReadResponseBinding](#account-v1-PlayerAdmissionEntitlementReadResponseBinding)
+    - [PlayerAdmissionEntitlementReadSelectors](#account-v1-PlayerAdmissionEntitlementReadSelectors)
+    - [ReadPlayerAdmissionEntitlementRequest](#account-v1-ReadPlayerAdmissionEntitlementRequest)
+    - [ReadPlayerAdmissionEntitlementResponse](#account-v1-ReadPlayerAdmissionEntitlementResponse)
+
+    - [AccountPlayerAdmissionEntitlementReadService](#account-v1-AccountPlayerAdmissionEntitlementReadService)
 
 - [account/v1/publication_authorization_service.proto](#account_v1_publication_authorization_service-proto)
     - [ReadHeldPublicationAuthorizationRequest](#account-v1-ReadHeldPublicationAuthorizationRequest)
@@ -314,6 +340,30 @@ for conventions on schema evolution and error handling. See each service's
 
     - [AccountStartSessionWorldParticipationSettlementService](#account-v1-AccountStartSessionWorldParticipationSettlementService)
 
+- [account/v1/tenant_capacity_admission.proto](#account_v1_tenant_capacity_admission-proto)
+    - [CommitTenantCapacityAdmissionRequest](#account-v1-CommitTenantCapacityAdmissionRequest)
+    - [CommitTenantCapacityAdmissionResponse](#account-v1-CommitTenantCapacityAdmissionResponse)
+    - [TenantCapacityAdmissionAttempt](#account-v1-TenantCapacityAdmissionAttempt)
+    - [TenantCapacityAdmissionCommitment](#account-v1-TenantCapacityAdmissionCommitment)
+    - [TenantCapacityAdmissionRefusal](#account-v1-TenantCapacityAdmissionRefusal)
+    - [TenantCapacityPlayerContext](#account-v1-TenantCapacityPlayerContext)
+    - [TenantCapacityShape](#account-v1-TenantCapacityShape)
+    - [TenantCapacityWorldContext](#account-v1-TenantCapacityWorldContext)
+
+    - [TenantCapacityAdmissionRefusal.Code](#account-v1-TenantCapacityAdmissionRefusal-Code)
+
+- [account/v1/tenant_creation_authorization_service.proto](#account_v1_tenant_creation_authorization_service-proto)
+    - [ResolveCurrentTenantCreationAuthorizationRequest](#account-v1-ResolveCurrentTenantCreationAuthorizationRequest)
+    - [ResolveCurrentTenantCreationAuthorizationResponse](#account-v1-ResolveCurrentTenantCreationAuthorizationResponse)
+
+    - [TenantCreationCurrentAuthorizationReadService](#account-v1-TenantCreationCurrentAuthorizationReadService)
+
+- [account/v1/tenant_operation_entitlement_read.proto](#account_v1_tenant_operation_entitlement_read-proto)
+    - [ReadTenantOperationEntitlementRequest](#account-v1-ReadTenantOperationEntitlementRequest)
+    - [ReadTenantOperationEntitlementResponse](#account-v1-ReadTenantOperationEntitlementResponse)
+
+    - [AccountTenantOperationEntitlementReadService](#account-v1-AccountTenantOperationEntitlementReadService)
+
 - [account/v1/virtual_currency_service.proto](#account_v1_virtual_currency_service-proto)
     - [AddCurrencyRequest](#account-v1-AddCurrencyRequest)
     - [AddCurrencyResponse](#account-v1-AddCurrencyResponse)
@@ -323,6 +373,12 @@ for conventions on schema evolution and error handling. See each service's
     - [SpendCurrencyResponse](#account-v1-SpendCurrencyResponse)
 
     - [VirtualCurrencyService](#account-v1-VirtualCurrencyService)
+
+- [automation-scripting/v1/automation_runtime_family_catalog_read.proto](#automation-scripting_v1_automation_runtime_family_catalog_read-proto)
+    - [ReadAutomationRuntimeFamilyCatalogRequest](#automation_scripting-v1-ReadAutomationRuntimeFamilyCatalogRequest)
+    - [ReadAutomationRuntimeFamilyCatalogResponse](#automation_scripting-v1-ReadAutomationRuntimeFamilyCatalogResponse)
+
+    - [AutomationRuntimeFamilyCatalogReadService](#automation_scripting-v1-AutomationRuntimeFamilyCatalogReadService)
 
 - [automation-scripting/v1/automation_scripting_service.proto](#automation-scripting_v1_automation_scripting_service-proto)
     - [AddFormationMemberRequest](#automation_scripting-v1-AddFormationMemberRequest)
@@ -430,6 +486,13 @@ for conventions on schema evolution and error handling. See each service's
 
     - [AutomationSelectedSourceIntakeTerminalReadService](#automation_scripting-v1-AutomationSelectedSourceIntakeTerminalReadService)
 
+- [entity-management/v1/account_bootstrap_roster_read.proto](#entity-management_v1_account_bootstrap_roster_read-proto)
+    - [AccountBootstrapRosterActor](#entity_management-v1-AccountBootstrapRosterActor)
+    - [AccountBootstrapRosterReadRequest](#entity_management-v1-AccountBootstrapRosterReadRequest)
+    - [AccountBootstrapRosterReadResponse](#entity_management-v1-AccountBootstrapRosterReadResponse)
+
+    - [AccountBootstrapRosterReadService](#entity_management-v1-AccountBootstrapRosterReadService)
+
 - [entity-management/v1/canonical_gameplay_roster_recovery.proto](#entity-management_v1_canonical_gameplay_roster_recovery-proto)
     - [CanonicalGameplayRosterRecoveryRequest](#entity_management-v1-CanonicalGameplayRosterRecoveryRequest)
     - [CanonicalGameplayRosterRecoveryResponse](#entity_management-v1-CanonicalGameplayRosterRecoveryResponse)
@@ -498,6 +561,8 @@ for conventions on schema evolution and error handling. See each service's
     - [QueryActorStateResponse](#entity_management-v1-QueryActorStateResponse)
     - [QueryInventoryRequest](#entity_management-v1-QueryInventoryRequest)
     - [QueryInventoryResponse](#entity_management-v1-QueryInventoryResponse)
+    - [ReadRunOwnedFixtureGroundRequest](#entity_management-v1-ReadRunOwnedFixtureGroundRequest)
+    - [ReadRunOwnedFixtureGroundResponse](#entity_management-v1-ReadRunOwnedFixtureGroundResponse)
     - [RemoveEquipmentRequest](#entity_management-v1-RemoveEquipmentRequest)
     - [RemoveEquipmentResponse](#entity_management-v1-RemoveEquipmentResponse)
     - [RoomEntity](#entity_management-v1-RoomEntity)
@@ -523,6 +588,13 @@ for conventions on schema evolution and error handling. See each service's
 
     - [CanonicalGameplayRosterService](#entity_management-v1-CanonicalGameplayRosterService)
     - [EntityManagementService](#entity_management-v1-EntityManagementService)
+    - [RunOwnedFixtureLookEntityService](#entity_management-v1-RunOwnedFixtureLookEntityService)
+
+- [entity-management/v1/entity_runtime_family_catalog_read.proto](#entity-management_v1_entity_runtime_family_catalog_read-proto)
+    - [ReadEntityRuntimeFamilyCatalogRequest](#entity_management-v1-ReadEntityRuntimeFamilyCatalogRequest)
+    - [ReadEntityRuntimeFamilyCatalogResponse](#entity_management-v1-ReadEntityRuntimeFamilyCatalogResponse)
+
+    - [EntityRuntimeFamilyCatalogReadService](#entity_management-v1-EntityRuntimeFamilyCatalogReadService)
 
 - [entity-management/v1/entity_selected_source_intake_command.proto](#entity-management_v1_entity_selected_source_intake_command-proto)
     - [RetainSelectedEntitySourceRequest](#entity_management-v1-RetainSelectedEntitySourceRequest)
@@ -744,12 +816,20 @@ for conventions on schema evolution and error handling. See each service's
     - [GameDesignStartSessionTemplateAssociationReadService](#game_design-v1-GameDesignStartSessionTemplateAssociationReadService)
 
 - [game-design/v1/tenant_identity_service.proto](#game-design_v1_tenant_identity_service-proto)
+    - [CreateAuthorizedTenantRequest](#gamedesign-v1-CreateAuthorizedTenantRequest)
+    - [CreateAuthorizedTenantResponse](#gamedesign-v1-CreateAuthorizedTenantResponse)
     - [ResolveAuthoredWorldSourceRequest](#gamedesign-v1-ResolveAuthoredWorldSourceRequest)
     - [ResolveAuthoredWorldSourceResponse](#gamedesign-v1-ResolveAuthoredWorldSourceResponse)
     - [ResolveFreshTenantCreationRequest](#gamedesign-v1-ResolveFreshTenantCreationRequest)
     - [ResolveFreshTenantCreationResponse](#gamedesign-v1-ResolveFreshTenantCreationResponse)
+    - [ResolveOriginalTenantCreationOutcomeRequest](#gamedesign-v1-ResolveOriginalTenantCreationOutcomeRequest)
+    - [ResolveOriginalTenantCreationOutcomeResponse](#gamedesign-v1-ResolveOriginalTenantCreationOutcomeResponse)
+
+    - [OriginalTenantCreationOutcome](#gamedesign-v1-OriginalTenantCreationOutcome)
 
     - [AuthoredWorldSourceReadService](#gamedesign-v1-AuthoredWorldSourceReadService)
+    - [OriginalTenantCreationOutcomeReadService](#gamedesign-v1-OriginalTenantCreationOutcomeReadService)
+    - [TenantCreationService](#gamedesign-v1-TenantCreationService)
     - [TenantIdentityService](#gamedesign-v1-TenantIdentityService)
 
 - [game-logic/v1/game_logic_service.proto](#game-logic_v1_game_logic_service-proto)
@@ -769,6 +849,8 @@ for conventions on schema evolution and error handling. See each service's
     - [PickupVisibleRoomItemRequest](#game_logic-v1-PickupVisibleRoomItemRequest)
     - [PingRequest](#game_logic-v1-PingRequest)
     - [PingResponse](#game_logic-v1-PingResponse)
+    - [ResolveRunOwnedFixtureLookRequest](#game_logic-v1-ResolveRunOwnedFixtureLookRequest)
+    - [ResolveRunOwnedFixtureLookResponse](#game_logic-v1-ResolveRunOwnedFixtureLookResponse)
     - [RoomAmbientState](#game_logic-v1-RoomAmbientState)
     - [RoomEntity](#game_logic-v1-RoomEntity)
     - [SendCommunicationRequest](#game_logic-v1-SendCommunicationRequest)
@@ -783,6 +865,7 @@ for conventions on schema evolution and error handling. See each service's
     - [HazardState](#game_logic-v1-HazardState)
 
     - [GameLogicService](#game_logic-v1-GameLogicService)
+    - [RunOwnedFixtureLookService](#game_logic-v1-RunOwnedFixtureLookService)
 
 - [game-logic/v1/gameplay_rule_intake_service.proto](#game-logic_v1_gameplay_rule_intake_service-proto)
     - [RetainGameplayRuleIntakeRequest](#game_logic-v1-RetainGameplayRuleIntakeRequest)
@@ -811,6 +894,10 @@ for conventions on schema evolution and error handling. See each service's
     - [GetOriginalNewNeverAdmittedDecisionResponse](#game_session-v1-GetOriginalNewNeverAdmittedDecisionResponse)
     - [GetPublishedRealmAdmissionOwnerReadRequest](#game_session-v1-GetPublishedRealmAdmissionOwnerReadRequest)
     - [GetPublishedRealmAdmissionOwnerReadResponse](#game_session-v1-GetPublishedRealmAdmissionOwnerReadResponse)
+    - [ListVisiblePublicProductionAdmissionTargetsRequest](#game_session-v1-ListVisiblePublicProductionAdmissionTargetsRequest)
+    - [ListVisiblePublicProductionAdmissionTargetsResponse](#game_session-v1-ListVisiblePublicProductionAdmissionTargetsResponse)
+    - [ResolvePublishedRealmAdmissionTargetRequest](#game_session-v1-ResolvePublishedRealmAdmissionTargetRequest)
+    - [ResolvePublishedRealmAdmissionTargetResponse](#game_session-v1-ResolvePublishedRealmAdmissionTargetResponse)
 
     - [CanonicalGameplayAdmissionDecisionStatus](#game_session-v1-CanonicalGameplayAdmissionDecisionStatus)
     - [CanonicalGameplayAdmissionOriginKind](#game_session-v1-CanonicalGameplayAdmissionOriginKind)
@@ -854,6 +941,12 @@ for conventions on schema evolution and error handling. See each service's
     - [ReadOriginalCharacterCreateTargetProtectionRequest](#game_session-v1-ReadOriginalCharacterCreateTargetProtectionRequest)
 
     - [CharacterCreateTargetService](#game_session-v1-CharacterCreateTargetService)
+
+- [game-session/v1/current_private_playtest_lifecycle_read.proto](#game-session_v1_current_private_playtest_lifecycle_read-proto)
+    - [ReadCurrentPrivatePlaytestLifecycleRequest](#game_session-v1-ReadCurrentPrivatePlaytestLifecycleRequest)
+    - [ReadCurrentPrivatePlaytestLifecycleResponse](#game_session-v1-ReadCurrentPrivatePlaytestLifecycleResponse)
+
+    - [CurrentPrivatePlaytestLifecycleReadService](#game_session-v1-CurrentPrivatePlaytestLifecycleReadService)
 
 - [game-session/v1/game_session_service.proto](#game-session_v1_game_session_service-proto)
     - [AccountPresenceEntry](#game_session-v1-AccountPresenceEntry)
@@ -993,6 +1086,13 @@ for conventions on schema evolution and error handling. See each service's
 
     - [GameSessionJwtReadinessReceiverService](#game_session-v1-GameSessionJwtReadinessReceiverService)
 
+- [game-session/v1/original_new_capacity_execution_read.proto](#game-session_v1_original_new_capacity_execution_read-proto)
+    - [ReadHistoricalOriginalNewCapacityFinalResponse](#game_session-v1-ReadHistoricalOriginalNewCapacityFinalResponse)
+    - [ReadOriginalNewCapacityExecutionRequest](#game_session-v1-ReadOriginalNewCapacityExecutionRequest)
+    - [ReadOriginalNewCapacityExecutionResponse](#game_session-v1-ReadOriginalNewCapacityExecutionResponse)
+
+    - [OriginalNewCapacityExecutionReadService](#game_session-v1-OriginalNewCapacityExecutionReadService)
+
 - [game-session/v1/original_new_final_admission_read.proto](#game-session_v1_original_new_final_admission_read-proto)
     - [ReadOriginalNewFinalAdmissionRequest](#game_session-v1-ReadOriginalNewFinalAdmissionRequest)
     - [ReadOriginalNewFinalAdmissionResponse](#game_session-v1-ReadOriginalNewFinalAdmissionResponse)
@@ -1004,6 +1104,26 @@ for conventions on schema evolution and error handling. See each service's
     - [ReadOriginalStartSessionCurrentAttemptResponse](#game_session-v1-ReadOriginalStartSessionCurrentAttemptResponse)
 
     - [OriginalStartSessionCurrentAttemptReadService](#game_session-v1-OriginalStartSessionCurrentAttemptReadService)
+
+- [game-session/v1/private_preparation_protection.proto](#game-session_v1_private_preparation_protection-proto)
+    - [AcquirePrivatePreparationProtectionRequest](#game_session-v1-AcquirePrivatePreparationProtectionRequest)
+    - [PrivatePreparationProtectionResponse](#game_session-v1-PrivatePreparationProtectionResponse)
+    - [ReadCurrentPrivatePreparationProtectionRequest](#game_session-v1-ReadCurrentPrivatePreparationProtectionRequest)
+
+    - [PrivatePreparationProtectionService](#game_session-v1-PrivatePreparationProtectionService)
+
+- [game-session/v1/private_world_preparation_read.proto](#game-session_v1_private_world_preparation_read-proto)
+    - [ReadPrivateWorldPreparationBuildResponse](#game_session-v1-ReadPrivateWorldPreparationBuildResponse)
+    - [ReadPrivateWorldPreparationRequest](#game_session-v1-ReadPrivateWorldPreparationRequest)
+    - [ReadPrivateWorldPreparationResponse](#game_session-v1-ReadPrivateWorldPreparationResponse)
+
+    - [PrivateWorldPreparationReadService](#game_session-v1-PrivateWorldPreparationReadService)
+
+- [game-session/v1/run_owned_fixture_initial_admission_owner_read.proto](#game-session_v1_run_owned_fixture_initial_admission_owner_read-proto)
+    - [ReadRunOwnedFixtureInitialAdmissionOwnerRequest](#game_session-v1-ReadRunOwnedFixtureInitialAdmissionOwnerRequest)
+    - [ReadRunOwnedFixtureInitialAdmissionOwnerResponse](#game_session-v1-ReadRunOwnedFixtureInitialAdmissionOwnerResponse)
+
+    - [RunOwnedFixtureInitialAdmissionOwnerReadService](#game_session-v1-RunOwnedFixtureInitialAdmissionOwnerReadService)
 
 - [logging-admin/v1/logging_admin_service.proto](#logging-admin_v1_logging_admin_service-proto)
     - [ApplyModerationActionRequest](#logging_admin-v1-ApplyModerationActionRequest)
@@ -1088,6 +1208,12 @@ for conventions on schema evolution and error handling. See each service's
     - [FriendRosterFilter](#social_groups-v1-FriendRosterFilter)
 
     - [SocialGroupsService](#social_groups-v1-SocialGroupsService)
+
+- [social-groups/v1/social_runtime_family_catalog_read.proto](#social-groups_v1_social_runtime_family_catalog_read-proto)
+    - [ReadSocialRuntimeFamilyCatalogRequest](#social_groups-v1-ReadSocialRuntimeFamilyCatalogRequest)
+    - [ReadSocialRuntimeFamilyCatalogResponse](#social_groups-v1-ReadSocialRuntimeFamilyCatalogResponse)
+
+    - [SocialRuntimeFamilyCatalogReadService](#social_groups-v1-SocialRuntimeFamilyCatalogReadService)
 
 - [spring-cloud-gateway/v1/gateway_management_service.proto](#spring-cloud-gateway_v1_gateway_management_service-proto)
     - [PingRequest](#gateway-v1-PingRequest)
@@ -1188,6 +1314,8 @@ for conventions on schema evolution and error handling. See each service's
     - [WorldCanonicalInstanceActivationService](#world_management-v1-WorldCanonicalInstanceActivationService)
 
 - [world-management/v1/world_canonical_instance_lifecycle_read.proto](#world-management_v1_world_canonical_instance_lifecycle_read-proto)
+    - [ReadRunOwnedFixtureStartRoomRequest](#world_management-v1-ReadRunOwnedFixtureStartRoomRequest)
+    - [ReadRunOwnedFixtureStartRoomResponse](#world_management-v1-ReadRunOwnedFixtureStartRoomResponse)
     - [ReadWorldCanonicalInstanceLifecycleRequest](#world_management-v1-ReadWorldCanonicalInstanceLifecycleRequest)
     - [ReadWorldCanonicalInstanceLifecycleResponse](#world_management-v1-ReadWorldCanonicalInstanceLifecycleResponse)
 
@@ -1236,6 +1364,8 @@ for conventions on schema evolution and error handling. See each service's
     - [ReadAuthoredWorldSourceIntakeByIdResponse](#world_management-v1-ReadAuthoredWorldSourceIntakeByIdResponse)
     - [ReadAuthoredWorldSourceIntakeRequest](#world_management-v1-ReadAuthoredWorldSourceIntakeRequest)
     - [ReadAuthoredWorldSourceIntakeResponse](#world_management-v1-ReadAuthoredWorldSourceIntakeResponse)
+    - [ReadRunOwnedFixtureLookRoomRequest](#world_management-v1-ReadRunOwnedFixtureLookRoomRequest)
+    - [ReadRunOwnedFixtureLookRoomResponse](#world_management-v1-ReadRunOwnedFixtureLookRoomResponse)
     - [ReadWorldStartSessionExecutionTerminalRequest](#world_management-v1-ReadWorldStartSessionExecutionTerminalRequest)
     - [ReadWorldStartSessionExecutionTerminalResponse](#world_management-v1-ReadWorldStartSessionExecutionTerminalResponse)
     - [RegionDesignMutation](#world_management-v1-RegionDesignMutation)
@@ -1275,6 +1405,7 @@ for conventions on schema evolution and error handling. See each service's
     - [WorldInboundSourceFamily](#world_management-v1-WorldInboundSourceFamily)
     - [WorldInstanceLifecycleStatus](#world_management-v1-WorldInstanceLifecycleStatus)
 
+    - [RunOwnedFixtureLookWorldService](#world_management-v1-RunOwnedFixtureLookWorldService)
     - [WorldAuthoredSourceIntakeService](#world_management-v1-WorldAuthoredSourceIntakeService)
     - [WorldCanonicalInstancePreparationService](#world_management-v1-WorldCanonicalInstancePreparationService)
     - [WorldManagementService](#world_management-v1-WorldManagementService)
@@ -1302,6 +1433,12 @@ for conventions on schema evolution and error handling. See each service's
     - [WorldPublishedStartLocationAffectedTuple](#world_management-v1-WorldPublishedStartLocationAffectedTuple)
 
     - [WorldPublishedStartLocationReadService](#world_management-v1-WorldPublishedStartLocationReadService)
+
+- [world-management/v1/world_runtime_family_catalog_read.proto](#world-management_v1_world_runtime_family_catalog_read-proto)
+    - [ReadWorldRuntimeFamilyCatalogRequest](#world_management-v1-ReadWorldRuntimeFamilyCatalogRequest)
+    - [ReadWorldRuntimeFamilyCatalogResponse](#world_management-v1-ReadWorldRuntimeFamilyCatalogResponse)
+
+    - [WorldRuntimeFamilyCatalogReadService](#world_management-v1-WorldRuntimeFamilyCatalogReadService)
 
 - [world-management/v1/world_selected_draft_publication_freeze_service.proto](#world-management_v1_world_selected_draft_publication_freeze_service-proto)
     - [BeginVersionPublicationFreezeRequest](#world_management-v1-BeginVersionPublicationFreezeRequest)
@@ -1629,6 +1766,103 @@ Game Session certificate is the workload identity; no generic service JWT is acc
 | AbortGameplayAdmissionLease | [AbortGameplayAdmissionLeaseRequest](#account-v1-AbortGameplayAdmissionLeaseRequest) | [AccountGameplayAdmissionLeaseResponse](#account-v1-AccountGameplayAdmissionLeaseResponse) |  |
 | IssueOriginalNewGameplayCredential | [IssueOriginalNewGameplayCredentialRequest](#account-v1-IssueOriginalNewGameplayCredentialRequest) | [AccountGameplayAdmissionLeaseResponse](#account-v1-AccountGameplayAdmissionLeaseResponse) | Issues the first purpose-bound credential only after Account&#39;s original COMMITTED lease and independent original-ACK receipt have been re-read. The returned handle is internal to Game Session and is never forwarded to a player client. |
 | ConfirmOriginalNewGameplayAdmission | [ConfirmOriginalNewGameplayAdmissionRequest](#account-v1-ConfirmOriginalNewGameplayAdmissionRequest) | [OriginalNewAdmissionConfirmationResponse](#account-v1-OriginalNewAdmissionConfirmationResponse) | Requests exact recovery of the final Account confirmation. Account performs the protected original-final-admission read itself; this request carries no proof or timestamps. |
+
+
+
+
+
+<a name="account_v1_account_public_jwks_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## account/v1/account_public_jwks_read.proto
+
+
+
+<a name="account-v1-AccountPublicJwksSourceIdentity"></a>
+
+### AccountPublicJwksSourceIdentity
+Exact identity derived by Account&#39;s protected receipt-backed current publication source.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| environment_id | [string](#string) |  |  |
+| cluster_id | [string](#string) |  |  |
+| cluster_incarnation_uid | [string](#string) |  |  |
+| namespace | [string](#string) |  |  |
+| namespace_uid | [string](#string) |  |  |
+| config_map_uid | [string](#string) |  |  |
+| binding_revision | [string](#string) |  |  |
+| api_server_origin | [string](#string) |  |  |
+| serving_ca_sha256 | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetCurrentAccountPublicJwksRequest"></a>
+
+### GetCurrentAccountPublicJwksRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetCurrentAccountPublicJwksResponse"></a>
+
+### GetCurrentAccountPublicJwksResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| source_identity | [AccountPublicJwksSourceIdentity](#account-v1-AccountPublicJwksSourceIdentity) |  |  |
+| public_jwks | [bytes](#bytes) |  |  |
+| disposition | [GetCurrentAccountPublicJwksResponse.Disposition](#account-v1-GetCurrentAccountPublicJwksResponse-Disposition) |  |  |
+| committed_recovery_eligible | [bool](#bool) | optional | Presence is mandatory on SNAPSHOT and forbidden on PREPARED_DENY. |
+
+
+
+
+
+
+
+
+<a name="account-v1-GetCurrentAccountPublicJwksResponse-Disposition"></a>
+
+### GetCurrentAccountPublicJwksResponse.Disposition
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| UNSPECIFIED | 0 |  |
+| SNAPSHOT | 1 |  |
+| PREPARED_DENY | 2 |  |
+
+
+
+
+
+
+
+<a name="account-v1-AccountPublicJwksReadService"></a>
+
+### AccountPublicJwksReadService
+Private, read-only same-namespace Game Session workload boundary. No key selector, signing,
+registry, rotation/readiness-plan, or admission authority is accepted or returned.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetCurrentPublicJwks | [GetCurrentAccountPublicJwksRequest](#account-v1-GetCurrentAccountPublicJwksRequest) | [GetCurrentAccountPublicJwksResponse](#account-v1-GetCurrentAccountPublicJwksResponse) |  |
 
 
 
@@ -2113,6 +2347,7 @@ exact catalog/pointer evidence. Account re-resolves the target before issuance.
 | membership_authority_generation | [uint64](#uint64) |  |  |
 | replayed | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| gameplay_admission_allowed | [bool](#bool) |  | Exact current membership flag. A successful membership receipt may be non-admitting; this field and success never replace the separate current gameplay admission checks. |
 
 
 
@@ -2383,6 +2618,8 @@ Basic ping response containing a greeting and optional error details.
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| account_id | [string](#string) |  | Successful writes echo the exact persisted Account UUID and tenant selector. |
+| tenant_id | [string](#string) |  |  |
 
 
 
@@ -2441,14 +2678,15 @@ Basic ping response containing a greeting and optional error details.
 <a name="account-v1-GameplayLoginTransportClass"></a>
 
 ### GameplayLoginTransportClass
-Credential-bearing LOGIN accepts only the authenticated TCP Proxy branch.
-FIRST_PARTY_WEB remains bootstrap-backed and cannot present credentials here.
+Credential-bearing LOGIN accepts the authenticated TCP Proxy branch and the
+private run-owned WebSocket proof transport. FIRST_PARTY_WEB uses bootstrap.
 
 | Name | Number | Description |
 | ---- | ------ | ----------- |
 | GAMEPLAY_LOGIN_TRANSPORT_CLASS_UNSPECIFIED | 0 |  |
 | GAMEPLAY_LOGIN_TRANSPORT_CLASS_TRUSTED_TCP_PROXY | 1 |  |
 | GAMEPLAY_LOGIN_TRANSPORT_CLASS_FIRST_PARTY_WEB | 2 |  |
+| GAMEPLAY_LOGIN_TRANSPORT_CLASS_RUN_OWNED_FIXTURE_WEBSOCKET | 3 |  |
 
 
 
@@ -2490,6 +2728,7 @@ FIRST_PARTY_WEB remains bootstrap-backed and cannot present credentials here.
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
+| CommitTenantCapacityAdmission | [CommitTenantCapacityAdmissionRequest](#account-v1-CommitTenantCapacityAdmissionRequest) | [CommitTenantCapacityAdmissionResponse](#account-v1-CommitTenantCapacityAdmissionResponse) | Strict capacity owner. Available only through an explicitly composed bounded mTLS receiver. |
 | Ping | [PingRequest](#account-v1-PingRequest) | [PingResponse](#account-v1-PingResponse) |  |
 | CreateAccount | [CreateAccountRequest](#account-v1-CreateAccountRequest) | [CreateAccountResponse](#account-v1-CreateAccountResponse) |  |
 | Authenticate | [AuthenticateRequest](#account-v1-AuthenticateRequest) | [AuthenticateResponse](#account-v1-AuthenticateResponse) |  |
@@ -2504,13 +2743,13 @@ FIRST_PARTY_WEB remains bootstrap-backed and cannot present credentials here.
 | GetProfile | [GetProfileRequest](#account-v1-GetProfileRequest) | [GetProfileResponse](#account-v1-GetProfileResponse) |  |
 | ListPresenceVisibilityPolicies | [ListPresenceVisibilityPoliciesRequest](#account-v1-ListPresenceVisibilityPoliciesRequest) | [ListPresenceVisibilityPoliciesResponse](#account-v1-ListPresenceVisibilityPoliciesResponse) |  |
 | UpdateProfile | [UpdateProfileRequest](#account-v1-UpdateProfileRequest) | [UpdateProfileResponse](#account-v1-UpdateProfileResponse) |  |
-| ExportAccount | [ExportAccountRequest](#account-v1-ExportAccountRequest) | [ExportAccountResponse](#account-v1-ExportAccountResponse) |  |
-| ExportTenantData | [ExportTenantDataRequest](#account-v1-ExportTenantDataRequest) | [ExportTenantDataResponse](#account-v1-ExportTenantDataResponse) |  |
+| ExportAccount | [ExportAccountRequest](#account-v1-ExportAccountRequest) | [ExportAccountResponse](#account-v1-ExportAccountResponse) | Deferred: non-OK FAILED_PRECONDITION with ErrorDetail status trailers; no response. |
+| ExportTenantData | [ExportTenantDataRequest](#account-v1-ExportTenantDataRequest) | [ExportTenantDataResponse](#account-v1-ExportTenantDataResponse) | Deferred: non-OK FAILED_PRECONDITION with ErrorDetail status trailers; no response. |
 | DeleteAccount | [DeleteAccountRequest](#account-v1-DeleteAccountRequest) | [DeleteAccountResponse](#account-v1-DeleteAccountResponse) |  |
 | RequestPasswordReset | [RequestPasswordResetRequest](#account-v1-RequestPasswordResetRequest) | [RequestPasswordResetResponse](#account-v1-RequestPasswordResetResponse) |  |
 | CompletePasswordReset | [CompletePasswordResetRequest](#account-v1-CompletePasswordResetRequest) | [CompletePasswordResetResponse](#account-v1-CompletePasswordResetResponse) |  |
-| LinkExternalAccount | [LinkExternalAccountRequest](#account-v1-LinkExternalAccountRequest) | [LinkExternalAccountResponse](#account-v1-LinkExternalAccountResponse) |  |
-| RequestEmailVerification | [RequestEmailVerificationRequest](#account-v1-RequestEmailVerificationRequest) | [RequestEmailVerificationResponse](#account-v1-RequestEmailVerificationResponse) |  |
+| LinkExternalAccount | [LinkExternalAccountRequest](#account-v1-LinkExternalAccountRequest) | [LinkExternalAccountResponse](#account-v1-LinkExternalAccountResponse) | Deferred: non-OK FAILED_PRECONDITION with ErrorDetail status trailers; no response. |
+| RequestEmailVerification | [RequestEmailVerificationRequest](#account-v1-RequestEmailVerificationRequest) | [RequestEmailVerificationResponse](#account-v1-RequestEmailVerificationResponse) | Deferred: non-OK FAILED_PRECONDITION with ErrorDetail status trailers; no response. |
 | VerifyEmail | [VerifyEmailRequest](#account-v1-VerifyEmailRequest) | [VerifyEmailResponse](#account-v1-VerifyEmailResponse) |  |
 
 
@@ -2741,6 +2980,104 @@ This API supplies original Account source readback, never Entity terminal/releas
 | ----------- | ------------ | ------------- | ------------|
 | ReadOriginalCharacterCreate | [ReadOriginalCharacterCreateRequest](#account-v1-ReadOriginalCharacterCreateRequest) | [ReadOriginalCharacterCreateResponse](#account-v1-ReadOriginalCharacterCreateResponse) |  |
 | ReadOriginalCharacterCreateProtection | [ReadOriginalCharacterCreateProtectionRequest](#account-v1-ReadOriginalCharacterCreateProtectionRequest) | [ReadOriginalCharacterCreateProtectionResponse](#account-v1-ReadOriginalCharacterCreateProtectionResponse) |  |
+
+
+
+
+
+<a name="account_v1_control_ui_authentication-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## account/v1/control_ui_authentication.proto
+
+
+
+<a name="account-v1-AuthLoginRequest"></a>
+
+### AuthLoginRequest
+Repeated scalar members intentionally let the shared closed codec reject duplicate wire fields.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [uint32](#uint32) | repeated |  |
+| target_namespace | [string](#string) | repeated |  |
+| request_id | [string](#string) | repeated |  |
+| caller_context_id | [string](#string) | repeated |  |
+| email | [string](#string) | repeated |  |
+| secret | [string](#string) | repeated | Transient primary credential. Never persist, log, echo, or include in an error. |
+| canonical_client_address | [string](#string) | repeated | Gateway-derived source, accepted only from the authenticated Gateway workload. |
+| transport_class | [AccountControlUiCredentialTransportClass](#account-v1-AccountControlUiCredentialTransportClass) | repeated |  |
+
+
+
+
+
+
+<a name="account-v1-AuthLoginResponse"></a>
+
+### AuthLoginResponse
+Account echoes stable request context, never the primary credential.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [uint32](#uint32) | repeated |  |
+| target_namespace | [string](#string) | repeated |  |
+| request_id | [string](#string) | repeated |  |
+| caller_context_id | [string](#string) | repeated |  |
+| status | [AccountControlUiAuthLoginStatus](#account-v1-AccountControlUiAuthLoginStatus) | repeated |  |
+| account_id | [string](#string) | repeated | Present exactly once only for SUCCESS. |
+| auth_token | [string](#string) | repeated | Compact Control-UI JWT. Present exactly once only for SUCCESS. |
+| expires_at_epoch_seconds | [int64](#int64) | repeated | Whole UTC epoch seconds. Present exactly once only for SUCCESS. |
+| retry_after_millis | [int64](#int64) | repeated | Positive exact milliseconds, required for RETRY_LATER, optional for ABUSE_UNAVAILABLE only. |
+
+
+
+
+
+
+
+
+<a name="account-v1-AccountControlUiAuthLoginStatus"></a>
+
+### AccountControlUiAuthLoginStatus
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_UNSPECIFIED | 0 |  |
+| ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_SUCCESS | 1 |  |
+| ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_DENIED | 2 |  |
+| ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_RETRY_LATER | 3 |  |
+| ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_ABUSE_UNAVAILABLE | 4 |  |
+
+
+
+<a name="account-v1-AccountControlUiCredentialTransportClass"></a>
+
+### AccountControlUiCredentialTransportClass
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACCOUNT_CONTROL_UI_CREDENTIAL_TRANSPORT_CLASS_UNSPECIFIED | 0 |  |
+| ACCOUNT_CONTROL_UI_CREDENTIAL_TRANSPORT_CLASS_HTTP | 1 |  |
+
+
+
+
+
+
+
+<a name="account-v1-AccountControlUiAuthenticationService"></a>
+
+### AccountControlUiAuthenticationService
+Workload-authenticated Control-UI login handoff from Gateway to Account.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| AuthLogin | [AuthLoginRequest](#account-v1-AuthLoginRequest) | [AuthLoginResponse](#account-v1-AuthLoginResponse) |  |
 
 
 
@@ -4032,6 +4369,99 @@ Unregistered original creator producer. Environment authority is Account-owned.
 
 
 
+<a name="account_v1_player_admission_entitlement_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## account/v1/player_admission_entitlement_read.proto
+
+
+
+<a name="account-v1-PlayerAdmissionEntitlementReadResponseBinding"></a>
+
+### PlayerAdmissionEntitlementReadResponseBinding
+Response comparison binding, independent of the credential-bearing version 1 request.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [uint32](#uint32) | repeated |  |
+| target | [game_session.v1.ResolvePublishedRealmAdmissionTargetRequest](#game_session-v1-ResolvePublishedRealmAdmissionTargetRequest) | repeated |  |
+
+
+
+
+
+
+<a name="account-v1-PlayerAdmissionEntitlementReadSelectors"></a>
+
+### PlayerAdmissionEntitlementReadSelectors
+Comparison selectors only. Account verifies the credential subject and retained scope, and
+selects the current paid/demo source itself. Repeated members each require exactly one value.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [uint32](#uint32) | repeated |  |
+| target | [game_session.v1.ResolvePublishedRealmAdmissionTargetRequest](#game_session-v1-ResolvePublishedRealmAdmissionTargetRequest) | repeated |  |
+| connect_scope_id | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="account-v1-ReadPlayerAdmissionEntitlementRequest"></a>
+
+### ReadPlayerAdmissionEntitlementRequest
+Credential travels only on this exact trusted mTLS method and must never be logged or persisted.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| selectors | [PlayerAdmissionEntitlementReadSelectors](#account-v1-PlayerAdmissionEntitlementReadSelectors) | repeated |  |
+| initial_login_jwt | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="account-v1-ReadPlayerAdmissionEntitlementResponse"></a>
+
+### ReadPlayerAdmissionEntitlementResponse
+Evidence is exact bounded RFC 8785 UTF-8 and carries the verified scope token hash.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_evidence | [bytes](#bytes) | repeated |  |
+| binding | [PlayerAdmissionEntitlementReadResponseBinding](#account-v1-PlayerAdmissionEntitlementReadResponseBinding) | repeated |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="account-v1-AccountPlayerAdmissionEntitlementReadService"></a>
+
+### AccountPlayerAdmissionEntitlementReadService
+Manually composed Account read for exact same-namespace Game Session over workload mTLS.
+This point-in-time PLAYER_ADMISSION value supplies neither capacity nor a later World hold.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadPlayerAdmissionEntitlement | [ReadPlayerAdmissionEntitlementRequest](#account-v1-ReadPlayerAdmissionEntitlementRequest) | [ReadPlayerAdmissionEntitlementResponse](#account-v1-ReadPlayerAdmissionEntitlementResponse) |  |
+
+
+
+
+
 <a name="account_v1_publication_authorization_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -5247,6 +5677,338 @@ lookup-only: it supplies no terminal result, currentness claim, or release instr
 
 
 
+<a name="account_v1_tenant_capacity_admission-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## account/v1/tenant_capacity_admission.proto
+
+
+
+<a name="account-v1-CommitTenantCapacityAdmissionRequest"></a>
+
+### CommitTenantCapacityAdmissionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| attempt | [TenantCapacityAdmissionAttempt](#account-v1-TenantCapacityAdmissionAttempt) | repeated |  |
+| capacity_delta | [int64](#int64) | optional | Mandatory presence. Proto JSON is a canonical base-10 decimal string, not a JSON number. |
+
+
+
+
+
+
+<a name="account-v1-CommitTenantCapacityAdmissionResponse"></a>
+
+### CommitTenantCapacityAdmissionResponse
+Exactly one commitment or one produced domain refusal. Transport/pre-domain failure is non-OK.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| commitment | [TenantCapacityAdmissionCommitment](#account-v1-TenantCapacityAdmissionCommitment) | repeated |  |
+| refusal | [TenantCapacityAdmissionRefusal](#account-v1-TenantCapacityAdmissionRefusal) | repeated |  |
+
+
+
+
+
+
+<a name="account-v1-TenantCapacityAdmissionAttempt"></a>
+
+### TenantCapacityAdmissionAttempt
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) | repeated |  |
+| request_id | [string](#string) | repeated |  |
+| admission_id | [string](#string) | repeated |  |
+| admission_attempt_id | [string](#string) | repeated |  |
+| capacity_rearm_fence | [int64](#int64) | repeated |  |
+| target_namespace | [string](#string) | repeated |  |
+| player_context | [TenantCapacityPlayerContext](#account-v1-TenantCapacityPlayerContext) | repeated | Exactly one typed alternative, never a caller-supplied workload identity. |
+| world_context | [TenantCapacityWorldContext](#account-v1-TenantCapacityWorldContext) | repeated |  |
+| operation | [string](#string) | repeated |  |
+| prior_shape | [TenantCapacityShape](#account-v1-TenantCapacityShape) | repeated |  |
+| requested_shape | [TenantCapacityShape](#account-v1-TenantCapacityShape) | repeated |  |
+| canonical_account_evidence | [bytes](#bytes) | repeated | Exact existing Account canonical bundle; content parsing cannot register its authority. |
+| mutation_digest | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="account-v1-TenantCapacityAdmissionCommitment"></a>
+
+### TenantCapacityAdmissionCommitment
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) | repeated |  |
+| request_id | [string](#string) | repeated |  |
+| admission_id | [string](#string) | repeated |  |
+| admission_attempt_id | [string](#string) | repeated |  |
+| capacity_rearm_fence | [int64](#int64) | repeated |  |
+| mutation_digest | [string](#string) | repeated |  |
+| reservation_id | [string](#string) | repeated |  |
+| reservation_fence | [int64](#int64) | repeated |  |
+| expires_at | [string](#string) | repeated |  |
+| state | [string](#string) | repeated |  |
+| snapshot_identity | [string](#string) | repeated |  |
+| evaluation_identity | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="account-v1-TenantCapacityAdmissionRefusal"></a>
+
+### TenantCapacityAdmissionRefusal
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) | repeated |  |
+| request_id | [string](#string) | repeated |  |
+| admission_id | [string](#string) | repeated |  |
+| admission_attempt_id | [string](#string) | repeated |  |
+| capacity_rearm_fence | [int64](#int64) | repeated |  |
+| mutation_digest | [string](#string) | repeated |  |
+| snapshot_identity | [string](#string) | repeated |  |
+| evaluation_identity | [string](#string) | repeated |  |
+| code | [TenantCapacityAdmissionRefusal.Code](#account-v1-TenantCapacityAdmissionRefusal-Code) | repeated |  |
+| durable_denial_id | [string](#string) | repeated | Zero or one canonical UUID. Only an irrevocable Account quota denial can carry this receipt. |
+
+
+
+
+
+
+<a name="account-v1-TenantCapacityPlayerContext"></a>
+
+### TenantCapacityPlayerContext
+Exact PlayerExecutionContext content with strict singleton multiplicity preserved on this wire.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| account_id | [string](#string) | repeated |  |
+| tenant_id | [string](#string) | repeated |  |
+| playable_state_namespace_id | [string](#string) | repeated |  |
+| game_instance_id | [string](#string) | repeated |  |
+| character_id | [string](#string) | repeated |  |
+| session_id | [string](#string) | repeated |  |
+| realm_id | [string](#string) | repeated |  |
+| request_id | [string](#string) | repeated |  |
+| playable_state_scope | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="account-v1-TenantCapacityShape"></a>
+
+### TenantCapacityShape
+Singleton repeated envelopes preserve multiplicity for the strict bounded codec.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| active_sessions | [int64](#int64) | repeated |  |
+| concurrent_game_instances | [int64](#int64) | repeated |  |
+| storage_bytes | [int64](#int64) | repeated |  |
+
+
+
+
+
+
+<a name="account-v1-TenantCapacityWorldContext"></a>
+
+### TenantCapacityWorldContext
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) | repeated |  |
+| operation_id | [string](#string) | repeated |  |
+| lifecycle_id | [string](#string) | repeated |  |
+| game_instance_id | [string](#string) | repeated |  |
+| owner_id | [string](#string) | repeated |  |
+| owner_fence | [int64](#int64) | repeated |  |
+
+
+
+
+
+
+
+
+<a name="account-v1-TenantCapacityAdmissionRefusal-Code"></a>
+
+### TenantCapacityAdmissionRefusal.Code
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| CODE_UNSPECIFIED | 0 |  |
+| TENANT_BILLING_BLOCKED | 1 |  |
+| CAPACITY_QUOTA_EXCEEDED | 2 |  |
+
+
+
+
+
+
+
+
+
+
+<a name="account_v1_tenant_creation_authorization_service-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## account/v1/tenant_creation_authorization_service.proto
+
+
+
+<a name="account-v1-ResolveCurrentTenantCreationAuthorizationRequest"></a>
+
+### ResolveCurrentTenantCreationAuthorizationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| read_request_id | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| creation_request_id | [string](#string) |  |  |
+| account_authorization_operation_id | [string](#string) |  |  |
+| initiating_account_id | [string](#string) |  |  |
+| creation_request_digest | [string](#string) |  |  |
+| account_authorization_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-ResolveCurrentTenantCreationAuthorizationResponse"></a>
+
+### ResolveCurrentTenantCreationAuthorizationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| read_request_id | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| creation_request_id | [string](#string) |  |  |
+| account_authorization_operation_id | [string](#string) |  |  |
+| initiating_account_id | [string](#string) |  |  |
+| creation_request_digest | [string](#string) |  |  |
+| account_authorization_digest | [string](#string) |  |  |
+| valid_before_epoch_millis | [int64](#int64) |  |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="account-v1-TenantCreationCurrentAuthorizationReadService"></a>
+
+### TenantCreationCurrentAuthorizationReadService
+Private Account-owned current-authority read for one exact original tenant-creation binding.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ResolveCurrentTenantCreationAuthorization | [ResolveCurrentTenantCreationAuthorizationRequest](#account-v1-ResolveCurrentTenantCreationAuthorizationRequest) | [ResolveCurrentTenantCreationAuthorizationResponse](#account-v1-ResolveCurrentTenantCreationAuthorizationResponse) |  |
+
+
+
+
+
+<a name="account_v1_tenant_operation_entitlement_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## account/v1/tenant_operation_entitlement_read.proto
+
+
+
+<a name="account-v1-ReadTenantOperationEntitlementRequest"></a>
+
+### ReadTenantOperationEntitlementRequest
+Repeated transport members must each have exactly one value. This preserves duplicate scalar
+occurrences for closed-schema validation instead of protobuf&#39;s singular last-value-wins parsing.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) | repeated |  |
+| target_namespace | [string](#string) | repeated |  |
+| tenant_id | [string](#string) | repeated |  |
+| request_id | [string](#string) | repeated |  |
+| source_kind | [string](#string) | repeated | Exactly PAID_HOSTING or NON_PAID_DEMO. No default, inference, or fallback. |
+
+
+
+
+
+
+<a name="account-v1-ReadTenantOperationEntitlementResponse"></a>
+
+### ReadTenantOperationEntitlementResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request | [ReadTenantOperationEntitlementRequest](#account-v1-ReadTenantOperationEntitlementRequest) | repeated |  |
+| canonical_evidence | [bytes](#bytes) | repeated | Exactly one existing strict canonical TENANT_OPERATION value, bounded to 64 KiB. Its callerWorkload is derived from the authenticated peer, never request data. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="account-v1-AccountTenantOperationEntitlementReadService"></a>
+
+### AccountTenantOperationEntitlementReadService
+Private Account owner read for exact same-namespace World Management over workload mTLS.
+Explicit eligibility source selection creates neither capacity nor player admission authority.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadTenantOperationEntitlement | [ReadTenantOperationEntitlementRequest](#account-v1-ReadTenantOperationEntitlementRequest) | [ReadTenantOperationEntitlementResponse](#account-v1-ReadTenantOperationEntitlementResponse) |  |
+
+
+
+
+
 <a name="account_v1_virtual_currency_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -5364,13 +6126,71 @@ lookup-only: it supplies no terminal result, currentness claim, or release instr
 <a name="account-v1-VirtualCurrencyService"></a>
 
 ### VirtualCurrencyService
-
+These deferred methods currently fail before domain execution with non-OK
+FAILED_PRECONDITION and bounded ErrorDetail status trailers, without a response.
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | GetBalance | [GetBalanceRequest](#account-v1-GetBalanceRequest) | [GetBalanceResponse](#account-v1-GetBalanceResponse) |  |
 | AddCurrency | [AddCurrencyRequest](#account-v1-AddCurrencyRequest) | [AddCurrencyResponse](#account-v1-AddCurrencyResponse) |  |
 | SpendCurrency | [SpendCurrencyRequest](#account-v1-SpendCurrencyRequest) | [SpendCurrencyResponse](#account-v1-SpendCurrencyResponse) |  |
+
+
+
+
+
+<a name="automation-scripting_v1_automation_runtime_family_catalog_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## automation-scripting/v1/automation_runtime_family_catalog_read.proto
+
+
+
+<a name="automation_scripting-v1-ReadAutomationRuntimeFamilyCatalogRequest"></a>
+
+### ReadAutomationRuntimeFamilyCatalogRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_request_bytes | [bytes](#bytes) | repeated | Exactly one closed bounded frame; repeated preserves duplicate-wire refusal. |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ReadAutomationRuntimeFamilyCatalogResponse"></a>
+
+### ReadAutomationRuntimeFamilyCatalogResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_response_bytes | [bytes](#bytes) | repeated | Exactly one complete immutable correlated snapshot; never partial or paginated. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="automation_scripting-v1-AutomationRuntimeFamilyCatalogReadService"></a>
+
+### AutomationRuntimeFamilyCatalogReadService
+Manual unregistered source read only. Not owner enrollment, FRESH materialization,
+actor authorization, runtime admission or activation.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadAutomationRuntimeFamilyCatalog | [ReadAutomationRuntimeFamilyCatalogRequest](#automation_scripting-v1-ReadAutomationRuntimeFamilyCatalogRequest) | [ReadAutomationRuntimeFamilyCatalogResponse](#automation_scripting-v1-ReadAutomationRuntimeFamilyCatalogResponse) |  |
 
 
 
@@ -7432,6 +8252,84 @@ Standalone and unregistered. Only the same-namespace Account workload may read.
 
 
 
+<a name="entity-management_v1_account_bootstrap_roster_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## entity-management/v1/account_bootstrap_roster_read.proto
+
+
+
+<a name="entity_management-v1-AccountBootstrapRosterActor"></a>
+
+### AccountBootstrapRosterActor
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| character_uuid | [string](#string) |  |  |
+| display_name | [string](#string) |  |  |
+| level | [int32](#int32) | optional | Existing Entity-owned persisted level from the same eligible actor row, including real zero. |
+
+
+
+
+
+
+<a name="entity_management-v1-AccountBootstrapRosterReadRequest"></a>
+
+### AccountBootstrapRosterReadRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_uuid | [string](#string) |  |  |
+| canonical_account_uuid | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| expected_target | [CanonicalGameplayRosterTarget](#entity_management-v1-CanonicalGameplayRosterTarget) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-AccountBootstrapRosterReadResponse"></a>
+
+### AccountBootstrapRosterReadResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request | [AccountBootstrapRosterReadRequest](#entity_management-v1-AccountBootstrapRosterReadRequest) |  | Complete exact request echo, including every source digest and target counter. |
+| actors | [AccountBootstrapRosterActor](#entity_management-v1-AccountBootstrapRosterActor) | repeated | At most 100 persisted eligible actors, ordered by canonical UUID text. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="entity_management-v1-AccountBootstrapRosterReadService"></a>
+
+### AccountBootstrapRosterReadService
+Manually composed and unregistered non-admitting Account discovery. This transient
+projection creates no original selection, roster snapshot, retention or session.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadAccountBootstrapRoster | [AccountBootstrapRosterReadRequest](#entity_management-v1-AccountBootstrapRosterReadRequest) | [AccountBootstrapRosterReadResponse](#entity_management-v1-AccountBootstrapRosterReadResponse) | Exact same-workload-namespace Account mTLS is required before request decoding. Only independently current public-production SHARED PRESEEDED_ONLY targets are supported. A valid empty persisted roster succeeds; unsupported, stale and unavailable sources never become an empty success. Failures use non-OK status. |
+
+
+
+
+
 <a name="entity-management_v1_canonical_gameplay_roster_recovery-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -8607,6 +9505,39 @@ Immutable identity and content digest of one exact roster snapshot.
 
 
 
+<a name="entity_management-v1-ReadRunOwnedFixtureGroundRequest"></a>
+
+### ReadRunOwnedFixtureGroundRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| room | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+| world_fixture_lifecycle | [bytes](#bytes) |  | Complete WorldRunOwnedFixtureLifecycleEvidence from the authenticated World owner. |
+
+
+
+
+
+
+<a name="entity_management-v1-ReadRunOwnedFixtureGroundResponse"></a>
+
+### ReadRunOwnedFixtureGroundResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| room | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+| entity_snapshot_id | [string](#string) |  |  |
+| empty_ground_verified | [bool](#bool) |  |  |
+
+
+
+
+
+
 <a name="entity_management-v1-RemoveEquipmentRequest"></a>
 
 ### RemoveEquipmentRequest
@@ -9030,6 +9961,72 @@ UNAVAILABLE. No partial success is returned.
 | GetDraftDesignDigest | [GetDraftDesignDigestRequest](#entity_management-v1-GetDraftDesignDigestRequest) | [GetDraftDesignDigestResponse](#entity_management-v1-GetDraftDesignDigestResponse) |  |
 | ValidateEntityTemplateReference | [ValidateEntityTemplateReferenceRequest](#entity_management-v1-ValidateEntityTemplateReferenceRequest) | [ValidateEntityTemplateReferenceResponse](#entity_management-v1-ValidateEntityTemplateReferenceResponse) |  |
 | ValidateEntityUpgradeMappings | [ValidateEntityUpgradeMappingsRequest](#entity_management-v1-ValidateEntityUpgradeMappingsRequest) | [ValidateEntityUpgradeMappingsResponse](#entity_management-v1-ValidateEntityUpgradeMappingsResponse) |  |
+
+
+<a name="entity_management-v1-RunOwnedFixtureLookEntityService"></a>
+
+### RunOwnedFixtureLookEntityService
+Verifies physical room-ground absence within an exact run-owned fixture.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadRunOwnedFixtureGround | [ReadRunOwnedFixtureGroundRequest](#entity_management-v1-ReadRunOwnedFixtureGroundRequest) | [ReadRunOwnedFixtureGroundResponse](#entity_management-v1-ReadRunOwnedFixtureGroundResponse) |  |
+
+
+
+
+
+<a name="entity-management_v1_entity_runtime_family_catalog_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## entity-management/v1/entity_runtime_family_catalog_read.proto
+
+
+
+<a name="entity_management-v1-ReadEntityRuntimeFamilyCatalogRequest"></a>
+
+### ReadEntityRuntimeFamilyCatalogRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_request_bytes | [bytes](#bytes) | repeated | Exactly one closed frame; repeated preserves duplicate wire occurrences for refusal. |
+
+
+
+
+
+
+<a name="entity_management-v1-ReadEntityRuntimeFamilyCatalogResponse"></a>
+
+### ReadEntityRuntimeFamilyCatalogResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_response_bytes | [bytes](#bytes) | repeated | Exactly one complete bounded frame. No empty, partial or paginated success. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="entity_management-v1-EntityRuntimeFamilyCatalogReadService"></a>
+
+### EntityRuntimeFamilyCatalogReadService
+Manual, unregistered Entity-local schema evidence, not a runtime manifest or admission.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadEntityRuntimeFamilyCatalog | [ReadEntityRuntimeFamilyCatalogRequest](#entity_management-v1-ReadEntityRuntimeFamilyCatalogRequest) | [ReadEntityRuntimeFamilyCatalogResponse](#entity_management-v1-ReadEntityRuntimeFamilyCatalogResponse) |  |
 
 
 
@@ -12412,6 +13409,55 @@ descriptor mutation, World preparation, or admission.
 
 
 
+<a name="gamedesign-v1-CreateAuthorizedTenantRequest"></a>
+
+### CreateAuthorizedTenantRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| create_request_id | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| creation_request_id | [string](#string) |  |  |
+| account_authorization_operation_id | [string](#string) |  |  |
+| initiating_account_id | [string](#string) |  |  |
+| creation_request_digest | [string](#string) |  |  |
+| account_authorization_digest | [string](#string) |  |  |
+| source_game_tenant_key | [string](#string) |  |  |
+| name | [string](#string) |  |  |
+| description | [string](#string) | optional |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-CreateAuthorizedTenantResponse"></a>
+
+### CreateAuthorizedTenantResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| create_request_id | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| creation_request_id | [string](#string) |  |  |
+| account_authorization_operation_id | [string](#string) |  |  |
+| initiating_account_id | [string](#string) |  |  |
+| creation_request_digest | [string](#string) |  |  |
+| account_authorization_digest | [string](#string) |  |  |
+| status | [OriginalTenantCreationOutcome](#gamedesign-v1-OriginalTenantCreationOutcome) |  |  |
+| created_receipt | [ResolveFreshTenantCreationResponse](#gamedesign-v1-ResolveFreshTenantCreationResponse) |  |  |
+
+
+
+
+
+
 <a name="gamedesign-v1-ResolveAuthoredWorldSourceRequest"></a>
 
 ### ResolveAuthoredWorldSourceRequest
@@ -12498,6 +13544,66 @@ descriptor mutation, World preparation, or admission.
 
 
 
+<a name="gamedesign-v1-ResolveOriginalTenantCreationOutcomeRequest"></a>
+
+### ResolveOriginalTenantCreationOutcomeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| read_request_id | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| creation_request_id | [string](#string) |  |  |
+| account_authorization_operation_id | [string](#string) |  |  |
+| initiating_account_id | [string](#string) |  |  |
+| creation_request_digest | [string](#string) |  |  |
+| account_authorization_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveOriginalTenantCreationOutcomeResponse"></a>
+
+### ResolveOriginalTenantCreationOutcomeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| read_request_id | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| creation_request_id | [string](#string) |  |  |
+| account_authorization_operation_id | [string](#string) |  |  |
+| initiating_account_id | [string](#string) |  |  |
+| creation_request_digest | [string](#string) |  |  |
+| account_authorization_digest | [string](#string) |  |  |
+| outcome | [OriginalTenantCreationOutcome](#gamedesign-v1-OriginalTenantCreationOutcome) |  |  |
+| created_receipt | [ResolveFreshTenantCreationResponse](#gamedesign-v1-ResolveFreshTenantCreationResponse) |  |  |
+| evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+
+
+<a name="gamedesign-v1-OriginalTenantCreationOutcome"></a>
+
+### OriginalTenantCreationOutcome
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ORIGINAL_TENANT_CREATION_OUTCOME_UNSPECIFIED | 0 |  |
+| ORIGINAL_TENANT_CREATION_OUTCOME_CREATED | 1 |  |
+| ORIGINAL_TENANT_CREATION_OUTCOME_NOT_CREATED | 2 |  |
+
 
 
 
@@ -12512,6 +13618,27 @@ Standalone, unregistered exact authored-world source read; no mutation or admiss
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | ResolveAuthoredWorldSource | [ResolveAuthoredWorldSourceRequest](#gamedesign-v1-ResolveAuthoredWorldSourceRequest) | [ResolveAuthoredWorldSourceResponse](#gamedesign-v1-ResolveAuthoredWorldSourceResponse) |  |
+
+
+<a name="gamedesign-v1-OriginalTenantCreationOutcomeReadService"></a>
+
+### OriginalTenantCreationOutcomeReadService
+Standalone, unregistered read of one committed terminal Account-bound creation outcome.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ResolveOriginalTenantCreationOutcome | [ResolveOriginalTenantCreationOutcomeRequest](#gamedesign-v1-ResolveOriginalTenantCreationOutcomeRequest) | [ResolveOriginalTenantCreationOutcomeResponse](#gamedesign-v1-ResolveOriginalTenantCreationOutcomeResponse) |  |
+
+
+<a name="gamedesign-v1-TenantCreationService"></a>
+
+### TenantCreationService
+Standalone private Account-only dispatch for an exact, currently authorized original.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| CreateAuthorizedTenant | [CreateAuthorizedTenantRequest](#gamedesign-v1-CreateAuthorizedTenantRequest) | [CreateAuthorizedTenantResponse](#gamedesign-v1-CreateAuthorizedTenantResponse) |  |
+| CloseOriginalTenantCreation | [ResolveOriginalTenantCreationOutcomeRequest](#gamedesign-v1-ResolveOriginalTenantCreationOutcomeRequest) | [.google.protobuf.Empty](#google-protobuf-Empty) | Explicit terminal exclusion of future creation. Acknowledgment is not outcome evidence. |
 
 
 <a name="gamedesign-v1-TenantIdentityService"></a>
@@ -12847,6 +13974,36 @@ Read-only exact Account/Game Session workload handoff for owner-created tenant e
 
 
 
+<a name="game_logic-v1-ResolveRunOwnedFixtureLookRequest"></a>
+
+### ResolveRunOwnedFixtureLookRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| room | [world_management.v1.ReadRunOwnedFixtureLookRoomRequest](#world_management-v1-ReadRunOwnedFixtureLookRoomRequest) |  |  |
+
+
+
+
+
+
+<a name="game_logic-v1-ResolveRunOwnedFixtureLookResponse"></a>
+
+### ResolveRunOwnedFixtureLookResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| look | [LookResult](#game_logic-v1-LookResult) |  |  |
+
+
+
+
+
+
 <a name="game_logic-v1-RoomAmbientState"></a>
 
 ### RoomAmbientState
@@ -13063,6 +14220,16 @@ Read-only exact Account/Game Session workload handoff for owner-created tenant e
 | PickupVisibleRoomItem | [PickupVisibleRoomItemRequest](#game_logic-v1-PickupVisibleRoomItemRequest) | [.entity_management.v1.PickupItemFromRoomResponse](#entity_management-v1-PickupItemFromRoomResponse) |  |
 | DropCarriedItem | [DropCarriedItemRequest](#game_logic-v1-DropCarriedItemRequest) | [.entity_management.v1.DropItemToRoomResponse](#entity_management-v1-DropItemToRoomResponse) |  |
 | GetDraftDesignDigest | [GetDraftDesignDigestRequest](#game_logic-v1-GetDraftDesignDigestRequest) | [GetDraftDesignDigestResponse](#game_logic-v1-GetDraftDesignDigestResponse) |  |
+
+
+<a name="game_logic-v1-RunOwnedFixtureLookService"></a>
+
+### RunOwnedFixtureLookService
+Protected LOOK projection for an already admitted run-owned fixture session.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ResolveRunOwnedFixtureLook | [ResolveRunOwnedFixtureLookRequest](#game_logic-v1-ResolveRunOwnedFixtureLookRequest) | [ResolveRunOwnedFixtureLookResponse](#game_logic-v1-ResolveRunOwnedFixtureLookResponse) |  |
 
 
 
@@ -13448,16 +14615,102 @@ membership, ownership, current-caller, or admission authority; GS rereads its cu
 <a name="game_session-v1-GetPublishedRealmAdmissionOwnerReadResponse"></a>
 
 ### GetPublishedRealmAdmissionOwnerReadResponse
-Complete current GS target and the existing full source response (owner proof, launch/source,
-complete published policy set). The existing source response remains independently validated
-by CanonicalGameplayRosterOwnerReadGrpcCodec. Total bound is below 4 MiB and includes target
-protobuf headroom; the Account client applies it only to this RPC.
+Complete current GS target, exactly one source (the full Human publication source or the
+run-owned fixture&#39;s retained policy source), and a mandatory fresh World ACTIVE capture of the
+same launch. Existing owner codecs independently validate every carried source. The complete
+6,422,545-byte bound includes all carriers and protobuf framing; oversized complete source
+refuses rather than dropping evidence.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | schema_version | [uint32](#uint32) | repeated |  |
-| published_source | [GetCanonicalGameplayRosterOwnerReadResponse](#game_session-v1-GetCanonicalGameplayRosterOwnerReadResponse) | repeated |  |
+| published_source | [GetCanonicalGameplayRosterOwnerReadResponse](#game_session-v1-GetCanonicalGameplayRosterOwnerReadResponse) | repeated | Human variant only. Exactly one of published_source and run_owned_fixture_source is present. |
+| current_target | [CanonicalPlayableTargetEvidence](#game_session-v1-CanonicalPlayableTargetEvidence) | repeated |  |
+| world_lifecycle_evidence | [bytes](#bytes) | repeated | Required once. Human: exact WorldCanonicalInstanceLifecycleEvidence canonical bytes whose ACTIVE request/launch/publication binding matches the same owner target. Run-owned fixture: exact WorldRunOwnedFixtureLifecycleEvidence canonical bytes for the same ACTIVE launch. |
+| run_owned_fixture_source | [bytes](#bytes) | repeated | Run-owned fixture variant only: exact CanonicalGameplayRunOwnedFixtureSourceEvidence canonical bytes (owner proof plus the catalog-retained sealed fixture policy). |
+
+
+
+
+
+
+<a name="game_session-v1-ListVisiblePublicProductionAdmissionTargetsRequest"></a>
+
+### ListVisiblePublicProductionAdmissionTargetsRequest
+Closed workload-only discovery correlation. No player credential or guessed target is accepted.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [uint32](#uint32) | repeated |  |
+| read_request_uuid | [string](#string) | repeated |  |
+| target_namespace | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="game_session-v1-ListVisiblePublicProductionAdmissionTargetsResponse"></a>
+
+### ListVisiblePublicProductionAdmissionTargetsResponse
+All current visible public SHARED PRESEEDED targets or refusal. An authenticated empty list is
+valid. The complete serialized response is bounded to exactly 4 MiB; each complete target is
+bounded to 64 KiB. No truncation or pagination, and no fresh World lifecycle/hold is implied.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [uint32](#uint32) | repeated |  |
+| request | [ListVisiblePublicProductionAdmissionTargetsRequest](#game_session-v1-ListVisiblePublicProductionAdmissionTargetsRequest) | repeated |  |
+| current_targets | [CanonicalPlayableTargetEvidence](#game_session-v1-CanonicalPlayableTargetEvidence) | repeated |  |
+
+
+
+
+
+
+<a name="game_session-v1-ResolvePublishedRealmAdmissionTargetRequest"></a>
+
+### ResolvePublishedRealmAdmissionTargetRequest
+Exact retained public-production target plus read/account correlation. No content-version UUID,
+World epoch, private storage handle, bearer, or Account-issued scope may be supplied here.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [uint32](#uint32) | repeated |  |
+| read_request_uuid | [string](#string) | repeated |  |
+| account_uuid | [string](#string) | repeated |  |
+| target_namespace | [string](#string) | repeated |  |
+| canonical_tenant_uuid | [string](#string) | repeated |  |
+| tenant_slug | [string](#string) | repeated |  |
+| world_slug | [string](#string) | repeated |  |
+| realm_uuid | [string](#string) | repeated |  |
+| realm_slug | [string](#string) | repeated |  |
+| playable_state_namespace_uuid | [string](#string) | repeated |  |
+| playable_state_scope | [string](#string) | repeated |  |
+| canonical_game_instance_uuid | [string](#string) | repeated |  |
+| catalog_revision | [string](#string) | repeated |  |
+| pointer_version | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="game_session-v1-ResolvePublishedRealmAdmissionTargetResponse"></a>
+
+### ResolvePublishedRealmAdmissionTargetResponse
+Point-in-time PRESEEDED_ONLY SHARED owner target, including actual version/epoch and committed
+OPEN proof. This selects a subsequent strict published read and supplies no fresh World lease.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [uint32](#uint32) | repeated |  |
+| request | [ResolvePublishedRealmAdmissionTargetRequest](#game_session-v1-ResolvePublishedRealmAdmissionTargetRequest) | repeated |  |
 | current_target | [CanonicalPlayableTargetEvidence](#game_session-v1-CanonicalPlayableTargetEvidence) | repeated |  |
 
 
@@ -13518,6 +14771,8 @@ workload and returns existing owner evidence without claiming gameplay admission
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
+| ListVisiblePublicProductionAdmissionTargets | [ListVisiblePublicProductionAdmissionTargetsRequest](#game_session-v1-ListVisiblePublicProductionAdmissionTargetsRequest) | [ListVisiblePublicProductionAdmissionTargetsResponse](#game_session-v1-ListVisiblePublicProductionAdmissionTargetsResponse) | Complete point-in-time discovery from current canonical owners; no admission or World hold. |
+| ResolvePublishedRealmAdmissionTarget | [ResolvePublishedRealmAdmissionTargetRequest](#game_session-v1-ResolvePublishedRealmAdmissionTargetRequest) | [ResolvePublishedRealmAdmissionTargetResponse](#game_session-v1-ResolvePublishedRealmAdmissionTargetResponse) | Resolves only missing strict-read selectors from current owner rows; never grants admission. |
 | GetOriginalNewNeverAdmittedDecision | [GetOriginalNewNeverAdmittedDecisionRequest](#game_session-v1-GetOriginalNewNeverAdmittedDecisionRequest) | [GetOriginalNewNeverAdmittedDecisionResponse](#game_session-v1-GetOriginalNewNeverAdmittedDecisionResponse) |  |
 | GetCanonicalGameplayAdmissionDecision | [GetCanonicalGameplayAdmissionDecisionRequest](#game_session-v1-GetCanonicalGameplayAdmissionDecisionRequest) | [GetCanonicalGameplayAdmissionDecisionResponse](#game_session-v1-GetCanonicalGameplayAdmissionDecisionResponse) |  |
 | GetPublishedRealmAdmissionOwnerRead | [GetPublishedRealmAdmissionOwnerReadRequest](#game_session-v1-GetPublishedRealmAdmissionOwnerReadRequest) | [GetPublishedRealmAdmissionOwnerReadResponse](#game_session-v1-GetPublishedRealmAdmissionOwnerReadResponse) |  |
@@ -14161,6 +15416,65 @@ the retained original. Neither response supplies World lifecycle or Account auth
 | ----------- | ------------ | ------------- | ------------|
 | AcquireCharacterCreateTargetProtection | [AcquireCharacterCreateTargetProtectionRequest](#game_session-v1-AcquireCharacterCreateTargetProtectionRequest) | [CharacterCreateTargetProtection](#game_session-v1-CharacterCreateTargetProtection) |  |
 | ReadOriginalCharacterCreateTargetProtection | [ReadOriginalCharacterCreateTargetProtectionRequest](#game_session-v1-ReadOriginalCharacterCreateTargetProtectionRequest) | [CharacterCreateTargetProtection](#game_session-v1-CharacterCreateTargetProtection) |  |
+
+
+
+
+
+<a name="game-session_v1_current_private_playtest_lifecycle_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## game-session/v1/current_private_playtest_lifecycle_read.proto
+
+
+
+<a name="game_session-v1-ReadCurrentPrivatePlaytestLifecycleRequest"></a>
+
+### ReadCurrentPrivatePlaytestLifecycleRequest
+The single bounded canonical frame carries the read correlation and exact target selectors.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_evidence | [bytes](#bytes) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ReadCurrentPrivatePlaytestLifecycleResponse"></a>
+
+### ReadCurrentPrivatePlaytestLifecycleResponse
+The closed response repeats the request correlation and represents an absent current selection
+explicitly. A present snapshot remains PREPARING and non-admissible.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_evidence | [bytes](#bytes) |  |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="game_session-v1-CurrentPrivatePlaytestLifecycleReadService"></a>
+
+### CurrentPrivatePlaytestLifecycleReadService
+Separate, manually composed Account-only read of an exact current private preparation. This
+read returns source facts only; it does not authorize grants, create a player catalog, or admit
+gameplay.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadCurrentPrivatePlaytestLifecycle | [ReadCurrentPrivatePlaytestLifecycleRequest](#game_session-v1-ReadCurrentPrivatePlaytestLifecycleRequest) | [ReadCurrentPrivatePlaytestLifecycleResponse](#game_session-v1-ReadCurrentPrivatePlaytestLifecycleResponse) |  |
 
 
 
@@ -17132,6 +18446,102 @@ Isolated non-authorizing JWT readiness verification on the exact Game Session Po
 
 
 
+<a name="game-session_v1_original_new_capacity_execution_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## game-session/v1/original_new_capacity_execution_read.proto
+
+
+
+<a name="game_session-v1-ReadHistoricalOriginalNewCapacityFinalResponse"></a>
+
+### ReadHistoricalOriginalNewCapacityFinalResponse
+Historical positive evidence only. Carries no current owner or admission authority.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| selector | [ReadOriginalNewCapacityExecutionRequest](#game_session-v1-ReadOriginalNewCapacityExecutionRequest) | repeated |  |
+| fence_operation_id | [string](#string) | repeated |  |
+| transition_id | [string](#string) | repeated |  |
+| candidate_digest | [string](#string) | repeated |  |
+| selected_owner_id | [string](#string) | repeated |  |
+| selected_owner_fence | [int64](#int64) | repeated |  |
+| canonical_execution | [bytes](#bytes) | repeated |  |
+| final_session_sha256 | [string](#string) | repeated |  |
+| admission_at_ms | [int64](#int64) | repeated |  |
+| continuity_expires_at_ms | [int64](#int64) | repeated |  |
+| inventory_snapshot_revision | [string](#string) | repeated |  |
+| cohort_digest | [string](#string) | repeated |  |
+| barrier_target_digest | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="game_session-v1-ReadOriginalNewCapacityExecutionRequest"></a>
+
+### ReadOriginalNewCapacityExecutionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| attempt | [account.v1.CommitTenantCapacityAdmissionRequest](#account-v1-CommitTenantCapacityAdmissionRequest) | repeated |  |
+| reservation | [account.v1.CommitTenantCapacityAdmissionResponse](#account-v1-CommitTenantCapacityAdmissionResponse) | repeated |  |
+
+
+
+
+
+
+<a name="game_session-v1-ReadOriginalNewCapacityExecutionResponse"></a>
+
+### ReadOriginalNewCapacityExecutionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| selector | [ReadOriginalNewCapacityExecutionRequest](#game_session-v1-ReadOriginalNewCapacityExecutionRequest) | repeated |  |
+| transition_id | [string](#string) | repeated |  |
+| candidate_digest | [string](#string) | repeated |  |
+| selected_owner_id | [string](#string) | repeated |  |
+| selected_owner_fence | [int64](#int64) | repeated |  |
+| canonical_execution | [bytes](#bytes) | repeated |  |
+| disposition | [string](#string) | repeated |  |
+| physical_digest | [string](#string) | repeated |  |
+| receipt_digest | [string](#string) | repeated |  |
+| canonical_readback | [bytes](#bytes) | repeated |  |
+| current_owner_id | [string](#string) | repeated |  |
+| current_owner_fence | [int64](#int64) | repeated |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="game_session-v1-OriginalNewCapacityExecutionReadService"></a>
+
+### OriginalNewCapacityExecutionReadService
+Unregistered, bounded, exact same-namespace Account-only read. Never closes or executes.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadOriginalNewCapacityExecution | [ReadOriginalNewCapacityExecutionRequest](#game_session-v1-ReadOriginalNewCapacityExecutionRequest) | [ReadOriginalNewCapacityExecutionResponse](#game_session-v1-ReadOriginalNewCapacityExecutionResponse) |  |
+| ReadHistoricalOriginalNewCapacityFinal | [ReadOriginalNewCapacityExecutionRequest](#game_session-v1-ReadOriginalNewCapacityExecutionRequest) | [ReadHistoricalOriginalNewCapacityFinalResponse](#game_session-v1-ReadHistoricalOriginalNewCapacityFinalResponse) |  |
+
+
+
+
+
 <a name="game-session_v1_original_new_final_admission_read-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -17256,6 +18666,212 @@ It exposes no claimant credential and grants no mutation, renewal, redemption, o
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | ReadOriginalStartSessionCurrentAttempt | [ReadOriginalStartSessionCurrentAttemptRequest](#game_session-v1-ReadOriginalStartSessionCurrentAttemptRequest) | [ReadOriginalStartSessionCurrentAttemptResponse](#game_session-v1-ReadOriginalStartSessionCurrentAttemptResponse) |  |
+
+
+
+
+
+<a name="game-session_v1_private_preparation_protection-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## game-session/v1/private_preparation_protection.proto
+
+
+
+<a name="game_session-v1-AcquirePrivatePreparationProtectionRequest"></a>
+
+### AcquirePrivatePreparationProtectionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_evidence | [bytes](#bytes) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-PrivatePreparationProtectionResponse"></a>
+
+### PrivatePreparationProtectionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_evidence | [bytes](#bytes) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ReadCurrentPrivatePreparationProtectionRequest"></a>
+
+### ReadCurrentPrivatePreparationProtectionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_evidence | [bytes](#bytes) |  |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="game_session-v1-PrivatePreparationProtectionService"></a>
+
+### PrivatePreparationProtectionService
+Unregistered World-only source protection. No actor, expiry extension, release or admission.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| AcquirePrivatePreparationProtection | [AcquirePrivatePreparationProtectionRequest](#game_session-v1-AcquirePrivatePreparationProtectionRequest) | [PrivatePreparationProtectionResponse](#game_session-v1-PrivatePreparationProtectionResponse) |  |
+| ReadCurrentPrivatePreparationProtection | [ReadCurrentPrivatePreparationProtectionRequest](#game_session-v1-ReadCurrentPrivatePreparationProtectionRequest) | [PrivatePreparationProtectionResponse](#game_session-v1-PrivatePreparationProtectionResponse) |  |
+
+
+
+
+
+<a name="game-session_v1_private_world_preparation_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## game-session/v1/private_world_preparation_read.proto
+
+
+
+<a name="game_session-v1-ReadPrivateWorldPreparationBuildResponse"></a>
+
+### ReadPrivateWorldPreparationBuildResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_evidence | [bytes](#bytes) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ReadPrivateWorldPreparationRequest"></a>
+
+### ReadPrivateWorldPreparationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_evidence | [bytes](#bytes) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ReadPrivateWorldPreparationResponse"></a>
+
+### ReadPrivateWorldPreparationResponse
+Complete current preparation/source/allocated-target facts; absence is a refusal, never success.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_evidence | [bytes](#bytes) |  |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="game_session-v1-PrivateWorldPreparationReadService"></a>
+
+### PrivateWorldPreparationReadService
+Distinct, manually composed World-only source read. No runtime allocation or admission.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadPrivateWorldPreparation | [ReadPrivateWorldPreparationRequest](#game_session-v1-ReadPrivateWorldPreparationRequest) | [ReadPrivateWorldPreparationResponse](#game_session-v1-ReadPrivateWorldPreparationResponse) |  |
+| ReadPrivateWorldPreparationBuild | [ReadPrivateWorldPreparationRequest](#game_session-v1-ReadPrivateWorldPreparationRequest) | [ReadPrivateWorldPreparationBuildResponse](#game_session-v1-ReadPrivateWorldPreparationBuildResponse) | Exact retained publication selector; still no materialization or actor authority. |
+
+
+
+
+
+<a name="game-session_v1_run_owned_fixture_initial_admission_owner_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## game-session/v1/run_owned_fixture_initial_admission_owner_read.proto
+
+
+
+<a name="game_session-v1-ReadRunOwnedFixtureInitialAdmissionOwnerRequest"></a>
+
+### ReadRunOwnedFixtureInitialAdmissionOwnerRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| read_request_id | [string](#string) |  |  |
+| authority_kind | [string](#string) |  |  |
+| fixture_policy_seal_evidence_digest | [string](#string) |  |  |
+| hold | [GetCanonicalInitialAdmissionOwnerProofRequest](#game_session-v1-GetCanonicalInitialAdmissionOwnerProofRequest) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ReadRunOwnedFixtureInitialAdmissionOwnerResponse"></a>
+
+### ReadRunOwnedFixtureInitialAdmissionOwnerResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| read_request_id | [string](#string) |  |  |
+| authority_kind | [string](#string) |  |  |
+| fixture_policy_seal_evidence_digest | [string](#string) |  |  |
+| proof | [GetCanonicalInitialAdmissionOwnerProofResponse](#game_session-v1-GetCanonicalInitialAdmissionOwnerProofResponse) |  |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="game_session-v1-RunOwnedFixtureInitialAdmissionOwnerReadService"></a>
+
+### RunOwnedFixtureInitialAdmissionOwnerReadService
+Reads a pending or committed first OPEN for the configured run-owned fixture.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadRunOwnedFixtureInitialAdmissionOwner | [ReadRunOwnedFixtureInitialAdmissionOwnerRequest](#game_session-v1-ReadRunOwnedFixtureInitialAdmissionOwnerRequest) | [ReadRunOwnedFixtureInitialAdmissionOwnerResponse](#game_session-v1-ReadRunOwnedFixtureInitialAdmissionOwnerResponse) |  |
 
 
 
@@ -18511,6 +20127,63 @@ Receivers validate the required subset and equality with their own authoritative
 
 
 
+<a name="social-groups_v1_social_runtime_family_catalog_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## social-groups/v1/social_runtime_family_catalog_read.proto
+
+
+
+<a name="social_groups-v1-ReadSocialRuntimeFamilyCatalogRequest"></a>
+
+### ReadSocialRuntimeFamilyCatalogRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_request_bytes | [bytes](#bytes) | repeated | Exactly one value; repeated so duplicate wire values remain observable. |
+
+
+
+
+
+
+<a name="social_groups-v1-ReadSocialRuntimeFamilyCatalogResponse"></a>
+
+### ReadSocialRuntimeFamilyCatalogResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_response_bytes | [bytes](#bytes) | repeated | Exactly one complete closed frame. No partial, empty or paginated success. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="social_groups-v1-SocialRuntimeFamilyCatalogReadService"></a>
+
+### SocialRuntimeFamilyCatalogReadService
+Manually composed only. As-of Social-local schema/classification evidence, never a FRESH
+manifest, owner registry, row inventory, materialization or admission result.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadSocialRuntimeFamilyCatalog | [ReadSocialRuntimeFamilyCatalogRequest](#social_groups-v1-ReadSocialRuntimeFamilyCatalogRequest) | [ReadSocialRuntimeFamilyCatalogResponse](#social_groups-v1-ReadSocialRuntimeFamilyCatalogResponse) |  |
+
+
+
+
+
 <a name="spring-cloud-gateway_v1_gateway_management_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -19638,6 +21311,37 @@ WorldManagementService.ActivatePreparedWorldInstance operation.
 
 
 
+<a name="world_management-v1-ReadRunOwnedFixtureStartRoomRequest"></a>
+
+### ReadRunOwnedFixtureStartRoomRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| lifecycle | [ReadWorldCanonicalInstanceLifecycleRequest](#world_management-v1-ReadWorldCanonicalInstanceLifecycleRequest) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ReadRunOwnedFixtureStartRoomResponse"></a>
+
+### ReadRunOwnedFixtureStartRoomResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| lifecycle | [ReadWorldCanonicalInstanceLifecycleResponse](#world_management-v1-ReadWorldCanonicalInstanceLifecycleResponse) |  |  |
+| room_instance_key | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="world_management-v1-ReadWorldCanonicalInstanceLifecycleRequest"></a>
 
 ### ReadWorldCanonicalInstanceLifecycleRequest
@@ -19682,6 +21386,7 @@ Read-only complete canonical World lifecycle owner evidence for authenticated Ga
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | ReadWorldCanonicalInstanceLifecycle | [ReadWorldCanonicalInstanceLifecycleRequest](#world_management-v1-ReadWorldCanonicalInstanceLifecycleRequest) | [ReadWorldCanonicalInstanceLifecycleResponse](#world_management-v1-ReadWorldCanonicalInstanceLifecycleResponse) |  |
+| ReadRunOwnedFixtureStartRoom | [ReadRunOwnedFixtureStartRoomRequest](#world_management-v1-ReadRunOwnedFixtureStartRoomRequest) | [ReadRunOwnedFixtureStartRoomResponse](#world_management-v1-ReadRunOwnedFixtureStartRoomResponse) | Read-only start room of the exact ACTIVE run-owned fixed fixture. |
 
 
 
@@ -20515,6 +22220,39 @@ The committed Game Session launch-association selector and separate original ope
 
 
 
+<a name="world_management-v1-ReadRunOwnedFixtureLookRoomRequest"></a>
+
+### ReadRunOwnedFixtureLookRoomRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| lifecycle | [ReadWorldCanonicalInstanceLifecycleRequest](#world_management-v1-ReadWorldCanonicalInstanceLifecycleRequest) |  |  |
+| expected_room_instance_key | [string](#string) |  |  |
+| preferred_locale | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ReadRunOwnedFixtureLookRoomResponse"></a>
+
+### ReadRunOwnedFixtureLookRoomResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| lifecycle | [ReadWorldCanonicalInstanceLifecycleResponse](#world_management-v1-ReadWorldCanonicalInstanceLifecycleResponse) |  |  |
+| snapshot | [RoomSnapshot](#world_management-v1-RoomSnapshot) |  |  |
+
+
+
+
+
+
 <a name="world_management-v1-ReadWorldStartSessionExecutionTerminalRequest"></a>
 
 ### ReadWorldStartSessionExecutionTerminalRequest
@@ -21168,6 +22906,16 @@ counts only; nonempty member grammar remains unsupported and must be rejected by
 
 
 
+<a name="world_management-v1-RunOwnedFixtureLookWorldService"></a>
+
+### RunOwnedFixtureLookWorldService
+Protected World snapshot reads for the exact active run-owned fixture.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadRunOwnedFixtureLookRoom | [ReadRunOwnedFixtureLookRoomRequest](#world_management-v1-ReadRunOwnedFixtureLookRoomRequest) | [ReadRunOwnedFixtureLookRoomResponse](#world_management-v1-ReadRunOwnedFixtureLookRoomResponse) |  |
+
+
 <a name="world_management-v1-WorldAuthoredSourceIntakeService"></a>
 
 ### WorldAuthoredSourceIntakeService
@@ -21531,6 +23279,63 @@ Opt-in authenticated readback of the selector in an exact frozen World publicati
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | ReadWorldPublishedStartLocation | [ReadWorldPublishedStartLocationRequest](#world_management-v1-ReadWorldPublishedStartLocationRequest) | [ReadWorldPublishedStartLocationResponse](#world_management-v1-ReadWorldPublishedStartLocationResponse) |  |
+
+
+
+
+
+<a name="world-management_v1_world_runtime_family_catalog_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## world-management/v1/world_runtime_family_catalog_read.proto
+
+
+
+<a name="world_management-v1-ReadWorldRuntimeFamilyCatalogRequest"></a>
+
+### ReadWorldRuntimeFamilyCatalogRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_request_bytes | [bytes](#bytes) | repeated | Exactly one value; repeated so duplicate wire values remain observable. |
+
+
+
+
+
+
+<a name="world_management-v1-ReadWorldRuntimeFamilyCatalogResponse"></a>
+
+### ReadWorldRuntimeFamilyCatalogResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_response_bytes | [bytes](#bytes) | repeated | Exactly one complete closed frame. No partial, empty or paginated success. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="world_management-v1-WorldRuntimeFamilyCatalogReadService"></a>
+
+### WorldRuntimeFamilyCatalogReadService
+Manually composed only. As-of World-local catalog evidence, never a FRESH manifest,
+global owner registry, materialization, actor authorization or admission result.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadWorldRuntimeFamilyCatalog | [ReadWorldRuntimeFamilyCatalogRequest](#world_management-v1-ReadWorldRuntimeFamilyCatalogRequest) | [ReadWorldRuntimeFamilyCatalogResponse](#world_management-v1-ReadWorldRuntimeFamilyCatalogResponse) |  |
 
 
 

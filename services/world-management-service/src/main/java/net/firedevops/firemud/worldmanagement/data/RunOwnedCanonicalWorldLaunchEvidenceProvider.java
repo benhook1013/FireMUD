@@ -159,25 +159,10 @@ public final class RunOwnedCanonicalWorldLaunchEvidenceProvider {
       var capability = RunOwnedInitialAdmissionFixtureWireCodec.parseCapability(capabilityBytes);
       var receipt =
           RunOwnedInitialAdmissionFixtureWireCodec.parseSourceReceipt(receiptBytes, capability);
-      if (!runId.equals(capability.runId())
-          || !composeProjectName.equals(capability.composeProjectName())
-          || !runId.equals(receipt.runId())
-          || !composeProjectName.equals(receipt.composeProjectName())) {
-        throw invalidEvidence();
-      }
+      requireExactRun(capability, receipt);
 
       stage = VerificationStage.WORLD_CERTIFICATE_PINS;
-      CertificatePins worldPins = configuredWorldCertificatePins(grpcProperties);
-      if (!GAME_SESSION_URI_SAN.equals(capability.gameSessionUriSan())
-          || !WORLD_MANAGEMENT_URI_SAN.equals(capability.worldManagementUriSan())
-          || !worldPins.uriSan().equals(capability.worldManagementUriSan())
-          || !worldPins.leafSha256().equals(capability.worldManagementLeafSha256())
-          || !worldPins.caSha256().equals(capability.caCertificateSha256())
-          || !worldPins.caSha256().equals(receipt.caCertificateSha256())
-          || !worldPins.uriSan().equals(receipt.worldManagementUriSan())
-          || !worldPins.leafSha256().equals(receipt.worldManagementLeafSha256())) {
-        throw invalidEvidence();
-      }
+      CertificatePins worldPins = requireExactRecipientPins(capability, receipt);
 
       stage = VerificationStage.GAME_SESSION_PEER;
       requireAuthenticatedGameSessionPeer(capability);
@@ -240,6 +225,51 @@ public final class RunOwnedCanonicalWorldLaunchEvidenceProvider {
       logger.warn("Run-owned World launch evidence verification rejected; stage={}", stage);
       throw exception;
     }
+  }
+
+  /** Reads the configured fixture identity for World-owned terminal recovery. */
+  public RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt requireConfiguredFixtureReceipt() {
+    if (!enabled) {
+      throw invalidEvidence();
+    }
+    requireExpectedRunBinding(runId, composeProjectName);
+    var capability =
+        RunOwnedInitialAdmissionFixtureWireCodec.parseCapability(
+            readImmutableWireFile(capabilityPath));
+    var receipt =
+        RunOwnedInitialAdmissionFixtureWireCodec.parseSourceReceipt(
+            readImmutableWireFile(sourceReceiptPath), capability);
+    requireExactRun(capability, receipt);
+    requireExactRecipientPins(capability, receipt);
+    return receipt;
+  }
+
+  private void requireExactRun(
+      RunOwnedInitialAdmissionFixtureWireCodec.Capability capability,
+      RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt receipt) {
+    if (!runId.equals(capability.runId())
+        || !composeProjectName.equals(capability.composeProjectName())
+        || !runId.equals(receipt.runId())
+        || !composeProjectName.equals(receipt.composeProjectName())) {
+      throw invalidEvidence();
+    }
+  }
+
+  private CertificatePins requireExactRecipientPins(
+      RunOwnedInitialAdmissionFixtureWireCodec.Capability capability,
+      RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt receipt) {
+    CertificatePins worldPins = configuredWorldCertificatePins(grpcProperties);
+    if (!GAME_SESSION_URI_SAN.equals(capability.gameSessionUriSan())
+        || !WORLD_MANAGEMENT_URI_SAN.equals(capability.worldManagementUriSan())
+        || !worldPins.uriSan().equals(capability.worldManagementUriSan())
+        || !worldPins.leafSha256().equals(capability.worldManagementLeafSha256())
+        || !worldPins.caSha256().equals(capability.caCertificateSha256())
+        || !worldPins.caSha256().equals(receipt.caCertificateSha256())
+        || !worldPins.uriSan().equals(receipt.worldManagementUriSan())
+        || !worldPins.leafSha256().equals(receipt.worldManagementLeafSha256())) {
+      throw invalidEvidence();
+    }
+    return worldPins;
   }
 
   private static boolean isRetryableOwnerReadFailure(

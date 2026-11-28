@@ -1,0 +1,22 @@
+import org.gradle.api.tasks.PathSensitivity
+
+// Owner proofs read these Flyway files from the checkout, not the classes-only proof JARs.
+// Repository-relative paths preserve owner identity without polluting runtime classpaths.
+def ownersByTask = [
+    integrationTest: ['world-management-service', 'game-session-service', 'common-saga'],
+    crossServiceTest: ['world-management-service', 'game-session-service',
+                       'account-service', 'entity-management-service', 'common-saga']
+]
+ownersByTask.each { taskName, owners ->
+    def patterns = owners.collectMany { owner ->
+        def root = "services/${owner}/src/main/resources/db/migration"
+        if (owner == 'common-saga') root += '/saga'
+        ["${root}/**/*.sql", "${root}/**/*.sql.conf"]
+    }
+    def migrations = rootProject.fileTree(rootProject.projectDir) { include(patterns) }
+    tasks.matching { it.name == taskName }.configureEach {
+        inputs.files(migrations)
+            .withPropertyName('worldOwnerFilesystemMigrations')
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+    }
+}

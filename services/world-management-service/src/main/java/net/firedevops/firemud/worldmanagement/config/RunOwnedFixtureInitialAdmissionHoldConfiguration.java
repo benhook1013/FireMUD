@@ -6,8 +6,10 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.prev1.PreV1GateWaivers;
 import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionCanonicalInitialAdmissionOwnerClient;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidenceProvider;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
 import net.firedevops.firemud.worldmanagement.service.impl.RunOwnedFixtureLookWorldGrpcService;
+import net.firedevops.firemud.worldmanagement.tenant.RunOwnedFixtureInitialAdmissionHoldReconciler;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldGrpcService;
@@ -90,17 +92,33 @@ public class RunOwnedFixtureInitialAdmissionHoldConfiguration {
   }
 
   @Bean
-  WorldCanonicalInitialAdmissionHoldGrpcService runOwnedFixtureInitialAdmissionHoldGrpcService(
+  WorldCanonicalInitialAdmissionHoldRepository runOwnedFixtureInitialAdmissionHoldRepository(
       DSLContext dsl,
       PlatformTransactionManager transactionManager,
       WorldCanonicalInstanceAssociationRepository associations,
-      WorldCanonicalInstanceLifecycleReadRepository lifecycle,
+      WorldCanonicalInstanceLifecycleReadRepository lifecycle) {
+    return new WorldCanonicalInitialAdmissionHoldRepository(
+        dsl, transactionManager, associations, lifecycle);
+  }
+
+  @Bean
+  WorldCanonicalInitialAdmissionHoldGrpcService runOwnedFixtureInitialAdmissionHoldGrpcService(
+      WorldCanonicalInitialAdmissionHoldRepository holds,
       GrpcGameSessionCanonicalInitialAdmissionOwnerClient gameSessionOwner,
+      RunOwnedCanonicalWorldLaunchEvidenceProvider fixtureSources,
       @Value("${firemud.grpc.workload-namespace:}") String namespace) {
-    var holds =
-        new WorldCanonicalInitialAdmissionHoldRepository(
-            dsl, transactionManager, associations, lifecycle);
     return new WorldCanonicalInitialAdmissionHoldGrpcService(
-        new WorldCanonicalInitialAdmissionHoldOwner(holds, gameSessionOwner), namespace);
+        new WorldCanonicalInitialAdmissionHoldOwner(holds, gameSessionOwner),
+        namespace,
+        fixtureSources);
+  }
+
+  @Bean
+  RunOwnedFixtureInitialAdmissionHoldReconciler runOwnedFixtureInitialAdmissionHoldReconciler(
+      WorldCanonicalInitialAdmissionHoldRepository holds,
+      RunOwnedCanonicalWorldLaunchEvidenceProvider sourceProvider,
+      GrpcGameSessionCanonicalInitialAdmissionOwnerClient gameSessionOwner) {
+    return new RunOwnedFixtureInitialAdmissionHoldReconciler(
+        holds, sourceProvider, gameSessionOwner);
   }
 }

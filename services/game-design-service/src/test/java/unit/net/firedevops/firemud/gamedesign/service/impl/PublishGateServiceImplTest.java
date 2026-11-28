@@ -33,6 +33,7 @@ import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -89,7 +90,7 @@ class PublishGateServiceImplTest {
             any(PublicationDigestRequestBinding.class)))
         .thenReturn(
             new PublishParticipantDigestDto(
-                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null));
+                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 2, null, null));
     when(gameLogicClient.getDraftDesignDigestForVersion(any(PublicationDigestRequestBinding.class)))
         .thenReturn(
             new PublishParticipantDigestDto(
@@ -113,6 +114,36 @@ class PublishGateServiceImplTest {
             "WORLD_MANAGEMENT"),
         digests.get(0).digestSchemaVersion());
     assertDoesNotThrow(() -> service.assertGatePassed(version, digests));
+    assertEquals(2, digests.get(1).digestSchemaVersion());
+    // Ordinary v2 convergence must not rewrite retained attestation or selected-full profiles.
+    assertEquals(
+        2,
+        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+            "ENTITY_MANAGEMENT", 1));
+    assertEquals(
+        3,
+        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+            "ENTITY_MANAGEMENT", 4));
+    for (int rejectedSchema : new int[] {1, 3}) {
+      var mixed = new java.util.ArrayList<>(digests);
+      var entity = digests.get(1);
+      mixed.set(
+          1,
+          new PublishParticipantDigestDto(
+              entity.participantKey(),
+              entity.scopeValue(),
+              entity.baseVersionId(),
+              entity.appliedCommitId(),
+              entity.contentDigest(),
+              rejectedSchema,
+              entity.abilitySchemaDigest(),
+              entity.errorCode(),
+              entity.errorMessage()));
+      var rejected =
+          assertThrows(
+              PublishGateFailureException.class, () -> service.assertGatePassed(version, mixed));
+      assertEquals(PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA, rejected.failureCode());
+    }
 
     PublicationDigestRequestBinding expectedBinding =
         PublicationDigestRequestBinding.full("tenant-1", "7", "publish-request-1");
@@ -136,6 +167,7 @@ class PublishGateServiceImplTest {
 
     assertEquals(5, digests.size());
     assertDoesNotThrow(() -> service.assertSelectedGatePassed(version, digests));
+    assertEquals(3, digests.get(1).digestSchemaVersion());
     assertEquals(2, digests.get(4).digestSchemaVersion());
     assertEquals(6, digests.get(3).digestSchemaVersion());
     assertEquals("b".repeat(64), digests.getFirst().contentDigest());
@@ -405,7 +437,7 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 3, null, null),
             new PublishParticipantDigestDto(
-                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null),
+                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 2, null, null),
             new PublishParticipantDigestDto(
                 "GAME_LOGIC", "7", null, null, null, "INTERNAL", "Internal error"),
             new PublishParticipantDigestDto(
@@ -443,7 +475,7 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "WORLD_MANAGEMENT", "7", "version:7", "digest-world", worldSchema, null, null),
             new PublishParticipantDigestDto(
-                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null),
+                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 2, null, null),
             new PublishParticipantDigestDto(
                 "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
             new PublishParticipantDigestDto(
@@ -494,6 +526,44 @@ class PublishGateServiceImplTest {
     assertTrue(thrown.getMessage().contains("ENTITY_MANAGEMENT"));
   }
 
+  @ParameterizedTest
+  @CsvSource({",version:7,MISSING_CONTENT_DIGEST", "digest-entity,,MISSING_APPLIED_COMMIT"})
+  void ordinaryEntitySchemaTwoRequiresCompleteDigestAndCommitEvidence(
+      String entityDigest, String entityCommit, PublishGateFailureCode expectedFailure) {
+    VersionDto version =
+        new VersionDto(
+            7L,
+            "tenant-1",
+            8,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            null,
+            null,
+            false,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
+    List<PublishParticipantDigestDto> digests =
+        List.of(
+            new PublishParticipantDigestDto(
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 3, null, null),
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 5, null, null),
+            new PublishParticipantDigestDto(
+                "ENTITY_MANAGEMENT", "7", entityCommit, entityDigest, 2, null, null),
+            new PublishParticipantDigestDto(
+                "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
+            new PublishParticipantDigestDto(
+                "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-design", 1, null, null));
+
+    var denied =
+        assertThrows(
+            PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
+
+    assertEquals(expectedFailure, denied.failureCode());
+    assertTrue(denied.getMessage().contains("ENTITY_MANAGEMENT"));
+  }
+
   @Test
   void fullVersionGateRejectsObsoleteAutomationDigestSchema() {
     VersionDto version =
@@ -514,7 +584,7 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 3, null, null),
             new PublishParticipantDigestDto(
-                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null),
+                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 2, null, null),
             new PublishParticipantDigestDto(
                 "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
             new PublishParticipantDigestDto(
@@ -605,7 +675,7 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "WORLD_MANAGEMENT", "7", "version:7", "digest-world-2", 3, null, null),
             new PublishParticipantDigestDto(
-                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null),
+                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 2, null, null),
             new PublishParticipantDigestDto(
                 "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
             new PublishParticipantDigestDto(
@@ -641,7 +711,7 @@ class PublishGateServiceImplTest {
                 "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 3, null, null),
             null,
             new PublishParticipantDigestDto(
-                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null),
+                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 2, null, null),
             new PublishParticipantDigestDto(
                 "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
             new PublishParticipantDigestDto(
@@ -676,7 +746,7 @@ class PublishGateServiceImplTest {
             new PublishParticipantDigestDto(
                 "WORLD_MANAGEMENT", "7", "version:7", "digest-world", null, null, null),
             new PublishParticipantDigestDto(
-                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null),
+                "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 2, null, null),
             new PublishParticipantDigestDto(
                 "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
             new PublishParticipantDigestDto(

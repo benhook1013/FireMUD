@@ -17,6 +17,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -38,6 +40,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
+import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHoldState;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
@@ -48,19 +51,24 @@ import net.firedevops.firemud.worldmanagement.WorldManagementServiceApplication;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
+import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionCanonicalInitialAdmissionOwnerClient;
 import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
+import net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHoldRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomInstanceRepository;
 import net.firedevops.firemud.worldmanagement.service.impl.RoomServiceImpl;
 import net.firedevops.firemud.worldmanagement.service.impl.RunOwnedWorldFixtureLifecycleTestFactory;
 import net.firedevops.firemud.worldmanagement.service.impl.WorldLifecycleCommandServiceImpl;
+import net.firedevops.firemud.worldmanagement.tenant.FixtureHoldStorageTestAccess;
+import net.firedevops.firemud.worldmanagement.tenant.RunOwnedFixtureInitialAdmissionHoldReconciler;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldOwner;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociation;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
@@ -841,6 +849,35 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     long id = association.worldInstanceId();
     var request = RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence);
 
+    var preparedRows = allRows(dsl).get("world_instance");
+    assertThatThrownBy(() -> insertFixtureActivationReceipt(id))
+        .hasStackTraceContaining(
+            "Run-owned fixture activation receipt did not commit its exact ACTIVE CAS");
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .executeWithoutResult(
+                        status -> {
+                          insertFixtureActivationReceipt(id);
+                          assertThat(
+                                  dsl.execute(
+                                      "DELETE FROM world_run_owned_fixture_activation_manifest "
+                                          + "WHERE transaction_id = txid_current() AND world_instance_id = ?",
+                                      id))
+                              .isEqualTo(1);
+                          dsl.execute(
+                              "UPDATE world_instance SET status='ACTIVE', lifecycle_epoch=2, row_version=1 "
+                                  + "WHERE id = ?",
+                              id);
+                        }))
+        .hasStackTraceContaining("Run-owned fixture World row mutations are disabled");
+    assertThat(allRows(dsl).get("world_instance")).isEqualTo(preparedRows);
+    assertThat(
+            scalarLong(
+                "SELECT count(*) FROM world_run_owned_fixture_activation WHERE world_instance_id = ?",
+                id))
+        .isZero();
+
     var activated =
         RunOwnedWorldFixtureLifecycleTestFactory.activate(
             service, evidence, controlledInstallation, 1L);
@@ -856,12 +893,44 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
         .isEqualTo(1L);
     assertThat(scalarLong("SELECT row_version FROM world_instance WHERE id = ?", id)).isEqualTo(1L);
 
+    var committedReceipt = allRows(dsl).get("world_run_owned_fixture_activation");
     var replay =
         RunOwnedWorldFixtureLifecycleTestFactory.activate(
             service, evidence, controlledInstallation, 1L);
-    assertThat(replay.status()).isEqualTo("ACTIVE");
-    assertThat(replay.lifecycleEpoch()).isEqualTo(2L);
+    assertThat(replay).isEqualTo(activated);
+    assertThat(allRows(dsl).get("world_run_owned_fixture_activation")).isEqualTo(committedReceipt);
+    assertThat(scalarLong("SELECT count(*) FROM world_run_owned_fixture_activation_manifest"))
+        .isZero();
     assertThat(scalarLong("SELECT row_version FROM world_instance WHERE id = ?", id)).isEqualTo(1L);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    """
+                    SELECT world_verify_run_owned_fixed_preset_plan(
+                        p.input_json::jsonb, p.fixed_preset_content_digest,
+                        p.world_instance_id, p.private_game_instance_key)
+                    FROM world_canonical_instance_preparation p WHERE p.world_instance_id = ?
+                    """,
+                    id))
+        .hasStackTraceContaining("RUN_OWNED_WORLD_FIXED_PRESET_ASSOCIATION_MISMATCH");
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .executeWithoutResult(
+                        status -> {
+                          // Model a receipt mismatch without leaving damaged committed state.
+                          dsl.execute("SET LOCAL session_replication_role = replica");
+                          dsl.execute(
+                              "UPDATE world_run_owned_fixture_activation "
+                                  + "SET expected_row_version = 1, result_row_version = 2 "
+                                  + "WHERE world_instance_id = ?",
+                              id);
+                          dsl.execute("SET LOCAL session_replication_role = origin");
+                          associationRepository()
+                              .activateRunOwnedFixtureInOwnerTransaction(association, 1L, 1L);
+                        }))
+        .hasMessageStartingWith("LIFECYCLE_EPOCH_MISMATCH:");
+    assertThat(allRows(dsl).get("world_run_owned_fixture_activation")).isEqualTo(committedReceipt);
     assertThatThrownBy(
             () ->
                 RunOwnedWorldFixtureLifecycleTestFactory.activate(
@@ -878,6 +947,68 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             dsl.execute(
                 "DELETE FROM world_run_owned_fixture_activation WHERE world_instance_id = ?", id),
         "23514");
+  }
+
+  private void insertFixtureActivationReceipt(long worldInstanceId) {
+    dsl.execute(
+        """
+        INSERT INTO world_run_owned_fixture_activation (
+            world_instance_id, canonical_game_instance_id, fixture_binding_sha256,
+            expected_lifecycle_epoch, expected_row_version, result_lifecycle_epoch, result_row_version)
+        SELECT id, canonical_game_instance_id, run_owned_fixture_binding_sha256,
+            lifecycle_epoch, row_version, lifecycle_epoch + 1, row_version + 1
+        FROM world_instance WHERE id = ?
+        """,
+        worldInstanceId);
+  }
+
+  @Test
+  void fixtureActivationRefusesMissingCommittedPresetRoom() throws Exception {
+    var evidence = controlledEvidence();
+    var service = nativeService(evidence);
+    prepareWithInstallation(service, evidence);
+    var repository = associationRepository();
+    var association =
+        repository.readRunOwnedFixtureAssociation(
+            evidence, RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence));
+    assertFixtureActivationRefusesMissingPresetRoom(repository, association, 0L);
+    assertThat(
+            RunOwnedWorldFixtureLifecycleTestFactory.activate(
+                    service, evidence, controlledInstallation, 1L)
+                .status())
+        .isEqualTo("ACTIVE");
+    assertFixtureActivationRefusesMissingPresetRoom(repository, association, 1L);
+  }
+
+  private void assertFixtureActivationRefusesMissingPresetRoom(
+      WorldCanonicalInstanceAssociationRepository repository,
+      WorldCanonicalInstanceAssociation association,
+      long rowVersion) {
+    var original = allRows(dsl);
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .executeWithoutResult(
+                        status -> {
+                          // Model damaged storage without changing the committed fixture.
+                          dsl.execute("SET LOCAL session_replication_role = replica");
+                          assertThat(
+                                  dsl.execute(
+                                      """
+                                      DELETE FROM room_instance WHERE room_instance_row_id = (
+                                          SELECT min(runtime_row_id)
+                                          FROM world_canonical_instance_topology_identity
+                                          WHERE world_instance_id = ? AND family = 'ROOM')
+                                      """,
+                                      association.worldInstanceId()))
+                              .isEqualTo(1);
+                          dsl.execute("SET LOCAL session_replication_role = origin");
+                          repository.activateRunOwnedFixtureInOwnerTransaction(
+                              association, 1L, rowVersion);
+                        }))
+        .hasStackTraceContaining("RUN_OWNED_WORLD_FIXED_PRESET_TOPOLOGY_MISMATCH");
+
+    assertThat(allRows(dsl)).isEqualTo(original);
   }
 
   @Test
@@ -904,7 +1035,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             identity.canonicalGameInstanceId(),
             association.canonicalVersionId(),
             2L,
-            "fixture-initial-admission-1",
+            "run-owned-fixture-" + evidence.sourceReceipt().fixtureOperationId(),
             "a".repeat(64),
             WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER,
             identity.catalogRevision(),
@@ -968,12 +1099,58 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                 lifecycleRequest, "R-0", "", rooms))
         .isEmpty();
 
+    var closedOrigin =
+        new WorldCanonicalInitialAdmissionHold.Request(
+            holdRequest.targetNamespace(),
+            holdRequest.canonicalTenantId(),
+            holdRequest.worldSlug(),
+            holdRequest.realmId(),
+            holdRequest.playableStateNamespaceId(),
+            holdRequest.playableStateScope(),
+            holdRequest.canonicalGameInstanceId(),
+            holdRequest.canonicalVersionId(),
+            holdRequest.activeLifecycleEpoch(),
+            "fixture-closed-origin",
+            holdRequest.initialAdmissionRequestDigest(),
+            WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.EXPECT_CLOSED,
+            holdRequest.expectedCatalogRevision(),
+            2L);
+    assertThatThrownBy(() -> holds.acquire(closedOrigin, lifecycleRequest))
+        .isInstanceOf(
+            WorldCanonicalInitialAdmissionHoldRepository.InvalidHoldEvidenceException.class)
+        .hasMessage("Fixture first OPEN supports NO_PRIOR_POINTER only");
+
     var hold = holds.acquire(holdRequest, lifecycleRequest);
+    // Exercise the installed storage guard with otherwise matching hold bytes and columns.
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    """
+                    INSERT INTO initial_admission_bind_hold
+                    SELECT (jsonb_populate_record(NULL::initial_admission_bind_hold,
+                        to_jsonb(h) || jsonb_build_object(
+                            'hold_id', ?::uuid, 'hold_fence', ?::uuid,
+                            'initial_admission_request_id', ?::text,
+                            'initial_admission_origin', 'EXPECT_CLOSED',
+                            'expected_no_prior_pointer', false,
+                            'expected_prior_pointer_version', 2,
+                            'canonical_request_bytes', to_jsonb(?::bytea),
+                            'hold_binding_digest', ?::text))).*
+                    FROM initial_admission_bind_hold h WHERE h.hold_id = ?
+                    """,
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    closedOrigin.initialAdmissionRequestId(),
+                    closedOrigin.canonicalRequestBytes(),
+                    closedOrigin.holdBindingDigest(),
+                    hold.holdId()))
+        .hasStackTraceContaining("Fixture first OPEN supports NO_PRIOR_POINTER only");
     assertThat(holds.acquire(holdRequest, lifecycleRequest)).isEqualTo(hold);
     var state = holds.readState(hold, lifecycleRequest).orElseThrow();
 
     assertThat(state.isRunOwnedFixture()).isTrue();
     assertThat(state.isPendingAtExpectedActiveEpoch()).isTrue();
+    assertThat(new InitialAdmissionBindHoldRepository(dsl).findNonterminalLegacy(32)).isEmpty();
     assertThat(WorldCanonicalInitialAdmissionHoldState.fromStored(state.canonicalBytes()))
         .isEqualTo(state);
     assertSqlState(
@@ -982,6 +1159,90 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                 "UPDATE world_instance SET status = 'TERMINATING', lifecycle_epoch = 3, row_version = 2 WHERE id = ?",
                 association.worldInstanceId()),
         "55000");
+
+    assertFixtureTerminalRecovery(holds, evidence, hold);
+    assertThat(holds.readState(hold, lifecycleRequest).orElseThrow().holdStatus())
+        .isEqualTo(WorldCanonicalInitialAdmissionHoldState.HoldStatus.COMMITTED);
+  }
+
+  private void assertFixtureTerminalRecovery(
+      WorldCanonicalInitialAdmissionHoldRepository holds,
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
+      WorldCanonicalInitialAdmissionHold.HoldIdentity hold) {
+    var pending =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            hold,
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.PENDING,
+            null,
+            null,
+            null,
+            false,
+            null);
+    var committed =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            hold,
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+            1L,
+            23L,
+            "sha256:" + "b".repeat(64),
+            false,
+            Instant.now().truncatedTo(ChronoUnit.MICROS));
+    var receipt = evidence.sourceReceipt();
+    String provenance = receipt.fixturePolicySeal().evidenceDigest();
+    var source = mock(RunOwnedCanonicalWorldLaunchEvidenceProvider.class);
+    when(source.requireConfiguredFixtureReceipt()).thenReturn(receipt);
+    var gameSession = mock(GrpcGameSessionCanonicalInitialAdmissionOwnerClient.class);
+    when(gameSession.readFixture(hold, provenance, receipt.gameSessionLeafSha256()))
+        .thenReturn(pending, committed);
+    var fixtureReconciler =
+        new RunOwnedFixtureInitialAdmissionHoldReconciler(holds, source, gameSession);
+
+    var original = allRows(dsl);
+    fixtureReconciler.reconcilePendingHold();
+    assertThat(allRows(dsl)).isEqualTo(original);
+    var genericOwner = new WorldCanonicalInitialAdmissionHoldOwner(holds, identity -> committed);
+    assertThatThrownBy(() -> genericOwner.settleFromAuthenticatedOwnerRead(hold))
+        .hasStackTraceContaining(
+            "World fixture hold requires its original activation and committed terminal");
+    assertThat(allRows(dsl)).isEqualTo(original);
+
+    assertThat(provenance).isNotEqualTo(VALID_DIGEST);
+    assertSqlState(
+        () -> FixtureHoldStorageTestAccess.settle(holds, hold, VALID_DIGEST, committed),
+        "23514",
+        "World fixture terminal differs from its exact hold or provenance");
+    assertThat(allRows(dsl)).isEqualTo(original);
+
+    fixtureReconciler.reconcilePendingHold();
+    var terminal =
+        dsl.fetchSingle(
+            """
+        SELECT convert_from(canonical_owner_proof_bytes,'UTF8')::jsonb->>'authorityKind' AS kind,
+               convert_from(canonical_owner_proof_bytes,'UTF8')::jsonb->>'fixturePolicySealEvidenceDigest' AS seal,
+               owner_pointer_audit_id, owner_pointer_version
+        FROM initial_admission_bind_hold WHERE hold_id = ?
+        """,
+            hold.holdId());
+    assertThat(terminal.get("kind", String.class)).isEqualTo("RUN_OWNED_FIXTURE");
+    assertThat(terminal.get("seal", String.class)).isEqualTo(provenance);
+    assertThat(terminal.get("owner_pointer_audit_id", String.class)).isEqualTo("23");
+    assertThat(terminal.get("owner_pointer_version", Long.class)).isEqualTo(1L);
+    var settled = allRows(dsl).get("initial_admission_bind_hold");
+    FixtureHoldStorageTestAccess.settle(holds, hold, provenance, committed);
+    var substituted =
+        new GameSessionCanonicalInitialAdmissionOwnerProof(
+            hold,
+            committed.outcome(),
+            committed.committedPointerVersion(),
+            committed.auditEventId() + 1,
+            committed.proofDigest(),
+            false,
+            committed.terminalAt());
+    assertThatThrownBy(
+            () -> FixtureHoldStorageTestAccess.settle(holds, hold, provenance, substituted))
+        .hasMessageContaining("already settled by a different terminal proof");
+    fixtureReconciler.reconcilePendingHold();
+    assertThat(allRows(dsl).get("initial_admission_bind_hold")).isEqualTo(settled);
   }
 
   @Test
@@ -1666,8 +1927,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   .fetch(
                       "SELECT catalog_epoch FROM world_runtime_family_catalog_epoch ORDER BY catalog_epoch")
                   .getValues(0, Long.class))
-          .as("V1046 through V1050 and V1070 install six consecutive catalog epochs")
-          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
+          .as("V1046 through V1050 and V1070 through V1077 install thirteen catalog epochs")
+          .containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L, 12L, 13L);
       assertThat(
               connection
                   .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_snapshot")
@@ -1698,6 +1959,11 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
               retainedRowsAtDefaultFrontierOriginalColumns.remove(
                   "world_run_owned_fixture_activation"))
           .as("new additive V1070 fixture activation table is installed and empty")
+          .isNotNull()
+          .isEmpty();
+      assertThat(
+              retainedRowsAtDefaultFrontierOriginalColumns.remove(
+                  "world_run_owned_fixture_activation_manifest"))
           .isNotNull()
           .isEmpty();
       for (String extendedTable :
@@ -3456,6 +3722,13 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1049");
     versions.add("1050");
     versions.add("1070");
+    versions.add("1071");
+    versions.add("1072");
+    versions.add("1073");
+    versions.add("1074");
+    versions.add("1075");
+    versions.add("1076");
+    versions.add("1077");
     return List.copyOf(versions);
   }
 

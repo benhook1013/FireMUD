@@ -125,6 +125,7 @@ class PreseededActorAssignmentOwnerReadInterceptorChainTest {
         .containsExactly(
             "game_session.v1.GameSessionService/Ping",
             "game_session.v1.GameSessionControlPlaneService/GetRunOwnedFixtureLaunchAssociation",
+            "game_session.v1.RunOwnedFixtureInitialAdmissionOwnerReadService/ReadRunOwnedFixtureInitialAdmissionOwner",
             "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetCanonicalGameplayRosterReference",
             "game_session.v1.CanonicalGameplayRosterOwnerReadService/AcknowledgeCanonicalGameplayRosterRetirement",
             "game_session.v1.CanonicalGameplayRosterOwnerReadService/ConfirmCanonicalGameplayRosterRetirementAcknowledgement",

@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package game_session.v1;
+
+import "game-session/v1/game_session_service.proto";
+
+option java_package = "net.firedevops.firemud.gamesession.v1";
+option java_multiple_files = true;
+
+// Reads a pending or committed first OPEN for the configured run-owned fixture.
+service RunOwnedFixtureInitialAdmissionOwnerReadService {
+  rpc ReadRunOwnedFixtureInitialAdmissionOwner(ReadRunOwnedFixtureInitialAdmissionOwnerRequest)
+      returns (ReadRunOwnedFixtureInitialAdmissionOwnerResponse);
+}
+
+message ReadRunOwnedFixtureInitialAdmissionOwnerRequest {
+  string read_request_id = 1;
+  string authority_kind = 2;
+  string fixture_policy_seal_evidence_digest = 3;
+  GetCanonicalInitialAdmissionOwnerProofRequest hold = 4;
+}
+
+message ReadRunOwnedFixtureInitialAdmissionOwnerResponse {
+  string read_request_id = 1;
+  string authority_kind = 2;
+  string fixture_policy_seal_evidence_digest = 3;
+  GetCanonicalInitialAdmissionOwnerProofResponse proof = 4;
+}

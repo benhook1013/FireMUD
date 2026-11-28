@@ -113,7 +113,7 @@ class WorldManagementClientTest {
     return List.of(
         world,
         new PublishParticipantDigestDto(
-            "ENTITY_MANAGEMENT", "7", "commit-7", "entity", 1, null, null),
+            "ENTITY_MANAGEMENT", "7", "commit-7", "entity", 2, null, null),
         new PublishParticipantDigestDto("GAME_LOGIC", "7", "commit-7", "logic", 1, null, null),
         new PublishParticipantDigestDto(
             "AUTOMATION_SCRIPTING", "7", "commit-7", "script", 5, null, null),

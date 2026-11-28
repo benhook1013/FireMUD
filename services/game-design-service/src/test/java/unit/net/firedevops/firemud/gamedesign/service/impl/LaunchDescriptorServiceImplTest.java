@@ -635,14 +635,43 @@ class LaunchDescriptorServiceImplTest {
     stubSource(request, sourceEvidence(WORLD_SLUG));
     stubVersion(7L, VersionLifecycleState.PUBLISHED, 17L, null);
 
-    IllegalArgumentException thrown =
+    assertFrozenScriptPatchDenial(request);
+
+    verify(template).getDefaultScriptPatchVersion();
+  }
+
+  @Test
+  void requestedPatchWithoutExactPublicationAndReadinessEvidenceCannotResolve() {
+    var request = request("cp-requested-patch", 9L, true, "patch-1");
+    stubTemplate(request, 7L, null);
+    stubSource(request, sourceEvidence(WORLD_SLUG));
+    stubVersion(7L, VersionLifecycleState.PUBLISHED, 17L, null);
+
+    assertFrozenScriptPatchDenial(request);
+  }
+
+  @Test
+  void versionPatchWithoutExactPublicationAndReadinessEvidenceCannotResolve() {
+    var request = request("cp-version-patch", 9L);
+    stubTemplate(request, 7L, null);
+    stubSource(request, sourceEvidence(WORLD_SLUG));
+    stubVersion(7L, VersionLifecycleState.PUBLISHED, 17L, "patch-1");
+
+    assertFrozenScriptPatchDenial(request);
+  }
+
+  private void assertFrozenScriptPatchDenial(
+      AuthoredWorldLaunchDescriptorEvidence.Request request) {
+    FrozenLaunchDescriptorDenialException thrown =
         assertThrows(
-            IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+            FrozenLaunchDescriptorDenialException.class,
+            () -> service.resolveLaunchDescriptor(request));
 
     assertEquals(
         "SCRIPT_PATCH_NOT_READY: exact published-for-base and Automation READY evidence is unavailable",
         thrown.getMessage());
-    verify(template).getDefaultScriptPatchVersion();
+    assertEquals("SCRIPT_PATCH_NOT_READY", thrown.failureCode());
+    verifyNoInteractions(publishedReleaseBundleService, templateRemapSetService);
     org.mockito.ArgumentCaptor<LaunchDescriptor> failure =
         org.mockito.ArgumentCaptor.forClass(LaunchDescriptor.class);
     verify(launchDescriptorRepository).insertImmutable(failure.capture());
@@ -650,8 +679,10 @@ class LaunchDescriptorServiceImplTest {
     assertEquals("SCRIPT_PATCH_NOT_READY", failure.getValue().getFailureCode());
     assertEquals(request.requestDigest(), failure.getValue().getRequestDigest());
     assertDescriptorSourceTuple(failure.getValue(), sourceEvidence(WORLD_SLUG));
-    assertEquals(null, failure.getValue().getLaunchDescriptorId());
-    assertEquals(null, failure.getValue().getVersionId());
+    assertNull(failure.getValue().getLaunchDescriptorId());
+    assertNull(failure.getValue().getVersionId());
+    assertNull(failure.getValue().getScriptPatchVersion());
+    assertNull(failure.getValue().getResultDigest());
   }
 
   @Test

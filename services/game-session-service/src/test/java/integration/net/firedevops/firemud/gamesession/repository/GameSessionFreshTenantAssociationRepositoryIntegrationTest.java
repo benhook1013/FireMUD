@@ -18,6 +18,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
@@ -183,6 +184,74 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
         .isEqualTo(legacyReservation.get("xmin", String.class));
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_tenant_scope_reservation"))))
         .isEqualTo(2);
+  }
+
+  @Test
+  void skipsThePrivateKeyReservedByAConcurrentLegacyWriter() throws Exception {
+    Fixture fixture = fixture();
+    IntakeReceipt source = fixture.registerFreshSource();
+    UUID operation = uuid(651);
+    setTenantReservationSequenceNextValue(fixture.dsl, 1L);
+    String reservationSql =
+        "SELECT reservation_kind, reserved_at, xmin::text AS xmin"
+            + " FROM game_session_tenant_scope_reservation WHERE game_session_tenant_id = 1";
+
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    AtomicReference<Future<FreshGameSessionTenantAssociation>> freshWriter =
+        new AtomicReference<>();
+    try {
+      var legacyReservation =
+          fixture.transactions.execute(
+              status -> {
+                fixture.dsl.execute(
+                    "INSERT INTO feature_flag (tenant_id, name, enabled)"
+                        + " VALUES (1, 'concurrent-legacy-scope', true)");
+                var reservation = fixture.dsl.fetchSingle(reservationSql);
+                assertThat(reservation.get("reservation_kind", String.class))
+                    .isEqualTo("LEGACY_OCCUPIED");
+                int legacyPid =
+                    fixture.dsl.fetchSingle("SELECT pg_backend_pid()").get(0, int.class);
+                freshWriter.set(
+                    executor.submit(() -> fixture.associate(operation, NAMESPACE, source)));
+                awaitDatabaseWait(
+                    () ->
+                        Boolean.TRUE.equals(
+                            fixture
+                                .dsl
+                                .fetchSingle(
+                                    "SELECT EXISTS (SELECT 1 FROM pg_locks "
+                                        + "WHERE locktype = 'transactionid' AND NOT granted "
+                                        + "AND ? = ANY(pg_blocking_pids(pid)))",
+                                    legacyPid)
+                                .get(0, Boolean.class)),
+                    "Fresh allocation did not wait for the legacy reservation transaction");
+                return reservation;
+              });
+
+      FreshGameSessionTenantAssociation association = freshWriter.get().get(20, TimeUnit.SECONDS);
+      assertThat(association.legacyGameSessionTenantId()).isEqualTo(2L);
+      assertThat(fixture.associate(operation, NAMESPACE, source)).isEqualTo(association);
+      assertThat(fixture.dsl.fetchSingle(reservationSql)).isEqualTo(legacyReservation);
+      assertThat(
+              fixture
+                  .dsl
+                  .fetchSingle(
+                      "SELECT reservation_kind FROM game_session_tenant_scope_reservation"
+                          + " WHERE game_session_tenant_id = ?",
+                      association.legacyGameSessionTenantId())
+                  .get(0, String.class))
+          .isEqualTo("FRESH_SOURCE_BOUND");
+      assertThat(
+              fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_tenant_scope_reservation"))))
+          .isEqualTo(2);
+      assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_tenant_canonical_claim"))))
+          .isEqualTo(1);
+      assertThat(
+              fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_fresh_tenant_association"))))
+          .isEqualTo(1);
+    } finally {
+      executor.shutdownNow();
+    }
   }
 
   @Test
@@ -934,20 +1003,26 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
   }
 
   private static void awaitAdvisoryWait(Fixture fixture, String lockKey) {
+    awaitDatabaseWait(
+        () ->
+            Boolean.TRUE.equals(
+                fixture
+                    .dsl
+                    .fetchSingle(
+                        "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' "
+                            + "AND NOT granted AND objsubid = 1 "
+                            + "AND classid = (((hashtextextended(?, 0) >> 32) & 4294967295)::oid) "
+                            + "AND objid = ((hashtextextended(?, 0) & 4294967295)::oid))",
+                        lockKey,
+                        lockKey)
+                    .get(0, Boolean.class)),
+        "Human retry did not wait for the canonical association owner lock");
+  }
+
+  private static void awaitDatabaseWait(BooleanSupplier waiting, String failureMessage) {
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
     while (System.nanoTime() < deadline) {
-      Boolean waiting =
-          Objects.requireNonNull(
-                  fixture.dsl.fetchOne(
-                      "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' "
-                          + "AND NOT granted AND objsubid = 1 "
-                          + "AND classid = (((hashtextextended(?, 0) >> 32) & 4294967295)::oid) "
-                          + "AND objid = ((hashtextextended(?, 0) & 4294967295)::oid))",
-                      lockKey,
-                      lockKey),
-                  "PostgreSQL did not return the advisory-lock wait query result")
-              .get(0, Boolean.class);
-      if (Boolean.TRUE.equals(waiting)) {
+      if (waiting.getAsBoolean()) {
         return;
       }
       try {
@@ -955,10 +1030,10 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
       } catch (InterruptedException interrupted) {
         Thread.currentThread().interrupt();
         throw new IllegalStateException(
-            "Interrupted while awaiting the owner advisory lock", interrupted);
+            "Interrupted while awaiting a PostgreSQL lock", interrupted);
       }
     }
-    throw new AssertionError("Human retry did not wait for the canonical association owner lock");
+    throw new AssertionError(failureMessage);
   }
 
   private record HumanRetryFixture(

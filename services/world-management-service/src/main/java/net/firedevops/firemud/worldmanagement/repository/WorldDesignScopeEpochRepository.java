@@ -41,6 +41,56 @@ public class WorldDesignScopeEpochRepository {
         .fetchOptional(this::toEntity);
   }
 
+  public boolean compareAndAdvance(
+      Long tenantId,
+      Long versionId,
+      String scopeType,
+      String scopeId,
+      Long expectedEpoch,
+      LocalDateTime updatedAt) {
+    if (expectedEpoch == null || expectedEpoch < 0L || expectedEpoch == Long.MAX_VALUE) {
+      return false;
+    }
+
+    long nextEpoch = expectedEpoch + 1L;
+    LocalDateTime advancementTime = updatedAt == null ? LocalDateTime.now() : updatedAt;
+    int updated =
+        dsl.update(WORLD_DESIGN_SCOPE_EPOCH)
+            .set(WORLD_DESIGN_SCOPE_EPOCH.DRAFT_SCOPE_REVISION_EPOCH, nextEpoch)
+            .set(WORLD_DESIGN_SCOPE_EPOCH.UPDATED_AT, advancementTime)
+            .where(
+                WORLD_DESIGN_SCOPE_EPOCH
+                    .TENANT_ID
+                    .eq(tenantId)
+                    .and(WORLD_DESIGN_SCOPE_EPOCH.VERSION_ID.eq(versionId))
+                    .and(WORLD_DESIGN_SCOPE_EPOCH.SCOPE_TYPE.eq(scopeType))
+                    .and(WORLD_DESIGN_SCOPE_EPOCH.SCOPE_ID.eq(scopeId))
+                    .and(WORLD_DESIGN_SCOPE_EPOCH.DRAFT_SCOPE_REVISION_EPOCH.eq(expectedEpoch)))
+            .execute();
+    if (updated == 1) {
+      return true;
+    }
+    if (expectedEpoch != 0L) {
+      return false;
+    }
+
+    return dsl.insertInto(WORLD_DESIGN_SCOPE_EPOCH)
+            .set(WORLD_DESIGN_SCOPE_EPOCH.TENANT_ID, tenantId)
+            .set(WORLD_DESIGN_SCOPE_EPOCH.VERSION_ID, versionId)
+            .set(WORLD_DESIGN_SCOPE_EPOCH.SCOPE_TYPE, scopeType)
+            .set(WORLD_DESIGN_SCOPE_EPOCH.SCOPE_ID, scopeId)
+            .set(WORLD_DESIGN_SCOPE_EPOCH.DRAFT_SCOPE_REVISION_EPOCH, nextEpoch)
+            .set(WORLD_DESIGN_SCOPE_EPOCH.UPDATED_AT, advancementTime)
+            .onConflict(
+                WORLD_DESIGN_SCOPE_EPOCH.TENANT_ID,
+                WORLD_DESIGN_SCOPE_EPOCH.VERSION_ID,
+                WORLD_DESIGN_SCOPE_EPOCH.SCOPE_TYPE,
+                WORLD_DESIGN_SCOPE_EPOCH.SCOPE_ID)
+            .doNothing()
+            .execute()
+        == 1;
+  }
+
   public WorldDesignScopeEpoch save(WorldDesignScopeEpoch entity) {
     if (entity.getId() == null) {
       WorldDesignScopeEpochRecord record = dsl.newRecord(WORLD_DESIGN_SCOPE_EPOCH);
