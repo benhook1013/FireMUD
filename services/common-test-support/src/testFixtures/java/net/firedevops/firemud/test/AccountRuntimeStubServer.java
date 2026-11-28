@@ -455,10 +455,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     }
     final long tenantId;
     try {
-      tenantId = Long.parseLong(request.getTenantId());
-      if (tenantId <= 0L || !Long.toString(tenantId).equals(request.getTenantId())) {
-        throw new IllegalArgumentException("tenantId must be canonical and positive");
-      }
+      tenantId = requireProfileTenantId(request.getTenantId());
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
           GetProfileResponse.newBuilder()
@@ -493,16 +490,27 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   @Override
   public void updateProfile(
       UpdateProfileRequest request, StreamObserver<UpdateProfileResponse> responseObserver) {
+    Long accountId = resolveRegisteredAccountId(request.getAccountId());
+    if (accountId == null) {
+      responseObserver.onNext(
+          UpdateProfileResponse.newBuilder()
+              .setError(ErrorDetail.newBuilder().setCode("ACCOUNT_NOT_FOUND"))
+              .build());
+      responseObserver.onCompleted();
+      return;
+    }
+    final long tenantId;
     try {
-      Long accountId = resolveRegisteredAccountId(request.getAccountId());
-      if (accountId == null) {
-        responseObserver.onNext(
-            UpdateProfileResponse.newBuilder()
-                .setError(ErrorDetail.newBuilder().setCode("ACCOUNT_NOT_FOUND"))
-                .build());
-        responseObserver.onCompleted();
-        return;
-      }
+      tenantId = requireProfileTenantId(request.getTenantId());
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onNext(
+          UpdateProfileResponse.newBuilder()
+              .setError(ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT"))
+              .build());
+      responseObserver.onCompleted();
+      return;
+    }
+    try {
       AccountProfileJson profile =
           AccountProfileJson.parse(request.getProfileJson(), StubProfile.DEFAULT_VISIBILITY_POLICY);
       StubProfile existing =
@@ -515,12 +523,26 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
               profile.presenceVisibilityPolicy() == null
                   ? existing.presenceVisibilityPolicy()
                   : profile.presenceVisibilityPolicy()));
-      responseObserver.onNext(UpdateProfileResponse.newBuilder().setSuccess(true).build());
+      // Like profile reads, this echo describes the controlled request fixture.
+      responseObserver.onNext(
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(true)
+              .setAccountId(accountUuidForTestFixture(accountId))
+              .setTenantId(Long.toString(tenantId))
+              .build());
       responseObserver.onCompleted();
     } catch (Exception ex) {
       responseObserver.onNext(UpdateProfileResponse.newBuilder().setSuccess(false).build());
       responseObserver.onCompleted();
     }
+  }
+
+  private static long requireProfileTenantId(String selector) {
+    long tenantId = Long.parseLong(selector);
+    if (tenantId <= 0L || !Long.toString(tenantId).equals(selector)) {
+      throw new IllegalArgumentException("tenantId must be canonical and positive");
+    }
+    return tenantId;
   }
 
   private Long resolveRegisteredAccountId(String accountUuid) {
