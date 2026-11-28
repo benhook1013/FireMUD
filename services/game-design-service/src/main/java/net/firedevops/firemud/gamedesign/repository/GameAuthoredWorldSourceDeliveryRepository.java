@@ -28,7 +28,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class GameAuthoredWorldSourceDeliveryRepository {
   private static final int SCHEMA_VERSION = 1;
   private static final String NEW_GAME_ROW = "NEW_GAME_ROW";
-  private static final int MAX_PENDING_BATCH_SIZE = 100;
+  public static final int MAX_PENDING_BATCH_SIZE = 100;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private static final Table<?> DELIVERY =
