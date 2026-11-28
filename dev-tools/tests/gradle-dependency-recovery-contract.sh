@@ -389,6 +389,8 @@ LOG
 
 new_case captured-jooq-codegen-maven-429
 write_jooq_throttled_cause
+# Gradle can leave whitespace after an otherwise exact HTTP result.
+sed -i '/Received status code 429/s/$/ /' "$CASE_DIR/jooq-cause.log"
 write_jooq_wrapper ''
 run_case game-logic-service 0
 assert_call_count 2
@@ -472,6 +474,7 @@ LOG
 
 new_case annotation-processor-maven-429
 write_annotation_processor_429_cause
+sed -i '/Received status code 429/s/$/ /' "$CASE_DIR/cause.log"
 # shellcheck disable=SC2016
 write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-annotation-processors; exit 0'
 run_case common-platform-core 0

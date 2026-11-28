@@ -68,8 +68,9 @@ if not tag1 or tag1 ~= tag2
   or (mayCreate ~= '0' and mayCreate ~= '1')
   or not positiveInt64(absoluteDeadlineMillis) then return -1 end
 
--- PROBE runs before the durable SQL creation permission is consumed. Require TIME here too so
--- the principal's command ACL is proven before that permission can enter INITIALIZING.
+-- Check TIME before any mutation. A permission change after PROBE still leaves a
+-- definite no-write outcome for this exact initialization claim.
+if not redis.acl_check_cmd('TIME') then return -4 end
 local redisTime = redis.call('TIME')
 local redisNowMillis = tonumber(redisTime[1]) * 1000 + math.floor(tonumber(redisTime[2]) / 1000)
 local remainingMillis = tonumber(absoluteDeadlineMillis) - redisNowMillis

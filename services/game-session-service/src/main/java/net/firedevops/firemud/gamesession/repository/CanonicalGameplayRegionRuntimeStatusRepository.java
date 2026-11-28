@@ -439,10 +439,22 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
 
           @Override
           public void rollback(org.jooq.TransactionContext context) {
-            provider.rollback(context);
-            // A successful rollback before actual JDBC commit proves the claim did not
-            // release. Never restore after an ambiguous driver commit, even if rollback returns.
-            if (!commitAttempted) proof.restoreAfterConfirmedRollback();
+            if (installationBudget == null) {
+              provider.rollback(context);
+              if (!commitAttempted) proof.restoreAfterConfirmedRollback();
+              return;
+            }
+            long previousRollbacks = installationBudget.jdbcConfirmedRollbacks();
+            try {
+              provider.rollback(context);
+            } finally {
+              // The driver can confirm rollback before the provider throws on pool return.
+              // An attempted commit remains ambiguous even if the driver later rolls back.
+              if (!commitAttempted
+                  && installationBudget.jdbcConfirmedRollbacks() != previousRollbacks) {
+                proof.restoreAfterConfirmedRollback();
+              }
+            }
           }
         };
     DSL.using(dsl.configuration().derive(guardedProvider))

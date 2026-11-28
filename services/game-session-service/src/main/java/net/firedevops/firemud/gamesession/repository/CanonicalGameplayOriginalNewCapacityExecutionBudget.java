@@ -86,6 +86,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private boolean redisCloseFailureRecorded;
   private final AtomicInteger outstandingConnections = new AtomicInteger();
   private final AtomicLong jdbcCommitInvocations = new AtomicLong();
+  private final AtomicLong jdbcConfirmedRollbacks = new AtomicLong();
   private final Context caller;
   private final Clock clock;
   private final Deadline deadline;
@@ -458,6 +459,10 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     return jdbcCommitInvocations.get();
   }
 
+  long jdbcConfirmedRollbacks() {
+    return jdbcConfirmedRollbacks.get();
+  }
+
   /** Releases the resource permit only after the registered Redis disposal succeeds. */
   void retainUntilAsyncClose(CompletableFuture<Void> closeAttempt) {
     Objects.requireNonNull(closeAttempt);
@@ -794,7 +799,10 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       // The resource worker still owns pool return. Cancellation can abort this exact connection
       // while the driver is waiting for rollback to finish.
       try {
-        return invoke(raw, method, args);
+        Object result = invoke(raw, method, args);
+        // A savepoint rollback does not settle the enclosing transaction.
+        if (method.getParameterCount() == 0) jdbcConfirmedRollbacks.incrementAndGet();
+        return result;
       } catch (Throwable failure) {
         synchronized (resources) {
           rollbackFailed = true;

@@ -277,8 +277,14 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     assertThatThrownBy(() -> owner.readRetainedInitialGrant(preparation, status, identity))
         .isInstanceOf(IllegalStateException.class);
     verify(commands, org.mockito.Mockito.times(3)).aclWhoami();
-    verify(commands, org.mockito.Mockito.times(3)).get(any(byte[].class));
-    verify(commands, org.mockito.Mockito.times(3)).pttl(any(byte[].class));
+    byte[] expectedLeaseKey =
+        CanonicalGameplayRegionRedisKeys.lease(
+                source.tenantId(), source.gameInstanceId(), source.regionId())
+            .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    verify(commands, org.mockito.Mockito.times(3))
+        .get(org.mockito.AdditionalMatchers.aryEq(expectedLeaseKey));
+    verify(commands, org.mockito.Mockito.times(3))
+        .pttl(org.mockito.AdditionalMatchers.aryEq(expectedLeaseKey));
     org.mockito.Mockito.verifyNoMoreInteractions(commands);
   }
 
@@ -332,7 +338,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     var cleanup = new AtomicBoolean();
     var released = new AtomicBoolean();
     assertThatThrownBy(() ->
-            CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundWithin(
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundCleanup(
                 frozen,
                 frozen.millis() + 5_000,
                 io.grpc.Deadline.after(0, TimeUnit.NANOSECONDS),
@@ -341,6 +347,20 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         .isExactlyInstanceOf(
             CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
     assertThat(cleanup.get()).isFalse();
+    assertThat(released.get()).isTrue();
+    released.set(false);
+    boolean liveCleanup =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackgroundCleanup(
+            frozen,
+            frozen.millis() + 5_000,
+            io.grpc.Deadline.after(5, TimeUnit.SECONDS),
+            budget -> {
+              cleanup.set(true);
+              return true;
+            },
+            () -> released.set(true));
+    assertThat(liveCleanup).isTrue();
+    assertThat(cleanup.get()).isTrue();
     assertThat(released.get()).isTrue();
   }
 
@@ -735,7 +755,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         var scriptArguments = org.mockito.ArgumentCaptor.forClass(byte[][].class);
         verify(commands, org.mockito.Mockito.times(2))
             .evalsha(
-                any(), eq(ScriptOutputType.INTEGER), any(byte[][].class), scriptArguments.capture());
+                any(),
+                eq(ScriptOutputType.INTEGER),
+                any(byte[][].class),
+                scriptArguments.capture());
         byte[][] probe = scriptArguments.getAllValues().getFirst();
         byte[][] arguments = scriptArguments.getValue();
         assertThat(new String(probe[1], java.nio.charset.StandardCharsets.US_ASCII))
@@ -1225,8 +1248,17 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                           budget.sql(source(provider)).configuration().connectionProvider();
                       Connection proxy = java.util.Objects.requireNonNull(scoped.acquire());
                       scoped.acquire();
+                      try {
+                        proxy.rollback(mock(java.sql.Savepoint.class));
+                        assertThat(budget.jdbcConfirmedRollbacks()).isZero();
+                        proxy.rollback();
+                      } catch (java.sql.SQLException failure) {
+                        throw new AssertionError(failure);
+                      }
+                      assertThat(budget.jdbcConfirmedRollbacks()).isEqualTo(1);
                       assertThatThrownBy(() -> scoped.release(proxy))
                           .hasMessage("Controlled uncertain pool return");
+                      assertThat(budget.jdbcConfirmedRollbacks()).isEqualTo(1);
                       rollbackFailure.set(
                           org.assertj.core.api.Assertions.catchThrowable(proxy::rollback));
                       autoCommitFailure.set(
@@ -1252,7 +1284,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                 (AtomicInteger)
                     ReflectionTestUtils.getField(captured.get(), "outstandingConnections"))
             .hasValue(2);
-        verify(first, never()).rollback();
+        verify(first).rollback();
         verify(first, never()).setAutoCommit(true);
         verify(provider).release(first);
         verify(provider).release(second);

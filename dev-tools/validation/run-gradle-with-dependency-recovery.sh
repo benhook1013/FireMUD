@@ -135,13 +135,18 @@ failure_body() {
   ' "$log_path"
 }
 
+contains_http_429() {
+  # Read the complete stream so failure_body can still validate its framing.
+  grep -E '^[[:space:]]*(> )?Received status code 429 from server: Too Many Requests[[:space:]]*$' "$@" >/dev/null
+}
+
 classify_failure_body() {
   local log_path="$1"
   local jooq_throttled=0
 
   # Select the strict download-chain parser for cache-wrapped jOOQ throttling.
   # The parser still requires every artifact, repository URL and HTTP result to match.
-  if grep -Eq '^[[:space:]]*> Received status code 429 from server: Too Many Requests$' "$log_path"; then
+  if contains_http_429 "$log_path"; then
     jooq_throttled=1
   fi
 
@@ -818,7 +823,7 @@ fi
 # affected repository and unrelated repositories needed during configuration.
 retry_refresh=true
 retry_description="with dependency metadata refresh"
-if failure_body "$NORMAL_LOG" | grep -E '^[[:space:]]*(> )?Received status code 429 from server: Too Many Requests$' >/dev/null; then
+if failure_body "$NORMAL_LOG" | contains_http_429; then
   retry_refresh=false
   retry_description="with cached dependency metadata"
 fi

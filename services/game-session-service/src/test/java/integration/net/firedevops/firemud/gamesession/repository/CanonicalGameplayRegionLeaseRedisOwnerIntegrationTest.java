@@ -113,11 +113,13 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
             RedisScriptCatalog.fromContributions(
                 java.util.List.of(new CanonicalGameplayRegionLeaseRedisScriptContribution()));
         Clock clock = Clock.systemUTC();
+        var acquisitionStarted = new CompletableFuture<Void>();
         var refusal =
             CompletableFuture.runAsync(() -> {
               var owner =
                   new CanonicalGameplayRegionLeaseRedisOwner(client, uri, catalog)
                       .forHandoffDeadline(clock, clock.millis() + 1_000L);
+              acquisitionStarted.complete(null);
               assertThatThrownBy(() ->
                       owner.acquire(
                           source(GAME_INSTANCE_ID_A),
@@ -126,6 +128,7 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
                           identity("stalled")))
                   .isInstanceOf(IllegalStateException.class);
             });
+        acquisitionStarted.get(2, TimeUnit.SECONDS);
         refusal.get(1500, TimeUnit.MILLISECONDS);
         assertThat(disconnected.get(2, TimeUnit.SECONDS)).isTrue();
       }
