@@ -1131,7 +1131,8 @@ class CanonicalGameplayOriginalNewCapacityTransferCustodyIntegrationTest
       throws Exception {
     try (var proof = new TransferSqlProof(MigrationVersion.fromVersion("1065.0.11.2"))) {
       assertThat(
-              proof.sql
+              proof
+                  .sql
                   .fetchSingle(
                       "SELECT version FROM flyway_schema_history WHERE success"
                           + " ORDER BY installed_rank DESC LIMIT 1")
