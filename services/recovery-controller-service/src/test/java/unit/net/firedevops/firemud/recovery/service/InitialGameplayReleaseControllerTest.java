@@ -517,6 +517,68 @@ class InitialGameplayReleaseControllerTest {
         .isEqualTo("OWNER_BUSY");
   }
 
+  @Test
+  void resumeRecordsTransitionAfterExactFreshOwnerEvidence() {
+    var journal = mock(InitialGameplayReleaseJournal.class);
+    var codec = mock(InitialGameplayReleaseTupleCodec.class);
+    var provider = mock(InitialGameplayReleaseEvidenceProvider.class);
+    var effectPort = mock(InitialGameplayReleaseEffectPort.class);
+    var scope =
+        new Scope(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "release-target",
+            UUID.randomUUID(),
+            new PeerStorageBinding(
+                "release-target", "cluster-1", "recovery-peer", "storage-1", "revision-1", DIGEST),
+            "evidence");
+    var operation = mock(Operation.class);
+    var retainedEvidence = mock(InitialGameplayReleaseEvidence.class);
+    var ownerEvidence = mock(InitialGameplayReleaseEvidence.class);
+    var lock = MaintenanceLockCredential.issue(UUID.randomUUID());
+    Instant now = Instant.parse("2026-09-01T00:00:00Z");
+    when(operation.scope()).thenReturn(scope);
+    when(operation.maintenanceLockIdentity()).thenReturn(lock.identity());
+    when(operation.evidence()).thenReturn(retainedEvidence);
+    when(retainedEvidence.evidenceIdentity()).thenReturn("proof");
+    when(ownerEvidence.evidenceIdentity()).thenReturn("proof");
+    when(codec.digest(scope)).thenReturn(DIGEST);
+    when(codec.digest(retainedEvidence)).thenReturn(DIGEST);
+    when(codec.digest(ownerEvidence)).thenReturn(DIGEST);
+    when(journal.find(scope.operationId())).thenReturn(Optional.of(operation));
+
+    var tuple =
+        new PublicTransitionTuple(
+            scope.operationId(),
+            DIGEST,
+            TransitionVerb.RESUME,
+            Phase.AWAITING_RESUME,
+            lock.identity(),
+            scope.evidenceRef(),
+            "proof",
+            DIGEST);
+    var authorized = new PublicTransitionResult(scope.operationId(), Phase.RESUME_AUTHORIZED);
+    when(journal.findTransition(tuple)).thenReturn(Optional.empty());
+    when(provider.read(scope))
+        .thenReturn(new EvidenceResolution(ResolutionStatus.AVAILABLE, ownerEvidence));
+    when(journal.transition(tuple, now)).thenReturn(authorized);
+    var controller =
+        new InitialGameplayReleaseController(
+            journal, codec, provider, effectPort, Clock.fixed(now, ZoneOffset.UTC));
+
+    assertThat(
+            controller.resume(
+                new Resume(scope.operationId(), Phase.AWAITING_RESUME, lock, scope.evidenceRef())))
+        .isSameAs(authorized);
+    var order = inOrder(journal, provider, ownerEvidence, codec);
+    order.verify(journal).findTransition(tuple);
+    order.verify(provider).read(scope);
+    order.verify(ownerEvidence).validateFor(scope);
+    order.verify(codec).digest(ownerEvidence);
+    order.verify(journal).transition(tuple, now);
+    verifyNoInteractions(effectPort);
+  }
+
   @ParameterizedTest
   @EnumSource(ResolutionStatus.class)
   void ownerEvidenceFailureReturnsConcurrentExactCommittedTransition(ResolutionStatus status) {

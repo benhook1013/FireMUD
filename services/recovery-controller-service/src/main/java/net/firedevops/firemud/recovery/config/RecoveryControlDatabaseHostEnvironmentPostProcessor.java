@@ -127,9 +127,14 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
     }
     String validateOnMigrate = "spring.flyway.validate-on-migrate";
     if (binder.bind(validateOnMigrate, String.class).isBound()
-        && !binder.bind(validateOnMigrate, Boolean.class).orElse(false)) {
+        && !Boolean.TRUE.equals(binder.bind(validateOnMigrate, Boolean.class).orElse(null))) {
       throw new SafeOverrideException(
           "spring.flyway.validate-on-migrate must be enabled for the recovery migrations");
+    }
+    if (!Boolean.FALSE.equals(
+        binder.bind("spring.flyway.placeholder-replacement", Boolean.class).orElse(null))) {
+      throw new SafeOverrideException(
+          "spring.flyway.placeholder-replacement must be disabled for the recovery migrations");
     }
     if (Boolean.TRUE.equals(binder.bind("spring.flyway.mixed", Boolean.class).orElse(null))) {
       throw new SafeOverrideException(
@@ -158,15 +163,15 @@ public final class RecoveryControlDatabaseHostEnvironmentPostProcessor
     }
     requireAbsent(binder, "spring.flyway.dry-run-output");
     String connectionInitSql =
-        binder.bind("spring.datasource.hikari.connection-init-sql", String.class).orElse("");
-    if (!connectionInitSql.isBlank()) {
+        binder.bind("spring.datasource.hikari.connection-init-sql", String.class).orElse(null);
+    if (connectionInitSql != null && !connectionInitSql.trim().isEmpty()) {
       throw new SafeOverrideException(
           "spring.datasource.hikari.connection-init-sql must be empty for the recovery migrations");
     }
     String connectionTestQuery =
-        binder.bind("spring.datasource.hikari.connection-test-query", String.class).orElse("");
+        binder.bind("spring.datasource.hikari.connection-test-query", String.class).orElse(null);
     // Hikari trims the query and uses JDBC connection validation when it is empty.
-    if (!connectionTestQuery.trim().isEmpty()) {
+    if (connectionTestQuery != null && !connectionTestQuery.trim().isEmpty()) {
       throw new SafeOverrideException(
           "spring.datasource.hikari.connection-test-query must be empty for the recovery migrations");
     }

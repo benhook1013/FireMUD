@@ -48,7 +48,7 @@ public record InitialGameplayRecoverRequest(
     public Target {
       Objects.requireNonNull(launchAssociation, "launchAssociation");
       Objects.requireNonNull(peerStorageBinding, "peerStorageBinding");
-      evidenceRef = text(evidenceRef, 512);
+      evidenceRef = boundedText(Objects.requireNonNull(evidenceRef, "evidenceRef"), 512);
       if (evidenceRef.codePoints().anyMatch(InitialGameplayRecoverRequest::isNoncharacter)) {
         throw new IllegalArgumentException(
             "Evidence reference must not contain Unicode noncharacters");
@@ -150,14 +150,17 @@ public record InitialGameplayRecoverRequest(
     if (GameTenantCreationDigest.utf8ByteLength(value) > limit) {
       throw new IllegalArgumentException("Raw text exceeds family limit");
     }
-    String normalized = Normalizer.normalize(value, Normalizer.Form.NFC);
-    if (isUnicodeWhitespaceOnly(normalized)
-        || hasUnicodeWhitespaceBoundary(normalized)
-        || normalized.codePoints().anyMatch(Character::isISOControl)
-        || GameTenantCreationDigest.utf8ByteLength(normalized) > limit) {
+    return boundedText(Normalizer.normalize(value, Normalizer.Form.NFC), limit);
+  }
+
+  private static String boundedText(String value, int limit) {
+    if (isUnicodeWhitespaceOnly(value)
+        || hasUnicodeWhitespaceBoundary(value)
+        || value.codePoints().anyMatch(Character::isISOControl)
+        || GameTenantCreationDigest.utf8ByteLength(value) > limit) {
       throw new IllegalArgumentException("Text must be bounded nonblank Unicode without controls");
     }
-    return normalized;
+    return value;
   }
 
   private static String journalSelector(String value, int limit) {

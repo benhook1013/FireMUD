@@ -58,6 +58,18 @@ class InitialGameplayRecoverCodecTest {
   }
 
   @Test
+  void evidenceReferenceKeepsTheOriginalOwnerIdentityAndDigest() {
+    String decomposed = "owner-cafe\u0301";
+    String composed = "owner-caf\u00e9";
+    var first = decode(WIRE.replace("\"evidence\"", "\"" + decomposed + "\""));
+    var second = decode(WIRE.replace("\"evidence\"", "\"" + composed + "\""));
+    assertThat(first.target().evidenceRef()).isEqualTo(decomposed);
+    assertThat(second.target().evidenceRef()).isEqualTo(composed);
+    assertThat(InitialGameplayRecoverCodec.mutationDigest(first))
+        .isNotEqualTo(InitialGameplayRecoverCodec.mutationDigest(second));
+  }
+
+  @Test
   void exactPeerStorageSelectorsMustBeRepresentableWithoutChangingIdentity() {
     for (String field : List.of("clusterIdentity", "storageIdentity", "storageRevision")) {
       String member = "(\"" + field + "\":\")([^\"]+)";

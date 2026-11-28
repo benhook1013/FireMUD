@@ -5,7 +5,6 @@ plugins {
 
 firemudJooq {
     packageName.set("net.firedevops.firemud.recovery.jooq")
-    migrationGlob.set("src/main/resources/db/recovery-control-migration/*.sql")
 }
 
 dependencies {

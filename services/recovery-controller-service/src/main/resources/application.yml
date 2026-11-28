@@ -57,7 +57,7 @@ management:
         liveness:
           include: livenessState
         readiness:
-          include: readinessState,db,recoveryJournal
+          include: readinessState,recoveryJournal
 
 firemud:
   grpc:

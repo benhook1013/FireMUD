@@ -83,6 +83,7 @@ public final class InitialGameplayReleaseController {
     }
     InitialGameplayReleaseEvidence evidence = resolution.evidence();
     evidence.validateFor(operation.scope());
+    tupleCodec.requireBoundedEvidence(evidence);
     String digest = tupleCodec.digest(evidence);
     return journal.bindVerifiedEvidence(
         operation.scope(), tupleCodec.digest(operation.scope()), evidence, digest, clock.instant());
@@ -250,6 +251,7 @@ public final class InitialGameplayReleaseController {
     }
     InitialGameplayReleaseEvidence currentEvidence = resolution.evidence();
     currentEvidence.validateFor(operation.scope());
+    tupleCodec.requireBoundedEvidence(currentEvidence);
     if (!operation.evidence().evidenceIdentity().equals(currentEvidence.evidenceIdentity())
         || !tupleCodec.digest(operation.evidence()).equals(tupleCodec.digest(currentEvidence))) {
       throw new InitialGameplayReleaseConflictException(

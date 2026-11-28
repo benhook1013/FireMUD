@@ -394,8 +394,10 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
 
   @Test
   void requiresCanonicalMigrationHistoryWhenFlywayActivationIsUnset() {
+    var environment =
+        endpointFixture().withProperty("spring.flyway.placeholder-replacement", "false");
     assertThatThrownBy(
-            () -> postProcessor.postProcessEnvironment(endpointFixture(), new SpringApplication()))
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageStartingWith("spring.flyway.table must name the dedicated recovery")
         .hasNoCause();
@@ -582,8 +584,9 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         .hasNoCause();
   }
 
-  @Test
-  void refusesEffectiveHikariConnectionInitSqlForEnabledFlyway() {
+  @ParameterizedTest
+  @ValueSource(strings = {"SELECT 1", "\u2003"})
+  void refusesEffectiveHikariConnectionInitSqlForEnabledFlyway(String initSql) {
     var environment =
         fixtureEnvironment().withProperty("spring.datasource.hikari.connection-init-sql", "");
     environment
@@ -591,12 +594,12 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         .addFirst(
             new SystemEnvironmentPropertySource(
                 "test-systemEnvironment",
-                Map.of("SPRING_DATASOURCE_HIKARI_CONNECTIONINITSQL", "SELECT 1")));
+                Map.of("SPRING_DATASOURCE_HIKARI_CONNECTIONINITSQL", initSql)));
     assertThatThrownBy(
             () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageStartingWith("spring.datasource.hikari.connection-init-sql must be empty")
-        .hasMessageNotContaining("SELECT 1")
+        .hasMessageNotContaining(initSql)
         .hasNoCause();
   }
 
@@ -752,12 +755,23 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
         + "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended";
   }
 
+  @Test
+  void enabledFlywayRefusesEffectivePlaceholderReplacement() {
+    var environment =
+        fixtureEnvironment().withProperty("spring.flyway.placeholder-replacement", "true");
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .hasMessage(
+            "spring.flyway.placeholder-replacement must be disabled for the recovery migrations");
+  }
+
   private static MockEnvironment fixtureEnvironment() {
     return endpointFixture()
         .withProperty("spring.flyway.locations", "classpath:db/recovery-control-migration")
         .withProperty("spring.flyway.schemas", "recovery_control")
         .withProperty("spring.flyway.default-schema", "recovery_control")
-        .withProperty("spring.flyway.table", "flyway_schema_history_recovery_control");
+        .withProperty("spring.flyway.table", "flyway_schema_history_recovery_control")
+        .withProperty("spring.flyway.placeholder-replacement", "false");
   }
 
   private static MockEnvironment endpointFixture() {

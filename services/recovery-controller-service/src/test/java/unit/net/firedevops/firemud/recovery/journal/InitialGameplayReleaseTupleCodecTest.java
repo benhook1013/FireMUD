@@ -67,6 +67,22 @@ class InitialGameplayReleaseTupleCodecTest {
     var retained = codec.readEffectReadback(json);
     assertThat(retained).isEqualTo(closure);
     assertThat(codec.digest(retained)).isEqualTo(codec.digest(closure));
+    var differentIdentity =
+        new EffectReadback(
+            closure.operationId(),
+            closure.effectId(),
+            closure.attemptId(),
+            closure.attemptOrdinal(),
+            closure.effectKind(),
+            closure.operationTupleDigest(),
+            closure.payloadDigest(),
+            closure.state(),
+            closure.authority(),
+            java.text.Normalizer.normalize(
+                closure.readbackIdentity(), java.text.Normalizer.Form.NFC),
+            closure.observedAt());
+    assertThat(differentIdentity.readbackIdentity()).isNotEqualTo(closure.readbackIdentity());
+    assertThat(codec.digest(differentIdentity)).isNotEqualTo(codec.digest(closure));
   }
 
   @ParameterizedTest

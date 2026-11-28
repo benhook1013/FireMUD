@@ -56,6 +56,16 @@ class RecoveryControllerPackagedWiringTest {
       assertThat(new BeanWrapperImpl(context.getBean(DataSource.class)).getPropertyValue("jdbcUrl"))
           .isEqualTo(
               "jdbc:postgresql://recovery-control.invalid:5432/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended");
+      assertThat(
+              context
+                  .getEnvironment()
+                  .getProperty("management.endpoint.health.group.readiness.include"))
+          .isEqualTo("readinessState,recoveryJournal");
+      assertThat(
+              context
+                  .getEnvironment()
+                  .getProperty("management.endpoint.health.group.liveness.include"))
+          .isEqualTo("livenessState");
       String redisConnectionFactory =
           "org.springframework.data.redis.connection.RedisConnectionFactory";
       ClassLoader loader = context.getClassLoader();

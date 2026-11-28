@@ -22,7 +22,7 @@ except ModuleNotFoundError as error:
         "environment."
     ) from None
 
-VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:[._][0-9]+)*)__.+\.(?:java|sql)$")
+VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:[._][0-9]+)*)__.*\.(?:java|sql)$")
 MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/(migration|recovery-control-migration)/")
 RECOVERY_PROJECT = "recovery-controller-service"
 RECOVERY_LOCATION = "classpath:db/recovery-control-migration"
@@ -40,6 +40,8 @@ RECOVERY_MIGRATION_ANCESTORS = {
 RECOVERY_HISTORY_VERSION_LIMIT = 50
 RECOVERY_HISTORY_TABLE = "flyway_schema_history_recovery_control"
 RECOVERY_SCHEMA = "recovery_control"
+POSTGRESQL_DRIVER = "org.postgresql.Driver"
+JAVA_TRIM_CHARACTERS = "".join(map(chr, range(0x21)))
 RECOVERY_DATASOURCE_URL = (
     "jdbc:postgresql://${FIREMUD_RECOVERY_CONTROL_DB_HOST}:${FIREMUD_RECOVERY_CONTROL_DB_PORT:5432}"
     "/firemud_recovery_control?logServerErrorDetail=false&preferQueryMode=extended"
@@ -401,6 +403,19 @@ def effective_sets(
     return grouped
 
 
+def spring_boolean(value: object) -> bool | None:
+    """Bind literal Boolean values without resolving runtime placeholders."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip(JAVA_TRIM_CHARACTERS).lower()
+        if normalized in {"true", "on", "yes", "1"}:
+            return True
+        if normalized in {"false", "off", "no", "0"}:
+            return False
+    return None
+
+
 def recovery_flyway_config(
     snapshot: Snapshot,
     project: str,
@@ -474,6 +489,11 @@ def recovery_flyway_config(
     pool_init_sql = "spring.datasource.hikari.connectioninitsql"
     pool_test_query = "spring.datasource.hikari.connectiontestquery"
     datasource_type = "spring.datasource.type"
+    driver_paths = {
+        "spring.datasource.driverclassname",
+        "spring.datasource.hikari.driverclassname",
+        "spring.flyway.driverclassname",
+    }
     credential_paths = {
         "spring.datasource.username": "${FIREMUD_RECOVERY_CONTROL_DB_USER}",
         "spring.datasource.password": "${FIREMUD_RECOVERY_CONTROL_DB_PASSWORD}",
@@ -559,18 +579,29 @@ def recovery_flyway_config(
             locations_property = "spring.flyway.locations"
             indexed_location_paths = {
                 path for path in properties
-                if path.startswith(locations_property + "[") or path.startswith(locations_property + ".")
+                if path.startswith((locations_property + "[", locations_property + "."))
             }
-            if indexed_location_paths:
-                if locations_property in properties or locations_property in ambiguous:
+            location_value = properties.get(locations_property)
+            if indexed_location_paths or isinstance(location_value, dict):
+                if locations_property in ambiguous:
+                    return None
+                indexed_values: dict[int, object] = {}
+                if isinstance(location_value, dict):
+                    # Boot flattens integer YAML keys to bracketed collection indices.
+                    if not location_value or any(type(key) is not int for key in location_value):
+                        return None
+                    indexed_values.update(location_value)
+                elif locations_property in properties:
                     return None
                 index_pattern = re.compile(r"^spring\.flyway\.locations\[(0|[1-9][0-9]*)\]$")
-                indexed_values: dict[int, object] = {}
                 for path in indexed_location_paths:
                     match = index_pattern.fullmatch(path)
                     if match is None or path in ambiguous:
                         return None
-                    indexed_values[int(match.group(1))] = properties[path]
+                    index = int(match.group(1))
+                    if index in indexed_values:
+                        return None
+                    indexed_values[index] = properties[path]
                 if set(indexed_values) != set(range(len(indexed_values))) or not all(
                         isinstance(value, str) for value in indexed_values.values()):
                     return None
@@ -579,7 +610,7 @@ def recovery_flyway_config(
                     properties.pop(path)
                     ambiguous.discard(path)
             exact_guard_paths = {auto_configuration_switch, pool_init_sql, pool_test_query,
-                                 datasource_type, *credential_paths,
+                                 datasource_type, *credential_paths, *driver_paths,
                                  "spring.flyway.validateonmigrate",
                                  "spring.datasource.url", "spring.datasource.hikari.jdbcurl",
                                  "spring.flyway.enabled", "spring.flyway.locations", "spring.flyway.target",
@@ -640,6 +671,10 @@ def recovery_flyway_config(
     if (datasource_type in effective_settings
             and effective_settings[datasource_type] != "com.zaxxer.hikari.HikariDataSource"):
         return None
+    if require_current_configuration and any(
+        effective_settings[path] != POSTGRESQL_DRIVER for path in driver_paths & effective_settings.keys()
+    ):
+        return None
     if any(effective_settings[path] != reference for path, reference in credential_paths.items()
            if path in effective_settings):
         return None
@@ -659,29 +694,13 @@ def recovery_flyway_config(
     enabled = flyway.get("enabled", True)
     if enabled is not True and not (isinstance(enabled, str) and enabled == "true"):
         return None
-    checksum_validation = flyway.get("validateonmigrate", True)
-    if checksum_validation is not True and not (
-            isinstance(checksum_validation, str)
-            and checksum_validation.strip().lower() in {"true", "on", "yes", "1"}):
+    if spring_boolean(flyway.get("validateonmigrate", True)) is not True:
         return None
     for sql_property in (pool_init_sql, pool_test_query):
         pool_sql = effective_settings.get(sql_property)
         if pool_sql is not None and (not isinstance(pool_sql, str) or pool_sql.strip()):
             return None
-    mixed = flyway.get("mixed", False)
-    if isinstance(mixed, bool):
-        mixed_enabled = mixed
-    elif isinstance(mixed, str):
-        normalized_mixed = mixed.strip().lower()
-        if normalized_mixed in {"true", "on", "yes", "1"}:
-            mixed_enabled = True
-        elif normalized_mixed in {"false", "off", "no", "0"}:
-            mixed_enabled = False
-        else:
-            return None
-    else:
-        return None
-    if mixed_enabled:
+    if spring_boolean(flyway.get("mixed", False)) is not False:
         return None
     target = flyway.get("target", "latest")
     if not isinstance(target, str) or target.casefold() != "latest":
@@ -690,11 +709,8 @@ def recovery_flyway_config(
     if "dryrunoutput" in flyway:
         return None
     encoding = flyway.get("encoding", "UTF-8")
-    detect_encoding = flyway.get("detectencoding", False)
     if (not isinstance(encoding, str) or encoding.strip().lower() != "utf-8"
-            or detect_encoding is not False and not (
-                isinstance(detect_encoding, str) and detect_encoding.strip().lower() == "false"
-            )):
+            or spring_boolean(flyway.get("detectencoding", False)) is not False):
         return None
     if "callbacklocations" in flyway:
         return None
@@ -722,10 +738,10 @@ def recovery_flyway_config(
         placeholder_delimiters = (prefix.encode(), suffix.encode())
     locations = flyway.get("locations", ["classpath:db/migration"])
     if isinstance(locations, str):
-        locations = [location.strip() for location in locations.split(",")]
+        locations = [location.strip(JAVA_TRIM_CHARACTERS) for location in locations.split(",")]
     if not isinstance(locations, list) or not all(isinstance(location, str) for location in locations):
         return None
-    # The binder trims comma-delimited scalar elements; YAML list elements are
+    # The binder applies Java String.trim() to comma-delimited scalar elements. YAML list elements are
     # already individual values and must match the runtime guard byte-for-byte.
     normalized_location_list = locations
     # Spring binds Flyway locations as an ordered collection. Preserve and
@@ -735,9 +751,7 @@ def recovery_flyway_config(
         return None
     normalized_locations = set(normalized_location_list)
     if RECOVERY_LOCATION in normalized_locations:
-        create_schemas = flyway.get("createschemas", True)
-        if create_schemas is not True and not (
-                isinstance(create_schemas, str) and create_schemas.strip().lower() in {"true", "on", "yes", "1"}):
+        if spring_boolean(flyway.get("createschemas", True)) is not True:
             return None
         schemas = flyway.get("schemas", [])
         if isinstance(schemas, str):
@@ -756,22 +770,10 @@ def recovery_flyway_config(
             or flyway.get("sqlmigrationseparator", "__") != "__"
             or flyway.get("repeatablesqlmigrationprefix", "R") != "R"):
         return None
-    skip_default_resolvers = flyway.get("skipdefaultresolvers", False)
-    if skip_default_resolvers is not False and not (
-            isinstance(skip_default_resolvers, str) and skip_default_resolvers.lower() == "false"):
-        return None
-    execute_in_transaction = flyway.get("executeintransaction", True)
-    if execute_in_transaction is not True and not (
-            isinstance(execute_in_transaction, str)
-            and execute_in_transaction.strip().lower() in {"true", "on", "yes", "1"}):
-        return None
-    skip_executing_migrations = flyway.get("skipexecutingmigrations", False)
-    if skip_executing_migrations is not False and not (
-            isinstance(skip_executing_migrations, str) and skip_executing_migrations.lower() == "false"):
-        return None
-    baseline_on_migrate = flyway.get("baselineonmigrate", False)
-    if baseline_on_migrate is not False and not (
-            isinstance(baseline_on_migrate, str) and baseline_on_migrate.lower() == "false"):
+    for flag in ("skipdefaultresolvers", "skipexecutingmigrations", "baselineonmigrate"):
+        if spring_boolean(flyway.get(flag, False)) is not False:
+            return None
+    if spring_boolean(flyway.get("executeintransaction", True)) is not True:
         return None
     return RecoveryFlywayConfig(normalized_locations, placeholder_delimiters)
 
@@ -978,6 +980,36 @@ def run_self_test() -> None:
             b"locations: ' classpath:db/recovery-control-migration '",
         ),
     }, recovery_history, None)
+    for padding in ("\u00a0", "\u2003"):
+        check("non-Java whitespace in scalar Flyway location is preserved", {
+            **recovery_history,
+            recovery_config: recovery_settings.replace(
+                b"locations: classpath:db/recovery-control-migration",
+                f"locations: '{padding}classpath:db/recovery-control-migration{padding}'".encode(),
+            ),
+        }, recovery_history, "historical effective migration no longer applied")
+    for property_name in ("spring.datasource", "spring.datasource.hikari", "spring.flyway"):
+        for driver, expected in (
+            ("org.postgresql.Driver", None),
+            ("org.h2.Driver", "historical effective migration no longer applied"),
+            ("' org.postgresql.Driver '", "historical effective migration no longer applied"),
+        ):
+            check(f"Recovery driver override {property_name} = {driver}", {
+                **recovery_history,
+                recovery_config: recovery_settings + f"{property_name}.driver-class-name: {driver}\n".encode(),
+            }, recovery_history, expected)
+    check("Flyway version with empty description participates in duplicate detection", {
+        **recovery_history,
+        recovery + "V1__.sql": b"-- alternate",
+    }, recovery_history, "duplicate version V1")
+    empty_description_history = {
+        recovery + "V1__.sql": b"-- journal",
+        recovery_config: recovery_settings,
+    }
+    check("Flyway version with empty description participates in retained history", {
+        **empty_description_history,
+        recovery + "V1__.sql": b"-- changed journal",
+    }, empty_description_history, "historical migration content changed")
     check("current recovery must carry its dedicated datasource URL", {
         **recovery_history,
         recovery_config: recovery_settings.removeprefix(datasource_setting),
@@ -1354,13 +1386,59 @@ def run_self_test() -> None:
         indexed_locations_config:
             b"spring.flyway.locations[0]: classpath:db/recovery-control-migration\n",
     }, recovery_history, None)
+    check("numeric YAML Recovery index replaces lower-priority scalar locations", {
+        **recovery_history,
+        recovery_config: ordinary_locations_settings,
+        indexed_locations_config:
+            b"spring.flyway.locations: {0: 'classpath:db/recovery-control-migration'}\n",
+    }, recovery_history, None)
+    mixed_index_sources = {
+        **recovery_history,
+        indexed_locations_config: (
+            b"spring.flyway.locations: {0: classpath:db/recovery-control-migration}\n"
+            b"spring.flyway.locations[1]: classpath:db/migration\n"
+        ),
+    }
+    mixed_index_config = recovery_flyway_config(mixed_index_sources, RECOVERY_PROJECT)
+    if mixed_index_config is None or mixed_index_config.locations != {RECOVERY_LOCATION, "classpath:db/migration"}:
+        raise AssertionError("disjoint numeric YAML and bracketed indices must bind together")
+    check("higher-priority scalar replaces lower-priority numeric YAML locations", {
+        **recovery_history,
+        recovery_config: recovery_settings.replace(
+            b"locations: classpath:db/recovery-control-migration",
+            b"locations: {0: classpath:db/migration}",
+        ),
+        indexed_locations_config: b"spring.flyway.locations: classpath:db/recovery-control-migration\n",
+    }, recovery_history, None)
+    for driver, expected in (
+        ("org.postgresql.Driver", None),
+        ("org.postgresql.Drvier", "historical effective migration no longer applied"),
+    ):
+        check("higher-priority explicit Recovery driver qualifies only PostgreSQL", {
+            **recovery_history,
+            indexed_locations_config: f"spring.datasource.driver-class-name: {driver}\n".encode(),
+        }, recovery_history, expected)
     for malformed_indexed_locations in (
+        b"spring.flyway.locations: {'0': classpath:db/recovery-control-migration}\n",
+        b"spring.flyway.locations: {1: classpath:db/recovery-control-migration}\n",
+        b"spring.flyway.locations: {true: classpath:db/recovery-control-migration}\n",
+        b"spring.flyway.locations: {0.0: classpath:db/recovery-control-migration}\n",
+        b"spring.flyway.locations: {0: {path: classpath:db/recovery-control-migration}}\n",
+        b"spring.flyway.locations: {0: classpath:db/recovery-control-migration, true: extra}\n",
+        (
+            b"spring.flyway.locations: {0: classpath:db/migration}\n"
+            b"spring.flyway.locations[0]: classpath:db/recovery-control-migration\n"
+        ),
         b"spring.flyway.locations[1]: classpath:db/recovery-control-migration\n",
-        b"spring.flyway.locations[0]: classpath:db/recovery-control-migration\n"
-        b"spring.flyway.locations[2]: classpath:db/migration\n",
+        (
+            b"spring.flyway.locations[0]: classpath:db/recovery-control-migration\n"
+            b"spring.flyway.locations[2]: classpath:db/migration\n"
+        ),
         b"spring.flyway.locations.0: classpath:db/recovery-control-migration\n",
-        b"spring.flyway.locations: classpath:db/recovery-control-migration\n"
-        b"spring.flyway.locations[0]: classpath:db/recovery-control-migration\n",
+        (
+            b"spring.flyway.locations: classpath:db/recovery-control-migration\n"
+            b"spring.flyway.locations[0]: classpath:db/recovery-control-migration\n"
+        ),
     ):
         check("ambiguous indexed Recovery locations are rejected", {
             **recovery_history, indexed_locations_config: malformed_indexed_locations,
@@ -1391,12 +1469,22 @@ def run_self_test() -> None:
     }, recovery_history, "historical effective migration no longer applied")
     check("malformed late locations entry cannot be hidden by a matching entry", {
         **recovery_history,
-        recovery_config: (
-            b"spring:\n  flyway:\n    locations:\n"
+        recovery_config: recovery_list_settings.replace(
+            b"      - classpath:db/recovery-control-migration\n",
             b"      - classpath:db/recovery-control-migration\n"
-            b"      - path: classpath:db/migration\n" + recovery_table_setting
+            b"      - path: classpath:db/migration\n",
         ),
     }, recovery_history, "historical effective migration no longer applied")
+    for flag in ("baseline-on-migrate", "detect-encoding", "skip-default-resolvers", "skip-executing-migrations"):
+        for raw, accepted in (
+            ("' FaLsE '", True), ("' off '", True), ("'no'", True), ("'0'", True),
+            ("'yes'", False), ("0", False), ("'\u00a0off\u00a0'", False), ("${RECOVERY_FLAG:false}", False),
+        ):
+            check(f"effective Flyway {flag} = {raw}", {
+                **recovery_history,
+                recovery_config: recovery_settings + f"    {flag}: true\n".encode(),
+                indexed_locations_config: f"spring.flyway.{flag}: {raw}\n".encode(),
+            }, recovery_history, None if accepted else "historical effective migration no longer applied")
     check("mixed comma-separated locations cannot qualify the isolated recovery journal", {
         **recovery_history,
         recovery_config: recovery_settings.replace(
