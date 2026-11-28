@@ -1567,6 +1567,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         "preparation_single_receipt",
         "preparation_globally_unique_identity",
         "local_no_send_dispatch_precision",
+        "local_no_send_attempt_only_key",
+        "closure_recorded_precision",
+        "outbox_readback_payload_nullability",
         "namespace_width"
       })
   @ResourceLock("packaged-recovery-control-fixture-database")
@@ -1658,6 +1661,15 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
             case "local_no_send_dispatch_precision" ->
                 "ALTER TABLE recovery_control.initial_gameplay_release_attempt_local_no_send"
                     + " ALTER COLUMN dispatched_at TYPE timestamptz(3)";
+            case "local_no_send_attempt_only_key" ->
+                "ALTER TABLE recovery_control.initial_gameplay_release_attempt_local_no_send"
+                    + " ADD UNIQUE (attempt_id, outbox_id)";
+            case "closure_recorded_precision" ->
+                "ALTER TABLE recovery_control.initial_gameplay_release_attempt_closure"
+                    + " ALTER COLUMN recorded_at TYPE timestamptz(3)";
+            case "outbox_readback_payload_nullability" ->
+                "ALTER TABLE recovery_control.initial_gameplay_release_outbox"
+                    + " ALTER COLUMN readback_payload SET NOT NULL";
             case "preparation_globally_unique_identity" ->
                 """
                 ALTER TABLE recovery_control.initial_gameplay_release_preparation_receipt

@@ -78,10 +78,15 @@ def decode_indexed_string_list(
 
     indexed_values: dict[int, object] = {}
     if isinstance(value, dict):
-        # Boot flattens integer YAML keys to bracketed collection indices.
-        if not value or any(type(key) is not int for key in value):
+        # Integer YAML keys are handled here. Explicit bracket keys were
+        # flattened into indexed_paths by flatten_properties.
+        if not value:
             return False
-        indexed_values.update(value)
+        for key, item in value.items():
+            if type(key) is int:
+                indexed_values[key] = item
+            elif not isinstance(key, str) or property_name + key not in indexed_paths:
+                return False
     elif property_name in properties:
         return False
 
@@ -590,13 +595,16 @@ def recovery_flyway_config(
             if not isinstance(key, str):
                 continue
             parts = tuple(re.sub(r"[-_]", "", part).lower() for part in key.split("."))
-            path = ".".join((*prefix, *parts))
+            child_prefix = (*prefix, *parts)
+            if prefix and key.startswith("["):
+                child_prefix = (*prefix[:-1], prefix[-1] + parts[0], *parts[1:])
+            path = ".".join(child_prefix)
             if path in properties:
                 previous = properties[path]
                 if type(previous) is not type(child) or previous != child:
                     ambiguous.add(path)
             properties[path] = child
-            flatten_properties(child, (*prefix, *parts), properties, ambiguous)
+            flatten_properties(child, child_prefix, properties, ambiguous)
 
     def count_yaml_entries(
         value: object, active: set[int], completed: dict[int, int], config_path: str,
@@ -1725,6 +1733,12 @@ def run_self_test() -> None:
         recovery_config: ordinary_locations_settings,
         indexed_locations_config:
             b"spring.flyway.locations: {0: 'classpath:db/recovery-control-migration'}\n",
+    }, recovery_history, None)
+    check("bracketed YAML Recovery index replaces lower-priority scalar locations", {
+        **recovery_history,
+        recovery_config: ordinary_locations_settings,
+        indexed_locations_config:
+            b"spring.flyway.locations: {'[0]': 'classpath:db/recovery-control-migration'}\n",
     }, recovery_history, None)
     mixed_index_sources = {
         **recovery_history,

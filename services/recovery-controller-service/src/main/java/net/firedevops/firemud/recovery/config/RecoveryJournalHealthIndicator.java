@@ -135,6 +135,18 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                   ORDER BY CASE a.attname WHEN 'outbox_id' THEN 0 WHEN 'attempt_id' THEN 1 ELSE 2 END))
             AND NOT EXISTS (
               SELECT 1
+              FROM pg_catalog.pg_index i
+              JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid
+                AND a.attnum = i.indkey[0] AND NOT a.attisdropped
+              LEFT JOIN pg_catalog.pg_attribute b ON b.attrelid = i.indrelid
+                AND b.attnum = i.indkey[1] AND NOT b.attisdropped
+              WHERE i.indrelid = 'recovery_control.initial_gameplay_release_attempt_local_no_send'::regclass
+                AND i.indisunique AND i.indisready AND i.indislive
+                AND a.attname IN ('outbox_id', 'attempt_id')
+                AND (i.indnkeyatts = 1 OR (i.indnkeyatts = 2
+                  AND b.attname IN ('outbox_id', 'attempt_id'))))
+            AND NOT EXISTS (
+              SELECT 1
               FROM (VALUES
                 ('operation_id', 'pg_catalog.uuid'::regtype, -1, true),
                 ('operation_kind', 'pg_catalog.varchar'::regtype, 44, true),
@@ -322,11 +334,16 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                 AND pg_catalog.pg_get_expr(c.conbin, c.conrelid) =
                   '(((state)::text <> ''pending''::text) OR ((attempt_count = 0)'
                   || ' AND (last_attempt_id IS NULL) AND (last_dispatched_at IS NULL)))')
+            AND (SELECT count(*) = 2
+              FROM pg_catalog.pg_attribute
+              WHERE attrelid = 'recovery_control.initial_gameplay_release_attempt_closure'::regclass
+                AND attname IN ('dispatched_at', 'recorded_at') AND NOT attisdropped AND attnotnull
+                AND atttypid = 'pg_catalog.timestamptz'::regtype AND atttypmod IN (-1, 6))
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
-              WHERE attrelid = 'recovery_control.initial_gameplay_release_attempt_closure'::regclass
-                AND attname = 'dispatched_at' AND NOT attisdropped AND attnotnull
-                AND atttypid = 'pg_catalog.timestamptz'::regtype AND atttypmod IN (-1, 6))
+              WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+                AND attname = 'readback_payload' AND NOT attisdropped AND NOT attnotnull
+                AND atttypid = 'pg_catalog.jsonb'::regtype)
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_attempt_local_no_send'::regclass

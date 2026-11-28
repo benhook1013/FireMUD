@@ -126,6 +126,9 @@ public record InitialGameplayRecoverRequest(
     public AuditReason {
       Objects.requireNonNull(code, "code");
       detail = text(detail, 1024);
+      if (detail.codePoints().anyMatch(InitialGameplayRecoverRequest::isNoncharacter)) {
+        throw new IllegalArgumentException("Audit detail must not contain Unicode noncharacters");
+      }
     }
   }
 
