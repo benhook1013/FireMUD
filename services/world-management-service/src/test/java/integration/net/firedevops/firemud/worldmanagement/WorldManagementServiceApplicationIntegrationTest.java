@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement;
 
+import static net.firedevops.firemud.worldmanagement.jooq.tables.GenerationRule.GENERATION_RULE;
 import static net.firedevops.firemud.worldmanagement.jooq.tables.RegionInstance.REGION_INSTANCE;
 import static net.firedevops.firemud.worldmanagement.jooq.tables.WorldEvent.WORLD_EVENT;
 import static net.firedevops.firemud.worldmanagement.jooq.tables.WorldInstance.WORLD_INSTANCE;
@@ -18,6 +19,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.test.FiremudAuthTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -51,7 +53,12 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = WorldManagementServiceApplication.class,
-    properties = "spring.grpc.server.port=0")
+    properties = {
+      "spring.grpc.server.port=0",
+      FiremudAuthTestProperties.HTTP_ENABLED,
+      "firemud.auth.http.public-routes[0].method=GET",
+      "firemud.auth.http.public-routes[0].path-pattern=/ping"
+    })
 class WorldManagementServiceApplicationIntegrationTest {
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
 
@@ -90,8 +97,7 @@ class WorldManagementServiceApplicationIntegrationTest {
 
   @Test
   void listRegionsRejectsMalformedTenantIdWithInvalidArgumentEnvelope() throws Exception {
-    String token =
-        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = operatorToken();
     HttpRequest request =
         HttpRequest.newBuilder(
                 URI.create("http://localhost:" + port + "/regions?tenantId=bad-tenant"))
@@ -108,8 +114,7 @@ class WorldManagementServiceApplicationIntegrationTest {
 
   @Test
   void moveRegionRejectsMalformedShardIdWithInvalidArgumentEnvelope() throws Exception {
-    String token =
-        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = operatorToken();
     HttpRequest request =
         HttpRequest.newBuilder(
                 URI.create("http://localhost:" + port + "/regions/4/move?tenantId=1&shardId=bad"))
@@ -126,8 +131,7 @@ class WorldManagementServiceApplicationIntegrationTest {
 
   @Test
   void saveRuleRejectsMalformedBodyWithInvalidArgumentEnvelope() throws Exception {
-    String token =
-        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = operatorToken();
     HttpRequest request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/generation/rules"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -148,6 +152,15 @@ class WorldManagementServiceApplicationIntegrationTest {
 
   @Test
   void saveRuleRequiresAuthenticationAndRefusesSignedValidWrite() throws Exception {
+    dsl.insertInto(GENERATION_RULE)
+        .set(GENERATION_RULE.TENANT_ID, 1L)
+        .set(GENERATION_RULE.VERSION_ID, 7L)
+        .set(GENERATION_RULE.NAME, "retained-denial-proof")
+        .set(GENERATION_RULE.SCOPE_TYPE, "ZONE_SUBTREE")
+        .set(GENERATION_RULE.SCOPE_ID, "12")
+        .set(GENERATION_RULE.VALUE, "{\"retained\":true}")
+        .execute();
+    var before = dsl.selectFrom(GENERATION_RULE).orderBy(GENERATION_RULE.ID).fetchMaps();
     URI uri = URI.create("http://localhost:" + port + "/generation/rules");
     String body =
         """
@@ -164,11 +177,9 @@ class WorldManagementServiceApplicationIntegrationTest {
 
     assertThat(unauthenticatedResponse.statusCode()).isEqualTo(401);
 
-    String token =
-        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
     HttpRequest authenticatedRequest =
         HttpRequest.newBuilder(uri)
-            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + operatorToken())
             .header(HttpHeaders.CONTENT_TYPE, "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(body))
             .build();
@@ -176,12 +187,22 @@ class WorldManagementServiceApplicationIntegrationTest {
     HttpResponse<String> authenticatedResponse =
         HTTP_CLIENT.send(authenticatedRequest, HttpResponse.BodyHandlers.ofString());
 
-    assertThat(authenticatedResponse.statusCode()).isEqualTo(412);
+    assertThat(authenticatedResponse.statusCode())
+        .as("HTTP response body: %s", authenticatedResponse.body())
+        .isEqualTo(412);
     assertThat(authenticatedResponse.body()).contains("\"status\":\"ERROR\"");
     assertThat(authenticatedResponse.body()).contains("\"code\":\"FAILED_PRECONDITION\"");
     assertThat(authenticatedResponse.body())
         .contains(
             "\"message\":\"Generation rule writes are unavailable without canonical Draft and Account commit authorization\"");
+    assertThat(dsl.selectFrom(GENERATION_RULE).orderBy(GENERATION_RULE.ID).fetchMaps())
+        .isEqualTo(before);
+  }
+
+  private String operatorToken() {
+    String accountId = "aa7b9ab1-0895-4ac2-9a78-a21b5f2b6dc7";
+    return jwtUtil.generateToken(
+        accountId, Map.of("accountId", accountId, "globalRoles", List.of("platformAdmin")));
   }
 
   @Test
