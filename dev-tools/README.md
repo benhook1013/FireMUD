@@ -26,7 +26,7 @@ The `report-worktree-pr-topology.sh` and `maintenance/cloc-report.py pr` entrypo
 
 ## FireController
 
-FireController is maintained outside this repository. Skill choice and connection rules are in the [PR lifecycle](../design/developer-workflows/pr-lifecycle.md#review-and-status). The [PR lifecycle](../design/developer-workflows/pr-lifecycle.md) retains FireMUD review policy and authority. Controller service changes belong to FireController Worker. Sealed legacy data, captures, migration proof, frozen comparison sites, and installed runtimes remain retained outside this source retirement.
+FireController is maintained outside this repository. Skill choice, connection rules, and FireMUD review policy are in the [PR lifecycle](../design/developer-workflows/pr-lifecycle.md#review-and-status). Controller service changes belong to FireController Worker. Sealed legacy data, captures, migration proof, frozen comparison sites, and installed runtimes remain retained outside this source retirement.
 
 ## Folder map
 

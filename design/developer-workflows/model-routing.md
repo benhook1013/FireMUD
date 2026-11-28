@@ -25,7 +25,7 @@ The FireController operator variable `provider_mode` says which providers to lea
 
 | Role | What it covers | `both` | `codex_low` | `claude_low` |
 | --- | --- | --- | --- | --- |
-| Orchestrator | Plans and runs a workstream, integrates and verifies subagent work, adjudicates findings, owns PRs | The human's choice: Sol or Opus | Opus | Sol |
+| Orchestrator | Plans and runs a workstream, integrates and verifies subagent work, owns PRs | The human's choice: Sol or Opus | Opus | Sol |
 | Bulk executor (subagent) | Bounded investigation, mechanical edits, straightforward test updates | Luna `high` under Sol; Opus `medium` under Opus | Opus `medium` | Luna `high` |
 | Deep executor (subagent or task) | Substantial multi-file implementation, wide reading, documentation rewrites | Opus `high` under Opus; Luna `xhigh` under Sol | Opus `high` | Luna `xhigh`, then Sol `medium` |
 | Independent reviewer | Fresh-context review or commissioned audit | Sol `high` or Opus `high`, from the other provider than the author where possible | Opus `high`, fresh context | Sol `high`, fresh context |

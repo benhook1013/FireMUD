@@ -17,7 +17,7 @@ This is the always-on guidance for AI agents working in FireMUD. It states inten
 
 ## Safety
 
-- Expect concurrent, dirty worktrees. Preserve edits you did not make: no `git restore`, `git checkout -- <path>`, `git reset --hard`, `git clean`, or `git stash` unless a human asks. Creating, switching, and rebasing branches in your own clean worktree is fine. Delete an untracked file only when it is clearly yours and disposable. Canonical formatter changes are fine.
+- Expect concurrent, dirty worktrees. Preserve edits you did not make: run nothing that discards uncommitted changes (such as `git restore`, `git checkout -- <path>`, `git reset --hard`, `git clean`, `git stash`) unless a human asks. Creating, switching, and rebasing branches in your own clean worktree is fine. Delete an untracked file only when it is clearly yours and disposable. Canonical formatter changes are fine.
 - If overlapping edits make intent unclear, ask.
 - Agents never merge, enable auto-merge, or close PRs on their own judgment. The narrow exceptions are in [PR lifecycle](design/developer-workflows/pr-lifecycle.md#review-completion-criteria).
 - Before provisioning or reconfiguring a remote machine, confirm the human's existing authorization covers that host and action, and say what you will change, where, and how it will be cleaned up. A runbook alone is not authorization. Read-only inspection and normal PR operations need no extra approval.
@@ -43,7 +43,7 @@ This is the always-on guidance for AI agents working in FireMUD. It states inten
 
 ## Execution Basics
 
-- Gradle paths have no `services:` prefix, for example `:tcp-proxy-service:test`. Run local Gradle from WSL through the [canonical local Gradle wrapper](design/developer-workflows/validation-and-runtime-proof.md#local-gradle-execution) (`bash dev-tools/validation/run-locked-gradle.sh <tasks>`). Prefer native Linux Docker over Windows wrappers.
+- Gradle paths have no `services:` prefix, for example `:tcp-proxy-service:test`. Run heavy local Gradle work from WSL through the [canonical local Gradle wrapper](design/developer-workflows/validation-and-runtime-proof.md#local-gradle-execution) (`bash dev-tools/validation/run-locked-gradle.sh <tasks>`). Prefer native Linux Docker over Windows wrappers.
 - Record surprising unresolved agent, tooling, or environment problems and recurring friction in [AI observations](design/project-management/ai-observations.md). Check for an existing entry first, keep each entry to a few lines, and do not log ordinary bugs you fixed in the same work.
 
 ## Workflow Guides
@@ -60,7 +60,7 @@ This is the always-on guidance for AI agents working in FireMUD. It states inten
 Roles are responsibilities, independent of model.
 
 - **Overseer** (when the human sets one up): project direction, priorities, consequential decisions, evidence adjudication, cross-lane coordination, and talking to the human.
-- **Orchestrator**: plans and runs an assigned workstream, integrates and verifies delegated work, adjudicates review findings, and owns its PRs. Without an Overseer, the main orchestrator also holds project direction and design discussion with the human.
+- **Orchestrator**: plans and runs an assigned workstream, integrates and verifies delegated work, and owns its PRs; review rounds follow the FireController assignment. Without an Overseer, the main orchestrator also holds project direction and design discussion with the human.
 - **Subagent**: does bounded investigation, edits, or checks and reports back. Subagents supply evidence and options, not product or architecture decisions.
 
 Orchestrators verify subagent claims themselves before relying on them. Orchestrators may build small repo tools when repeated manual work justifies them, following the [dev-tools placement guidance](dev-tools/README.md#placement-guidance); subagents suggest tools rather than adding them.

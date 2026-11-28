@@ -36,7 +36,7 @@ reviews:
       instructions: |
         FireMUD is pre-v1. Focus on defects that break this PR's stated purpose, correctness, security, data integrity, or documented contracts.
         Still report worthwhile improvements that belong in this PR's purpose, especially small ones.
-        For improvements outside the PR's purpose, outside v1 scope, or that would grow the PR materially (but not fixes or proof the PR needs to be correct), say so explicitly (for example "outside v1 scope" or "can be routed") so the orchestrator can route them instead of fixing them here.
+        For improvements outside the PR's purpose, outside v1 scope, or that would grow the PR materially (but not fixes or proof the PR needs to be correct), say so explicitly (for example "outside v1 scope" or "can be routed") so they can be routed instead of fixed here.
         Avoid speculative hardening, broad refactors, and style preferences unless they cause a real defect.
     - path: "services/**"
       instructions: |
