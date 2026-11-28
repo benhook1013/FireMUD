@@ -59,7 +59,7 @@ class GameSessionClientTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"INTERNAL", "UNAVAILABLE", "DEADLINE_EXCEEDED"})
+  @ValueSource(strings = {"INTERNAL", "UNAVAILABLE", "DEADLINE_EXCEEDED", "AUTH_UNAVAILABLE"})
   void listGameplayWorldsMapsRetryableApplicationFailuresToUnavailable(String code)
       throws Exception {
     GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
@@ -78,7 +78,7 @@ class GameSessionClientTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"INTERNAL", "UNAVAILABLE", "DEADLINE_EXCEEDED"})
+  @ValueSource(strings = {"INTERNAL", "UNAVAILABLE", "DEADLINE_EXCEEDED", "AUTH_UNAVAILABLE"})
   void listGameplayRealmsMapsRetryableApplicationFailuresToUnavailable(String code)
       throws Exception {
     GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
@@ -112,13 +112,15 @@ class GameSessionClientTest {
     verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
   }
 
-  @Test
-  void getAdmissionPointerMapsInternalApplicationFailureToUnavailable() throws Exception {
+  @ParameterizedTest
+  @ValueSource(strings = {"INTERNAL", "AUTH_UNAVAILABLE"})
+  void getAdmissionPointerMapsRetryableApplicationFailureToUnavailable(String code)
+      throws Exception {
     GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
     when(stub.getAdmissionPointer(any()))
         .thenReturn(
             GetAdmissionPointerResponse.newBuilder()
-                .setError(ErrorDetail.newBuilder().setCode("INTERNAL").setMessage("store failed"))
+                .setError(ErrorDetail.newBuilder().setCode(code).setMessage("store failed"))
                 .build());
     GameSessionClient client = newClient(stub);
 
@@ -132,15 +134,17 @@ class GameSessionClientTest {
     verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
   }
 
-  @Test
-  void getAdmissionPointerPreservesInvalidArgumentAsDomainFailure() throws Exception {
+  @ParameterizedTest
+  @ValueSource(strings = {"INVALID_ARGUMENT", "NOT_FOUND", "ADMISSION_POINTER_UNAVAILABLE"})
+  void getAdmissionPointerPreservesUnavailableEvidenceAsDomainFailure(String code)
+      throws Exception {
     GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
     when(stub.getAdmissionPointer(any()))
         .thenReturn(
             GetAdmissionPointerResponse.newBuilder()
                 .setError(
                     ErrorDetail.newBuilder()
-                        .setCode("INVALID_ARGUMENT")
+                        .setCode(code)
                         .setMessage("Unknown gameplay realm selection"))
                 .build());
     GameSessionClient client = newClient(stub);
@@ -152,7 +156,8 @@ class GameSessionClientTest {
     assertThat(failure.getCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
     assertThat(failure.getMessage())
         .isEqualTo(
-            "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
+            "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying"
+                + " gameplay entry");
     verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
   }
 
@@ -184,14 +189,29 @@ class GameSessionClientTest {
                         .setCode("ADMISSION_POINTER_UNAVAILABLE")
                         .setMessage("incomplete authority"))
                 .build());
+    when(stub.listGameplayRealms(any()))
+        .thenReturn(
+            ListGameplayRealmsResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("ADMISSION_POINTER_UNAVAILABLE")
+                        .setMessage("incomplete authority"))
+                .build());
     GameSessionClient client = newClient(stub);
 
-    IllegalStateException failure =
-        assertThrows(IllegalStateException.class, client::listGameplayWorlds);
+    AuthenticationException worldFailure =
+        assertThrows(AuthenticationException.class, client::listGameplayWorlds);
+    AuthenticationException realmFailure =
+        assertThrows(AuthenticationException.class, () -> client.listGameplayRealms("demo"));
 
-    assertThat(failure)
-        .hasMessage("Gameplay world discovery failed: ADMISSION_POINTER_UNAVAILABLE");
-    verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
+    assertThat(worldFailure.getCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(realmFailure.getCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(worldFailure.getMessage())
+        .isEqualTo(
+            "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying"
+                + " gameplay entry");
+    assertThat(realmFailure.getMessage()).isEqualTo(worldFailure.getMessage());
+    verify(stub, org.mockito.Mockito.times(2)).withDeadlineAfter(5L, TimeUnit.SECONDS);
   }
 
   @Test
