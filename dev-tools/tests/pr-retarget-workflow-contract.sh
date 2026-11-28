@@ -2412,6 +2412,10 @@ JSON
   esac
 fi
 
+print_source_inventory() {
+  jq -c '[. + {total_count: (.workflow_runs | length)}]' "$1"
+}
+
 if [[ -n "${CONTRACT_REFRESH_SOURCE_PAYLOAD:-}" && "$*" == *"actions/workflows/runtime-images.yml/runs"* ]]; then
   invocation=0
   [[ ! -f "$CONTRACT_REFRESH_SOURCE_STATE" ]] || invocation="$(cat "$CONTRACT_REFRESH_SOURCE_STATE")"
@@ -2422,9 +2426,9 @@ if [[ -n "${CONTRACT_REFRESH_SOURCE_PAYLOAD:-}" && "$*" == *"actions/workflows/r
     exit 1
   fi
   if (( invocation == 0 )); then
-    cat "$CONTRACT_SOURCE_PAYLOAD"
+    print_source_inventory "$CONTRACT_SOURCE_PAYLOAD"
   else
-    cat "$CONTRACT_REFRESH_SOURCE_PAYLOAD"
+    print_source_inventory "$CONTRACT_REFRESH_SOURCE_PAYLOAD"
   fi
   exit 0
 fi
@@ -2482,11 +2486,11 @@ PY_PAGE
 JSON
 else
   if [[ -n "${CONTRACT_SOURCE_PAYLOAD:-}" ]]; then
-    cat "$CONTRACT_SOURCE_PAYLOAD"
+    print_source_inventory "$CONTRACT_SOURCE_PAYLOAD"
     exit 0
   fi
   cat <<'JSON'
-[{"workflow_runs":[{"id":102,"status":"completed","conclusion":"skipped","html_url":"https://example.test/runtime/102","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-metadata","created_at":"2026-07-24T00:02:00Z"}]},{"workflow_runs":[{"id":101,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}]}]
+[{"total_count":2,"workflow_runs":[{"id":102,"status":"completed","conclusion":"skipped","html_url":"https://example.test/runtime/102","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-metadata","created_at":"2026-07-24T00:02:00Z"},{"id":101,"status":"completed","conclusion":"success","html_url":"https://example.test/runtime/101","event":"pull_request","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","display_title":"Build Runtime Images secure-pr-artifact pr-1 base-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb head-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa merge-cccccccccccccccccccccccccccccccccccccccc mode-required","created_at":"2026-07-24T00:01:00Z"}]}]
 JSON
 fi
 EOF
@@ -2534,7 +2538,7 @@ timeout 20s bash "$image_wait_path" "cccccccccccccccccccccccccccccccccccccccc" \
   >"$contract_fixture_dir/retry-output" \
   2>"$contract_fixture_dir/retry-error"
 require_contains "$contract_fixture_dir/retry-error" \
-  'GitHub API response was empty or invalid while waiting for the runtime-images workflow; retrying.'
+  'GitHub runtime-image producer inventory is incomplete or inconsistent while waiting for the runtime-images workflow.'
 require_contains "$contract_fixture_dir/retry-output" 'Matching runtime-images workflow 101 succeeded'
 require_contains "$contract_fixture_dir/retry-output" 'Trusted PR image publisher 201 succeeded'
 
@@ -4066,6 +4070,57 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
       }
     });
   })
+  .then(async () => {
+    const native = {
+      ...runtimeRun(651, runtimeTitle(baseSha, headSha, mergeSha)),
+      status: "completed", conclusion: "cancelled",
+    };
+    const replacement = dispatchRun(652, baseSha, headSha, mergeSha);
+    const beforeLiveReads = forbiddenCurrentBaseLookups;
+    availableRuns = [replacement, native];
+    currentBaseSha = liveBaseSha = "d".repeat(40);
+    currentMergeSha = "e".repeat(40);
+    currentMergeParents = [{ sha: liveBaseSha }, { sha: headSha }];
+    onSmokeSleep = () => {
+      native.status = "completed";
+      native.conclusion = "success";
+    };
+    try {
+      await check("success", false);
+      if (forbiddenCurrentBaseLookups <= beforeLiveReads || jobQueries.at(-1).run_id !== native.id) {
+        throw new Error("a dispatch with an advanced live base must fall back to independently qualified native event proof");
+      }
+    } finally {
+      onSmokeSleep = null;
+      currentBaseSha = liveBaseSha = baseSha;
+      currentMergeSha = mergeSha;
+      currentMergeParents = eventMergeParents;
+    }
+  })
+  .then(async () => {
+    const native = {
+      ...runtimeRun(653, runtimeTitle(baseSha, headSha, mergeSha)),
+      status: "completed", conclusion: "cancelled",
+    };
+    const replacement = dispatchRun(654, baseSha, headSha, mergeSha);
+    const latest = {
+      ...dispatchRun(655, baseSha, headSha, mergeSha),
+      created_at: "2026-09-21T00:00:00Z", conclusion: "failure",
+    };
+    const firstQuery = repositoryDispatchQueryCount;
+    availableRuns = [replacement, native];
+    onRepositoryDispatchQuery = (queryCount) => {
+      if (queryCount > firstQuery + 1) availableRuns = [latest, replacement, native];
+    };
+    try {
+      await check("success", true, `Runtime images run ${latest.id} did not complete successfully`);
+      if (jobQueries.at(-1).run_id !== replacement.id) {
+        throw new Error("the newer terminal failure must be observed after checking the original replacement proof");
+      }
+    } finally {
+      onRepositoryDispatchQuery = null;
+    }
+  })
   .then(() => {
     const eventRun = {
       ...runtimeRun(603, runtimeTitle(baseSha, headSha, mergeSha)),
@@ -4131,6 +4186,7 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
     eventMergeParents = [{ sha: baseSha }, { sha: headSha }];
     const queryStart = workflowRunQueries.length;
     const jobStart = jobQueries.length;
+    const beforeLiveReads = forbiddenCurrentBaseLookups;
     availableRuns = [
       runtimeRun(303, runtimeTitle(currentBaseSha, headSha, currentMergeSha)),
       runtimeRun(304, `Build Runtime Images secure-pr-artifact pr-42 head-${headSha} mode-required`),
@@ -4150,7 +4206,7 @@ checkPartialPaginationRetry().then(checkIdentityQuotaFailures).then(() => {
       if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 202) {
         throw new Error("Smoke Gate must select the exact successful event base/head/merge tuple");
       }
-      if (forbiddenCurrentBaseLookups !== 0) {
+      if (forbiddenCurrentBaseLookups !== beforeLiveReads) {
         throw new Error("Smoke Gate must not require the live base SHA to accept event-tuple smoke");
       }
     });

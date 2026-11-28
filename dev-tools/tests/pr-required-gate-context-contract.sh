@@ -658,13 +658,13 @@ assert can_reuse_required_name("${{ matrix.language }}", {"CodeQL Gate"})
 assert not can_reuse_required_name("CodeQL Analysis (${{ matrix.language }})", {"CodeQL Gate"})
 
 
-def isolates_metadata_group(group, run_scoped, *, pr_number=42):
+def isolates_metadata_group(group, run_scoped, workflow_name, *, pr_number=42):
     metadata_groups = [
-        effective_group(group, "edited", None, pr_number=pr_number, run_id=run_id)
+        effective_group(group, "edited", None, workflow_name, pr_number=pr_number, run_id=run_id)
         for run_id in ("123", "456")
     ]
     expected_suffixes = ("-metadata-123", "-metadata-456") if run_scoped else ("-metadata", "-metadata")
-    substantive = [effective_group(group, action, base_ref, pr_number=pr_number) for action, base_ref in (
+    substantive = [effective_group(group, action, base_ref, workflow_name, pr_number=pr_number) for action, base_ref in (
         ("edited", "develop"), ("opened", None), ("synchronize", None), ("reopened", None),
     )]
     if len({name.casefold() for name in substantive}) != 1:
@@ -811,16 +811,23 @@ for workflow, (workflow_name, gate_job, gate_name, change_job, result_step, pr_o
     if "github.event.pull_request.number" not in group or META.split(" && ", 1)[1] not in group or suffix not in group:
         raise SystemExit(f"{workflow} concurrency group must keep metadata runs out of the PR's required namespace")
     for pr_number in (42, 43, 44):
-        if not isolates_metadata_group(group, run_scoped, pr_number=pr_number):
+        if not isolates_metadata_group(group, run_scoped, workflow_name, pr_number=pr_number):
             raise SystemExit(f"{workflow} PR {pr_number} effective metadata and substantive groups must differ")
     # The old substring guard would accept this expression despite its bypass.
     bypassed = group.replace(META, "true && 'required' || " + META, 1)
     assert bypassed != group and META in bypassed and suffix in bypassed
-    assert effective_group(bypassed, "edited", None) == effective_group(bypassed, "edited", "develop"), workflow
-    assert effective_group(bypassed, "edited", None).endswith("-required"), workflow
-    assert not isolates_metadata_group(bypassed, run_scoped), workflow
+    assert effective_group(bypassed, "edited", None, workflow_name) == effective_group(bypassed, "edited", "develop", workflow_name), workflow
+    assert effective_group(bypassed, "edited", None, workflow_name).endswith("-required"), workflow
+    assert not isolates_metadata_group(bypassed, run_scoped, workflow_name), workflow
     collided = group.replace(META, f"github.event.action == 'synchronize' || {META}", 1)
-    assert collided != group and not isolates_metadata_group(collided, run_scoped), workflow
+    assert collided != group and not isolates_metadata_group(collided, run_scoped, workflow_name), workflow
+    if workflow == "ci.yml":
+        split_opened = (
+            "${{ github.workflow == 'CI — Validation' && github.event.action == 'opened' && 'opened-' || '' }}"
+            + group
+        )
+        assert isolates_metadata_group(split_opened, run_scoped, "Required Gate")
+        assert not isolates_metadata_group(split_opened, run_scoped, workflow_name), workflow
     if concurrency.get("cancel-in-progress") != "true":
         raise SystemExit(f"{workflow} must cancel obsolete runs within each namespace")
 

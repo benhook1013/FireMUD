@@ -9,6 +9,7 @@ module.exports = async function admitPrRuntimeRefresh({
   input,
   admissionAttempt = process.env.GITHUB_RUN_ATTEMPT,
   sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+  now = () => Date.now(),
 }) {
   const runtimePath = '.github/workflows/runtime-images.yml';
   const admissionPath = '.github/workflows/admit-pr-runtime-refresh.yml';
@@ -19,6 +20,11 @@ module.exports = async function admitPrRuntimeRefresh({
   const inventoryPages = 3;
   const pageSize = 100;
   const inventoryLimit = inventoryPages * pageSize;
+  const admissionJobTimeoutMs = 4 * 60 * 1000;
+  const minimumClaimBudgetMs = 70 * 1000;
+  const ownerReceiptReserveMs = 20 * 1000;
+  const identityRequestTimeoutMs = 5000;
+  const claimWriteTimeoutMs = 10_000;
 
   const fail = message => { throw new Error(message); };
   const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -64,10 +70,20 @@ module.exports = async function admitPrRuntimeRefresh({
   const defaultBranch = repository.default_branch;
   const pullNumber = Number(input.pr_number);
 
-  const observeIdentity = async () => {
+  const validChronology = value => typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) &&
+    Number.isFinite(Date.parse(value));
+  const identityRequest = deadline => {
+    if (deadline === undefined) return {};
+    const remaining = deadline - now();
+    if (remaining <= 0) throw new Error('Exact runtime comparison read deadline expired.');
+    return {request: {timeout: Math.min(identityRequestTimeoutMs, remaining)}};
+  };
+  const observeIdentity = async deadline => {
     let pullResponse;
     try {
-      pullResponse = await github.rest.pulls.get({...contextRepo, pull_number: pullNumber});
+      pullResponse = await github.rest.pulls.get({...contextRepo, pull_number: pullNumber,
+        ...identityRequest(deadline)});
     } catch (error) {
       if (isNotFound(error)) return false;
       return transientIdentityRead(error);
@@ -82,7 +98,8 @@ module.exports = async function admitPrRuntimeRefresh({
 
     let refResponse;
     try {
-      refResponse = await github.rest.git.getRef({...contextRepo, ref: `heads/${input.base_ref}`});
+      refResponse = await github.rest.git.getRef({...contextRepo, ref: `heads/${input.base_ref}`,
+        ...identityRequest(deadline)});
     } catch (error) {
       if (isNotFound(error)) return false;
       return transientIdentityRead(error);
@@ -96,7 +113,8 @@ module.exports = async function admitPrRuntimeRefresh({
 
     let commitResponse;
     try {
-      commitResponse = await github.rest.repos.getCommit({...contextRepo, ref: reportedMerge});
+      commitResponse = await github.rest.repos.getCommit({...contextRepo, ref: reportedMerge,
+        ...identityRequest(deadline)});
     } catch (error) {
       if (isNotFound(error)) return null;
       return transientIdentityRead(error);
@@ -126,14 +144,47 @@ module.exports = async function admitPrRuntimeRefresh({
     return true;
   };
 
-  const currentIdentity = async () => {
+  const currentIdentity = async deadline => {
     for (let observation = 0; observation < 6; observation++) {
-      const result = await observeIdentity();
+      if (deadline !== undefined && now() >= deadline) {
+        throw new Error('Exact runtime comparison read deadline expired.');
+      }
+      const result = await observeIdentity(deadline);
+      if (deadline !== undefined && now() >= deadline) {
+        throw new Error('Exact runtime comparison read deadline expired.');
+      }
       if (typeof result === 'boolean') return result;
       if (result !== null && observation === 5) throw result.error;
-      if (observation < 5) await sleep(2000);
+      if (observation < 5) {
+        if (deadline !== undefined && now() + 2000 >= deadline) {
+          throw new Error('Exact runtime comparison read deadline expired.');
+        }
+        await sleep(2000);
+      }
     }
     throw new Error('Exact runtime comparison is still unavailable after bounded merge computation.');
+  };
+
+  const admissionJobDeadline = async () => {
+    if (!isPositiveInteger(context.runId) || !isCanonicalId(admissionAttempt)) {
+      fail('Current admission run identity is unavailable.');
+    }
+    const inventory = dataOf(await github.rest.actions.listJobsForWorkflowRunAttempt({
+      ...contextRepo, run_id: context.runId, attempt_number: Number(admissionAttempt), per_page: pageSize, page: 1,
+    }));
+    if (!inventory || !Number.isSafeInteger(inventory.total_count) || inventory.total_count < 1 ||
+        inventory.total_count > pageSize || !Array.isArray(inventory.jobs) ||
+        inventory.jobs.length !== inventory.total_count) {
+      fail('Current admission job timing is unavailable.');
+    }
+    const jobs = inventory.jobs.filter(job => job?.name === 'Admit Exact Runtime Tuple');
+    if (jobs.length !== 1 || !isPositiveInteger(jobs[0].id) || jobs[0].run_id !== context.runId ||
+        (Object.hasOwn(jobs[0], 'run_attempt') && jobs[0].run_attempt !== Number(admissionAttempt)) ||
+        jobs[0].head_sha !== context.sha || jobs[0].status !== 'in_progress' ||
+        !validChronology(jobs[0].started_at)) {
+      fail('Current admission job timing is ambiguous.');
+    }
+    return Date.parse(jobs[0].started_at) + admissionJobTimeoutMs;
   };
 
   if (!await currentIdentity()) {
@@ -171,18 +222,16 @@ module.exports = async function admitPrRuntimeRefresh({
     }
     return false;
   };
-  const validChronology = value => typeof value === 'string' &&
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) &&
-    Number.isFinite(Date.parse(value));
   const isExactActiveRun = run => exactNativeTuple(run) &&
     isPositiveInteger(run.id) && isPositiveInteger(run.run_attempt) &&
     activeStatuses.has(run.status) && run.conclusion == null && validChronology(run.created_at);
   const secondsUtc = timestamp => new Date(timestamp).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
   const seenBeforeDispatch = new Set();
-  const collectInventory = async (event, status, createdSince, runs, ids, createdUntil) => {
+  const collectInventory = async (event, status, createdSince, runs, createdUntil) => {
     let total;
     let seen = 0;
+    const queryIds = new Set();
     for (let page = 1; page <= inventoryPages; page++) {
       const {data: inventory} = await github.rest.actions.listWorkflowRuns({
         ...contextRepo, workflow_id: runtimeWorkflow.id, event, status, per_page: pageSize, page,
@@ -211,8 +260,8 @@ module.exports = async function admitPrRuntimeRefresh({
           throw new Error('Exact runtime run has invalid native chronology.');
         }
         const identity = `${run.event}:${run.id}:${run.run_attempt}`;
-        if (ids.has(identity)) throw new Error('Duplicate exact runtime run identity.');
-        ids.add(identity);
+        if (queryIds.has(identity)) throw new Error('Duplicate exact runtime run identity.');
+        queryIds.add(identity);
         seenBeforeDispatch.add(identity);
         if (activeStatuses.has(run.status)) {
           if (run.conclusion != null) throw new Error('Active runtime run has a conclusion.');
@@ -226,43 +275,65 @@ module.exports = async function admitPrRuntimeRefresh({
     }
     throw new Error('Incomplete runtime run inventory.');
   };
+  const sameRunAttemptIdentity = (left, right) => left.event === right.event && left.id === right.id &&
+    left.run_attempt === right.run_attempt && left.workflow_id === right.workflow_id &&
+    left.display_title === right.display_title && left.path === right.path &&
+    left.head_branch === right.head_branch && left.head_sha === right.head_sha &&
+    left.created_at === right.created_at && left.repository?.full_name === right.repository?.full_name &&
+    left.head_repository?.full_name === right.head_repository?.full_name &&
+    JSON.stringify(left.pull_requests ?? null) === JSON.stringify(right.pull_requests ?? null);
+  const mergeRunObservations = runs => {
+    const merged = new Map();
+    for (const run of runs) {
+      const identity = `${run.event}:${run.id}:${run.run_attempt}`;
+      const prior = merged.get(identity);
+      if (prior && !sameRunAttemptIdentity(prior, run)) {
+        throw new Error('Runtime run observations disagree on immutable attempt identity.');
+      }
+      // Separate status queries are separate observations. Keep the later
+      // response for an unchanged attempt, then reread it before suppressing.
+      merged.set(identity, run);
+    }
+    return [...merged.values()];
+  };
   const rankRuns = (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at);
   const readNewestExact = async () => {
     const exactRuns = [];
-    const observedRunIds = new Set();
     try {
       for (const event of inventoryEvents) {
         for (const status of activeStatuses) {
-          await collectInventory(event, status, undefined, exactRuns, observedRunIds);
+          await collectInventory(event, status, undefined, exactRuns);
         }
       }
 
-      exactRuns.sort(rankRuns);
-      if (exactRuns.length === 0) return null;
+      const activeRuns = mergeRunObservations(exactRuns);
+      activeRuns.sort(rankRuns);
+      if (activeRuns.length === 0) return null;
       // An older active producer only matters if no newer completed run supersedes it.
-      const createdSince = secondsUtc(Date.parse(exactRuns[0].created_at));
+      const createdSince = secondsUtc(Date.parse(activeRuns[0].created_at));
       for (const event of inventoryEvents) {
         const completed = [];
-        await collectInventory(event, 'completed', createdSince, completed, observedRunIds);
+        await collectInventory(event, 'completed', createdSince, completed);
         if (event === 'repository_dispatch' && completed.length > 0) {
           const claim = await latestClaim();
           if (claim) {
             for (const run of completed) {
               if (Date.parse(run.created_at) >= Date.parse(claim.date) &&
                   await receiverProvesClaim(run, claim) && await completedReceiverStillCurrent(run)) {
-                exactRuns.push(run);
+                activeRuns.push(run);
               }
             }
           }
         } else {
-          exactRuns.push(...completed);
+          activeRuns.push(...completed);
         }
       }
-      exactRuns.sort(rankRuns);
-      if (exactRuns.length > 1 && Date.parse(exactRuns[0].created_at) === Date.parse(exactRuns[1].created_at)) {
+      const mergedRuns = mergeRunObservations(activeRuns);
+      mergedRuns.sort(rankRuns);
+      if (mergedRuns.length > 1 && Date.parse(mergedRuns[0].created_at) === Date.parse(mergedRuns[1].created_at)) {
         throw new Error('Newest exact runtime runs have equal chronology.');
       }
-      return exactRuns[0];
+      return mergedRuns[0];
     } catch {
       core.warning('Runtime active-run inventory was incomplete or ambiguous; preserving the required refresh fallback.');
       return null;
@@ -454,7 +525,8 @@ module.exports = async function admitPrRuntimeRefresh({
   const recordOwnerReceipt = async (claim, {kind, description}) => {
     const ref = `${ownerReceiptRefPrefix(kind, claim.tag_sha)}${context.runId}/${admissionAttempt}`;
     try {
-      const locator = await github.rest.git.createRef({...contextRepo, ref, sha: claim.tag_sha, request: {retries: 0}});
+      const locator = await github.rest.git.createRef({...contextRepo, ref, sha: claim.tag_sha,
+        request: {retries: 0, timeout: claimWriteTimeoutMs}});
       if (locator?.status !== 201 || locator.data?.ref !== ref ||
           locator.data.object?.type !== 'tag' || locator.data.object.sha !== claim.tag_sha) {
         fail(`${description} locator creation is unproven.`);
@@ -573,7 +645,6 @@ module.exports = async function admitPrRuntimeRefresh({
 
   const terminalReceiverProven = async claim => {
     const runs = [];
-    const ids = new Set();
     const ranges = [[Date.parse(claim.date) / 1000, Math.floor(Date.now() / 1000)]];
     // Search the entire observed claim interval, including its creation second.
     // Subdivide only overfull inventories. A dense second or exhausted budget
@@ -583,7 +654,7 @@ module.exports = async function admitPrRuntimeRefresh({
       const [start, end] = ranges.pop();
       if (start > end) fail('Invalid runtime receiver inventory interval.');
       if (await collectInventory('repository_dispatch', 'completed',
-        secondsUtc(start * 1000), runs, ids, secondsUtc(end * 1000))) continue;
+        secondsUtc(start * 1000), runs, secondsUtc(end * 1000))) continue;
       if (start === end) fail('Incomplete runtime receiver inventory for a creation second.');
       const midpoint = Math.floor((start + end) / 2);
       ranges.push([start, midpoint], [midpoint + 1, end]);
@@ -642,8 +713,13 @@ module.exports = async function admitPrRuntimeRefresh({
         return 'obsolete';
       }
     }
+    const jobDeadline = await admissionJobDeadline();
+    if (jobDeadline - now() < minimumClaimBudgetMs) {
+      core.info('Insufficient admission job time remains to claim and record a pre-send outcome; no dispatch.');
+      return 'admission-budget-exhausted';
+    }
     const generation = (prior?.generation ?? 0) + 1;
-    const date = secondsUtc(Date.now());
+    const date = secondsUtc(now());
     if (!isPositiveInteger(generation) || (prior && date < prior.date)) fail('Invalid successor runtime claim.');
     if (!isTrustedAdmission()) fail('Runtime claim owner revision is unproven.');
     // GitHub binds the native repository_dispatch SHA to its default branch.
@@ -653,7 +729,8 @@ module.exports = async function admitPrRuntimeRefresh({
     const witnessDigest = sha256(candidateWitness);
     const tag = await github.rest.git.createTag({
       ...contextRepo, tag: tagName(generation), message: claimMessage(generation, witnessDigest, ownerRevision),
-      object: ownerRevision, type: 'commit', tagger: {...tagger, date}, request: {retries: 0},
+      object: ownerRevision, type: 'commit', tagger: {...tagger, date},
+      request: {retries: 0, timeout: claimWriteTimeoutMs},
     });
     const annotation = parseClaimTag(tag?.data, generation);
     if (tag?.status !== 201 || annotation?.ownerRevision !== ownerRevision ||
@@ -661,12 +738,13 @@ module.exports = async function admitPrRuntimeRefresh({
       fail('Runtime claim tag creation is unproven.');
     }
     const ref = `refs/tags/${tagName(generation)}`;
-    const created = await github.rest.git.createRef({...contextRepo, ref, sha: tag.data.sha, request: {retries: 0}});
+    const created = await github.rest.git.createRef({...contextRepo, ref, sha: tag.data.sha,
+      request: {retries: 0, timeout: claimWriteTimeoutMs}});
     if (created?.status !== 201 || created.data?.ref !== ref ||
         created.data.object?.type !== 'tag' || created.data.object.sha !== tag.data.sha) {
       fail('Runtime claim ref creation is unproven.');
     }
-    claim = {generation, tag_sha: tag.data.sha};
+    claim = {generation, tag_sha: tag.data.sha, jobDeadline};
     witness = candidateWitness;
   } catch {
     // A lost response is not ownership. Never adopt, update, delete, or retry a claim ref.
@@ -676,7 +754,7 @@ module.exports = async function admitPrRuntimeRefresh({
 
   let identityIsCurrent;
   try {
-    identityIsCurrent = await currentIdentity();
+    identityIsCurrent = await currentIdentity(claim.jobDeadline - ownerReceiptReserveMs);
   } catch {
     core.warning('Runtime refresh tuple could not be rechecked after claiming; no dispatch.');
     if (isTrustedReceiptOwner() && await recordOwnerReceipt(claim, preSendUnavailable)) {

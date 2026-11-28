@@ -58,6 +58,27 @@ fetch_workflow_runs() {
     return 1
   fi
 
+  # REST pages are separate observations. Reject gaps, duplicates and changing
+  # totals before any caller infers absence from the listed runs.
+  if ! jq -se '
+      length == 1 and (.[0] |
+        type == "array" and length > 0 and
+        all(.[]; type == "object" and (.workflow_runs | type == "array")) and
+        (.[0].total_count) as $total |
+        ($total | type == "number" and floor == . and . >= 0) and
+        length == ([1, (($total / 100) | ceil)] | max) and
+        all(to_entries[]; .key as $page | .value |
+          .total_count == $total and
+          (.workflow_runs | length) == ([100, $total - ($page * 100)] | min)) and
+        [.[].workflow_runs[] | .id] as $ids |
+        all($ids[]; type == "number" and floor == . and . > 0) and
+        ($ids | unique | length) == $total)
+    ' <<<"$payload" >/dev/null; then
+    printf 'GitHub runtime-image producer inventory is incomplete or inconsistent while %s.\n' \
+      "$wait_context" >&2
+    return 1
+  fi
+
   printf '%s' "${payload}"
 }
 
@@ -96,6 +117,16 @@ def is_matching_run(run):
         return (
             run.get("event") == "workflow_run"
             and run.get("display_title") == f"Build Runtime Images trusted-branch branch-develop sha-{head_sha}"
+        ) or (
+            run.get("event") == "workflow_dispatch"
+            and run.get("display_title") == "develop"
+            and run.get("head_branch") == "develop"
+            and run.get("head_sha") == head_sha
+            and run.get("path") in {
+                ".github/workflows/runtime-images.yml",
+                ".github/workflows/runtime-images.yml@develop",
+                ".github/workflows/runtime-images.yml@refs/heads/develop",
+            }
         )
 
     # A base refresh is dispatched as the typed pr-runtime-base-refresh event;
@@ -469,14 +500,15 @@ except (OSError, TypeError, ValueError, RuntimeError, zipfile.BadZipFile):
 }
 
 confirm_publication_source_attempt() {
-  local lookup_deadline="$1" source_id="$2" workflow_id="$3" source_attempt="$4" source_title="$5" source_state="$6"
+  local lookup_deadline="$1" source_id="$2" workflow_id="$3" source_attempt="$4" source_title="$5" source_state="$6" source_branch="$7"
   local latest
   latest="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${source_id}")" || return 1
   jq -e --argjson id "$source_id" --argjson workflow "$workflow_id" --argjson attempt "$source_attempt" \
-    --arg repo "$GITHUB_REPOSITORY" --arg title "$source_title" --arg head "$head_sha" '
+    --arg repo "$GITHUB_REPOSITORY" --arg title "$source_title" --arg head "$head_sha" --arg branch "$source_branch" '
     .id == $id and .workflow_id == $workflow and .run_attempt == $attempt
     and .repository.full_name == $repo and .head_repository.full_name == $repo
-    and .display_title == $title and (.event != "pull_request" or .head_sha == $head)
+    and .display_title == $title and ((.head_branch // "") == $branch)
+    and (.event != "pull_request" or .head_sha == $head)
   ' <<<"$latest" >/dev/null &&
     [[ "$(jq -c '{workflow_runs:[.]}' <<<"$latest" | read_run_state)" == "$source_state" ]]
 }
@@ -489,8 +521,8 @@ use_completed_duplicate_publication() {
   local source_state="$1" lookup_deadline="$2" remaining
   local proof_origin="${3:-alternate}"
   local observed_inventory="${4:-}"
-  local source source_attempt source_title publisher_event expected_title
-  local run attempt jobs latest publisher_path default_branch repository_info
+  local source source_attempt source_title source_branch callback_branch publisher_event expected_title
+  local run attempt jobs latest publisher_path publisher_branch default_branch repository_info
   local source_workflow source_workflow_id source_pr producer_artifact publisher_artifact expected_receipt artifact_status
   local -a publisher_events=()
   local pending_handoff=false publisher_selector=all
@@ -503,6 +535,7 @@ use_completed_duplicate_publication() {
   }
   [[ "$(jq -c '{workflow_runs:[.]}' <<<"$source" | read_run_state)" == "$source_state" ]] || return 1
   source_title="$(jq -er '.display_title | select(type == "string")' <<<"$source")" || return 1
+  source_branch="$(jq -er '(.head_branch // "") | select(type == "string")' <<<"$source")" || return 1
   source_attempt="$(jq -er --arg repo "$GITHUB_REPOSITORY" --arg head "$head_sha" '
     select(.repository.full_name == $repo and .head_repository.full_name == $repo)
     | select(.event != "pull_request" or .head_sha == $head)
@@ -584,10 +617,20 @@ use_completed_duplicate_publication() {
       [[ "$publisher_path" == ".github/workflows/publish-pr-runtime-images.yml" ||
          "$publisher_path" == ".github/workflows/publish-pr-runtime-images.yml@${default_branch}" ||
          "$publisher_path" == ".github/workflows/publish-pr-runtime-images.yml@refs/heads/${default_branch}" ]] || continue
-      attempt="$(jq -er --argjson id "$publisher_id" --arg repo "$GITHUB_REPOSITORY" --arg path "$publisher_path" --arg branch "$default_branch" \
+      # The receipt binds the actual publisher workflow ref. If a native PR
+      # callback's REST record carries the source branch, require it to agree
+      # with the exact producer and still verify that default-ref receipt.
+      callback_branch=""
+      if [[ "$publisher_event" == "workflow_run" && "$source_event" == "pull_request" ]]; then
+        callback_branch="$source_branch"
+      fi
+      publisher_branch="$(jq -er --arg default "$default_branch" --arg callback "$callback_branch" '
+        .head_branch | select(. == $default or ($callback != "" and . == $callback))
+      ' <<<"$run")" || continue
+      attempt="$(jq -er --argjson id "$publisher_id" --arg repo "$GITHUB_REPOSITORY" --arg path "$publisher_path" \
         --arg title "$expected_title" --arg event "$publisher_event" '
           select(.id == $id and .event == $event and .display_title == $title
-            and .path == $path and .head_branch == $branch
+            and .path == $path
             and .repository.full_name == $repo and .head_repository.full_name == $repo
             and .status == "completed" and .conclusion == "success")
           | .run_attempt | select(type == "number" and . >= 1 and floor == .)
@@ -617,9 +660,9 @@ use_completed_duplicate_publication() {
       verify_exact_publication_receipt "$lookup_deadline" "$(jq -r '.id' <<<"$publisher_artifact")" \
         "$(jq -r '.digest' <<<"$publisher_artifact")" "$expected_receipt" || continue
       confirm_publication_source_attempt "$lookup_deadline" "$older_id" "$source_workflow_id" \
-        "$source_attempt" "$source_title" "$source_state" || continue
+        "$source_attempt" "$source_title" "$source_state" "$source_branch" || continue
       latest="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${publisher_id}")" || continue
-      jq -e --argjson id "$publisher_id" --argjson attempt "$attempt" --arg path "$publisher_path" --arg branch "$default_branch" \
+      jq -e --argjson id "$publisher_id" --argjson attempt "$attempt" --arg path "$publisher_path" --arg branch "$publisher_branch" \
         --arg title "$expected_title" --arg event "$publisher_event" --arg repo "$GITHUB_REPOSITORY" '
         .id == $id and .run_attempt == $attempt and .status == "completed" and .conclusion == "success"
         and .path == $path and .head_branch == $branch and .event == $event and .display_title == $title
@@ -628,7 +671,7 @@ use_completed_duplicate_publication() {
       # Observe the producer attempt last. A publisher read and a producer read
       # are separate observations; a newly observed producer attempt withholds proof.
       confirm_publication_source_attempt "$lookup_deadline" "$older_id" "$source_workflow_id" \
-        "$source_attempt" "$source_title" "$source_state" || continue
+        "$source_attempt" "$source_title" "$source_state" "$source_branch" || continue
       (( SECONDS < lookup_deadline )) || break
       if [[ "$proof_origin" == "direct" ]]; then
         printf 'Trusted PR image publisher %s succeeded for %s as the direct source.\n' "$publisher_id" "$image_tag"

@@ -43,15 +43,17 @@ n=len(calls)
 p.write_text("\\n".join([*calls, policy]) + "\\n")
 if os.environ["CASE"]=="api-error":sys.exit(1)
 case=os.environ["CASE"]
+if case == "transient-error" and n == 0:sys.exit(1)
 if case == "timely-ready":pathlib.Path(os.environ["CLOCK"]).write_text("89")
 if case == "late-ready":pathlib.Path(os.environ["CLOCK"]).write_text("90")
 if case == "shared-deadline" and n == 0 and policy == "firemud-trust-runtime-namespace-boundary":
     pathlib.Path(os.environ["CLOCK"]).write_text("89")
-ready=(case in ("ready", "timely-ready", "late-ready", "warnings", "ignore")
+ready=(case in ("ready", "timely-ready", "transient-error", "late-ready", "warnings", "ignore")
        or (case=="shared-deadline" and n==0 and policy=="firemud-trust-runtime-namespace-boundary"))
 print(json.dumps({"metadata":{"generation":2},"spec":{"failurePolicy":"Ignore" if os.environ["CASE"]=="ignore" else "Fail"},"status":{"observedGeneration":2 if ready else 1,"typeChecking":{"expressionWarnings":["bad"] if os.environ["CASE"]=="warnings" else []}}}))
 ''')
-    for case, success in [("ready", True), ("timely-ready", True), ("late-ready", False),
+    for case, success in [("ready", True), ("timely-ready", True), ("transient-error", True),
+                          ("late-ready", False),
                           ("expired-before-request", False), ("stale", False),
                           ("warnings", False), ("ignore", False), ("api-error", False),
                           ("shared-deadline", False)]:
@@ -101,7 +103,11 @@ print(now)
                 "firemud-trust-runtime-namespace-boundary", "firemud-trust-runtime-binding-boundary",
                 "firemud-trust-runtime-pod-boundary", "firemud-trust-runtime-pod-identity",
             }
-            assert len(calls) == 4
+            if case == "transient-error":
+                assert calls[:2] == ["firemud-trust-runtime-namespace-boundary"] * 2
+                assert len(calls) == 5
+            else:
+                assert len(calls) == 4
         else:
             assert "policy_readiness=timeout" in result.stderr
             if case in ("late-ready", "expired-before-request"):

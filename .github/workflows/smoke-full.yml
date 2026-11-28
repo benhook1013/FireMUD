@@ -80,7 +80,7 @@ jobs:
         with:
           requirements: smoke
 
-      - name: Checkout trusted smoke override source
+      - name: Checkout trusted smoke entrypoint and override
         if: ${{ inputs.runtime_digests != '' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -96,7 +96,7 @@ jobs:
           install -T .trusted-runtime-workflow/docker/docker-compose.smoke-images.override.yml \
             docker/docker-compose.smoke-images.override.yml
 
-      - name: Validate exact runtime image digests
+      - name: Export exact runtime image references
         if: ${{ inputs.runtime_digests != '' }}
         env:
           RUNTIME_DIGESTS: ${{ inputs.runtime_digests }}
@@ -105,7 +105,6 @@ jobs:
           import json
           import os
           import re
-          import subprocess
 
           runtime_services = {
               "account-service",
@@ -143,19 +142,6 @@ jobs:
               "SMOKE_IMAGE_REF_" + service.upper().replace("-", "_"): f"ghcr.io/benhook1013/{service}@{digest}"
               for service, digest in digests.items()
           }
-          rendered = subprocess.run(
-              ["docker", "compose", "-f", "docker/docker-compose.smoke-images.override.yml",
-               "config", "--no-consistency", "--format", "json"],
-              check=True,
-              stdout=subprocess.PIPE,
-              env={**os.environ, **refs},
-          )
-          services = json.loads(rendered.stdout)["services"]
-          for service, digest in digests.items():
-              compose_service = "gateway" if service == "spring-cloud-gateway" else service
-              if services.get(compose_service, {}).get("image") != f"ghcr.io/benhook1013/{service}@{digest}":
-                  raise SystemExit(f"Smoke Compose does not select the fixed digest for {service}")
-
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
               for variable, image in refs.items():
                   environment.write(f"{variable}={image}\n")
@@ -172,7 +158,16 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🧪 Run Canonical Image Smoke Proof
-        run: bash ./dev-tools/verify-smoke-images.sh --keep-running
+        env:
+          FIREMUD_SMOKE_RUNTIME_DIGESTS: ${{ inputs.runtime_digests }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$FIREMUD_SMOKE_RUNTIME_DIGESTS" ]]; then
+            FIREMUD_SMOKE_SOURCE_ROOT="$GITHUB_WORKSPACE" \
+              bash .trusted-runtime-workflow/dev-tools/verify-smoke-images.sh --keep-running
+          else
+            bash ./dev-tools/verify-smoke-images.sh --keep-running
+          fi
 
       - name: 📜 Dump Docker Compose Logs on Failure
         if: failure()

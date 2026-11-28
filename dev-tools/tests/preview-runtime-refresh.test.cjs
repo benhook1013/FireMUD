@@ -40,9 +40,11 @@ function admissionFixture() {
   const claimRefs = new Map();
   const claimTags = new Map();
   const receiverJobs = new Map();
+  const now = Date.now();
   const state = {base: B, mergeParents: [B, C], keepHidden: false, afterInventory: null,
     labels: [{name: 'preview:priority'}], nextId: 301, lookups: [], pullObservations: [],
-    baseReads: 0, commitRefs: [], missingExactCommitReads: 0, waits: [], producerReads: []};
+    baseReads: 0, commitRefs: [], missingExactCommitReads: 0, waits: [], producerReads: [],
+    now, admissionJobStartedAt: new Date(now - 1000).toISOString()};
   const github = {rest: {
     pulls: {get: async ({pull_number}) => {
       assert.equal(pull_number, 7);
@@ -107,6 +109,15 @@ function admissionFixture() {
       listJobsForWorkflowRunAttempt: async ({run_id, attempt_number}) => {
         state.receiverJobReads ??= [];
         state.receiverJobReads.push(`${run_id}:${attempt_number}`);
+        if (receiverJobs.has(`${run_id}:${attempt_number}`)) {
+          const jobs = receiverJobs.get(`${run_id}:${attempt_number}`);
+          return {data: {total_count: jobs.length, jobs}};
+        }
+        if (run_id === admission.context.runId && Number(attempt_number) === Number(admission.admissionAttempt)) {
+          return {data: {total_count: 1, jobs: [{id: 3, run_id, run_attempt: Number(attempt_number),
+            head_sha: D, name: 'Admit Exact Runtime Tuple', status: 'in_progress',
+            started_at: state.admissionJobStartedAt}]}};
+        }
         const jobs = receiverJobs.get(`${run_id}:${attempt_number}`) || [];
         return {data: {total_count: jobs.length, jobs}};
       },
@@ -114,14 +125,14 @@ function admissionFixture() {
         assert.equal(workflow_id, 42);
         assert.equal(per_page, 100);
         assert.ok(Number.isSafeInteger(page) && page > 0 && page <= 3);
-        state.afterInventory?.();
+        state.afterInventory?.({event, status, page});
         const matching = runs.filter(run => (!status || run.status === status) && run.event === event &&
           (!created || (() => {
             const [start, end] = created.split('..');
             const timestamp = Date.parse(run.created_at);
             return timestamp >= Date.parse(start) && (end === '*' || timestamp < Date.parse(end) + 1000);
           })()));
-        const pageRuns = matching.slice((page - 1) * per_page, page * per_page);
+        const pageRuns = matching.slice((page - 1) * per_page, page * per_page).map(run => structuredClone(run));
         state.lookups.push({status, event, per_page, page, created, runIds: pageRuns.map(run => run.id)});
         return {data: {workflow_runs: pageRuns, total_count: matching.length}};
       },
@@ -148,7 +159,7 @@ function admissionFixture() {
       },
     },
   }};
-  const admission = {github, input, admissionAttempt: '1',
+  const admission = {github, input, admissionAttempt: '1', now: () => state.now,
     context: {repo: {owner: 'example', repo: 'FireMUD'}, runId: 600, ref: 'refs/heads/develop', sha: D,
       eventName: 'repository_dispatch',
       payload: {action: 'pr-runtime-base-refresh-request', repository: {full_name: repository, default_branch: 'develop'}}},
@@ -342,6 +353,47 @@ test('an exact native active producer appearing during live identity validation 
   assert.deepEqual(f.sent, []);
   assert.equal(f.claimTags.size, 0);
   assert.equal(f.claimRefs.size, 0);
+});
+
+test('a producer changing status between inventory queries is merged and reread', async () => {
+  const f = admissionFixture();
+  const run = f.makePullRequestRun({id: 220, status: 'queued'});
+  f.runs.push(run);
+  let transitioned = false;
+  f.state.afterInventory = ({event, status}) => {
+    if (!transitioned && event === 'pull_request' && status === 'in_progress') {
+      run.status = 'in_progress';
+      transitioned = true;
+    }
+  };
+
+  assert.equal(await admitRuntimeRefresh(f.admission), 'already-active');
+  assert.equal(transitioned, true);
+  assert.ok(f.state.lookups.some(call => call.status === 'queued' && call.runIds.includes(run.id)));
+  assert.ok(f.state.lookups.some(call => call.status === 'in_progress' && call.runIds.includes(run.id)));
+  assert.deepEqual(f.state.producerReads, [run.id], 'the selected attempt is reread before suppressing dispatch');
+  assert.deepEqual(f.sent, []);
+});
+
+test('admission leaves too little remaining job time unclaimed', async () => {
+  const f = admissionFixture();
+  f.state.admissionJobStartedAt = new Date(f.state.now - (4 * 60 * 1000 - 65 * 1000)).toISOString();
+
+  assert.equal(await admitRuntimeRefresh(f.admission), 'admission-budget-exhausted');
+  assert.equal(f.claimTags.size, 0);
+  assert.equal(f.claimRefs.size, 0);
+  assert.deepEqual(f.sent, []);
+});
+
+test('the final identity read stops before the reserved owner receipt window', async () => {
+  const f = admissionFixture();
+  const deadline = Date.parse(f.state.admissionJobStartedAt) + 4 * 60 * 1000;
+  f.state.afterClaim = () => { f.state.now = deadline - 19_000; };
+
+  assert.equal(await admitRuntimeRefresh(f.admission), 'pre-send-unavailable');
+  assert.equal(f.sent.length, 0);
+  assert.equal(f.outputs.get('pre-send-unavailable_claim')?.startsWith('generation 1 run 600 attempt 1 tag '), true);
+  assert.ok([...f.claimRefs.keys()].some(ref => ref.startsWith('refs/tags/firemud-runtime-refresh-pre-send-unavailable/')));
 });
 
 test('identity retries are bounded and do not retry authorization failure', async () => {

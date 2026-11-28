@@ -215,9 +215,10 @@ jobs:
                   job.run_id !== candidate.id ||
                   (job.run_attempt !== undefined && job.run_attempt !== candidate.run_attempt) ||
                   job.head_sha !== headSha);
+                const licenseChangeJob = "Detect License-Relevant Changes";
                 const evidenceNames = [gateName, ...(workflowId === "codeql.yml" ? [
                   ...detailChecks.map(([, name]) => name), "CodeQL Analysis ($" + "{{ matrix.language }})",
-                ] : [])];
+                ] : [licenseChangeJob])];
                 const duplicate = !mismatched &&
                   evidenceNames.some(name => data.jobs.filter(job => job.name === name).length > 1);
                 if (mismatched || duplicate) {
@@ -250,6 +251,11 @@ jobs:
                     enforcementCompleted && enforcement[0].conclusion === "skipped") {
                   if (preservation.length === 1 && preservation[0].status === "completed" &&
                       ["success", "failure"].includes(preservation[0].conclusion)) continue;
+                  // The native change job is skipped on metadata-only edits even when
+                  // runner setup fails before the preservation step can execute.
+                  const changes = data.jobs.find(job => job.name === licenseChangeJob);
+                  if (workflowId === "license-scan.yml" &&
+                      changes?.status === "completed" && changes.conclusion === "skipped") continue;
                   // Older License metadata jobs may only expose the completed deferral guard.
                   const deferral = steps.filter(step => step?.name === "Report dependency-deferred required gate");
                   if (workflowId === "license-scan.yml" && candidate.conclusion === "success" &&

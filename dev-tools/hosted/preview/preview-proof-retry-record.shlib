@@ -248,6 +248,8 @@ retire_merged_preview_retry_entries() {
     last="$namespace"
     old_row="$(preview_retry_entry "$initial" "$namespace")" || continue
     [[ "$old_row" != null ]] || continue
+    # A reservation remains in custody until its owner releases it or settles the send.
+    jq -e 'has("phase") | not' <<<"$old_row" >/dev/null || continue
     pr_number="${namespace#pr-}"
     # A closed, unmerged pull request can reopen with the same tuple. Only
     # positive, same-repository merge evidence permits automatic retirement.

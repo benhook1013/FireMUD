@@ -1125,7 +1125,7 @@ jobs:
               return newestPreExecutionCancellation;
             }
 
-            async function resolveCurrentIdentity(label) {
+            async function resolveCurrentIdentity(label, requireLiveBase = false) {
               let currentPullRequest;
               try {
                 ({ data: currentPullRequest } = await withTransientGitHubRetry(
@@ -1151,7 +1151,7 @@ jobs:
                 // Edited events can omit a usable test-merge SHA. Only immutable
                 // ordered parents authorize event proof; otherwise require the
                 // independently verified current tuple's trusted refresh.
-                const validEventTuple = /^[0-9a-f]{40}$/.test(eventBaseSha ?? "") &&
+                const validEventTuple = !requireLiveBase && /^[0-9a-f]{40}$/.test(eventBaseSha ?? "") &&
                   /^[0-9a-f]{40}$/.test(eventMergeSha ?? "");
                 const mergeCommit = validEventTuple
                   ? await immutableCommit(eventMergeSha, "event test-merge lookup")
@@ -1173,9 +1173,11 @@ jobs:
                   };
                 }
 
-                core.info(
-                  `Event test merge parents are not [${eventBaseSha}, ${headSha}]; checking for an exact trusted current-base smoke refresh.`
-                );
+                if (!requireLiveBase) {
+                  core.info(
+                    `Event test merge parents are not [${eventBaseSha}, ${headSha}]; checking for an exact trusted current-base smoke refresh.`
+                  );
+                }
                 const { data: currentBaseRefData } = await withTransientGitHubRetry(
                   "current base ref lookup",
                   () => github.rest.git.getRef({
@@ -1640,16 +1642,21 @@ jobs:
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue smokeGatePolling;
                 }
-                if (currentIdentity.sourceEvent === "repository_dispatch") {
+                const needsLiveComparison = matching.event === "repository_dispatch";
+                const isSelectedLiveComparison = (live) => live &&
+                  live.baseSha === currentIdentity.baseSha && live.headSha === currentIdentity.headSha &&
+                  live.mergeSha === currentIdentity.mergeSha && live.baseRef === currentIdentity.baseRef;
+                if (needsLiveComparison) {
                   // A trusted refresh follows the live base, unlike immutable event proof.
                   const acceptanceIdentity = await resolveCurrentIdentity(
-                    "Stopping stale current-base smoke gate after the final run lookup"
+                    "Stopping stale current-base smoke gate after the final run lookup", true
                   );
                   if (acceptanceIdentity?.obsolete) return;
-                  if (!acceptanceIdentity || identityKey(acceptanceIdentity) !== identityKey(currentIdentity)) {
-                    currentIdentity = acceptanceIdentity;
+                  if (!isSelectedLiveComparison(acceptanceIdentity)) {
+                    currentIdentity = currentIdentity.sourceEvent === "repository_dispatch" ? acceptanceIdentity : currentIdentity;
                     core.info("Current-base identity changed after the final runtime attempt lookup; resume exact selection.");
-                    continue smokeGatePolling;
+                    if (await retryExactSelection("Rechecking the selected live smoke comparison.", { requirePendingPrimary: false })) continue smokeGatePolling;
+                    break smokeGatePolling;
                   }
                   let acceptanceAttempt;
                   try {
@@ -1672,13 +1679,14 @@ jobs:
                     continue smokeGatePolling;
                   }
                   const confirmedIdentity = await resolveCurrentIdentity(
-                    "Stopping stale current-base smoke gate after the final attempt lookup"
+                    "Stopping stale current-base smoke gate after the final attempt lookup", true
                   );
                   if (confirmedIdentity?.obsolete) return;
-                  if (!confirmedIdentity || identityKey(confirmedIdentity) !== identityKey(currentIdentity)) {
-                    currentIdentity = confirmedIdentity;
+                  if (!isSelectedLiveComparison(confirmedIdentity)) {
+                    currentIdentity = currentIdentity.sourceEvent === "repository_dispatch" ? confirmedIdentity : currentIdentity;
                     core.info("Current-base identity changed after the final runtime attempt lookup; resume exact selection.");
-                    continue smokeGatePolling;
+                    if (await retryExactSelection("Rechecking the selected live smoke comparison.", { requirePendingPrimary: false })) continue smokeGatePolling;
+                    break smokeGatePolling;
                   }
                   // A rerun can start during that last live tuple lookup. This final
                   // attempt fence does not make the separate GitHub reads atomic.
@@ -1753,15 +1761,16 @@ jobs:
                       break smokeGatePolling;
                     }
                   }
-                  if (currentIdentity.sourceEvent === "repository_dispatch") {
+                  if (needsLiveComparison) {
                     const fallbackIdentity = await resolveCurrentIdentity(
-                      "Stopping stale current-base smoke gate after fallback ordering"
+                      "Stopping stale current-base smoke gate after fallback ordering", true
                     );
                     if (fallbackIdentity?.obsolete) return;
-                    if (!fallbackIdentity || identityKey(fallbackIdentity) !== identityKey(currentIdentity)) {
-                      currentIdentity = fallbackIdentity;
+                    if (!isSelectedLiveComparison(fallbackIdentity)) {
+                      currentIdentity = currentIdentity.sourceEvent === "repository_dispatch" ? fallbackIdentity : currentIdentity;
                       core.info("Current-base identity changed during fallback ordering; resume exact selection.");
-                      continue smokeGatePolling;
+                      if (await retryExactSelection("Rechecking the selected live smoke comparison.", { requirePendingPrimary: false })) continue smokeGatePolling;
+                      break smokeGatePolling;
                     }
                   }
                 }
@@ -1801,7 +1810,7 @@ jobs:
                     break smokeGatePolling;
                   }
                 }
-                if (selection.pendingPrimary?.event === "pull_request" && !selection.pendingRefresh &&
+                if ((selection.pendingPrimary?.event === "pull_request" || cancelledNative) && !selection.pendingRefresh &&
                     matching.event === "repository_dispatch") {
                   // The selected refresh may have been the newest visible one
                   // when checked. A later refresh can fail during proof reads.
@@ -1812,15 +1821,17 @@ jobs:
                       { allowCompletedFallback: false, fallbackFence: matching }
                     );
                   } catch (error) {
-                    if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary) && await retryExactSelection(
-                      "Trusted refresh ordering is unavailable before fallback proof; retry exact selection."
+                    if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary ?? cancelledNative) && await retryExactSelection(
+                      "Trusted refresh ordering is unavailable before fallback proof; retry exact selection.",
+                      { requirePendingPrimary: false }
                     )) continue smokeGatePolling;
                     throw error;
                   }
                   if (freshRefresh?.id !== matching.id || freshRefresh.run_attempt !== matching.run_attempt ||
                       freshRefresh.status !== "completed" || freshRefresh.conclusion !== "success") {
                     if (await retryExactSelection(
-                      "Trusted refresh ordering changed before fallback proof; retry exact selection."
+                      "Trusted refresh ordering changed before fallback proof; retry exact selection.",
+                      { requirePendingPrimary: false }
                     )) continue smokeGatePolling;
                     break smokeGatePolling;
                   }

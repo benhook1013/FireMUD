@@ -172,6 +172,22 @@ repair_requested_tuple() {
   return "$repair_success"
 }
 
+preview_dispatch_comparison_is_current() {
+  local pr_number="$1" base_sha="$2" head_sha="$3" merge_sha="$4" image_tag="$5"
+  local live_pr base_ref live_base live_image
+  live_pr="$(timeout 10s gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}")" || return 1
+  base_ref="$(jq -er --arg repo "$GITHUB_REPOSITORY" --arg head "$head_sha" --arg merge "$merge_sha" '
+    select(.state == "open" and .mergeable == true and .head.repo.full_name == $repo
+      and .base.repo.full_name == $repo and .head.sha == $head and .merge_commit_sha == $merge)
+    | .base.ref | select(type == "string" and test("^[A-Za-z0-9._/-]+$"))
+  ' <<<"$live_pr")" || return 1
+  live_base="$(timeout 10s gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${base_ref}")" || return 1
+  jq -e --arg base "$base_sha" '.object.sha == $base' <<<"$live_base" >/dev/null || return 1
+  live_image="$(bash ./dev-tools/hosted/preview/resolve-preview-image-tag.sh \
+    "$merge_sha" "$pr_number" "$base_sha")" || return 1
+  [[ "$live_image" == "$image_tag" ]]
+}
+
 prepare_preview_dispatch() {
   local namespace="$1" pr_number="$2" base_sha="$3" head_sha="$4" merge_sha="$5" image_tag="$6"
   local require_deployed_tuple="$7" priority="$8" expected_namespace_uid="$9" settled_once="${10:-false}"
@@ -340,8 +356,12 @@ prepare_preview_dispatch() {
     holder="$(read_preview_retry_holder)" || return 1
     prior="$(preview_retry_entry "$holder" "$namespace")" || return 1
     jq -en --argjson current "$prior" --argjson settled "$settled" '$current == $settled' >/dev/null || return 1
-    # The receiver can update proof or allocate the Namespace while we wait for
-    # settlement. Re-read the Namespace and ordinary capacity before dispatch.
+    # Settlement can race with a PR update as well as a Namespace change.
+    if ! preview_dispatch_comparison_is_current "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag"; then
+      echo "Skipping PR #${pr_number}: preview comparison could not be reconfirmed after retry settlement."
+      return 2
+    fi
+    # Re-read the Namespace and ordinary capacity before dispatch.
     prepare_preview_dispatch "$namespace" "$pr_number" "$base_sha" "$head_sha" "$merge_sha" "$image_tag" \
       "$require_deployed_tuple" "$priority" "$expected_namespace_uid" true
     return $?
@@ -569,10 +589,13 @@ readonly preview_native_pr_binding_jq='
 
 automatic_preview_has_tuple() {
   local run_id="$1" attempt="$2" head="$3" tuple="$4" pr="$5" event="$6" nonce="${7:-}" jobs latest jobs_available=true
+  local manual_title="${8:-}"
   local dispatch_tuple="${tuple#Preview resolved tuple }"
   local dispatch_title="Preview dispatch ${dispatch_tuple// /-}"
   if [[ -n "$nonce" ]]; then
     dispatch_title="Preview retry ${nonce} ${dispatch_tuple// /-}"
+  elif [[ -n "$manual_title" ]]; then
+    dispatch_title="$manual_title"
   fi
   # 0: exact active tuple, 1: proven nonmatch, 2: unavailable proof, 3: completed upload.
   jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${attempt}/jobs?per_page=100")" || jobs_available=false
@@ -652,6 +675,17 @@ automatic_preview_has_tuple() {
         return 4
       fi
       return 1
+    fi
+    if [[ -n "$manual_title" ]]; then
+      local resolved_tuple
+      resolved_tuple="$(jq -er '
+        [.jobs[] | select(.name == "Preview Plan") | .steps[]
+          | select(.name | startswith("Preview resolved tuple "))
+          | select(.status == "completed" and .conclusion == "success") | .name]
+        | select(length == 1) | .[0]
+      ' <<<"$jobs")" || return 2
+      [[ "$resolved_tuple" == "$tuple" ]] || return 1
+      if jq -e '.status != "completed"' <<<"$latest" >/dev/null; then return 0; fi
     fi
     preview_source_uploaded_render "$run_id" "$attempt" "$head" <<<"$jobs" >/dev/null || return 2
     if jq -e '.status == "completed" and .conclusion == "success"' <<<"$latest" >/dev/null; then
@@ -1437,7 +1471,7 @@ dispatch_candidates() {
       --arg default_branch "${DEFAULT_BRANCH}" \
       --arg pr_title "PR preview ${pr_number}" \
       --argjson pr_number "$pr_number" \
-      --arg head_sha "$head_sha" --arg merge_sha "$merge_sha" \
+      --arg base_sha "$base_sha" --arg head_sha "$head_sha" --arg merge_sha "$merge_sha" \
       --arg run_name "Preview dispatch pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}" \
       --arg retry_run_suffix "pr-${pr_number}-base-${base_sha}-head-${head_sha}-merge-${merge_sha}" \
       "$preview_native_pr_binding_jq"'
@@ -1463,13 +1497,20 @@ dispatch_candidates() {
               def native_preview:
                 native_same_repo and .workflow_id == $workflow_id
                 and (.name == $workflow_name or .name == .display_title);
-              def trusted_dispatch:
+              def manual_title:
+                ("Preview dispatch pr-" + ($pr_number | tostring)) as $prefix
+                | .display_title | IN(
+                  $prefix + "-base-unknown-head-" + $head_sha + "-merge-unknown",
+                  $prefix + "-base-unknown-head-" + $head_sha + "-merge-" + $merge_sha,
+                  $prefix + "-base-" + $base_sha + "-head-" + $head_sha + "-merge-unknown");
+              def dispatch_source:
                 native_preview and .event == "repository_dispatch"
                 and .head_branch == $default_branch
                 and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
                 and (.path == ".github/workflows/preview.yml" or .path == (".github/workflows/preview.yml@" + $default_branch)
-                  or .path == (".github/workflows/preview.yml@refs/heads/" + $default_branch))
-                and (.display_title == $run_name or
+                  or .path == (".github/workflows/preview.yml@refs/heads/" + $default_branch));
+              def trusted_dispatch:
+                dispatch_source and (.display_title == $run_name or
                   ((.display_title | startswith("Preview retry ")) and (.display_title | endswith($retry_run_suffix))));
               def provisional_pr:
                 native_preview and (.event == "pull_request" or .event == "pull_request_target")
@@ -1483,14 +1524,14 @@ dispatch_candidates() {
                 and (.path | IN(".github/workflows/hosted-identity-request.yml",
                   ".github/workflows/hosted-identity-request.yml@" + $default_branch,
                   ".github/workflows/hosted-identity-request.yml@refs/heads/" + $default_branch))
-                and (.display_title == $pr_title or .display_title == $run_name);
+                and (.display_title == $pr_title or .display_title == $run_name or manual_title);
               .[]
               | select(
                   (
                     (.firemud_reconciler_branch_filtered == false)
                     or (.firemud_reconciler_branch_filtered == true and .head_branch == $default_branch)
                   )
-                  and (trusted_dispatch or provisional_pr or trusted_consumer)
+                  and (trusted_dispatch or (dispatch_source and manual_title) or provisional_pr or trusted_consumer)
                   and (
                     .status == "requested"
                     or .status == "queued"
@@ -1500,7 +1541,8 @@ dispatch_candidates() {
                   )
                 )
               | if trusted_dispatch then {id, exact: true}
-                else {id, run_attempt, event, head_sha, exact: false} end
+                else {id, run_attempt, event, head_sha, exact: false,
+                  manual_title: (if dispatch_source and manual_title then .display_title else "" end)} end
             end
           end
         ' <<<"${active_preview_runs_json}"
@@ -1517,7 +1559,7 @@ dispatch_candidates() {
     tuple_step="Preview resolved tuple pr-${pr_number} base-${base_sha} head-${head_sha} merge-${merge_sha}"
     consumer_tuple="Trusted preview deploy tuple pr-${pr_number} base-${base_sha} head-${head_sha} merge-${merge_sha}"
     lookup_count=0
-    while IFS=$'\t' read -r run_id run_attempt run_event run_head; do
+    while IFS=$'\t' read -r run_id run_attempt run_event run_head manual_title; do
       [[ -n "$run_id" ]] || continue
       if (( lookup_count >= 3 )); then
         active_preview_lookup_unknown=true
@@ -1528,7 +1570,7 @@ dispatch_candidates() {
       if [[ "$run_event" == workflow_run ]]; then
         trusted_consumer_has_tuple "$run_id" "$run_attempt" "$run_head" "$consumer_tuple" || lookup_status=$?
       else
-        automatic_preview_has_tuple "$run_id" "$run_attempt" "$run_head" "$tuple_step" "$pr_number" "$run_event" || lookup_status=$?
+        automatic_preview_has_tuple "$run_id" "$run_attempt" "$run_head" "$tuple_step" "$pr_number" "$run_event" "" "$manual_title" || lookup_status=$?
       fi
       if [[ "$lookup_status" -eq 0 ]]; then
         active_preview_run_id="$run_id"
@@ -1539,7 +1581,7 @@ dispatch_candidates() {
       elif [[ "$lookup_status" -eq 2 ]]; then
         active_preview_lookup_unknown=true
       fi
-    done < <(jq -rs '[.[] | select(.exact | not)] | sort_by(.id) | reverse | .[] | [.id, .run_attempt, .event, .head_sha] | @tsv' <<<"$preview_candidates")
+    done < <(jq -rs '[.[] | select(.exact | not)] | sort_by(.id) | reverse | .[] | [.id, .run_attempt, .event, .head_sha, .manual_title] | @tsv' <<<"$preview_candidates")
   fi
 
   if [[ -n "${active_preview_run_id}" ]]; then

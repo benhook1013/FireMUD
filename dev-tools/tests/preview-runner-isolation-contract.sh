@@ -119,7 +119,8 @@ def active_ids(row: dict[str, Any]) -> str:
         "--argjson", "workflow_id", "173511323", "--argjson", "consumer_workflow_id", "357129350",
         "--arg", "repository", "benhook1013/FireMUD",
         "--arg", "default_branch", "develop", "--arg", "pr_title", "PR preview 7",
-        "--argjson", "pr_number", "7", "--arg", "head_sha", "a" * 40, "--arg", "merge_sha", "c" * 40,
+        "--argjson", "pr_number", "7", "--arg", "base_sha", "b" * 40,
+        "--arg", "head_sha", "a" * 40, "--arg", "merge_sha", "c" * 40,
         "--arg", "run_name", "Preview dispatch pr-7-base-b-head-a-merge-c",
         "--arg", "retry_run_suffix", "pr-7-base-b-head-a-merge-c",
         native_pr_binding.group(1) + "(" + active_filter + ") | [.id, .exact] | @tsv",
@@ -650,8 +651,26 @@ for candidate, parents, expected in (
     assert result.returncode == expected, (candidate, parents, result.stderr)
     if expected:
         assert "Stale preview merge ref" in result.stderr
-if re.search(r"(?:uses:|bash|python3)\s+(?:\./)?candidate/", render_text):
-    raise AssertionError("preview render executes candidate tools or local actions")
+def check_candidate_execution(job):
+    for step in job.get("steps", []):
+        if re.match(r"(?:\./)?candidate/", step.get("uses", "")):
+            raise AssertionError("preview render uses a candidate local action")
+        script = step.get("run", "").replace("\\\n", "")
+        if re.search(r"(?:bash|python3)\s+(?:\./)?candidate/", script) or re.search(
+            r"""(?:^|[;&|()]|(?:then|do|else)\s)\s*['"]?(?:\./)?candidate/""",
+            script,
+            flags=re.MULTILINE,
+        ):
+            raise AssertionError("preview render executes a candidate tool")
+
+check_candidate_execution(preview_jobs["preview-render"])
+check_candidate_execution({"steps": [{"run": "helm template example ./candidate/k8s/helm/firemud"}]})
+try:
+    check_candidate_execution({"steps": [{"run": "./candidate/inert-fixture.sh"}]})
+except AssertionError:
+    pass
+else:
+    raise AssertionError("direct candidate execution escaped isolation checking")
 for job_name, job in preview_jobs.items():
     for checkout in checkouts(job):
         if checkout.get("with", {}).get("persist-credentials") is not False:

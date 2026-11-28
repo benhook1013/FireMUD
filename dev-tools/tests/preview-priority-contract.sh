@@ -996,6 +996,9 @@ case "$resource" in
       exit 0
     fi
     live_head="${FAKE_PR_901_HEAD:-head-901}"
+    if [[ -n "${FAKE_PR_901_HEAD_AFTER_SETTLEMENT:-}" && -s "${FAKE_RETRY_PATCH_LOG:-}" ]]; then
+      live_head="$FAKE_PR_901_HEAD_AFTER_SETTLEMENT"
+    fi
     case "$live_head" in
       head-901|stale-head) live_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
     esac
@@ -1813,6 +1816,19 @@ run_proof_retry_contract() (
     "$FAKE_RETRY_HOLDER" >/dev/null
   test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
 
+  reset_case
+  seed_staged_holder
+  FAKE_PREVIEW_DISPATCH_JOBS_JSON="$source_jobs" \
+    FAKE_PREVIEW_DISPATCH_LATEST_JSON="$source_latest" \
+    FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$source_inventory" \
+    FAKE_PR_901_HEAD_AFTER_SETTLEMENT="$(printf '%040d' 8)" \
+    fixture_reconcile >"$case_output" 2>&1
+  grep -Fq 'preview comparison could not be reconfirmed after retry settlement' "$case_output"
+  jq -se --arg nonce "$old_nonce" 'length == 1 and
+    (.[0][2].value | fromjson | .count == 2 and .nonce == $nonce and (has("phase") | not))' \
+    "$FAKE_RETRY_PATCH_LOG" >/dev/null
+  test ! -e "$FAKE_DISPATCH_LOG"
+
   # An aligned preview settles an exact rendered handoff while its artifact
   # is retained. An unavailable artifact keeps the original charge staged.
   local rendered_jobs consumer consumer_jobs receipt receipt_case
@@ -2047,6 +2063,17 @@ run_proof_retry_contract() (
       assert_retry_count 3
       test ! -e "$FAKE_RETRY_PATCH_LOG"
     fi
+  done
+
+  for staged_phase in RESERVED SEND_STARTED; do
+    reset_case
+    seed_staged_holder "$staged_phase"
+    local still_owned
+    still_owned="$(<"$FAKE_RETRY_HOLDER")"
+    FAKE_NAMESPACE_ROWS='' FAKE_PR_901_NAMESPACE_ABSENT=true FAKE_RETRY_MERGE_STATE=merged \
+      bash "$PRUNER" --apply --retire-proof-retries >"$case_output"
+    test "$(<"$FAKE_RETRY_HOLDER")" = "$still_owned"
+    test ! -e "$FAKE_RETRY_PATCH_LOG"
   done
 
   # A failed runtime inventory must keep the overall cleanup unsuccessful and
@@ -3876,6 +3903,48 @@ make_recent_dispatch_source_evidence() {
   export FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON
 }
 
+for manual_case in unresolved exact previous-comparison; do
+  reset_case
+  manual_title="Preview dispatch pr-901-base-unknown-head-${preview_head_sha}-merge-unknown"
+  manual_tuple="Preview resolved tuple pr-901 base-${preview_base_sha} head-${preview_head_sha} merge-${preview_merge_sha}"
+  make_recent_dispatch_source_evidence "$(date -u +%Y-%m-%dT%H:%M:%SZ)" render
+  if [[ "$manual_case" == previous-comparison ]]; then manual_tuple="${manual_tuple%${preview_merge_sha}}$(printf '%040d' 9)"; fi
+  FAKE_PREVIEW_DISPATCH_LATEST_JSON="$(jq -c --arg title "$manual_title" '
+    .display_title = $title | .status = "in_progress" | del(.conclusion)
+  ' <<<"$FAKE_PREVIEW_DISPATCH_LATEST_JSON")"
+  if [[ "$manual_case" == unresolved ]]; then
+    FAKE_PREVIEW_DISPATCH_JOBS_JSON='{"total_count":0,"jobs":[]}'
+  else
+    FAKE_PREVIEW_DISPATCH_JOBS_JSON="$(jq -c --arg tuple "$manual_tuple" '
+      .jobs[0].steps = [{name:$tuple,status:"completed",conclusion:"success"}]
+    ' <<<"$FAKE_PREVIEW_DISPATCH_JOBS_JSON")"
+  fi
+  manual_output="$TEMP_DIR/reconciler-manual-${manual_case}.out"
+  (
+    cd "$ROOT_DIR"
+    FAKE_OPEN_PRIORITY_ROWS="1\t901\thead-901\thuman\tdevelop\topen\t${adversarial_labels_base64}\n" \
+      FAKE_PR_901_HEAD=head-901 FAKE_PR_901_REQUESTED_HEAD=head-901 FAKE_PR_901_PROOF_COMPLETE=false \
+      FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON='{"total_count":0,"workflow_runs":[]}' \
+      FAKE_ACTIVE_PREVIEW_RUN_PAGES_JSON="$(jq -c '[{workflow_runs:[.]}]' <<<"$FAKE_PREVIEW_DISPATCH_LATEST_JSON")" \
+      PREVIEW_MAX_ACTIVE=2 bash "$RECONCILER_RUN"
+  ) > "$manual_output"
+  case "$manual_case" in
+    unresolved)
+      grep -Fq 'active preview tuple lookup unavailable; retry budget unchanged.' "$manual_output"
+      test ! -e "$FAKE_RETRY_PATCH_LOG"
+      test ! -e "$FAKE_DISPATCH_LOG"
+      ;;
+    exact)
+      grep -Fq 'preview source or trusted consumer run 5255' "$manual_output"
+      test ! -e "$FAKE_RETRY_PATCH_LOG"
+      test ! -e "$FAKE_DISPATCH_LOG"
+      ;;
+    previous-comparison)
+      test -s "$FAKE_DISPATCH_LOG"
+      ;;
+  esac
+done
+
 for native_completed_case in head merge; do
   reset_case
   recent_source_updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -4112,10 +4181,10 @@ reconciler_expired_source_output="$TEMP_DIR/reconciler-expired-source.out"
 grep -Fq 'Dispatching preview render for PR #901' "$reconciler_expired_source_output"
 test -s "$FAKE_DISPATCH_LOG"
 
-for observation_case in duplicate-rows lookup-overflow workflow-run-only consumer-source-branch consumer-default-path consumer-nondefault-path consumer-wrong-workflow-id consumer-wrong-tuple consumer-title-only consumer-stale-attempt consumer-finished consumer-finished-without-proof consumer-active-jobs-unavailable consumer-job-attempt-missing consumer-job-attempt-mismatch consumer-job-attempt-null consumer-steps-missing; do
+for observation_case in duplicate-rows lookup-overflow workflow-run-only consumer-manual-title consumer-source-branch consumer-default-path consumer-nondefault-path consumer-wrong-workflow-id consumer-wrong-tuple consumer-title-only consumer-stale-attempt consumer-finished consumer-finished-without-proof consumer-active-jobs-unavailable consumer-job-attempt-missing consumer-job-attempt-mismatch consumer-job-attempt-null consumer-steps-missing; do
 reset_case
 reconciler_active_status_advance_output="$TEMP_DIR/reconciler-active-status-advance-${observation_case}.out"
-consumer_run="$(jq -cn --arg observation "$observation_case" '
+consumer_run="$(jq -cn --arg observation "$observation_case" --arg head "$preview_head_sha" '
   {id:5256,run_attempt:1,event:"workflow_run",
   workflow_id:(if $observation == "consumer-wrong-workflow-id" then 1 else 357129350 end),
   path:(".github/workflows/hosted-identity-request.yml"
@@ -4125,7 +4194,8 @@ consumer_run="$(jq -cn --arg observation "$observation_case" '
   name:"Trusted Hosted Identity Request",
   head_branch:(if $observation | IN("consumer-source-branch", "consumer-default-path", "consumer-nondefault-path",
     "consumer-wrong-workflow-id", "consumer-wrong-tuple") then "feature-preview" else "develop" end),
-  head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",display_title:"PR preview 901",
+  head_sha:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  display_title:(if $observation == "consumer-manual-title" then "Preview dispatch pr-901-base-unknown-head-" + $head + "-merge-unknown" else "PR preview 901" end),
   repository:{full_name:"example/FireMUD"},head_repository:{full_name:"example/FireMUD"},status:"in_progress"}')"
 namespace_absent_on_initial=false
 proof_complete=false
@@ -4135,6 +4205,10 @@ if [[ "$observation_case" == consumer-finished || "$observation_case" == consume
 fi
 if [[ "$observation_case" == consumer-finished ]]; then
   proof_after_consumer_completion=true
+fi
+if [[ "$observation_case" == consumer-manual-title ]]; then
+  printf '%s\n' '{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"firemud-preview-proof-retries","namespace":"firemud-system","uid":"uid-holder","resourceVersion":"1"},"data":{"schemaVersion":"1"}}' >"$FAKE_RETRY_HOLDER"
+  cp "$FAKE_RETRY_HOLDER" "$TEMP_DIR/active-manual-consumer-holder-before"
 fi
 (
   cd "$ROOT_DIR"
@@ -4177,12 +4251,16 @@ fi
 ) > "$reconciler_active_status_advance_output" 2>&1
 if [[ "$observation_case" == duplicate-rows || "$observation_case" == workflow-run-only ||
   "$observation_case" == consumer-source-branch || "$observation_case" == consumer-default-path ||
-  "$observation_case" == consumer-job-attempt-missing ]]; then
+  "$observation_case" == consumer-job-attempt-missing || "$observation_case" == consumer-manual-title ]]; then
   grep -Fqx \
     "Skipping proof retry for PR #901: preview source or trusted consumer run 5256 for ${preview_base_sha}/${preview_head_sha}/${preview_merge_sha} is already queued or in progress." \
     "$reconciler_active_status_advance_output"
   test ! -e "$FAKE_ANNOTATE_LOG"
+  test ! -e "$FAKE_RETRY_PATCH_LOG"
   test ! -e "$FAKE_DISPATCH_LOG"
+  if [[ "$observation_case" == consumer-manual-title ]]; then
+    cmp "$TEMP_DIR/active-manual-consumer-holder-before" "$FAKE_RETRY_HOLDER"
+  fi
 elif [[ "$observation_case" == consumer-stale-attempt || "$observation_case" == lookup-overflow || "$observation_case" == consumer-active-jobs-unavailable || "$observation_case" == consumer-job-attempt-mismatch || "$observation_case" == consumer-job-attempt-null || "$observation_case" == consumer-steps-missing ]]; then
   grep -Fqx \
     "Skipping proof retry for PR #901: active preview tuple lookup unavailable; retry budget unchanged." \

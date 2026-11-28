@@ -665,6 +665,45 @@ async function assertProducerSelectionRace() {
     jobRequests.length = 0;
   }
 }
+async function assertLicenseSetupFailureClassification() {
+  const originalPaginate = github.paginate;
+  const originalRequest = github.request;
+  for (const changesConclusion of ["skipped", "success", "failure"]) {
+    currentHeadSha = headSha; currentBaseSha = baseSha;
+    currentBaseRef = "develop"; pullRequestReads = 0;
+    github.paginate = async (method, input) => {
+      const rows = await originalPaginate(method, input);
+      if (method !== codeqlListWorkflowRuns || input.workflow_id !== "license-scan.yml") return rows;
+      const prior = rows.find(row => row.id === 300);
+      return [...rows, {...prior, id: 380, created_at: "2026-09-23T00:00:00Z", conclusion: "failure"}];
+    };
+    github.request = async (route, input) => {
+      if (input.run_id !== 380) return originalRequest(route, input);
+      jobRequests.push(input);
+      const common = {run_id: input.run_id, head_sha: headSha, status: "completed"};
+      return {data: {total_count: 2, jobs: [
+        {...common, id: 3801, name: "Detect License-Relevant Changes", conclusion: changesConclusion},
+        {...common, id: 3802, name: "License Gate", conclusion: "failure", steps: [
+          {name: "Harden runner", status: "completed", conclusion: "failure"},
+          {name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "skipped"},
+          {name: "Verify ORT results", status: "completed", conclusion: "skipped"},
+        ]},
+      ]}};
+    };
+    const start = calls.updated.length;
+    const jobsStart = jobRequests.length;
+    try { await run(github, context, core); } finally {
+      github.paginate = originalPaginate;
+      github.request = originalRequest;
+    }
+    const expected = changesConclusion === "skipped" ? "success" : "failure";
+    if (!jobRequests.slice(jobsStart).some(({run_id}) => run_id === 380) ||
+        !calls.updated.slice(start).some(({body}) => body.includes("License gate: `" + expected + "`"))) {
+      throw new Error("License setup failure misclassified with change job " + changesConclusion);
+    }
+  }
+}
+
 async function assertUnclassifiedCancellation() {
   const originalPaginate = github.paginate;
   currentHeadSha = headSha; currentBaseSha = baseSha;
@@ -967,6 +1006,7 @@ run(github, context, core).then(async () => {
                  await assertDuplicateDeletionRecovery();
                  await assertCompletionOrders();
                 await assertProducerSelectionRace();
+                await assertLicenseSetupFailureClassification();
                 await assertUnclassifiedCancellation();
                 await assertExactBaseRef();
                 await assertSkippedRequiredGates();

@@ -37,7 +37,7 @@ jobs:
       proof_retry_namespace_uid: ${{ steps.target.outputs.proof_retry_namespace_uid }}
       v2_schema_migration_change: ${{ steps.target.outputs.v2_schema_migration_change }}
       render_run_id: ${{ steps.target.outputs.render_run_id }}
-      artifact_name: ${{ steps.target.outputs.artifact_name }}
+      artifact_id: ${{ steps.target.outputs.artifact_id }}
       retire_identity: ${{ steps.target.outputs.retire_identity }}
       cleanup_state: ${{ steps.target.outputs.cleanup_state }}
     steps:
@@ -53,6 +53,9 @@ jobs:
 
       - name: Set up canonical GitHub CLI
         uses: ./.github/actions/setup-gh
+
+      - name: Set up canonical Python
+        uses: ./.github/actions/setup-python
 
       - name: Resolve certificate identity mode
         id: certificate-identity
@@ -102,13 +105,28 @@ jobs:
             printf '%s' "${value,,}"
           }
           download_source_artifact() {
-            local artifact_name="$1"
+            local artifact_id="$1" kind="$2" archive
             rm -rf -- "$ARTIFACT_DIRECTORY"
             mkdir -p -- "$ARTIFACT_DIRECTORY"
-            gh run download "$SOURCE_RUN_ID" \
-              --repo "$GITHUB_REPOSITORY" \
-              --name "$artifact_name" \
-              --dir "$ARTIFACT_DIRECTORY" >/dev/null
+            archive="$(mktemp "${ARTIFACT_DIRECTORY}/.source.XXXXXXXX")"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" >"$archive"
+            python3 - "$archive" "$ARTIFACT_DIRECTORY" "$kind" <<'PY'
+          import shutil
+          import sys
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          source, directory, kind = sys.argv[1:]
+          expected = (["preview-metadata.json", "preview-rendered-sanitized.yaml"]
+                      if kind == "render" else ["preview-intent.json"])
+          with ZipFile(source) as archive:
+              if sorted(archive.namelist()) != expected:
+                  sys.exit("Unexpected preview artifact contents.")
+              for name in expected:
+                  with archive.open(name) as member, (Path(directory) / name).open("xb") as output:
+                      shutil.copyfileobj(member, output)
+          PY
+            rm -f -- "$archive"
           }
           require_exact_files() {
             local expected="$1"
@@ -127,6 +145,7 @@ jobs:
           ARTIFACT_BASE_SHA=""
           ARTIFACT_MERGE_SHA=""
           ARTIFACT_NAME=""
+          ARTIFACT_ID=""
           ARTIFACT_KIND=""
           V2_SCHEMA_MIGRATION_CHANGE=false
           RETIRE_IDENTITY=false
@@ -191,6 +210,8 @@ jobs:
             [[ "$(jq 'length' <<<"$canonical_artifacts")" == 1 ]] ||
               emit_no_action "Ignoring source run without exactly one canonical preview artifact."
             ARTIFACT_NAME="$(jq -er '.[0].name' <<<"$canonical_artifacts")"
+            ARTIFACT_ID="$(jq -er '.[0].id | select(type == "number" and . > 0 and . == floor)' <<<"$canonical_artifacts")" ||
+              emit_no_action "Ignoring source run without an immutable preview artifact ID."
             if [[ "$ARTIFACT_NAME" == preview-render-pr-* ]]; then
               ARTIFACT_KIND=render
               ACTION=deploy
@@ -204,7 +225,7 @@ jobs:
             if [[ "$ARTIFACT_KIND" == render && "$SOURCE_EVENT" == repository_dispatch && -z "$SOURCE_RETRY_NONCE" ]]; then
               require_current_source_attempt
             fi
-            download_source_artifact "$ARTIFACT_NAME"
+            download_source_artifact "$ARTIFACT_ID" "$ARTIFACT_KIND"
             if [[ "$ARTIFACT_KIND" == render ]]; then
               require_exact_files "preview-metadata.json,preview-rendered-sanitized.yaml"
               metadata_event="$(jq -r '.event // empty' "$ARTIFACT_DIRECTORY/preview-metadata.json")"
@@ -511,7 +532,7 @@ jobs:
               echo "proof_retry_namespace_uid=${proof_retry_namespace_uid}"
             fi
             echo "render_run_id=${SOURCE_RUN_ID}"
-            echo "artifact_name=${ARTIFACT_NAME}"
+            echo "artifact_id=${ARTIFACT_ID}"
             echo "retire_identity=${RETIRE_IDENTITY}"
             echo "cleanup_state=${CLEANUP_STATE}"
           } >> "$GITHUB_OUTPUT"
@@ -557,7 +578,7 @@ jobs:
         uses: ./.github/actions/download-validated-preview-artifact
         with:
           artifact-directory: ${{ runner.temp }}/preview-artifact
-          artifact-name: ${{ needs.validate-target.outputs.artifact_name }}
+          artifact-id: ${{ needs.validate-target.outputs.artifact_id }}
           source-run-id: ${{ needs.validate-target.outputs.render_run_id }}
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
@@ -695,7 +716,7 @@ jobs:
         uses: ./.github/actions/download-validated-preview-artifact
         with:
           artifact-directory: ${{ runner.temp }}/preview-artifact
-          artifact-name: ${{ needs.validate-target.outputs.artifact_name }}
+          artifact-id: ${{ needs.validate-target.outputs.artifact_id }}
           source-run-id: ${{ needs.validate-target.outputs.render_run_id }}
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}

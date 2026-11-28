@@ -52,6 +52,7 @@ test_snapshot="$snapshot"
 preview_retry_holder_headroom "$test_snapshot" | jq -e '
  . == {usedBytes:67,hardLimitBytes:1048576,remainingBytes:1048509}' >/dev/null
 read_fail=false
+before_report_calls="$(wc -l <calls)"
 # Used indirectly by report_preview_retry_holder_headroom from the sourced helper.
 # shellcheck disable=SC2329
 read_preview_retry_holder() {
@@ -77,6 +78,7 @@ grep -F 'headroom: unknown' <<<"$unknown_report" >/dev/null
 read_fail=true
 unknown_report=$(report_preview_retry_holder_headroom holder)
 grep -F 'headroom: unknown' <<<"$unknown_report" >/dev/null
+test "$(wc -l <calls)" = "$before_report_calls"
 
 # Leave exactly enough room for the replacement, then add a single binary byte.
 record_bytes=$(jq -nr --argjson record "$record" '$record | tojson | utf8bytelength')

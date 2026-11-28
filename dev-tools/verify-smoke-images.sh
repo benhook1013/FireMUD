@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Protected digest qualification uses the trusted workflow's entrypoint with
+# the source commit's Compose files, local fixtures and transport probes.
+ROOT_DIR="${FIREMUD_SMOKE_SOURCE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 DOCKER_DIR="$ROOT_DIR/docker"
 ROOT_ENV_FILE="$ROOT_DIR/.env"
 ROOT_ENV_SAMPLE="$ROOT_DIR/.env.sample"
@@ -196,10 +198,33 @@ upsert_env_var() {
   mv "$tmp" "$file"
 }
 
+verify_pinned_runtime_images() {
+  docker compose "${COMPOSE_FILES[@]}" config --format json |
+    python3 -c '
+import json
+import os
+import sys
+
+digests = json.loads(os.environ["FIREMUD_SMOKE_RUNTIME_DIGESTS"])
+if not isinstance(digests, dict) or len(digests) != 11:
+    raise SystemExit("Protected smoke requires all 11 qualified runtime image digests")
+
+services = json.load(sys.stdin)["services"]
+for service, digest in digests.items():
+    compose_name = "gateway" if service == "spring-cloud-gateway" else service
+    rendered = services.get(compose_name, {})
+    if rendered.get("image") != f"ghcr.io/benhook1013/{service}@{digest}" or rendered.get("build") is not None:
+        raise SystemExit(f"Effective smoke Compose does not select the fixed digest without a build for {service}")
+'
+}
+
 compose_up_with_retry() {
   local attempt=1
   local max_attempts="$SMOKE_COMPOSE_UP_ATTEMPTS"
   while true; do
+    if (( attempt > 1 )) && [[ -n "${FIREMUD_SMOKE_RUNTIME_DIGESTS:-}" ]]; then
+      verify_pinned_runtime_images || return 1
+    fi
     if docker compose "${COMPOSE_FILES[@]}" "${COMPOSE_UP_ARGS[@]}"; then
       return 0
     fi
@@ -255,7 +280,13 @@ export FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVE
 bash "$ENSURE_CERTS_SCRIPT" --compose-mtls "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"
 ensure_run_owned_initial_admission_capability "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT" create-or-verify
 
-if [[ "$SMOKE_MINIO_LOCAL_ONLY" == "true" ]]; then
+if [[ -n "${FIREMUD_SMOKE_RUNTIME_DIGESTS:-}" ]]; then
+  if [[ "$SMOKE_MINIO_LOCAL_ONLY" == "true" || "${SMOKE_IMAGE_LOCAL_ONLY:-false}" == "true" ]]; then
+    echo "Protected digest qualification cannot use local-only smoke images." >&2
+    exit 1
+  fi
+  verify_pinned_runtime_images
+elif [[ "$SMOKE_MINIO_LOCAL_ONLY" == "true" ]]; then
   COMPOSE_CONFIG_FILE="$(mktemp)"
   FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT=/tmp/firemud-compose-grpc-mtls-config-only \
     docker compose "${COMPOSE_FILES[@]}" config --format json >"$COMPOSE_CONFIG_FILE"

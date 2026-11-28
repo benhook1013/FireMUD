@@ -842,7 +842,8 @@ for job_name in ("validate-target", "prepare-runtime", "deploy-runtime"):
         step for step in workflow["jobs"][job_name]["steps"]
         if step.get("uses") == "./.github/actions/setup-python"
     ]
-    assert not caller_python_steps, (job_name, caller_python_steps)
+    expected_python_steps = [{"name": "Set up canonical Python", "uses": "./.github/actions/setup-python"}] if job_name == "validate-target" else []
+    assert caller_python_steps == expected_python_steps, (job_name, caller_python_steps)
 assert any(
     step.get("uses") == "./.github/actions/resolve-certificate-identity-mode"
     for step in workflow["jobs"]["validate-target"]["steps"]
@@ -898,7 +899,7 @@ assert resolve_run.index('case "$mode" in') < resolve_run.index(
 
 expected_artifact_inputs = {
     "artifact-directory",
-    "artifact-name",
+    "artifact-id",
     "source-run-id",
     "github-token",
     "repository",
@@ -925,7 +926,7 @@ assert [step["name"] for step in artifact_action_steps] == [
 artifact_download = artifact_action_steps[0]
 assert_immutable_action_pin(artifact_download, "actions/download-artifact")
 assert artifact_download["with"] == {
-    "name": "${{ inputs['artifact-name'] }}",
+    "artifact-ids": "${{ inputs['artifact-id'] }}",
     "path": "${{ inputs['artifact-directory'] }}",
     "github-token": "${{ inputs['github-token'] }}",
     "run-id": "${{ inputs['source-run-id'] }}",
@@ -1725,7 +1726,7 @@ assert 'case "$exposure_mode" in' in target_script
 assert 'private|public) ;;' in target_script
 assert 'Private bridge proof requires hosted-controller identity.' in target_script
 assert '"${{ steps.certificate-identity.outputs.mode }}"' in target_script
-assert target_script.count('download_source_artifact "$ARTIFACT_NAME"') == 1
+assert target_script.count('download_source_artifact "$ARTIFACT_ID" "$ARTIFACT_KIND"') == 1
 assert target_script.count('metadata_event="$(jq -r') == 1
 workflow_run_start = target_script.index('if [[ "$EVENT_NAME" == workflow_run ]]; then')
 destroy_branch_start = target_script.index(
@@ -1795,7 +1796,7 @@ expected_artifact_call = {
     "uses": "./.github/actions/download-validated-preview-artifact",
     "with": {
         "artifact-directory": "${{ runner.temp }}/preview-artifact",
-        "artifact-name": "${{ needs.validate-target.outputs.artifact_name }}",
+        "artifact-id": "${{ needs.validate-target.outputs.artifact_id }}",
         "source-run-id": "${{ needs.validate-target.outputs.render_run_id }}",
         "github-token": "${{ github.token }}",
         "repository": "${{ github.repository }}",
@@ -6485,21 +6486,10 @@ for argument in "$@"; do
   fi
   previous="$argument"
 done
-if [[ "$1" == run && "$2" == download ]]; then
-  artifact_directory=""
-  artifact_name=""
-  previous=""
-  for argument in "$@"; do
-    if [[ "$previous" == --name ]]; then
-      artifact_name="$argument"
-    elif [[ "$previous" == --dir ]]; then
-      artifact_directory="$argument"
-    fi
-    previous="$argument"
-  done
-  [[ -n "$artifact_name" && -n "$artifact_directory" ]]
+if [[ "$1" == api && "$resource" == repos/example/FireMUD/actions/artifacts/401/zip ]]; then
   printf '%s\n' "$*" >>"${SOURCE_GH_LOG:?}"
-  mkdir -p "$artifact_directory"
+  artifact_directory="$(mktemp -d)"
+  trap 'rm -rf -- "$artifact_directory"' EXIT
   case "${FAKE_ARTIFACT_FILES:-valid}" in
     valid|extra|missing-metadata)
       cp "${VALID_RENDER_MANIFEST:?}" "$artifact_directory/preview-rendered-sanitized.yaml"
@@ -6533,6 +6523,18 @@ if [[ "$1" == run && "$2" == download ]]; then
   if [[ "${FAKE_ARTIFACT_FILES:-valid}" == extra ]]; then
     printf '%s\n' extra >"$artifact_directory/unexpected.txt"
   fi
+  python3 - "$artifact_directory" <<'PYZIP'
+import sys
+from io import BytesIO
+from pathlib import Path
+from zipfile import ZipFile
+
+archive = BytesIO()
+with ZipFile(archive, "w") as fixture:
+    for file in Path(sys.argv[1]).iterdir():
+        fixture.write(file, file.name)
+sys.stdout.buffer.write(archive.getvalue())
+PYZIP
   exit 0
 fi
 case "$resource" in
@@ -6687,7 +6689,7 @@ canonical_artifact_name='preview-render-pr-900-ccccccccccccccccccccccccccccccccc
 valid_workflow_run_json='{"conclusion":"success","run_attempt":1,"head_sha":"cccccccccccccccccccccccccccccccccccccccc","path":".github/workflows/preview.yml","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"cccccccccccccccccccccccccccccccccccccccc"}}]}'
 distinct_source_sha=dddddddddddddddddddddddddddddddddddddddd
 distinct_source_workflow_run_json='{"conclusion":"success","run_attempt":1,"head_sha":"dddddddddddddddddddddddddddddddddddddddd","path":".github/workflows/preview.yml@refs/pull/900/merge","event":"pull_request","repository":{"full_name":"example/FireMUD"},"pull_requests":[{"number":900,"head":{"sha":"dddddddddddddddddddddddddddddddddddddddd"}}]}'
-valid_artifacts_json='[{"artifacts":[{"name":"'"$canonical_artifact_name"'","expired":false},{"name":"old-preview","expired":true},{"name":"unrelated-artifact","expired":false}]}]'
+valid_artifacts_json='[{"artifacts":[{"id":401,"name":"'"$canonical_artifact_name"'","expired":false},{"name":"old-preview","expired":true},{"name":"unrelated-artifact","expired":false}]}]'
 
 run_deploy_target_fixture() {
   local scenario="$1"
@@ -6754,12 +6756,12 @@ run_deploy_target_fixture() {
 }
 
 run_deploy_target_fixture valid 0 'action=deploy'
-grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-valid.output"
+grep -Fxq "artifact_id=401" "$TEMP_DIR/deploy-target-valid.output"
 qualified_source_run_json="$(jq -c '.path += "@refs/pull/900/merge"' <<<"$valid_workflow_run_json")"
 FAKE_FIXTURE_WORKFLOW_RUN_JSON="$qualified_source_run_json" \
   run_deploy_target_fixture qualified-source-deploy 0 'action=deploy'
 grep -Fxq 'action=deploy' "$TEMP_DIR/deploy-target-qualified-source-deploy.output"
-grep -Fxq "artifact_name=${canonical_artifact_name}" "$TEMP_DIR/deploy-target-qualified-source-deploy.output"
+grep -Fxq "artifact_id=401" "$TEMP_DIR/deploy-target-qualified-source-deploy.output"
 for reference in develop refs/heads/develop; do
   dispatch_run="$(jq -c --arg reference "$reference" '
     .event = "repository_dispatch" | .head_branch = "develop" | .path += ("@" + $reference)
@@ -6908,7 +6910,7 @@ grep -Fxq 'api repos/example/FireMUD/actions/runs/42' \
   "$TEMP_DIR/deploy-target-final-run-head-mismatch.gh.log"
 grep -Fxq 'api --paginate --slurp repos/example/FireMUD/actions/runs/42/artifacts?per_page=100' \
   "$TEMP_DIR/deploy-target-final-run-head-mismatch.gh.log"
-grep -Fxq "run download 42 --repo example/FireMUD --name $canonical_artifact_name --dir $TEMP_DIR/deploy-target-final-run-head-mismatch-artifact" \
+grep -Fxq 'api repos/example/FireMUD/actions/artifacts/401/zip' \
   "$TEMP_DIR/deploy-target-final-run-head-mismatch.gh.log"
 
 # Unrelated native associations do not erase the uniquely selected artifact target.
@@ -6928,7 +6930,11 @@ grep -Fxq "action=none" "$TEMP_DIR/deploy-target-duplicate-target-association.ou
 FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[]}]' \
   run_deploy_target_fixture missing-canonical 0 \
     'Ignoring source run without exactly one canonical preview artifact.'
-FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[{"name":"'"$canonical_artifact_name"'","expired":false},{"name":"preview-render-pr-900-dddddddddddddddddddddddddddddddddddddddd","expired":false}]}]' \
+FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[{"name":"'"$canonical_artifact_name"'","expired":false}]}]' \
+  run_deploy_target_fixture missing-immutable-artifact-id 0 \
+    'Ignoring source run without an immutable preview artifact ID.'
+if grep -Fq '/actions/artifacts/' "$TEMP_DIR/deploy-target-missing-immutable-artifact-id.gh.log"; then exit 1; fi
+FAKE_FIXTURE_ARTIFACTS_JSON='[{"artifacts":[{"id":401,"name":"'"$canonical_artifact_name"'","expired":false},{"name":"preview-render-pr-900-dddddddddddddddddddddddddddddddddddddddd","expired":false}]}]' \
   run_deploy_target_fixture multiple-canonical 0 \
     'Ignoring source run without exactly one canonical preview artifact.'
 FAKE_FIXTURE_ARTIFACT_FILES=missing-metadata \
@@ -6964,8 +6970,12 @@ retry_old_base=dddddddddddddddddddddddddddddddddddddddd
 retry_old_merge=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 for comparison_case in base merge pending-merge stale-parents; do
   artifact_base=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-  if [[ "$comparison_case" == base ]]; then artifact_base="$retry_old_base"; fi
-  retry_old_comparison_run_json="$(jq -c --arg base "$artifact_base" --arg merge "$retry_old_merge" '
+  artifact_merge="$retry_old_merge"
+  if [[ "$comparison_case" == base ]]; then
+    artifact_base="$retry_old_base"
+    artifact_merge=cccccccccccccccccccccccccccccccccccccccc
+  fi
+  retry_old_comparison_run_json="$(jq -c --arg base "$artifact_base" --arg merge "$artifact_merge" '
     .display_title |= sub("-base-[0-9a-f]{40}"; "-base-" + $base)
       | .display_title |= sub("-merge-[0-9a-f]{40}"; "-merge-" + $merge)
   ' <<<"$retry_source_run_json")"
@@ -6989,7 +6999,8 @@ for comparison_case in base merge pending-merge stale-parents; do
   if [[ "$comparison_case" == stale-parents ]]; then stale_parents=true; fi
   FAKE_FIXTURE_WORKFLOW_RUN_JSON="$retry_old_comparison_run_json" FAKE_METADATA_EVENT=repository_dispatch \
     FAKE_METADATA_ACTION=deploy FAKE_METADATA_RETRY_NONCE="$retry_nonce" \
-    FAKE_FIXTURE_METADATA_BASE_SHA="$artifact_base" FAKE_FIXTURE_METADATA_MERGE_SHA="$retry_old_merge" \
+    FAKE_FIXTURE_METADATA_BASE_SHA="$artifact_base" FAKE_FIXTURE_METADATA_MERGE_SHA="$artifact_merge" \
+    TEST_PR_BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
     TEST_PR_MERGEABLE_STATE="$mergeable_state" FAKE_STALE_MERGE_PARENTS="$stale_parents" \
     run_deploy_target_fixture "retry-comparison-${comparison_case}" 0 "$expected_message"
   comparison_output="$TEMP_DIR/deploy-target-retry-comparison-${comparison_case}.output"
@@ -7200,7 +7211,7 @@ image_tag=${closed_head}
 namespace=pr-900
 hostname=pr-900.preview.firedevops.net
 render_run_id=
-artifact_name=
+artifact_id=
 retire_identity=true
 cleanup_state=closed
 EOF

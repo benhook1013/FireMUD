@@ -36,7 +36,7 @@ if [[ "$*" == *"/git/ref/heads/"* ]]; then
     branch_newer_noop|branch_older_jobs_transient)
       printf '{"ref":"refs/heads/develop","object":{"sha":"%s"}}' "$base_sha"
       ;;
-    branch_wrong|branch_runs|branch_unpromoted_current|branch_newer_failed|branch_newer_ambiguous|branch_older_mismatch|branch_older_unproved)
+    branch_wrong|branch_runs|branch_unpromoted_current|branch_manual_unproved|branch_newer_failed|branch_newer_ambiguous|branch_older_mismatch|branch_older_unproved)
       printf '{"ref":"refs/heads/develop","object":{"sha":"%s"}}' "$head_sha"
       ;;
     branch_ref_unavailable)
@@ -98,12 +98,50 @@ case "${GH_FIXTURE:-}" in
         fi
         ;;
       *actions/workflows/runtime-images.yml/runs?*)
-        printf '[{"workflow_runs":[%s]}]' "$source"
+        printf '[{"total_count":1,"workflow_runs":[%s]}]' "$source"
         ;;
       *)
         echo "Unexpected branch runtime-image API request in $GH_FIXTURE fixture" >&2
         exit 2
         ;;
+    esac
+    ;;
+  branch_manual*)
+    manual_branch=develop manual_path_ref=develop manual_sha="$head_sha"
+    case "$GH_FIXTURE" in
+      branch_manual_wrong_branch) manual_branch=main ;;
+      branch_manual_wrong_ref) manual_path_ref=main ;;
+      branch_manual_wrong_sha) manual_sha="$base_sha" ;;
+    esac
+    manual="$(jq -cn --arg branch "$manual_branch" --arg pathRef "$manual_path_ref" --arg sha "$manual_sha" '
+      {id:102,run_attempt:2,status:"completed",conclusion:"success",event:"workflow_dispatch",
+       html_url:"https://example.test/runtime/102",display_title:"develop",created_at:"2026-09-21T00:01:00Z",
+       head_branch:$branch,head_sha:$sha,path:(".github/workflows/runtime-images.yml@refs/heads/"+$pathRef),
+       repository:{full_name:"example/firemud"},head_repository:{full_name:"example/firemud"}}')"
+    if [[ "$GH_FIXTURE" == branch_manual_after_skip ]]; then
+      native="$(jq -c --arg sha "$head_sha" '.id=103 | .event="workflow_run" |
+        .display_title=("Build Runtime Images trusted-branch branch-develop sha-"+$sha) |
+        .created_at="2026-09-21T00:02:00Z"' <<<"$manual")"
+    fi
+    case "$*" in
+      *actions/workflows/runtime-images.yml/runs?*)
+        if [[ "$GH_FIXTURE" == branch_manual_after_skip ]]; then
+          printf '[{"total_count":2,"workflow_runs":[%s,%s]}]' "$native" "$manual"
+        else
+          printf '[{"total_count":1,"workflow_runs":[%s]}]' "$manual"
+        fi
+        ;;
+      *actions/runs/102) printf '%s' "$manual" ;;
+      *actions/runs/103) printf '%s' "$native" ;;
+      *actions/runs/103/attempts/2/jobs?per_page=100)
+        printf '%s' '{"total_count":1,"jobs":[{"run_id":103,"run_attempt":2,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"skipped","steps":[]}]}'
+        ;;
+      *actions/runs/102/attempts/2/jobs?per_page=100)
+        steps='[{"name":"Promote smoke-tested service digests","status":"completed","conclusion":"success"}]'
+        [[ "$GH_FIXTURE" != branch_manual_unproved ]] || steps='[]'
+        printf '{"total_count":1,"jobs":[{"run_id":102,"run_attempt":2,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"success","steps":%s}]}' "$steps"
+        ;;
+      *) echo "Unexpected manual runtime-image API request in $GH_FIXTURE fixture" >&2; exit 2 ;;
     esac
     ;;
   branch_wrong)
@@ -117,7 +155,7 @@ case "${GH_FIXTURE:-}" in
         [[ "$*" != *actions/runs/105/* ]] || run_id=105
         printf '{"total_count":1,"jobs":[{"run_id":%s,"run_attempt":1,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"success","steps":[{"name":"Promote smoke-tested service digests","status":"completed","conclusion":"success"}]}]}' "$run_id"
         ;;
-      *actions/workflows/runtime-images.yml/runs?*) printf '[{"workflow_runs":[%s,%s]}]' "$first" "$second" ;;
+      *actions/workflows/runtime-images.yml/runs?*) printf '[{"total_count":2,"workflow_runs":[%s,%s]}]' "$first" "$second" ;;
       *) echo "Unexpected API request in $GH_FIXTURE fixture" >&2; exit 2 ;;
     esac
     ;;
@@ -131,7 +169,7 @@ case "${GH_FIXTURE:-}" in
     }
     case "$*" in
       *actions/workflows/runtime-images.yml/runs?*)
-        printf '[{"workflow_runs":['
+        printf '[{"total_count":%s,"workflow_runs":[' "$((210 - promoted_id))"
         for ((id = promoted_id; id <= 209; id++)); do
           if (( id != promoted_id )); then printf ','; fi
           branch_run "$id" 1 completed '"success"'
@@ -205,7 +243,7 @@ case "${GH_FIXTURE:-}" in
         printf '{"total_count":1,"jobs":[{"run_id":102,"run_attempt":1,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"success","steps":[{"name":"Promote smoke-tested service digests","status":"completed","conclusion":"%s"}]}]}' "$conclusion"
         ;;
       *actions/workflows/runtime-images.yml/runs?*)
-        printf '[{"workflow_runs":[%s,%s]}]' "$source" "$older"
+        printf '[{"total_count":2,"workflow_runs":[%s,%s]}]' "$source" "$older"
         ;;
       *)
         echo "Unexpected branch fallback API request in $GH_FIXTURE fixture" >&2
@@ -213,7 +251,7 @@ case "${GH_FIXTURE:-}" in
         ;;
     esac
     ;;
-  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate|source_failure_with_alternate_rerun|publisher_replacement_handoff*|publisher_producer_rerun_at_acceptance|publisher_stale_receipt*|publisher_exact_retry|publisher_expired_producer|publisher_missing_producer)
+  success_runs|wrong_runs|publisher_steps_absent|publisher_duplicate_steps|typed_publisher_success|typed_publisher_step_absent|publisher_failed_with_active_alternate|source_failure_with_alternate_rerun|source_inventory_*|publisher_callback_*|publisher_pr_merge_head|publisher_replacement_handoff*|publisher_producer_rerun_at_acceptance|publisher_stale_receipt*|publisher_exact_retry|publisher_expired_producer|publisher_missing_producer)
     source_title="Build Runtime Images secure-pr-artifact pr-7 base-${base_sha} head-${head_sha} merge-${merge_sha} mode-required"
     source_event=pull_request
     publisher_merge="$merge_sha"
@@ -243,21 +281,34 @@ with zipfile.ZipFile(sys.stdout.buffer, "w") as archive:
         "mergeSha": os.environ["merge_sha"], "imageTag": "pr-merge-" + os.environ["merge_sha"],
         "producerWorkflowId": 50, "producerRunId": int(sys.argv[3]), "producerAttempt": int(sys.argv[2]),
         "producerArtifactId": 300 + int(sys.argv[2]), "producerArtifactDigest": "sha256:" + "8"*64,
-        "publisherWorkflowRef": "example/firemud/.github/workflows/publish-pr-runtime-images.yml@refs/heads/develop",
+        "publisherWorkflowRef": "example/firemud/.github/workflows/publish-pr-runtime-images.yml@refs/heads/" + (
+            "feature/runtime" if os.environ["GH_FIXTURE"] == "publisher_callback_bad_receipt" else "develop"
+        ),
         "publisherRunId": int(sys.argv[1]), "publisherAttempt": 2,
         "publishJob": "Publish Fixed PR Merge Image Tags", "publishStep": "Publish fixed PR image tags",
     }))
 PY_RECEIPT
     }
-    source="$(printf '{"id":101,"run_attempt":%s,"workflow_id":50,"path":".github/workflows/runtime-images.yml","status":"completed","conclusion":"success","event":"%s","head_sha":"%s","html_url":"https://example.test/runtime/101","display_title":"%s","created_at":"2026-09-21T00:00:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$source_attempt" "$source_event" "$head_sha" "$source_title")"
+    source_api_sha="$head_sha" source_api_branch=feature/runtime
+    [[ "$GH_FIXTURE" != publisher_pr_merge_head ]] || source_api_sha="$merge_sha"
+    [[ "$source_event" != repository_dispatch ]] || source_api_branch=develop
+    source="$(printf '{"id":101,"run_attempt":%s,"workflow_id":50,"path":".github/workflows/runtime-images.yml","status":"completed","conclusion":"success","event":"%s","head_sha":"%s","head_branch":"%s","html_url":"https://example.test/runtime/101","display_title":"%s","created_at":"2026-09-21T00:00:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$source_attempt" "$source_event" "$source_api_sha" "$source_api_branch" "$source_title")"
     publisher="$(printf '{"id":%s,"run_attempt":2,"status":"completed","conclusion":"success","event":"workflow_run","display_title":"%s","created_at":"2026-09-21T00:01:00Z","path":".github/workflows/publish-pr-runtime-images.yml","head_branch":"develop","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$publisher_id" "$publisher_title")"
+    case "$GH_FIXTURE" in
+      publisher_callback_source_branch|publisher_callback_bad_receipt)
+        publisher="$(jq -c '.head_branch="feature/runtime"' <<<"$publisher")"
+        ;;
+      publisher_callback_other_branch)
+        publisher="$(jq -c '.head_branch="feature/unrelated"' <<<"$publisher")"
+        ;;
+    esac
     if [[ "$GH_FIXTURE" == publisher_failed_with_active_alternate || "$GH_FIXTURE" == publisher_replacement_handoff* ]]; then
       publisher="$(jq -c '.conclusion="failure"' <<<"$publisher")"
     fi
     if [[ "$GH_FIXTURE" == publisher_replacement_handoff* ]]; then
       reads=0
       [[ ! -e "$GH_FIXTURE_STATE" ]] || read -r reads <"$GH_FIXTURE_STATE"
-      alt_source="$(jq -c '.id=103 | .event="repository_dispatch" | .created_at="2026-09-21T00:02:00Z"' <<<"$source")"
+      alt_source="$(jq -c '.id=103 | .event="repository_dispatch" | .head_branch="develop" | .created_at="2026-09-21T00:02:00Z"' <<<"$source")"
       alt_publisher="$(jq -c '.id=104 | .display_title += " source-run-103" |
         .created_at="2026-09-21T00:03:00Z" | .conclusion="success"' <<<"$publisher")"
       if (( reads <= 3 )); then
@@ -399,12 +450,28 @@ PY_RECEIPT
         printf '%s' '{"total_count":0,"workflow_runs":[]}'
         ;;
       *actions/workflows/runtime-images.yml/runs?*)
-        if [[ "$GH_FIXTURE" == source_failure_with_alternate_rerun ]]; then
+        if [[ "$GH_FIXTURE" == source_inventory_* ]]; then
+          failed_source="$(jq -c '.conclusion="failure"' <<<"$source")"
+          if [[ ! -e "$GH_FIXTURE_STATE" ]]; then
+            touch "$GH_FIXTURE_STATE"
+            printf '[{"total_count":1,"workflow_runs":[%s]}]' "$failed_source"
+            exit
+          fi
+          jq -cn --argjson failed "$failed_source" --arg fixture "$GH_FIXTURE" '
+            [$failed, (range(200; 299) | {id:.})] as $first |
+            [{total_count:101,workflow_runs:$first},
+             (if $fixture == "source_inventory_missing_row" then {total_count:101,workflow_runs:[]}
+              elif $fixture == "source_inventory_changing_totals" then {total_count:100,workflow_runs:[{id:299}]}
+              elif $fixture == "source_inventory_duplicate" then {total_count:101,workflow_runs:[{id:298}]}
+              elif $fixture == "source_inventory_active_replacement"
+                   then {total_count:101,workflow_runs:[$failed | .id=299 | .status="in_progress" | .conclusion=null | .created_at="2026-09-21T00:01:00Z"]}
+              else {total_count:101,workflow_runs:[{id:299}]} end)]'
+        elif [[ "$GH_FIXTURE" == source_failure_with_alternate_rerun ]]; then
           failed_source="$(jq -c '.id=105 | .created_at="2026-09-21T00:03:00Z" | .conclusion="failure"' <<<"$source")"
           if [[ -e "$GH_FIXTURE_STATE" ]]; then
             source="$(jq -c '.run_attempt=2 | .status="in_progress" | .conclusion=null' <<<"$source")"
           fi
-          printf '[{"workflow_runs":[%s,%s]}]' "$failed_source" "$source"
+          printf '[{"total_count":2,"workflow_runs":[%s,%s]}]' "$failed_source" "$source"
         elif [[ "$GH_FIXTURE" == publisher_replacement_handoff* ]]; then
           printf '%s\n' "$((reads + 1))" >"$GH_FIXTURE_STATE"
           if [[ "$GH_FIXTURE" == publisher_replacement_handoff_inventory_transient && "$reads" == 1 ]]; then
@@ -413,25 +480,25 @@ PY_RECEIPT
           fi
           if [[ "$GH_FIXTURE" == publisher_replacement_handoff_newest_failed ]]; then
             failed_source="$(jq -c '.id=105 | .created_at="2026-09-21T00:04:00Z" | .conclusion="failure"' <<<"$source")"
-            printf '[{"workflow_runs":[%s,%s]}]' "$failed_source" "$alt_source"
+            printf '[{"total_count":2,"workflow_runs":[%s,%s]}]' "$failed_source" "$alt_source"
           elif (( reads == 0 )); then
-            printf '[{"workflow_runs":[%s]}]' "$source"
+            printf '[{"total_count":1,"workflow_runs":[%s]}]' "$source"
           else
             if { [[ "$GH_FIXTURE" == publisher_replacement_handoff ||
                     "$GH_FIXTURE" == publisher_replacement_handoff_missing_direct ]] && (( reads == 1 )); } ||
                [[ "$GH_FIXTURE" == publisher_replacement_handoff_inventory_transient && "$reads" == 2 ]]; then
               alt_source="$(jq -c '.status="in_progress" | .conclusion=null' <<<"$alt_source")"
             fi
-            printf '[{"workflow_runs":[%s,%s]}]' "$source" "$alt_source"
+            printf '[{"total_count":2,"workflow_runs":[%s,%s]}]' "$source" "$alt_source"
           fi
         elif [[ "$GH_FIXTURE" == publisher_failed_with_active_alternate && -e "$GH_FIXTURE_STATE" ]]; then
           alternate="$(jq -c '.id=103 | .status="in_progress" | .conclusion=null | .created_at="2026-09-21T00:02:00Z"' <<<"$source")"
-          printf '[{"workflow_runs":[%s,%s]}]' "$source" "$alternate"
+          printf '[{"total_count":2,"workflow_runs":[%s,%s]}]' "$source" "$alternate"
         else
           if [[ "$GH_FIXTURE" == publisher_failed_with_active_alternate ]]; then
             : >"$GH_FIXTURE_STATE"
           fi
-          printf '[{"workflow_runs":[%s]}]' "$source"
+          printf '[{"total_count":1,"workflow_runs":[%s]}]' "$source"
         fi
         ;;
       *)
@@ -506,6 +573,10 @@ GH_FIXTURE=success_runs \
   HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
   timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/publisher-success.out"
 grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/publisher-success.out"
+GH_FIXTURE=publisher_callback_source_branch HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
+  HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/publisher-source-branch.out"
+grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/publisher-source-branch.out"
 
 # A failed publisher is not terminal while a freshly observed exact source is
 # still building. This fixture never completes that source; bounded failure is
@@ -520,6 +591,37 @@ alternate_output="$(
 test "$alternate_status" = 1
 grep -Fq 'Another exact runtime-images producer is still active' <<<"$alternate_output"
 grep -Fq 'Timed out waiting for trusted PR image publisher' <<<"$alternate_output"
+
+# Incomplete or changing multi-page producer observations must retry to the
+# deadline. A complete two-page observation can report the exact failure only
+# when it sees no active replacement.
+for inventory_fixture in source_inventory_missing_row source_inventory_changing_totals source_inventory_duplicate \
+  source_inventory_active_replacement source_inventory_complete; do
+  inventory_status=0
+  inventory_output="$(
+    GH_FIXTURE="$inventory_fixture" GH_FIXTURE_STATE="$TEMP_DIR/$inventory_fixture-state" \
+      HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+      timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" 2>&1
+  )" || inventory_status=$?
+  test "$inventory_status" = 1
+  case "$inventory_fixture" in
+    source_inventory_complete)
+      grep -Fq 'Matching runtime-images workflow 101 completed with failure' <<<"$inventory_output"
+      ;;
+    source_inventory_active_replacement)
+      grep -Fq 'Timed out waiting for runtime-images workflow' <<<"$inventory_output"
+      grep -Fq 'replacement is active' <<<"$inventory_output"
+      ;;
+    *)
+      grep -Fq 'inventory is incomplete or inconsistent while confirming terminal runtime-image failure' <<<"$inventory_output"
+      grep -Fq 'Timed out waiting for runtime-images workflow' <<<"$inventory_output"
+      if grep -Fq 'Matching runtime-images workflow 101 completed with failure' <<<"$inventory_output"; then
+        echo "incomplete inventory became a terminal failure in $inventory_fixture" >&2
+        exit 1
+      fi
+      ;;
+  esac
+done
 
 # A stale success in the first list can turn into a rerun before its detail read.
 # That replacement is still active even while the newer exact producer stays red.
@@ -591,7 +693,9 @@ for publisher_fixture in publisher_expired_producer publisher_missing_producer; 
   grep -Fq 'Trusted PR image publisher 102 succeeded' "$TEMP_DIR/$publisher_fixture.out"
 done
 
-for publisher_fixture in publisher_steps_absent publisher_duplicate_steps typed_publisher_step_absent publisher_stale_receipt publisher_stale_receipt_missing_producer publisher_producer_rerun_at_acceptance; do
+for publisher_fixture in publisher_steps_absent publisher_duplicate_steps typed_publisher_step_absent \
+  publisher_stale_receipt publisher_stale_receipt_missing_producer publisher_producer_rerun_at_acceptance \
+  publisher_callback_bad_receipt publisher_callback_other_branch publisher_pr_merge_head; do
   publisher_status=0
   publisher_output="$(
     GH_FIXTURE="$publisher_fixture" GH_FIXTURE_STATE="$TEMP_DIR/$publisher_fixture-state" HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
@@ -631,6 +735,22 @@ GH_FIXTURE=branch_runs \
   HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
   timeout 15s bash "$WAITER" "$head_sha" >"$TEMP_DIR/branch-success.out"
 grep -Fq "Matching runtime-images workflow 103 succeeded for ${head_sha} after" "$TEMP_DIR/branch-success.out"
+
+GH_FIXTURE=branch_manual_success HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 15s bash "$WAITER" "$head_sha" >"$TEMP_DIR/branch-manual-success.out"
+grep -Fq "Matching runtime-images workflow 102 succeeded for ${head_sha} after" "$TEMP_DIR/branch-manual-success.out"
+GH_FIXTURE=branch_manual_after_skip HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 15s bash "$WAITER" "$head_sha" >"$TEMP_DIR/branch-manual-after-skip.out"
+grep -Fq "Earlier trusted branch runtime-image run 102 has verified promotion for ${head_sha}" "$TEMP_DIR/branch-manual-after-skip.out"
+for branch_fixture in branch_manual_wrong_branch branch_manual_wrong_ref branch_manual_wrong_sha branch_manual_unproved; do
+  branch_manual_status=0
+  branch_manual_output="$(
+    GH_FIXTURE="$branch_fixture" HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+      timeout 15s bash "$WAITER" "$head_sha" 2>&1
+  )" || branch_manual_status=$?
+  test "$branch_manual_status" = 1
+  grep -Fq "Timed out waiting for runtime-images workflow for ${head_sha}" <<<"$branch_manual_output"
+done
 
 # A later successful callback with a wholly skipped promotion cannot hide exact
 # immutable-commit promotion proof from an earlier callback.

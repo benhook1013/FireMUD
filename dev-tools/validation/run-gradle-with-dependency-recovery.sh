@@ -177,6 +177,9 @@ classify_failure_body() {
     }
     # Observe this narrow POM failure independently of the older cases.
     function observe_pom_429(line,   coordinate, pom_coordinate, pom_url) {
+      if (pom_candidate && line == "> Received status code 429 from server: Too Many Requests") {
+        pom_candidate_429 = 1
+      }
       if (pom_download_step) {
         if (line != pom_chain[pom_download_step]) {
           pom_mismatch = 1
@@ -204,6 +207,7 @@ classify_failure_body() {
         pom_chain[5] = "> Could not GET " quote pom_url quote "."
         pom_chain[6] = "> Received status code 429 from server: Too Many Requests"
         pom_download_step = 1
+        pom_candidate = 1
       }
     }
     {
@@ -552,6 +556,11 @@ classify_failure_body() {
       invalid++
     }
     END {
+      # A POM 429 chain that did not match its exact coordinate, requester,
+      # and repository response must not fall through to generic retry rules.
+      if (pom_candidate_429 && (pom_mismatch || pom_download_step)) {
+        exit 1
+      }
       if (is_disabled_processor_pom_429()) {
         print "before-compile-cached-configuration-only"
         exit 0
