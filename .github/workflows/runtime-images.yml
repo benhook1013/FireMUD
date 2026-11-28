@@ -156,9 +156,33 @@ jobs:
           base_ref_hash="$(printf '%s' "$BASE_REF" | sha256sum | cut -d' ' -f1)"
           witness_hash="$(printf '%s' "$claim_witness" | sha256sum | cut -d' ' -f1)"
           claim="firemud-runtime-refresh-intent/v1/pr-${PR_NUMBER}/${MERGE_SHA}/${base_ref_hash}/g${EVENT_RUNTIME_REFRESH_CLAIM}"
-          claim_ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${claim}")"
+          claim_read_error="$(mktemp)"
+          trap 'rm -f "$claim_read_error"' EXIT
+          read_claim_object() {
+            local endpoint="$1"
+            local attempt response status
+            for attempt in 1 2 3; do
+              if response="$(timeout --kill-after=2s 15s gh api "$endpoint" 2>"$claim_read_error")"; then
+                printf '%s\n' "$response"
+                return 0
+              else
+                status=$?
+              fi
+              if (( attempt == 3 )); then
+                break
+              fi
+              if (( status != 124 )) && ! grep -Eq '^gh: .*\(HTTP (408|500|502|503|504)\)$' "$claim_read_error"; then
+                break
+              fi
+              echo "Transient runtime refresh claim read failure; retrying the same object." >&2
+              sleep "$attempt"
+            done
+            echo "Runtime refresh claim read failed. If this run is positively identified as the original receiver for the same current comparison, re-run all jobs after recovery. Preserve the claim and do not dispatch another receiver." >&2
+            return 1
+          }
+          claim_ref="$(read_claim_object "repos/${GITHUB_REPOSITORY}/git/ref/tags/${claim}")"
           claim_sha="$(jq -er --arg claim "refs/tags/${claim}" 'select(.ref == $claim and .object.type == "tag") | .object.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' <<<"$claim_ref")"
-          claim_tag="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${claim_sha}")"
+          claim_tag="$(read_claim_object "repos/${GITHUB_REPOSITORY}/git/tags/${claim_sha}")"
           jq -e --arg sha "$claim_sha" --arg claim "$claim" --arg merge "$MERGE_SHA" \
             --arg pr "$PR_NUMBER" --arg base_ref "$BASE_REF" --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
             --arg generation "$EVENT_RUNTIME_REFRESH_CLAIM" --arg witness_hash "$witness_hash" \

@@ -27,7 +27,7 @@ function admissionFixture() {
   });
   const makePullRequestRun = (overrides = {}) => makeRun({
     event: 'pull_request', head_sha: C,
-    pull_requests: [{number: 7, head: {sha: C}, base: {sha: B}}],
+    pull_requests: [{number: 7, head: {sha: C}, base: {sha: B, ref: input.base_ref}}],
     ...overrides,
   });
   const sent = [];
@@ -523,6 +523,16 @@ test('only a same-repository exact native producer can suppress the repair', asy
   assert.equal(await admitRuntimeRefresh(foreign.admission), 'dispatched-observed');
   assert.deepEqual(foreign.state.producerReads, []);
   assert.equal(foreign.sent.length, 1);
+});
+
+test('a native producer for a different base ref at the same SHA leaves refresh eligible', async () => {
+  const f = admissionFixture();
+  f.runs.push(f.makePullRequestRun({
+    pull_requests: [{number: 7, head: {sha: C}, base: {sha: B, ref: 'main'}}],
+  }));
+  assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-observed');
+  assert.deepEqual(f.state.producerReads, []);
+  assert.equal(f.sent.length, 1);
 });
 
 test('indeterminate dispatch visibility does not silently consume a repair or cause an immediate duplicate', async () => {
@@ -1335,7 +1345,7 @@ test('older base classifiers cannot omit newly introduced validation modules', a
 
 function producer(f, event = 'repository_dispatch') {
   return f.makeRun({id: 100, event, head_sha: event === 'pull_request' ? C : D,
-    status: 'in_progress', pull_requests: [{number: 7, head: {sha: C}, base: {sha: B}}]});
+    status: 'in_progress', pull_requests: [{number: 7, head: {sha: C}, base: {sha: B, ref: f.admission.input.base_ref}}]});
 }
 for (const event of ['repository_dispatch', 'pull_request']) {
   for (const status of ['queued', 'waiting', 'requested', 'pending', 'in_progress']) {

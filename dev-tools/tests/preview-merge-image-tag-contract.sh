@@ -121,6 +121,54 @@ case "${GH_FIXTURE:-}" in
       *) echo "Unexpected API request in $GH_FIXTURE fixture" >&2; exit 2 ;;
     esac
     ;;
+  branch_ninth_promotion|branch_intermediate_rerun)
+    promoted_id=201
+    [[ "$GH_FIXTURE" != branch_intermediate_rerun ]] || promoted_id=207
+    branch_run() {
+      local run_id="$1"
+      printf '{"id":%s,"run_attempt":%s,"status":"%s","conclusion":%s,"event":"workflow_run","html_url":"https://example.test/runtime/%s","display_title":"Build Runtime Images trusted-branch branch-develop sha-%s","created_at":"2026-09-21T00:00:%02dZ","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' \
+        "$run_id" "$2" "$3" "$4" "$run_id" "$head_sha" "$((run_id - 200))"
+    }
+    case "$*" in
+      *actions/workflows/runtime-images.yml/runs?*)
+        printf '[{"workflow_runs":['
+        for ((id = promoted_id; id <= 209; id++)); do
+          if (( id != promoted_id )); then printf ','; fi
+          branch_run "$id" 1 completed '"success"'
+        done
+        printf ']}]'
+        ;;
+      *actions/runs/2[0-9][0-9]/attempts/1/jobs?per_page=100)
+        endpoint="${*: -1}"
+        id="${endpoint#*actions/runs/}"
+        id="${id%%/*}"
+        if (( id == promoted_id )); then
+          touch "$GH_FIXTURE_STATE.promotion-read"
+          conclusion=success
+          steps='[{"name":"Promote smoke-tested service digests","status":"completed","conclusion":"success"}]'
+        else
+          conclusion=skipped
+          steps=[]
+        fi
+        printf '{"total_count":1,"jobs":[{"run_id":%s,"run_attempt":1,"name":"Promote Smoke-Tested Runtime Images","status":"completed","conclusion":"%s","steps":%s}]}' "$id" "$conclusion" "$steps"
+        ;;
+      *actions/runs/2[0-9][0-9])
+        id="${*: -1}"
+        id="${id##*/}"
+        printf '%s\n' "$id" >>"$GH_FIXTURE_STATE"
+        if [[ "$GH_FIXTURE" == branch_intermediate_rerun && "$id" == 208 && -e "$GH_FIXTURE_STATE.promotion-read" ]]; then
+          touch "$GH_FIXTURE_STATE.rerun-observed"
+          branch_run "$id" 2 in_progress null
+        else
+          branch_run "$id" 1 completed '"success"'
+        fi
+        ;;
+      *)
+        echo "Unexpected branch coverage API request in $GH_FIXTURE fixture" >&2
+        exit 2
+        ;;
+    esac
+    ;;
   branch_newer_noop|branch_older_jobs_transient|branch_newer_failed|branch_newer_ambiguous|branch_older_mismatch|branch_older_unproved)
     source="$(printf '{"id":103,"run_attempt":2,"status":"completed","conclusion":"success","event":"workflow_run","html_url":"https://example.test/runtime/103","display_title":"Build Runtime Images trusted-branch branch-develop sha-%s","created_at":"2026-09-21T00:02:00Z","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"}}' "$head_sha")"
     older_sha="$head_sha"
@@ -218,9 +266,25 @@ PY_RECEIPT
     fi
     case "$*" in
       "api repos/example/firemud")
+        if [[ "$GH_FIXTURE" == publisher_replacement_handoff_repo_transient && "$reads" == 2 ]]; then
+          echo 'gh: HTTP 503 Service Unavailable' >&2
+          exit 1
+        fi
+        if [[ "$GH_FIXTURE" == publisher_replacement_handoff_repo_malformed ]]; then
+          printf '%s' '{"full_name":"example/firemud","default_branch":7}'
+          exit
+        fi
         printf '%s' '{"full_name":"example/firemud","default_branch":"develop"}'
         ;;
       *actions/workflows/runtime-images.yml)
+        if [[ "$GH_FIXTURE" == publisher_replacement_handoff_workflow_transient && "$reads" == 2 ]]; then
+          echo 'gh: HTTP 503 Service Unavailable' >&2
+          exit 1
+        fi
+        if [[ "$GH_FIXTURE" == publisher_replacement_handoff_workflow_forbidden ]]; then
+          echo 'gh: HTTP 403 Resource not accessible by integration' >&2
+          exit 1
+        fi
         printf '%s' '{"id":50,"name":"Build Runtime Images","path":".github/workflows/runtime-images.yml"}'
         ;;
       *actions/runs/101/artifacts?*)
@@ -333,14 +397,19 @@ PY_RECEIPT
       *actions/workflows/runtime-images.yml/runs?*)
         if [[ "$GH_FIXTURE" == publisher_replacement_handoff* ]]; then
           printf '%s\n' "$((reads + 1))" >"$GH_FIXTURE_STATE"
+          if [[ "$GH_FIXTURE" == publisher_replacement_handoff_inventory_transient && "$reads" == 1 ]]; then
+            echo 'gh: HTTP 503 Service Unavailable' >&2
+            exit 1
+          fi
           if [[ "$GH_FIXTURE" == publisher_replacement_handoff_newest_failed ]]; then
             failed_source="$(jq -c '.id=105 | .created_at="2026-09-21T00:04:00Z" | .conclusion="failure"' <<<"$source")"
             printf '[{"workflow_runs":[%s,%s]}]' "$failed_source" "$alt_source"
           elif (( reads == 0 )); then
             printf '[{"workflow_runs":[%s]}]' "$source"
           else
-            if [[ "$GH_FIXTURE" == publisher_replacement_handoff ||
-                  "$GH_FIXTURE" == publisher_replacement_handoff_missing_direct ]] && (( reads == 1 )); then
+            if { [[ "$GH_FIXTURE" == publisher_replacement_handoff ||
+                    "$GH_FIXTURE" == publisher_replacement_handoff_missing_direct ]] && (( reads == 1 )); } ||
+               [[ "$GH_FIXTURE" == publisher_replacement_handoff_inventory_transient && "$reads" == 2 ]]; then
               alt_source="$(jq -c '.status="in_progress" | .conclusion=null' <<<"$alt_source")"
             fi
             printf '[{"workflow_runs":[%s,%s]}]' "$source" "$alt_source"
@@ -441,15 +510,40 @@ alternate_output="$(
 test "$alternate_status" = 1
 grep -Fq 'Another exact runtime-images producer is still active' <<<"$alternate_output"
 
-for handoff_fixture in publisher_replacement_handoff publisher_replacement_handoff_unobserved publisher_replacement_handoff_transient publisher_replacement_handoff_artifact_transient publisher_replacement_handoff_missing_direct publisher_replacement_handoff_newest_failed; do
+for handoff_fixture in publisher_replacement_handoff publisher_replacement_handoff_unobserved \
+  publisher_replacement_handoff_transient publisher_replacement_handoff_artifact_transient \
+  publisher_replacement_handoff_missing_direct publisher_replacement_handoff_newest_failed \
+  publisher_replacement_handoff_workflow_transient publisher_replacement_handoff_repo_transient \
+  publisher_replacement_handoff_inventory_transient; do
   GH_FIXTURE="$handoff_fixture" GH_FIXTURE_STATE="$TEMP_DIR/$handoff_fixture-state" \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=8 HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=8 \
     HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
-    timeout 20s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/$handoff_fixture.out"
-  grep -Fq 'Waiting for publication of an exact replacement producer' "$TEMP_DIR/$handoff_fixture.out"
+    timeout 20s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" >"$TEMP_DIR/$handoff_fixture.out" 2>&1
+  if [[ "$handoff_fixture" != publisher_replacement_handoff_inventory_transient ]]; then
+    grep -Fq 'Waiting for publication of an exact replacement producer' "$TEMP_DIR/$handoff_fixture.out"
+  fi
   grep -Fq 'Trusted PR image publisher 104 succeeded' "$TEMP_DIR/$handoff_fixture.out"
 done
 grep -Fq 'Another exact runtime-images producer is still active' "$TEMP_DIR/publisher_replacement_handoff_missing_direct.out"
+grep -Fq 'Runtime-image producer coverage unavailable' "$TEMP_DIR/publisher_replacement_handoff_inventory_transient.out"
+grep -Fq 'Another exact runtime-images producer is still active' "$TEMP_DIR/publisher_replacement_handoff_inventory_transient.out"
+
+# Forbidden or malformed metadata cannot qualify a replacement handoff.
+for handoff_fixture in publisher_replacement_handoff_workflow_forbidden publisher_replacement_handoff_repo_malformed; do
+  handoff_status=0
+  handoff_output="$(
+    GH_FIXTURE="$handoff_fixture" GH_FIXTURE_STATE="$TEMP_DIR/$handoff_fixture-state" \
+      HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=8 HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=8 \
+      HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
+      timeout 20s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" 2>&1
+  )" || handoff_status=$?
+  test "$handoff_status" = 1
+  grep -Fq 'Trusted PR image publisher 102 completed with failure' <<<"$handoff_output"
+  if grep -Eq 'Waiting for publication of an exact replacement producer|publisher 104 succeeded' <<<"$handoff_output"; then
+    echo "replacement received eligibility from invalid metadata in $handoff_fixture" >&2
+    exit 1
+  fi
+done
 
 # A typed native callback binds the exact source run in its title, and both
 # producer events still require one positive publication step for the attempt.
@@ -489,15 +583,17 @@ for publisher_fixture in publisher_steps_absent publisher_duplicate_steps typed_
 done
 
 # A publisher with a mismatched merge token must not satisfy the PR wait.
-if wrong_merge_output="$(
+wrong_merge_status=0
+wrong_merge_output="$(
   GH_FIXTURE=wrong_runs \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
     HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=1 \
     HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
     HOSTED_IMAGE_WAIT_MISSING_WORKFLOW_TIMEOUT_SECONDS=0 \
     timeout 15s bash "$WAITER" "$merge_sha" "$base_sha" "$head_sha" 2>&1
-)"; then
-  echo "waiter accepted a publisher for a different merge identity" >&2
+)" || wrong_merge_status=$?
+if [[ "$wrong_merge_status" != 1 ]]; then
+  printf 'wrong-merge publisher must be refused with exit status 1, got %s\n' "$wrong_merge_status" >&2
   exit 1
 fi
 grep -Fq 'No trusted PR image publisher appeared' <<<"$wrong_merge_output"
@@ -517,6 +613,32 @@ for branch_fixture in branch_newer_noop branch_older_jobs_transient; do
     timeout 15s bash "$WAITER" "$head_sha" >"$TEMP_DIR/$branch_fixture.out"
   grep -Fq "Earlier trusted branch runtime-image run 102 has verified promotion for ${head_sha} after a newer skipped promotion." "$TEMP_DIR/$branch_fixture.out"
 done
+
+# A promotion beneath eight exact skips can still qualify after develop moves.
+# The last native read must be for the selected successful attempt.
+branch_state="$TEMP_DIR/branch-ninth-state"
+GH_FIXTURE=branch_ninth_promotion GH_FIXTURE_STATE="$branch_state" \
+  HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=8 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+  timeout 15s bash "$WAITER" "$head_sha" >"$TEMP_DIR/branch-ninth.out"
+grep -Fq "Earlier trusted branch runtime-image run 201 has verified promotion for ${head_sha}" "$TEMP_DIR/branch-ninth.out"
+test "$(tail -n 2 "$branch_state")" = $'202\n201'
+
+# An intermediate skip can be bypassed only while its exact attempt remains
+# current, including after the older candidate's successful jobs were read.
+branch_state="$TEMP_DIR/branch-intermediate-rerun-state"
+branch_rerun_status=0
+branch_rerun_output="$(
+  GH_FIXTURE=branch_intermediate_rerun GH_FIXTURE_STATE="$branch_state" \
+    HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=3 HOSTED_IMAGE_WAIT_SLEEP_SECONDS=0 \
+    timeout 15s bash "$WAITER" "$head_sha" 2>&1
+)" || branch_rerun_status=$?
+test "$branch_rerun_status" = 1
+test -e "$branch_state.rerun-observed"
+grep -Fq "Timed out waiting for runtime-images workflow for ${head_sha}" <<<"$branch_rerun_output"
+if grep -Eq 'has verified promotion|is obsolete:' <<<"$branch_rerun_output"; then
+  echo "branch waiter settled while an intermediate promotion attempt had changed" >&2
+  exit 1
+fi
 
 # No fallback for a failed/unknown newer promotion, a different immutable commit,
 # or an older callback lacking the existing positive promotion-step evidence.

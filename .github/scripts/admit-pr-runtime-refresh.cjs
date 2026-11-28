@@ -167,7 +167,7 @@ module.exports = async function admitPrRuntimeRefresh({
       return (barePath || run.path === `${runtimePath}@refs/pull/${pullNumber}/merge`) &&
         run.head_sha === input.head_sha && Array.isArray(associations) && associations.length === 1 &&
         associations[0]?.number === pullNumber && associations[0]?.head?.sha === input.head_sha &&
-        associations[0]?.base?.sha === input.base_sha;
+        associations[0]?.base?.sha === input.base_sha && associations[0]?.base?.ref === input.base_ref;
     }
     return false;
   };

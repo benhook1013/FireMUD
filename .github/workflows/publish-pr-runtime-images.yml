@@ -710,16 +710,37 @@ jobs:
             verify_existing_target "$service"
           done
 
-          # The attempt can move during preflight. Check again before the
-          # first missing fixed tag can be written.
-          if (( ${#missing_services[@]} > 0 )); then
-            if ! gh api "repos/${CURRENT_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" |
-              jq -e --argjson id "$SOURCE_RUN_ID" --argjson attempt "$SOURCE_RUN_ATTEMPT" \
-                '.id == $id and .run_attempt == $attempt and .status == "completed" and .conclusion == "success"' >/dev/null; then
-              echo "The pinned source attempt changed during publication preflight; no fixed tags were written." >&2
-              exit 1
-            fi
-          fi
+          report_partial_publication() {
+            local failed_service="$1" candidate_service reached_failure=false
+            local -a unpublished_services=()
+            for candidate_service in "${missing_services[@]}"; do
+              if [[ "$candidate_service" == "$failed_service" ]]; then
+                reached_failure=true
+              fi
+              if [[ "$reached_failure" == true ]]; then
+                unpublished_services+=("$candidate_service")
+              fi
+            done
+            {
+              echo "### Partial PR runtime image publication"
+              echo
+              echo "Successfully available fixed tags:"
+              if ((${#available_services[@]} == 0)); then
+                echo "- None"
+              else
+                # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
+                printf -- '- `%s`\n' "${available_services[@]}"
+              fi
+              echo
+              echo "Fixed tags not verified available at stop:"
+              if ((${#unpublished_services[@]} == 0)); then
+                echo "- None"
+              else
+                # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
+                printf -- '- `%s`\n' "${unpublished_services[@]}"
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
 
           available_services=("${existing_services[@]}")
           for service in "${missing_services[@]}"; do
@@ -727,6 +748,15 @@ jobs:
             max_push_attempts=3
             push_attempt=1
             while true; do
+              # Preflight, verification of earlier tags, and retry backoff
+              # can all outlive the producer attempt. Fence each actual write.
+              if ! gh api "repos/${CURRENT_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" |
+                jq -e --argjson id "$SOURCE_RUN_ID" --argjson attempt "$SOURCE_RUN_ATTEMPT" \
+                  '.id == $id and .run_attempt == $attempt and .status == "completed" and .conclusion == "success"' >/dev/null; then
+                echo "The pinned source attempt is no longer a verified current success before pushing $image; stopping publication." >&2
+                report_partial_publication "$service"
+                exit 1
+              fi
               if docker push "$image"; then
                 # A successful client push is not publication proof until the
                 # authenticated target resolves to the exact source image ID.
@@ -743,35 +773,7 @@ jobs:
               fi
               if (( push_attempt >= max_push_attempts )); then
                 echo "Failed to publish $image after ${push_attempt} attempts." >&2
-                unpublished_services=()
-                reached_failure=false
-                for candidate_service in "${missing_services[@]}"; do
-                  if [[ "$candidate_service" == "$service" ]]; then
-                    reached_failure=true
-                  fi
-                  if [[ "$reached_failure" == true ]]; then
-                    unpublished_services+=("$candidate_service")
-                  fi
-                done
-                {
-                  echo "### Partial PR runtime image publication"
-                  echo
-                  echo "Successfully available fixed tags:"
-                  if ((${#available_services[@]} == 0)); then
-                    echo "- None"
-                  else
-                    # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
-                    printf -- '- `%s`\n' "${available_services[@]}"
-                  fi
-                  echo
-                  echo "Unpublished fixed tags (not rechecked after the failed push):"
-                  if ((${#unpublished_services[@]} == 0)); then
-                    echo "- None"
-                  else
-                    # shellcheck disable=SC2016 # Backticks are literal Markdown delimiters.
-                    printf -- '- `%s`\n' "${unpublished_services[@]}"
-                  fi
-                } >> "$GITHUB_STEP_SUMMARY"
+                report_partial_publication "$service"
                 exit 1
               fi
               backoff_seconds=$((5 * 2 ** (push_attempt - 1)))

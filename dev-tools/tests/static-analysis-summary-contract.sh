@@ -1082,6 +1082,22 @@ run(github, context, core).then(async () => {
                     throw new Error("a " + nonterminal + " exact gate must display as pending");
                   }
                 }
+                github.request = async (route, input) => {
+                  const response = await savedRequest(route, input);
+                  if (input.run_id === 200) {
+                    const gate = response.data.jobs.find(job => job.name === "CodeQL Gate");
+                    gate.conclusion = "stale";
+                  }
+                  return response;
+                };
+                const staleGateStart = calls.updated.length;
+                await run(github, context, core);
+                const staleGateWrites = calls.updated.slice(staleGateStart);
+                if (!staleGateWrites.some(row => row.body.includes("evidence is unavailable") &&
+                    row.body.includes("CodeQL gate: `unavailable`")) ||
+                    staleGateWrites.some(row => row.body.includes("checks passed"))) {
+                  throw new Error("a completed stale gate cannot report a passing summary");
+                }
                 github.request = savedRequest;
                 const savedActions = github.rest.actions;
                 const staleBefore = mutationCounts();

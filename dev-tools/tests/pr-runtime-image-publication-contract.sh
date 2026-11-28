@@ -705,6 +705,12 @@ case "${2:-}" in
       printf '%s\n' "$2" >> "$RUNTIME_CLAIM_LOOKUPS"
     fi
     [[ "$2" == "${EXPECTED_RUNTIME_CLAIM_REF:-}" ]] || exit 2
+    if [[ -n "${MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS:-}" ]] &&
+      { [[ "${MOCK_RUNTIME_CLAIM_REF_PERSISTENT:-}" == true ]] ||
+        [[ "$(wc -l < "$RUNTIME_CLAIM_LOOKUPS")" -eq 1 ]]; }; then
+      echo "gh: Test claim lookup response (HTTP $MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS)" >&2
+      exit 1
+    fi
     cat "$FIXTURE_DIR/runtime-claim-ref.json"
     ;;
   repos/benhook1013/FireMUD/git/tags/*)
@@ -844,6 +850,24 @@ try:
     assert "runtime_refresh_claim_attempt=1\n" in output
     assert f"runtime_refresh_claim_tag={claim_sha}\n" in output
     assert claim_witness not in output
+    claim_lookups = fixture / "claim-read-retry-lookups"
+    for http_status, persistent, count, succeeds in [
+        (503, False, 2, True),
+        (503, True, 3, False),
+        (404, True, 1, False),
+    ]:
+        claim_lookups.unlink(missing_ok=True)
+        retried_claim = admit(request, merge, branch, {
+            **claim_request, "RUNTIME_CLAIM_LOOKUPS": str(claim_lookups),
+            "MOCK_RUNTIME_CLAIM_REF_HTTP_STATUS": str(http_status),
+            "MOCK_RUNTIME_CLAIM_REF_PERSISTENT": str(persistent).lower(),
+        })
+        assert (retried_claim.returncode == 0) == succeeds, retried_claim.stderr
+        assert claim_lookups.read_text().splitlines() == [claim_request["EXPECTED_RUNTIME_CLAIM_REF"]] * count
+        claim_output = Path(env["GITHUB_OUTPUT"]).read_text()
+        assert ("runtime_refresh_claim_attempt=1" in claim_output) == succeeds, claim_output
+        if not succeeds:
+            assert "positively identified as the original receiver" in retried_claim.stderr, retried_claim.stderr
     unavailable_base = admit(request, merge, branch, {**claim_request, "MOCK_BASE_REF_MISSING": "true"})
     assert unavailable_base.returncode != 0
     assert Path(env["GITHUB_OUTPUT"]).read_text().splitlines() == [
@@ -1496,13 +1520,24 @@ case "${1:-}" in
     service="${service%%:*}"
     if [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$service" == social-groups-service ]]; then
       : > "$PULL_STATE"
+      if [[ "${ADVANCE_DURING_PUBLICATION:-}" == preflight ]]; then
+        jq '.run_attempt += 1' "$FIXTURE_DIR/exact-source-run.json" > "$FIXTURE_DIR/source-run.json"
+        : > "$FIXTURE_DIR/advance-marker"
+      fi
     elif [[ "$service" == account-service ]]; then
+      if [[ "${ADVANCE_DURING_PUBLICATION:-}" == between-tags ]]; then
+        jq '.run_attempt += 1' "$FIXTURE_DIR/exact-source-run.json" > "$FIXTURE_DIR/source-run.json"
+        : > "$FIXTURE_DIR/advance-marker"
+      fi
       : > "$PULL_STATE"
     else
       exit 2
     fi
     ;;
   push)
+    if [[ -n "${PUSH_ATTEMPT_LOG:-}" ]]; then
+      printf '%s\n' "${2%%:*}" >> "$PUSH_ATTEMPT_LOG"
+    fi
     if [[ "${PUBLISH_TARGET_MODE:-}" == later-existing && "$*" == *"automation-scripting-service"* ]]; then
       exit 1
     fi
@@ -1539,7 +1574,11 @@ EOF
 chmod +x "$fake_bin/curl"
 cat > "$fake_bin/sleep" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+set -euo pipefail
+if [[ "${ADVANCE_DURING_PUBLICATION:-}" == retry ]]; then
+  jq '.run_attempt += 1' "$FIXTURE_DIR/exact-source-run.json" > "$FIXTURE_DIR/source-run.json"
+  : > "$FIXTURE_DIR/advance-marker"
+fi
 EOF
 chmod +x "$fake_bin/sleep"
 rm -f "$fixture_dir/registry-marker" "$fixture_dir/pull-state"
@@ -1568,35 +1607,57 @@ if [[ -e "$fixture_dir/registry-marker" ]]; then
   exit 1
 fi
 
-# Keep the valid registry preflight, but model a newer native source attempt.
-jq '.run_attempt += 1' "$fixture_dir/exact-source-run.json" > "$fixture_dir/source-run.json"
-if PUBLISH_TARGET_MODE=later-existing PR_RUNTIME_ARTIFACT_DIR="$artifact_dir" IMAGE_TAG="pr-merge-$merge_sha" \
-   FIXTURE_DIR="$fixture_dir" CURRENT_REPOSITORY="$repository" SOURCE_RUN_ID="$source_run_id" SOURCE_RUN_ATTEMPT="$source_run_attempt" \
-   GHCR_USERNAME='test-user' GHCR_TOKEN='test-token' GITHUB_STEP_SUMMARY="$fixture_dir/summary" \
-   PULL_STATE="$fixture_dir/pull-state" REGISTRY_MARKER="$fixture_dir/registry-marker" \
-   PATH="$fake_bin:$PATH" bash "$publisher_script" 2>"$fixture_dir/attempt-error"; then
-  echo "publisher accepted an attempt superseded during registry preflight" >&2
-  exit 1
-fi
-grep -Fq 'The pinned source attempt changed during publication preflight' "$fixture_dir/attempt-error"
-test ! -e "$fixture_dir/registry-marker"
-cp "$fixture_dir/exact-source-run.json" "$fixture_dir/source-run.json"
+run_publication_fixture() {
+  local advance_during_publication="$1"
+  cp "$fixture_dir/exact-source-run.json" "$fixture_dir/source-run.json"
+  rm -f "$fixture_dir/registry-marker" "$fixture_dir/pull-state" "$fixture_dir/summary" \
+    "$fixture_dir/advance-marker" "$fixture_dir/push-attempt-log"
+  ADVANCE_DURING_PUBLICATION="$advance_during_publication" PUBLISH_TARGET_MODE=later-existing \
+    PR_RUNTIME_ARTIFACT_DIR="$artifact_dir" IMAGE_TAG="pr-merge-$merge_sha" \
+    FIXTURE_DIR="$fixture_dir" CURRENT_REPOSITORY="$repository" SOURCE_RUN_ID="$source_run_id" SOURCE_RUN_ATTEMPT="$source_run_attempt" \
+    GHCR_USERNAME='test-user' GHCR_TOKEN='test-token' GITHUB_STEP_SUMMARY="$fixture_dir/summary" \
+    PULL_STATE="$fixture_dir/pull-state" REGISTRY_MARKER="$fixture_dir/registry-marker" \
+    PUSH_ATTEMPT_LOG="$fixture_dir/push-attempt-log" PATH="$fake_bin:$PATH" bash "$publisher_script"
+}
 
-rm -f "$fixture_dir/registry-marker" "$fixture_dir/pull-state" "$fixture_dir/summary"
-if PUBLISH_TARGET_MODE=later-existing PR_RUNTIME_ARTIFACT_DIR="$artifact_dir" IMAGE_TAG="pr-merge-$merge_sha" \
-   FIXTURE_DIR="$fixture_dir" CURRENT_REPOSITORY="$repository" SOURCE_RUN_ID="$source_run_id" SOURCE_RUN_ATTEMPT="$source_run_attempt" \
-   GHCR_USERNAME='test-user' GHCR_TOKEN='test-token' GITHUB_STEP_SUMMARY="$fixture_dir/summary" \
-   PULL_STATE="$fixture_dir/pull-state" REGISTRY_MARKER="$fixture_dir/registry-marker" \
-   PATH="$fake_bin:$PATH" bash "$publisher_script"; then
+for publication_stage in preflight between-tags retry; do
+  if run_publication_fixture "$publication_stage" 2>"$fixture_dir/attempt-error"; then
+    echo "publisher accepted an attempt superseded during $publication_stage" >&2
+    exit 1
+  fi
+  grep -Fq 'The pinned source attempt is no longer a verified current success before pushing' "$fixture_dir/attempt-error"
+  test -e "$fixture_dir/advance-marker"
+  case "$publication_stage" in
+    preflight)
+      test ! -e "$fixture_dir/push-attempt-log"
+      test ! -e "$fixture_dir/registry-marker"
+      ;;
+    between-tags)
+      test "$(wc -l < "$fixture_dir/push-attempt-log")" -eq 1
+      grep -Fxq 'ghcr.io/benhook1013/account-service' "$fixture_dir/push-attempt-log"
+      sed '/Fixed tags not verified available at stop:/,$d' "$fixture_dir/summary" |
+        grep -Fx -- '- `account-service`' >/dev/null
+      ;;
+    retry)
+      test "$(wc -l < "$fixture_dir/push-attempt-log")" -eq 2
+      grep -Fxq 'ghcr.io/benhook1013/automation-scripting-service' "$fixture_dir/push-attempt-log"
+      ;;
+  esac
+done
+
+if run_publication_fixture unchanged; then
   echo "publisher accepted a failed push in the later-existing-service fixture" >&2
   exit 1
 fi
+test ! -e "$fixture_dir/advance-marker"
+grep -Fxq 'ghcr.io/benhook1013/account-service' "$fixture_dir/push-attempt-log"
+test "$(grep -Fxc 'ghcr.io/benhook1013/automation-scripting-service' "$fixture_dir/push-attempt-log")" -eq 3
 python3 - "$fixture_dir/summary" <<'PY'
 import sys
 from pathlib import Path
 
 summary = Path(sys.argv[1]).read_text(encoding="utf-8")
-unpublished = summary.split("Unpublished fixed tags (not rechecked after the failed push):", 1)[1]
+unpublished = summary.split("Fixed tags not verified available at stop:", 1)[1]
 if "`social-groups-service`" in unpublished:
     raise SystemExit("already-available later service was incorrectly reported unpublished")
 PY

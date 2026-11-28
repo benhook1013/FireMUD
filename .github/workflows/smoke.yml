@@ -628,10 +628,11 @@ jobs:
             }
 
             // Current producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "50dad49ccd4a52f78c3c126be66030f637202a3e4912940997ab5efc186392ae";
+            const canonicalRuntimeWorkflowSha256 = "ccb8ba1300f052681c556b2834ea9b1eb0acae3091feb08a9160b798e3b7054e";
             // The previous archive format does not change this definition's independently valid smoke proof.
             const canonicalMergeOnlyArtifactRuntimeWorkflowSha256 = "004af984d2aa7ab023758cbc38c6c20f92976b8f07040c9a4965bda6616d5dd5";
             const outgoingTrustedRefreshRuntimeWorkflowSha256 = new Set([
+              "50dad49ccd4a52f78c3c126be66030f637202a3e4912940997ab5efc186392ae",
               "1993dbcd405b657d171339ca7aaf21ff8757098289a8f9121ddc433a00df803e",
               "877a1a1656f6b625c9c2cbece0cf55d8657de320ceae45f3e6c50301a850b30b",
               "2a769961890119fc91a83b2987537122704f6624035d1572b446569d5f9d11a1",
@@ -1768,7 +1769,7 @@ jobs:
                       () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: cancelledNative.id })
                     ));
                   } catch (error) {
-                    if (canResumeAfterOptionalGitHubError(error, cancelledNative) && await retryExactSelection(
+                    if (canResumeAfterOptionalGitHubError(error, selection.pendingPrimary) && await retryExactSelection(
                       "Native cancellation evidence is unavailable; retry exact selection.",
                       { requirePendingPrimary: false }
                     )) continue smokeGatePolling;

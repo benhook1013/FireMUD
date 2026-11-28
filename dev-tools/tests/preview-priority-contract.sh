@@ -120,6 +120,11 @@ if [[ "${1:-}" == -n && "${2:-}" == firemud-system && "${3:-}" == patch &&
   state="$(kubectl -n firemud-system get configmap firemud-preview-proof-retries -o json --request-timeout=10s)"
   target_phase="$(jq -r '.[2].value | if type=="string" then fromjson | .phase // empty else empty end' <<<"$8")"
   if [[ "${FAKE_RETRY_PATCH_CASE:-}" == denied-start && "$target_phase" == SEND_STARTED ]]; then exit 1; fi
+  if [[ "${FAKE_RETRY_PATCH_CASE:-}" == superseded-rollback-conflict && -z "$target_phase" ]]; then
+    state="$(jq -c '.metadata.resourceVersion = "2"
+      | .data["pr-901"] |= (fromjson | .phase = "SEND_STARTED" | tojson)' <<<"$state")"
+    printf '%s\n' "$state" > "$FAKE_RETRY_HOLDER"
+  fi
   if [[ "${FAKE_RETRY_PATCH_CASE:-}" == rollback-version-conflict && "$target_phase" == RESERVED ]] &&
     jq -e '.data["pr-901"] | fromjson | .phase == "SEND_STARTED" and .count == 2' <<<"$state" >/dev/null &&
     [[ "$(jq -r '.metadata.resourceVersion' <<<"$state")" == 3 ]]; then
@@ -1445,10 +1450,10 @@ run_proof_retry_contract() (
     mv "$FAKE_RETRY_HOLDER.next" "$FAKE_RETRY_HOLDER"
   }
 
-  seed_started_holder() {
+  seed_staged_holder() {
     seed_retry_holder 1
-    jq -c '.data["pr-901"] |= (fromjson as $prior
-      | $prior + {count:2,stageVersion:2,phase:"SEND_STARTED",predecessor:$prior,
+    jq -c --arg phase "${1:-SEND_STARTED}" '.data["pr-901"] |= (fromjson as $prior
+      | $prior + {count:2,stageVersion:2,phase:$phase,predecessor:$prior,
         namespaceResourceVersion:"rv-901",holderUid:"uid-holder",holderResourceVersion:"0"}
       | tojson)' "$FAKE_RETRY_HOLDER" >"$FAKE_RETRY_HOLDER.next"
     mv "$FAKE_RETRY_HOLDER.next" "$FAKE_RETRY_HOLDER"
@@ -1633,6 +1638,50 @@ run_proof_retry_contract() (
   test ! -e "$FAKE_RETRY_PATCH_LOG"
 
   reset_case
+  seed_staged_holder RESERVED
+  local predecessor
+  predecessor="$(jq -c '.data["pr-901"] | fromjson | .predecessor' "$FAKE_RETRY_HOLDER")"
+  FAKE_PR_901_NAMESPACE_ABSENT=true fixture_reconcile >"$case_output"
+  jq -se --argjson prior "$predecessor" 'length == 1 and .[0][0].value == "uid-holder"
+    and .[0][1].value == "1" and (.[0][2].value | fromjson) == $prior' "$FAKE_RETRY_PATCH_LOG" >/dev/null
+  test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+  if grep -Fq 'proof_retry_nonce' "$FAKE_DISPATCH_LOG"; then exit 1; fi
+
+  reset_case
+  seed_staged_holder RESERVED
+  if FAKE_PR_901_NAMESPACE_ABSENT=true FAKE_RETRY_PATCH_CASE=superseded-rollback-conflict \
+    fixture_reconcile >"$case_output" 2>&1; then
+    echo 'a competing send-start allowed the Namespace absence rollback' >&2
+    exit 1
+  fi
+  jq -e '.data["pr-901"] | fromjson | .phase == "SEND_STARTED" and .count == 2' "$FAKE_RETRY_HOLDER" >/dev/null
+  test ! -e "$FAKE_DISPATCH_LOG"
+
+  reset_case
+  seed_staged_holder RESERVED
+  if FAKE_PR_901_NAMESPACE_ABSENT_ON_INITIAL=true FAKE_NAMESPACE_SNAPSHOT_RECHECK_ERROR=true \
+    fixture_reconcile >"$case_output" 2>&1; then
+    echo 'an unreadable Namespace recheck allowed reservation rollback' >&2
+    exit 1
+  fi
+  test ! -e "$FAKE_RETRY_PATCH_LOG"
+  test ! -e "$FAKE_DISPATCH_LOG"
+
+  reset_case
+  seed_retry_holder 3
+  local settled_row
+  settled_row="$(jq -r '.data["pr-901"]' "$FAKE_RETRY_HOLDER")"
+  FAKE_PR_901_SNAPSHOT_HEAD='' fixture_reconcile >"$case_output"
+  test "$(jq -r '.data["pr-901"]' "$FAKE_RETRY_HOLDER")" = "$settled_row"
+  test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+  if grep -Fq 'proof_retry_nonce' "$FAKE_DISPATCH_LOG"; then exit 1; fi
+  test ! -e "$FAKE_RETRY_PATCH_LOG"
+  fixture_reconcile >"$case_output" 2>&1
+  grep -Fq 'proof retry budget exhausted' "$case_output"
+  test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+  test ! -e "$FAKE_RETRY_PATCH_LOG"
+
+  reset_case
   seed_retry_holder 1
   if FAKE_RETRY_PATCH_CASE=denied-start fixture_reconcile >"$case_output" 2>&1; then
     echo 'unacknowledged send-start authorized dispatch' >&2; exit 1
@@ -1664,7 +1713,7 @@ run_proof_retry_contract() (
   # An exact terminal no-op receiver preserves the old charge while allowing
   # the next reservation to proceed through the ordinary cap and CAS path.
   reset_case
-  seed_started_holder
+  seed_staged_holder
   local old_nonce retry_title source_jobs source_latest source_inventory
   old_nonce="$(jq -er '.data["pr-901"] | fromjson | .nonce' "$FAKE_RETRY_HOLDER")"
   retry_title="Preview retry ${old_nonce} pr-901-base-${base}-head-${head}-merge-${merge}"
@@ -1731,7 +1780,7 @@ run_proof_retry_contract() (
   ')"
   for receipt_case in "$receipt" unavailable; do
     reset_case
-    seed_started_holder
+    seed_staged_holder
     FAKE_PR_901_PROOF_COMPLETE=true FAKE_PREVIEW_DISPATCH_JOBS_JSON="$rendered_jobs" \
       FAKE_PREVIEW_DISPATCH_LATEST_JSON="$source_latest" FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$source_inventory" \
       FAKE_TRUSTED_CONSUMER_LATEST_JSON="$consumer" FAKE_TRUSTED_CONSUMER_JOBS_JSON="$consumer_jobs" \
@@ -1749,10 +1798,42 @@ run_proof_retry_contract() (
     fi
   done
 
+  local rejection_case rejected_consumer_jobs
+  for rejection_case in stale-head wrong-nonce wrong-attempt skipped missing conflicting; do
+    reset_case
+    seed_staged_holder
+    rejected_consumer_jobs="$(jq -c --arg nonce "$old_nonce" --arg failure "$rejection_case" '
+      {name:("Trusted preview retry rejected stale-head nonce-" + $nonce),
+       status:"completed",conclusion:"success"} as $step
+      | if $failure == "conflicting" then .jobs[0].steps += [$step]
+        elif $failure == "missing" then .jobs[0].steps = []
+        elif $failure == "wrong-nonce" then .jobs[0].steps = [$step | .name += "-other"]
+        elif $failure == "wrong-attempt" then .jobs[0].steps = [$step] | .jobs[0].run_attempt += 1
+        elif $failure == "skipped" then .jobs[0].steps = [$step | .conclusion = "skipped"]
+        else .jobs[0].steps = [$step] end
+    ' <<<"$consumer_jobs")"
+    FAKE_PR_901_SNAPSHOT_HEAD='' FAKE_PREVIEW_DISPATCH_JOBS_JSON="$rendered_jobs" \
+      FAKE_PREVIEW_DISPATCH_LATEST_JSON="$source_latest" FAKE_RECENT_PREVIEW_DISPATCH_RUNS_JSON="$source_inventory" \
+      FAKE_TRUSTED_CONSUMER_LATEST_JSON="$consumer" FAKE_TRUSTED_CONSUMER_JOBS_JSON="$rejected_consumer_jobs" \
+      FAKE_RETRY_TERMINAL_CONSUMER="$(jq -c '[{total_count:1,workflow_runs:[.]}]' <<<"$consumer")" \
+      FAKE_RETRY_RENDER_RECEIPT="$receipt" fixture_reconcile >"$case_output" 2>&1
+    assert_retry_count 2
+    if [[ "$rejection_case" == stale-head ]]; then
+      jq -se --arg nonce "$old_nonce" 'length == 1 and
+        (.[0][2].value | fromjson | .count == 2 and .nonce == $nonce and (has("phase") | not))' \
+        "$FAKE_RETRY_PATCH_LOG" >/dev/null
+      test "$(wc -l < "$FAKE_DISPATCH_LOG")" -eq 1
+      if grep -Fq 'proof_retry_nonce' "$FAKE_DISPATCH_LOG"; then exit 1; fi
+    else
+      test ! -e "$FAKE_RETRY_PATCH_LOG"
+      test ! -e "$FAKE_DISPATCH_LOG"
+    fi
+  done
+
   # A terminal-looking inventory row with a different nonce cannot release the
   # original staged charge or authorize a replacement dispatch.
   reset_case
-  seed_started_holder
+  seed_staged_holder
   old_nonce="$(jq -er '.data["pr-901"] | fromjson | .nonce' "$FAKE_RETRY_HOLDER")"
   retry_title="Preview retry 12345678-1234-4234-8234-123456789abc pr-901-base-${base}-head-${head}-merge-${merge}"
   source_latest="$(jq -cn --arg title "$retry_title" --arg head "$base" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
@@ -5097,7 +5178,7 @@ assert "compensate_rejected_proof_retry" in post
 assert 'client_payload[proof_retry_nonce]' in run
 assert 'settle_terminal_preview_retry' in run
 assert 'validate-preview-artifact.py retry-receipt' in run
-assert 'and .status == "completed" and .conclusion == "success"' in run[run.index("trusted_consumer_has_tuple()") :]
+assert 'def successful: .status == "completed" and .conclusion == "success";' in run[run.index("trusted_consumer_has_tuple()") :]
 assert 'source-run-${run_id}-attempt-${attempt}' in run
 assert 'Preview retry ${nonce}' in run
 PY

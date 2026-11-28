@@ -300,6 +300,23 @@ jobs:
             "Ignoring pull request metadata because its head repository is not trusted."
           [[ "$base_repository" == "$GITHUB_REPOSITORY" ]] || emit_no_action \
             "Ignoring pull request metadata because its base repository is not trusted."
+          if [[ -n "${SOURCE_RETRY_NONCE:-}" && "$ARTIFACT_KIND" == render &&
+            "$current_head_sha" != "$EXPECTED_HEAD_SHA" ]]; then
+            # Record a definite stale-head rejection for this source attempt before any
+            # job can enter deployment. Other no-action paths do not attest rejection.
+            if [[ "$ARTIFACT_NAME" == "preview-render-pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA}" ]] &&
+              metadata_retry_image="$(jq -er '.imageTag | strings | select(test("\\A[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\\z"))' \
+                "$ARTIFACT_DIRECTORY/preview-metadata.json")" &&
+              [[ "$metadata_retry_uid" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]] &&
+              python3 ./dev-tools/hosted/preview/validate-preview-artifact.py retry-receipt \
+                "$ARTIFACT_DIRECTORY/preview-metadata.json" "$GITHUB_REPOSITORY" \
+                "$SOURCE_RUN_ID" "$SOURCE_RUN_ATTEMPT" "$PR_NUMBER" "$ARTIFACT_BASE_SHA" \
+                "$EXPECTED_HEAD_SHA" "$ARTIFACT_MERGE_SHA" "$metadata_retry_image" \
+                "$metadata_retry_uid" "$SOURCE_RETRY_NONCE"; then
+              echo "stale_head_retry_nonce=${SOURCE_RETRY_NONCE}" >> "$GITHUB_OUTPUT"
+            fi
+            emit_no_action "Ignoring stale lifecycle event for an earlier PR head."
+          fi
           if [[ "$ACTION" == deploy ]]; then
             [[ "$base_ref" =~ ^[A-Za-z0-9._/-]+$ ]] || emit_no_action \
               "Ignoring lifecycle event with an invalid current base ref."
@@ -481,6 +498,10 @@ jobs:
       - name: Trusted preview deploy tuple pr-${{ steps.target.outputs.pr_number }} base-${{ steps.target.outputs.base_sha }} head-${{ steps.target.outputs.head_sha }} merge-${{ steps.target.outputs.merge_sha }}
         if: ${{ steps.target.outputs.action == 'deploy' }}
         run: echo 'Validated the exact preview deployment target.'
+
+      - name: Trusted preview retry rejected stale-head nonce-${{ steps.target.outputs.stale_head_retry_nonce }}
+        if: ${{ steps.target.outputs.action == 'none' && steps.target.outputs.stale_head_retry_nonce != '' }}
+        run: echo 'Rejected the exact preview retry source attempt before deployment.'
 
   prepare-runtime:
     name: Prepare Validated Preview Inputs

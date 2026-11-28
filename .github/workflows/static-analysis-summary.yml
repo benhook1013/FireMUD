@@ -145,11 +145,12 @@ jobs:
             const terminalFailure = new Set([
               "failure", "cancelled", "timed_out", "action_required", "startup_failure",
             ]);
+            const pendingStatuses = new Set(["pending", "requested", "in_progress", "queued", "waiting"]);
             const statusIcon = (value) => {
               if (value === "success") return "✅";
               if (value === "cancelled") return "⚪";
               if (terminalFailure.has(value)) return "❌";
-              if (value === "pending" || value === "requested" || value === "in_progress" || value === "queued" || value === "waiting" || value === "unavailable") return "⏳";
+              if (pendingStatuses.has(value) || value === "unavailable") return "⏳";
               return "⏭️";
             };
 
@@ -309,7 +310,12 @@ jobs:
                 if (!candidates.length && isCodeQlAnalysis) {
                   candidates = jobs.filter(job => job.name === emptyMatrixCodeQlCheck);
                 }
-                return [label, normalizeStatus(candidates[0], checkName, workflowRun)];
+                const result = normalizeStatus(candidates[0], checkName, workflowRun);
+                const isGate = gateChecks.some(([, gateName]) => gateName === checkName);
+                if (isGate && result !== "success" && !terminalFailure.has(result) && !pendingStatuses.has(result)) {
+                  return [label, "unavailable"];
+                }
+                return [label, result];
               });
 
             const selectWorkflowRuns = async () => ({
@@ -328,17 +334,17 @@ jobs:
               terminalFailure.has(result)
             );
             const pendingChecks = gateResults.filter(([, result]) =>
-              ["pending", "requested", "in_progress", "queued", "waiting"].includes(result)
+              pendingStatuses.has(result)
             );
 
             const unavailableChecks = gateResults.filter(([, result]) => result === "unavailable");
 
-            let headline = "✅ Static analysis checks passed";
-            if (failedChecks.length > 0) {
+            let headline = "⏳ Static analysis evidence is unavailable";
+            if (gateResults.every(([, result]) => result === "success")) {
+              headline = "✅ Static analysis checks passed";
+            } else if (failedChecks.length > 0) {
               headline = "❌ Static analysis checks failed";
-            } else if (unavailableChecks.length > 0) {
-              headline = "⏳ Static analysis evidence is unavailable";
-            } else if (pendingChecks.length > 0) {
+            } else if (unavailableChecks.length === 0 && pendingChecks.length > 0) {
               headline = "⏳ Static analysis checks are still running";
             }
 

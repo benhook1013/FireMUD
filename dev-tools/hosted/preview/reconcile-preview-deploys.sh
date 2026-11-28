@@ -240,13 +240,15 @@ prepare_preview_dispatch() {
     return 1
   fi
   phase="$(jq -r '.phase // empty' <<<"$prior")" || return 1
-  if [[ "$phase" == RESERVED ]] && ! jq -e --arg base "$base_sha" --arg head "$head_sha" \
+  if [[ "$phase" == RESERVED ]] && {
+    [[ -z "$snapshot" ]] || ! jq -e --arg base "$base_sha" --arg head "$head_sha" \
       --arg merge "$merge_sha" --arg image "$image_tag" --arg uid "$namespace_uid" '
-      .base == $base and .head == $head and .merge == $merge and .image == $image
-      and ($uid == "" or .namespaceUid == $uid)
-    ' <<<"$prior" >/dev/null; then
+        .base == $base and .head == $head and .merge == $merge and .image == $image
+        and ($uid == "" or .namespaceUid == $uid)
+      ' <<<"$prior" >/dev/null
+  }; then
     # The exact holder CAS excludes a concurrent transition to SEND_STARTED.
-    # A superseded reservation can therefore restore its original predecessor.
+    # A superseded reservation or a confirmed missing Namespace can restore the predecessor.
     local predecessor
     predecessor="$(jq -c '.predecessor' <<<"$prior")" || return 1
     if ! holder="$(write_preview_retry_entry "$holder" "$namespace" "$predecessor" true)"; then
@@ -357,24 +359,16 @@ prepare_preview_dispatch() {
       prior="$legacy"
     fi
   fi
-  # Ordinary replacement carries the settled budget forward without spending it.
-  if [[ -z "$snapshot" ]]; then
-    return 0
-  fi
+  # Ordinary allocation or repair carries the retained budget forward.
+  [[ "$deployed_exact" == true ]] || return 0
   if jq -e --arg base "$base_sha" --arg head "$head_sha" --arg merge "$merge_sha" --arg image "$image_tag" '
     . != null and .base == $base and .head == $head and .merge == $merge and .image == $image
   ' <<<"$prior" >/dev/null; then
     next_count="$(( $(jq -r '.count' <<<"$prior") + 1 ))"
-  elif [[ "$deployed_exact" == false ]]; then
-    return 0
   fi
   if (( next_count > 3 )); then
     echo "Skipping PR #${pr_number}: proof retry budget exhausted for $base_sha/$head_sha/$merge_sha/$image_tag." >&2
     return 3
-  fi
-  if [[ "$deployed_exact" != true ]]; then
-    echo "Skipping PR #${pr_number}: retained proof retry requires an exact deployed Namespace; retry budget unchanged." >&2
-    return 1
   fi
   if [[ -z "$namespace_uid" || -z "$namespace_resource_version" ]]; then
     echo "Skipping PR #${pr_number}: Namespace retry custody is unavailable." >&2
@@ -727,7 +721,8 @@ automatic_preview_has_tuple() {
 settle_terminal_preview_retry() {
   local namespace="$1" pr_number="$2" row="$3"
   local nonce base head merge image uid inventory title matches run_id attempt run_head tuple_step
-  local source_status=0 consumer_inventory consumer_title consumer_matches consumer_id consumer_attempt consumer_head
+  local source_status=0 consumer_status=0
+  local consumer_inventory consumer_title consumer_matches consumer_id consumer_attempt consumer_head
   local source_latest consumer_latest
   nonce="$(jq -er '.nonce | select(type == "string" and length > 0)' <<<"$row")" || return 1
   base="$(jq -er '.base' <<<"$row")" || return 1
@@ -822,11 +817,10 @@ settle_terminal_preview_retry() {
     consumer_id="$(jq -er '.id' <<<"$consumer_matches")" || return 1
     consumer_attempt="$(jq -er '.run_attempt' <<<"$consumer_matches")" || return 1
     consumer_head="$(jq -er '.head_sha' <<<"$consumer_matches")" || return 1
-    local consumer_status=0
     trusted_consumer_has_tuple "$consumer_id" "$consumer_attempt" "$consumer_head" \
-      "Trusted preview deploy tuple pr-${pr_number} base-${base} head-${head} merge-${merge}" "$consumer_title" ||
+      "Trusted preview deploy tuple pr-${pr_number} base-${base} head-${head} merge-${merge}" "$consumer_title" "$nonce" ||
       consumer_status=$?
-    if [[ "$consumer_status" != 3 ]]; then
+    if [[ "$consumer_status" != 3 && "$consumer_status" != 4 ]]; then
       if [[ "$consumer_status" == 2 ]]; then
         echo "Exact trusted consumer ${consumer_id}/${consumer_attempt} is indeterminate; reservation stays charged." >&2
       else
@@ -853,8 +847,10 @@ settle_terminal_preview_retry() {
   if [[ "$source_status" == 3 ]]; then
     consumer_latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${consumer_id}")" || return 1
     jq -e --argjson id "$consumer_id" --argjson attempt "$consumer_attempt" --arg title "$consumer_title" \
-      '.id == $id and .run_attempt == $attempt and .display_title == $title
-        and .status == "completed"' <<<"$consumer_latest" >/dev/null || return 1
+      --argjson status "$consumer_status" '
+      .id == $id and .run_attempt == $attempt and .display_title == $title
+        and .status == "completed" and ($status != 4 or .conclusion == "success")
+      ' <<<"$consumer_latest" >/dev/null || return 1
   fi
 
   local holder current replacement
@@ -1168,8 +1164,8 @@ evaluate_recent_source_handoff() {
 }
 
 trusted_consumer_has_tuple() {
-  local run_id="$1" attempt="$2" run_head="$3" tuple="$4" expected_title="${5:-}" jobs latest jobs_available=true
-  local current status
+  local run_id="$1" attempt="$2" run_head="$3" tuple="$4" expected_title="${5:-}" retry_nonce="${6:-}"
+  local jobs latest jobs_available=true current status evidence
   jobs="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/attempts/${attempt}/jobs?per_page=100")" || jobs_available=false
   latest="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 2
   jq -e --argjson id "$run_id" --argjson workflow_id "$consumer_workflow_id" \
@@ -1200,19 +1196,29 @@ trusted_consumer_has_tuple() {
         and .head_sha == $head and .status == "completed"
         and (if .conclusion == "success" then (.steps | type == "array" and length > 0) else true end))
   ' <<<"$jobs" >/dev/null || return 2
-  jq -e --arg tuple "$tuple" '
-    any(.jobs[] | select(.name == "Validate Trusted Preview Target" and .conclusion == "success");
-      ([.steps[]? | select(.name | startswith("Trusted preview deploy tuple "))] | length) == 1
-      and any(.steps[]?; .name == $tuple and .status == "completed" and .conclusion == "success"))
-  ' <<<"$jobs" >/dev/null || return 1
+  evidence="$(jq -er --arg tuple "$tuple" --arg nonce "$retry_nonce" '
+    def successful: .status == "completed" and .conclusion == "success";
+    .jobs[] | select(.name == "Validate Trusted Preview Target" and .conclusion == "success")
+    | [.steps[] | select(.name | startswith("Trusted preview deploy tuple "))] as $deploy
+    | [.steps[] | select(successful and (.name | startswith("Trusted preview retry rejected ")))] as $rejected
+    | if ($rejected | length) == 0 and ($deploy | length) == 1
+         and ($deploy[0] | .name == $tuple and successful) then "validated-deploy"
+      elif $nonce != "" and ($rejected | length) == 1 and (any($deploy[]; successful) | not)
+         and $rejected[0].name == ("Trusted preview retry rejected stale-head nonce-" + $nonce)
+      then "stale-head"
+      else empty end
+  ' <<<"$jobs")" || return 1
   [[ -n "$expected_title" ]] || return 0
   current="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 2
   jq -e --argjson id "$run_id" --argjson attempt "$attempt" --arg head "$run_head" \
-    --arg title "$expected_title" '
+    --arg title "$expected_title" --arg evidence "$evidence" '
     .id == $id and .run_attempt == $attempt and .head_sha == $head
     and (.status | IN("requested", "queued", "in_progress", "waiting", "pending", "completed"))
     and ($title == "" or .display_title == $title)
+    and ($evidence != "stale-head" or (.status == "completed" and .conclusion == "success"))
   ' <<<"$current" >/dev/null || return 2
+  # A caller with a verified source receipt can use this terminal rejection for settlement.
+  if [[ "$evidence" == stale-head ]]; then return 4; fi
   status="$(jq -r '.status' <<<"$current")"
   if [[ "$status" == completed ]]; then return 3; fi
   return 0

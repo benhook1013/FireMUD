@@ -448,7 +448,7 @@ def evaluate(expression, action, base_ref, event="pull_request"):
     for key, value in values.items():
         body = body.replace(key, value)
     body = body.replace("&&", " and ").replace("||", " or ").replace("!=", " != ").replace("null", "None")
-    return eval(body, {"__builtins__": {}})
+    return bool(interpret_selector(ast.parse(body.strip(), mode="eval").body))
 
 
 
@@ -539,6 +539,8 @@ for expression, expected in (
     ("1 == '01'", False),
 ):
     assert interpret_selector(ast.parse(expression, mode="eval").body) is expected
+
+assert not evaluate(SUBSTANTIVE + " && github.event.action != 'SYNCHRONIZE'", "synchronize", None)
 
 
 assert literal_format("metadata-{0}", 123) == "metadata-123"
@@ -1227,10 +1229,12 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     baseMovesDuringOrdering;
   const h0 = kind.startsWith("optional-final-read-");
   const cancelledPrimary = kind === "optional-final-read-cancelled-primary";
-  const cancelledWithReplacement = kind === "optional-final-read-cancelled-with-replacement";
+  const missingCancellation = kind === "optional-final-read-cancellation-disappears";
+  const cancelledWithReplacement = kind === "optional-final-read-cancelled-with-replacement" || missingCancellation;
   const movedNativeCancellation = kind === "cancelled-native-attempt-moves";
   const transientFinalPull = kind === "optional-final-read-pr-identity";
-  let nativeCancellationRead = false, failedFinalPullReads = 0;
+  let nativeCancellationRead = false, failedFinalPullReads = 0, pendingReplacementRead = false;
+  let nativeCancellationDisappeared = false;
   const finalAttemptError = kind.startsWith("optional-final-read-attempt-");
   const duplicatePrimary = kind === "optional-final-read-duplicate";
   const newerFailure = kind === "duplicate-after-newer-failure";
@@ -1242,7 +1246,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     [404, 503].includes(badStatus);
   const primaryReady = () => (primaryCanRecover || newerFailure) && primaryInventoryReads > 1;
   let alternativeJobsReads = 0, primaryInventoryReads = 0, completedPrimaryJobReads = 0, lookupFailure;
-  let pullRequestLookups = 0, acceptanceLookupArmed = false, acceptanceLookupAttempts = 0;
+  let acceptanceLookupArmed = false, acceptanceLookupAttempts = 0;
   const nextBase = "e".repeat(40), nextMerge = "f".repeat(40);
   const baseAdvanceRead = {
     "trusted-current-base-advances": 2,
@@ -1266,6 +1270,7 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     created_at: "2026-09-01T00:00:01Z"};
   const cancelledOriginal = {...exactPrimary, status: "completed", conclusion: "cancelled"};
   const dispatchPrimary = {...source, id: 44, created_at: "2026-09-01T00:00:02Z"};
+  const replacementNative = {...exactPrimary, id: 45, created_at: "2026-09-01T00:00:03Z"};
   const incompleteSnapshot = kind.startsWith("incomplete-snapshot-");
   let snapshotRerunVisible = false;
   const job = {id: 100, run_id: 42, run_attempt: 1, head_sha: source.head_sha,
@@ -1297,12 +1302,11 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   const github = {rest: {
     pulls: {get: async () => {
       reads += 1;
-      pullRequestLookups += 1;
       if (transientFinalPull && alternativeJobsReads >= 3 && primaryInventoryReads === 1) {
         failedFinalPullReads += 1;
         throw Object.assign(new Error("optional refresh PR identity temporarily unavailable"), {status: 503});
       }
-      if (kind === "optional-final-acceptance-transient" && pullRequestLookups === 4) {
+      if (kind === "optional-final-acceptance-transient" && currentRunReads === 3 && acceptanceLookupAttempts === 0) {
         acceptanceLookupArmed = true;
       }
       if (kind === "trusted-current-base-attempt-advances" && currentRunReads >= 2) {
@@ -1328,16 +1332,27 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
       listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
       getWorkflow: async () => ({data: {id: 7, path: source.path, name: "Build Runtime Images"}}),
       getWorkflowRun: async ({run_id: runId}) => {
+        if (missingCancellation && runId === replacementNative.id) return {data: replacementNative};
         if (runId === 43 && primaryReady()) return {data: exactPrimary};
         if (runId === 43 && newerSuccessDuringAcceptance) return {data: exactPrimary};
         if (runId === 43 && (cancelledPrimary || cancelledWithReplacement ||
             (event === "repository_dispatch" && !h0 && !kind.startsWith("pending-native")))) {
+          if (missingCancellation && pendingReplacementRead) {
+            nativeCancellationDisappeared = true;
+            throw Object.assign(new Error("native cancellation no longer available"), {status: 404});
+          }
           nativeCancellationRead = true;
           return {data: movedNativeCancellation
             ? {...exactPrimary, run_attempt: 2, status: "queued", conclusion: null}
             : cancelledOriginal};
         }
-        if (runId === 44 && cancelledWithReplacement) return {data: dispatchPrimary};
+        if (runId === 44 && cancelledWithReplacement) {
+          if (missingCancellation) {
+            pendingReplacementRead = true;
+            return {data: {...dispatchPrimary, status: "queued", conclusion: null}};
+          }
+          return {data: dispatchPrimary};
+        }
         if (kind === "optional-final-acceptance-transient" && runId === 44) {
           return {data: {...source, id: 44, event: "repository_dispatch", head_sha: defaultSha,
             head_branch: "develop", status: "completed", conclusion: "success"}};
@@ -1377,6 +1392,10 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     },
   }, request: async (route, input) => {
     assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
+    if (missingCancellation && input.run_id === replacementNative.id) {
+      assert.equal(input.attempt_number, replacementNative.run_attempt);
+      return {data: replacementNative};
+    }
     if (input.run_id === 43 && primaryReady()) {
       assert.equal(input.attempt_number, exactPrimary.run_attempt);
       return {data: exactPrimary};
@@ -1402,6 +1421,11 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   }, paginate: async (method, input) => {
     if (method === listJobs) { snapshots += 1; return kind === "duplicate-jobs" ? [job, {...job, id: 101}] : [job]; }
     assert.equal(method, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
+    if (missingCancellation && input.run_id === replacementNative.id) {
+      assert.equal(input.attempt_number, replacementNative.run_attempt);
+      return [{...job, run_id: replacementNative.id, head_sha: head, steps: [...job.steps,
+        {name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}]}];
+    }
     if (input.run_id === 43 && newerSuccessDuringAcceptance) {
       completedPrimaryJobReads += 1;
       assert.equal(input.attempt_number, exactPrimary.run_attempt);
@@ -1429,7 +1453,8 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
       throw Object.assign(new Error("sole final jobs missing"), {status: 404});
     }
     if (h0) alternativeJobsReads += 1;
-    if (h0 && alternativeJobsReads > (cancelledPrimary ? 0 : 2) && !finalAttemptError && !transientFinalPull) {
+    if (h0 && alternativeJobsReads > (cancelledPrimary ? 0 : 2) &&
+        !finalAttemptError && !transientFinalPull && !missingCancellation) {
       assert.equal(input.attempt_number, source.run_attempt);
       if (kind.endsWith("-malformed")) return null;
       if (disappearingSnapshot) return [];
@@ -1473,6 +1498,10 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     }
     if ((h0 || newerFailure) && input.event === "pull_request") {
       primaryInventoryReads += 1;
+      if (nativeCancellationDisappeared) {
+        yield {data: [replacementNative]};
+        return;
+      }
       if (primaryDisappears && primaryInventoryReads > 1) { yield {data: []}; return; }
       const primary = {...exactPrimary, status: cancelledPrimary || cancelledWithReplacement || primaryReady() ? "completed" : "queued",
         conclusion: cancelledPrimary || cancelledWithReplacement ? "cancelled" : primaryReady() ? "success" : null};
@@ -1486,7 +1515,8 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
     }
     if (cancelledWithReplacement && input.event === "repository_dispatch") {
       refreshInventoryReads += 1;
-      const next = refreshInventoryReads > 1 ? dispatchPrimary : {...dispatchPrimary, status: "queued", conclusion: null};
+      const replacementReady = !missingCancellation && refreshInventoryReads > 1;
+      const next = replacementReady ? dispatchPrimary : {...dispatchPrimary, status: "queued", conclusion: null};
       yield {data: [next, source]}; return;
     }
     if (event === "repository_dispatch" && input.event === "pull_request") {
@@ -1624,6 +1654,11 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   assert.equal(cancelledReplacement.alternativeJobsReads, 6, "old dispatch proof exhausts final jobs retries");
   assert(cancelledReplacement.info.some(line => line.includes("Found runtime-images run 44 with status=completed")));
   assert.deepEqual(cancelledReplacement.failures, []);
+  const missingCancellation = await scenario("optional-final-read-cancellation-disappears", "repository_dispatch");
+  assert(missingCancellation.warnings.some(line => line.includes("Native cancellation evidence is unavailable")),
+    JSON.stringify({info: missingCancellation.info, warnings: missingCancellation.warnings}));
+  assert(missingCancellation.info.some(line => line.includes("Found runtime-images run 45 with status=completed")));
+  assert.deepEqual(missingCancellation.failures, [], "reselect the pending producer with fresh proof");
   for (const kind of ["optional-final-read-attempt-transient", "optional-final-read-attempt-network",
     "optional-final-read-attempt-missing",
     "optional-final-read-incomplete-snapshot"]) {
@@ -1636,6 +1671,9 @@ async function scenario(kind, event = "pull_request", captureLookupFailure = fal
   const finalCurrentBaseRetry = await scenario("optional-final-acceptance-transient", "repository_dispatch");
   assert.equal(finalCurrentBaseRetry.acceptanceLookupAttempts, 4,
     "the final optional current-base attempt read must exhaust only its bounded transient retries");
+  assert(finalCurrentBaseRetry.warnings.some(line => line.includes("final current-base attempt is temporarily unavailable")),
+    "inject after the live identity read for the current-base acceptance lookup: " +
+      JSON.stringify(finalCurrentBaseRetry.warnings));
   assert.equal(finalCurrentBaseRetry.primaryInventoryReads, 2,
     "a transient final current-base attempt read must restore and reselect the pending exact producer");
   assert(finalCurrentBaseRetry.info.some(line => line.includes("Found runtime-images run 44 with status=completed")));

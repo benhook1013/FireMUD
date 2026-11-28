@@ -1336,7 +1336,7 @@ fi
     summary_text = summary.read_text(encoding="utf-8")
     assert "Partial PR runtime image publication" in summary_text
     available_section, unpublished_section = summary_text.split(
-        "Unpublished fixed tags (not rechecked after the failed push):", maxsplit=1
+        "Fixed tags not verified available at stop:", maxsplit=1
     )
     assert "`account-service`" in available_section
     assert "`entity-management-service`" in available_section
@@ -1694,10 +1694,20 @@ assert janitor_runtime_cleanup_step.get("run") == (
 )
 target_step = next(step for step in validate_job["steps"] if step.get("id") == "target")
 target_script = target_step["run"]
-assert target_script.count("validate-preview-artifact.py") == 2
+assert target_script.count("validate-preview-artifact.py") == 3
 assert target_script.count(
     'python3 ./dev-tools/hosted/preview/validate-preview-artifact.py'
-) == 2
+) == 3
+retry_rejection_step = next(
+    step for step in validate_job["steps"]
+    if step.get("name", "").startswith("Trusted preview retry rejected stale-head nonce-")
+)
+assert retry_rejection_step["name"] == (
+    "Trusted preview retry rejected stale-head nonce-${{ steps.target.outputs.stale_head_retry_nonce }}"
+)
+assert retry_rejection_step["if"] == (
+    "${{ steps.target.outputs.action == 'none' && steps.target.outputs.stale_head_retry_nonce != '' }}"
+)
 assert '"$ARTIFACT_DIRECTORY/preview-metadata.json"' in target_script
 assert '"$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml"' in target_script
 assert 'exposure-mode "$ARTIFACT_DIRECTORY/preview-rendered-sanitized.yaml"' in target_script
@@ -6504,7 +6514,10 @@ if [[ "$1" == run && "$2" == download ]]; then
       --arg image_tag "${FAKE_METADATA_IMAGE_TAG:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" \
       --arg hostname "${FAKE_METADATA_HOSTNAME:-pr-900.preview.firedevops.net}" \
       --arg manifest_sha "$manifest_sha" \
-      '{schemaVersion:1,event:$event,repository:"example/FireMUD",sourceWorkflow:".github/workflows/preview.yml",sourceRunId:42,sourceRunAttempt:$source_attempt,prNumber:$pr_number,baseSha:$base_sha,headSha:$head_sha,mergeSha:$merge_sha,hostname:$hostname,imageTag:$image_tag,manifestSha256:$manifest_sha} + (if $event == "repository_dispatch" then {action:$action} else {} end)' \
+      --arg nonce "${FAKE_METADATA_RETRY_NONCE:-}" \
+      '{schemaVersion:1,event:$event,repository:"example/FireMUD",sourceWorkflow:".github/workflows/preview.yml",sourceRunId:42,sourceRunAttempt:$source_attempt,prNumber:$pr_number,baseSha:$base_sha,headSha:$head_sha,mergeSha:$merge_sha,hostname:$hostname,imageTag:$image_tag,manifestSha256:$manifest_sha}
+       + (if $event == "repository_dispatch" then {action:$action} else {} end)
+       + (if $nonce != "" then {proofRetryNonce:$nonce,proofRetryNamespaceUid:"uid-pr-900"} else {} end)' \
       >"$artifact_directory/preview-metadata.json"
   fi
   if [[ "${FAKE_ARTIFACT_FILES:-valid}" == extra ]]; then
@@ -6643,6 +6656,9 @@ cat >"$target_fixture_bin/python3" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == ./dev-tools/hosted/preview/validate-preview-artifact.py ]]; then
+  if [[ "${2:-}" == retry-receipt ]]; then
+    exec "${TARGET_REAL_PYTHON3:?}" "$@"
+  fi
   if [[ "${2:-}" == exposure-mode ]]; then
     [[ -f "${3:-}" ]]
     printf '%s\n' "${FAKE_EXPOSURE_MODE:-private}"
@@ -6921,6 +6937,22 @@ FAKE_FIXTURE_METADATA_BASE_SHA=dddddddddddddddddddddddddddddddddddddddd \
 FAKE_FIXTURE_METADATA_MERGE_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
   run_deploy_target_fixture merge-mismatch 0 \
     'Ignoring render artifact bound to a stale or different pull-request merge.'
+retry_nonce=01234567-0123-4123-8123-0123456789ab
+retry_source_run_json="$(jq -c --arg nonce "$retry_nonce" '
+  . + {event:"repository_dispatch",head_branch:"develop",
+    display_title:("Preview retry " + $nonce + " pr-900-base-" + ("b" * 40) + "-head-" + .head_sha + "-merge-" + .head_sha)}
+' <<<"$valid_workflow_run_json")"
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$retry_source_run_json" FAKE_METADATA_EVENT=repository_dispatch \
+  FAKE_METADATA_ACTION=deploy FAKE_METADATA_RETRY_NONCE="$retry_nonce" TEST_PR_HEAD_SHA="$distinct_source_sha" \
+  run_deploy_target_fixture retry-stale-head 0 'Ignoring stale lifecycle event for an earlier PR head.'
+grep -Fxq 'action=none' "$TEMP_DIR/deploy-target-retry-stale-head.output"
+grep -Fxq "stale_head_retry_nonce=${retry_nonce}" "$TEMP_DIR/deploy-target-retry-stale-head.output"
+
+FAKE_FIXTURE_WORKFLOW_RUN_JSON="$retry_source_run_json" FAKE_METADATA_EVENT=repository_dispatch \
+  FAKE_METADATA_ACTION=deploy FAKE_METADATA_RETRY_NONCE="$retry_nonce" FAKE_FIXTURE_METADATA_SOURCE_ATTEMPT=2 \
+  TEST_PR_HEAD_SHA="$distinct_source_sha" \
+  run_deploy_target_fixture retry-unbound-stale-head 0 'Ignoring render metadata not bound to the current source attempt.'
+test "$(cat "$TEMP_DIR/deploy-target-retry-unbound-stale-head.output")" = $'action=none\nretire_identity=false\ncleanup_state=none'
 FAKE_FIXTURE_PR_LABELS_JSON='{}' \
   run_deploy_target_fixture malformed-labels 0 \
     'Refusing hosted preview lifecycle action: PR label metadata is missing or malformed.'

@@ -71,6 +71,7 @@ wait_mode, image_tag, merge_sha, base_sha, head_sha = sys.argv[1:6]
 excluded_id = sys.argv[6] if len(sys.argv) > 6 else ""
 selection = sys.argv[7] if len(sys.argv) > 7 else ""
 alternates = selection in {"alternates", "active-alternates"}
+branch_alternates = selection == "branch-alternates"
 try:
     payload = json.load(sys.stdin)
 except json.JSONDecodeError:
@@ -115,9 +116,16 @@ if excluded_id:
     matching_runs = [run for run in matching_runs if str(run.get("id")) != excluded_id]
     if selection == "active-alternates":
         active_statuses = {"requested", "queued", "in_progress", "waiting", "pending"}
-        matching_runs = [run for run in matching_runs if run.get("status") in active_statuses
-                         and run.get("conclusion") in (None, "")]
-    else:
+        active_runs = []
+        for run in matching_runs:
+            status, conclusion = run.get("status"), run.get("conclusion")
+            if status == "completed" and isinstance(conclusion, str) and conclusion:
+                continue
+            if status not in active_statuses or conclusion not in (None, ""):
+                raise SystemExit(1)
+            active_runs.append(run)
+        matching_runs = active_runs
+    elif not branch_alternates:
         matching_runs = [run for run in matching_runs if run.get("status") == "completed"
                          and run.get("conclusion") == "success"]
 if not matching_runs:
@@ -162,13 +170,20 @@ def format_run(run):
         )
     )
 
-# Bound positive native lookups per polling pass and avoid duplicate API work.
+# Allow up to one page of exact branch candidates. An unexamined
+# suffix can never establish that promotion is absent.
+limit = 100 if branch_alternates else 8 if alternates else 1
 seen = set()
-for run in ranked[:8] if alternates else ranked[:1]:
+for run in ranked[:limit]:
     line = format_run(run)
-    if run["id"] not in seen:
-        print(line)
-        seen.add(run["id"])
+    if run["id"] in seen:
+        if branch_alternates:
+            raise SystemExit(1)
+        continue
+    print(line)
+    seen.add(run["id"])
+if branch_alternates and len(ranked) > limit:
+    print("incomplete")
 ' "${wait_mode}" "${image_tag}" "${merge_sha}" "${base_sha}" "${head_sha}" "$@"
 }
 
@@ -339,6 +354,38 @@ fetch_alternate_run_metadata() {
   timeout --signal=KILL "$remaining" gh api "$2"
 }
 
+read_handoff_metadata() {
+  local lookup_deadline="$1" endpoint="$2" proof_origin="$3"
+  local response exit_status
+  local http_error='(^|[[:space:](])http[[:space:]]+([1-5][0-9]{2})([[:space:])]|$)'
+  local transport_error='could[[:space:]]not[[:space:]]resolve|failed[[:space:]]to[[:space:]](connect|make[[:space:]]request)|error[[:space:]]connecting|unable[[:space:]]to[[:space:]]connect|connection[[:space:]](reset|refused|timed|closed)|network[[:space:]]is[[:space:]]unreachable|timed[[:space:]]out|timeout|temporary[[:space:]]failure|tls|eof'
+  if [[ "$proof_origin" != "handoff" ]]; then
+    fetch_alternate_run_metadata "$lookup_deadline" "$endpoint" || return 1
+    return 0
+  fi
+  if response="$(fetch_alternate_run_metadata "$lookup_deadline" "$endpoint" 2>&1)"; then
+    printf '%s' "$response"
+    return 0
+  else
+    exit_status=$?
+  fi
+  # A received HTTP status takes precedence over transport error text.
+  response="${response,,}"
+  if [[ "$response" =~ $http_error ]]; then
+    local http_status="${BASH_REMATCH[2]}"
+    if [[ "$http_status" == 429 || "$http_status" == 5?? ]] ||
+      [[ "$http_status" == 403 && "$response" =~ (rate[[:space:]-]*limit|abuse) ]]; then
+      return 2
+    fi
+    return 1
+  fi
+  if (( exit_status == 124 || exit_status == 137 || SECONDS >= lookup_deadline )) ||
+    [[ "$response" =~ $transport_error ]]; then
+    return 2
+  fi
+  return 1
+}
+
 # Resolve exactly one unexpired artifact. Producer proof can retain the ID and
 # digest of an expired row or use the authenticated publisher's receipt when
 # GitHub no longer lists the producer artifact. Status 2 is an unavailable read.
@@ -454,9 +501,10 @@ use_completed_duplicate_publication() {
     | select(.event != "pull_request" or .head_sha == $head)
     | .run_attempt | select(type == "number" and . >= 1 and floor == .)
   ' <<<"$source")" || return 1
-  source_workflow="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml")" || return 1
-  source_workflow_id="$(jq -er '
-    select(.name == "Build Runtime Images" and .path == ".github/workflows/runtime-images.yml")
+  source_workflow="$(read_handoff_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml" "$proof_origin")" || return "$?"
+  source_workflow_id="$(jq -ser '
+    select(length == 1) | .[0]
+    | select(.name == "Build Runtime Images" and .path == ".github/workflows/runtime-images.yml")
     | .id | select(type == "number" and floor == . and . > 0)
   ' <<<"$source_workflow")" || return 1
   jq -e --argjson workflow "$source_workflow_id" '
@@ -481,9 +529,9 @@ use_completed_duplicate_publication() {
     publisher_events=(workflow_run repository_dispatch)
   fi
   upper="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
-  repository_info="$(fetch_alternate_run_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}")" || return 1
-  default_branch="$(jq -er --arg repo "$GITHUB_REPOSITORY" '
-    select(.full_name == $repo) | .default_branch
+  repository_info="$(read_handoff_metadata "$lookup_deadline" "repos/${GITHUB_REPOSITORY}" "$proof_origin")" || return "$?"
+  default_branch="$(jq -ser --arg repo "$GITHUB_REPOSITORY" '
+    select(length == 1) | .[0] | select(.full_name == $repo) | .default_branch
     | select(type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$"))
   ' <<<"$repository_info")" || return 1
   for publisher_event in "${publisher_events[@]}"; do
@@ -611,16 +659,23 @@ branch_publication_attempt() {
   '
 }
 
+confirm_branch_publication_attempt() {
+  local run_id="$1" selected_state="$2" attempt="$3" latest
+  latest="$(fetch_alternate_run_metadata "$deadline" "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || return 2
+  [[ "$(branch_publication_attempt "$run_id" <<<"$latest")" == "$attempt" &&
+     "$(jq -c '{workflow_runs:[.]}' <<<"$latest" | read_run_state)" == "$selected_state" ]] &&
+    (( SECONDS < deadline )) || return 2
+}
+
 # Status 1 means the exact attempt has no matching promotion evidence.
 # Status 2 keeps an unavailable or ambiguous observation pending.
 verify_branch_publication() {
-  local run_id="$1" selected_state="$2" endpoint run attempt jobs latest proof_status=0
-  local promotion_conclusion="${3:-success}" expected_attempt="${4:-}" show_attempt="${5:-false}"
+  local run_id="$1" selected_state="$2" endpoint run attempt jobs proof_status=0
+  local promotion_conclusion="${3:-success}" show_attempt="${4:-false}"
   endpoint="repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
   run="$(fetch_alternate_run_metadata "$deadline" "$endpoint")" || return 2
   [[ "$(jq -c '{workflow_runs:[.]}' <<<"$run" | read_run_state)" == "$selected_state" ]] || return 2
   attempt="$(branch_publication_attempt "$run_id" <<<"$run")" || return 2
-  [[ -z "$expected_attempt" || "$attempt" == "$expected_attempt" ]] || return 2
   jobs="$(fetch_alternate_run_metadata "$deadline" "${endpoint}/attempts/${attempt}/jobs?per_page=100")" || return 2
   jq -se --argjson id "$run_id" --argjson attempt "$attempt" '
     length == 1 and (.[0] |
@@ -646,10 +701,7 @@ verify_branch_publication() {
         end)))
   ' <<<"$jobs" >/dev/null || proof_status=$?
   if (( proof_status > 1 )); then return 2; fi
-  latest="$(fetch_alternate_run_metadata "$deadline" "$endpoint")" || return 2
-  [[ "$(branch_publication_attempt "$run_id" <<<"$latest")" == "$attempt" &&
-     "$(jq -c '{workflow_runs:[.]}' <<<"$latest" | read_run_state)" == "$selected_state" ]] &&
-    (( SECONDS < deadline )) || return 2
+  confirm_branch_publication_attempt "$run_id" "$selected_state" "$attempt" || return 2
   (( proof_status == 0 )) || return 1
   if [[ "$show_attempt" == "true" ]]; then
     printf '%s\n' "$attempt"
@@ -658,26 +710,41 @@ verify_branch_publication() {
 
 find_earlier_branch_publication() {
   local selected_id="$1" selected_state="$2" inventory="$3"
-  local candidates candidate state candidate_id status conclusion skipped_attempt proof_status
+  local candidates candidate state candidate_id status conclusion skipped_attempt candidate_attempt proof_status=0 index
+  local -a bypassed_ids=() bypassed_states=() bypassed_attempts=()
   # Only an authoritatively skipped exact current attempt may be bypassed.
   # Keep failures and unavailable or ambiguous proof as barriers to fallback.
-  skipped_attempt="$(verify_branch_publication "$selected_id" "$selected_state" skipped "" true)" || return "$?"
-  candidates="$(read_run_state "" alternates <<<"$inventory")" || return 2
+  candidates="$(read_run_state "$selected_id" branch-alternates <<<"$inventory")" || return 2
+  skipped_attempt="$(verify_branch_publication "$selected_id" "$selected_state" skipped true)" || proof_status=$?
+  if (( proof_status != 0 )); then
+    [[ "$candidates" != "missing" ]] || return "$proof_status"
+    return 2
+  fi
+  [[ "$candidates" != "missing" ]] || return 1
+  bypassed_ids+=("$selected_id")
+  bypassed_states+=("$selected_state")
+  bypassed_attempts+=("$skipped_attempt")
   while IFS= read -r candidate; do
-    (( SECONDS < deadline )) || break
+    (( SECONDS < deadline )) || return 2
     IFS=$'\t' read -r state candidate_id status conclusion _ <<<"$candidate"
-    [[ "$candidate_id" != "$selected_id" ]] || continue
-    [[ "$state" == "found" && "$status" == "completed" && "$conclusion" == "success" ]] || return 1
+    [[ "$state" == "found" && "$status" == "completed" && "$conclusion" == "success" ]] || return 2
     proof_status=0
-    verify_branch_publication "$candidate_id" "$candidate" || proof_status=$?
+    candidate_attempt="$(verify_branch_publication "$candidate_id" "$candidate" success true)" || proof_status=$?
     if (( proof_status == 2 )); then return 2; fi
     if (( proof_status == 0 )); then
-      verify_branch_publication "$selected_id" "$selected_state" skipped "$skipped_attempt" || return "$?"
+      for index in "${!bypassed_ids[@]}"; do
+        confirm_branch_publication_attempt "${bypassed_ids[index]}" "${bypassed_states[index]}" "${bypassed_attempts[index]}" || return 2
+      done
+      # Read the selected success last. These are separate native observations.
+      confirm_branch_publication_attempt "$candidate_id" "$candidate" "$candidate_attempt" || return 2
       printf 'Earlier trusted branch runtime-image run %s has verified promotion for %s after a newer skipped promotion.\n' \
         "$candidate_id" "$image_tag"
       return 0
     fi
-    verify_branch_publication "$candidate_id" "$candidate" skipped || return "$?"
+    skipped_attempt="$(verify_branch_publication "$candidate_id" "$candidate" skipped true)" || return 2
+    bypassed_ids+=("$candidate_id")
+    bypassed_states+=("$candidate")
+    bypassed_attempts+=("$skipped_attempt")
   done <<<"$candidates"
   return 1
 }
@@ -741,15 +808,16 @@ wait_for_pr_publisher() {
     if find_completed_alternate_publication "$alternate_sources" "$publisher_deadline"; then
       return 0
     fi
-    local refreshed_source_payload refreshed_alternates new_alternates active_replacement
-    active_replacement="missing"
+    local refreshed_source_payload refreshed_alternates new_alternates active_replacement source_refresh_unavailable=true
+    active_replacement=""
     local source_refresh_remaining=$((publisher_deadline - SECONDS))
     if (( source_refresh_remaining > 0 )) && refreshed_source_payload="$(fetch_workflow_runs \
       "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" \
       "refreshing alternate runtime-image sources while waiting for publication" "$source_refresh_remaining")"; then
-      active_replacement="$(read_run_state "${source_run_id}" active-alternates <<<"${refreshed_source_payload}")" ||
-        active_replacement="missing"
       if refreshed_alternates="$(read_run_state "${source_run_id}" alternates <<<"${refreshed_source_payload}")"; then
+        if active_replacement="$(read_run_state "${source_run_id}" active-alternates <<<"${refreshed_source_payload}")"; then
+          source_refresh_unavailable=false
+        fi
         if [[ "${refreshed_alternates}" == "missing" ]]; then
           alternate_sources=""
         else
@@ -796,6 +864,11 @@ wait_for_pr_publisher() {
         sleep "${sleep_seconds}"
         continue
       fi
+      if [[ "$source_refresh_unavailable" == "true" ]]; then
+        printf 'Runtime-image producer coverage unavailable for %s; continuing bounded publication wait.\n' "$image_tag" >&2
+        sleep "${sleep_seconds}"
+        continue
+      fi
       if [[ "${state}" == "missing" ]]; then
         local elapsed_seconds=$((SECONDS - publisher_start_epoch))
         if (( elapsed_seconds >= missing_workflow_timeout_seconds )); then
@@ -831,7 +904,7 @@ while (( SECONDS < deadline )); do
   if ! workflow_payload="$(
     fetch_workflow_runs \
       "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" \
-      "waiting for the runtime-images workflow"
+      "waiting for the runtime-images workflow" "$((deadline - SECONDS))"
   )"; then
     sleep "${sleep_seconds}"
     continue
