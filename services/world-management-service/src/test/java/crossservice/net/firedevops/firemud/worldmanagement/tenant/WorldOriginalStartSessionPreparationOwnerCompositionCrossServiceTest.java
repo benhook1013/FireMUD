@@ -245,6 +245,7 @@ import org.flywaydb.core.Flyway;
 import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -269,6 +270,7 @@ import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
 import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.DefaultTransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
@@ -403,6 +405,12 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   @Test
+  void protectedActivationManifestRejectsSubstitutionsAndRollsBackOnHeldAuthorityLoss()
+      throws Exception {
+    compose(Refusal.NONE, ActivationFailure.POST_INSERT_AUTHORITY_LOSS);
+  }
+
+  @Test
   void transientLifecycleCasRollbackRetriesWithinOriginalActivationInvocation() throws Exception {
     compose(Refusal.NONE, ActivationFailure.TRANSIENT_ROLLBACK_ONCE);
   }
@@ -504,6 +512,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
 
   private enum ActivationFailure {
     NONE,
+    POST_INSERT_AUTHORITY_LOSS,
     TRANSIENT_ROLLBACK_ONCE,
     TRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE,
     TRANSIENT_AFTER_COMMIT_ONCE,
@@ -1079,6 +1088,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           var terminalReadbackFault = new ActivationTerminalReadbackFault();
           var activationTransactionFault =
               activationFailure == ActivationFailure.NONE
+                      || activationFailure == ActivationFailure.POST_INSERT_AUTHORITY_LOSS
                   ? null
                   : new ActivationTransactionFault(
                       world.manager(), world.dsl(), activationFailure, terminalReadbackFault);
@@ -1702,6 +1712,33 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                           issuer.sourceDsl(),
                           activationAccountBefore.keySet().toArray(String[]::new)))
                   .isEqualTo(accountAfterDenial);
+              return;
+            }
+
+            if (activationFailure == ActivationFailure.POST_INSERT_AUTHORITY_LOSS) {
+              var protection = worldProtectionAcquisition.acquire(activationInput);
+              String[] accountProtectionTables = {
+                "account_start_session_activation_protections",
+                "account_start_session_activation_protection_sources",
+                "account_start_session_activation_protection_settlements"
+              };
+              var heldAccountRows = rows(issuer.sourceDsl(), accountProtectionTables);
+              assertThat(heldAccountRows.get(accountProtectionTables[0])).hasSize(1);
+              assertThat(heldAccountRows.get(accountProtectionTables[1])).isNotEmpty();
+              assertThat(heldAccountRows.get(accountProtectionTables[2])).isEmpty();
+
+              assertProtectedManifestRefusalsAndAuthorityLoss(
+                  world.dsl(), activationService, protection);
+
+              var stableWorldTables = new TreeMap<>(activationWorldBefore);
+              stableWorldTables.remove("world_canonical_instance_activation_fence");
+              assertThat(rows(world.dsl(), stableWorldTables.keySet().toArray(String[]::new)))
+                  .isEqualTo(stableWorldTables);
+              assertThat(rows(gs.dsl(), activationGsBefore.keySet().toArray(String[]::new)))
+                  .isEqualTo(activationGsBefore);
+              assertThat(rows(issuer.sourceDsl(), accountProtectionTables))
+                  .isEqualTo(heldAccountRows);
+              assertThat(activationProtectionAcquisitionCalls.get()).isEqualTo(1);
               return;
             }
 
@@ -5232,6 +5269,112 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
   }
 
+  private static void assertProtectedManifestRefusalsAndAuthorityLoss(
+      DSLContext world,
+      WorldCanonicalInstanceActivationService service,
+      AccountStartSessionActivationProtectionEvidence protection) {
+    var request = protection.request().worldActivationRequest();
+    String heldAuthorityLoss = "TEST_ONLY local activation authority lost after manifest insertion";
+    var held =
+        new WorldCanonicalInstanceActivationService.HeldActivationAuthority() {
+          @Override
+          public void requireHeld() {
+            if (!TransactionSynchronizationManager.isActualTransactionActive()) return;
+            var manifest =
+                world.fetchOne(
+                    "SELECT world_instance_id FROM world_canonical_activation_execution_manifest "
+                        + "WHERE activation_request_id=? AND transaction_id=txid_current()",
+                    request.activationRequestId());
+            if (manifest == null) return;
+            long worldInstanceId = manifest.get(0, Long.class);
+
+            var preparing =
+                world.fetchSingle(
+                    "SELECT w.status,w.lifecycle_epoch,w.row_version,o.outcome "
+                        + "FROM world_instance w "
+                        + "JOIN world_canonical_instance_activation_operation o "
+                        + "ON o.world_instance_id=w.id WHERE w.id=? AND o.activation_request_id=?",
+                    worldInstanceId,
+                    request.activationRequestId());
+            assertThat(preparing.get("status", String.class)).isEqualTo("PREPARING");
+            assertThat(preparing.get("lifecycle_epoch", Long.class))
+                .isEqualTo(request.expectedLifecycleEpoch());
+            assertThat(preparing.get("row_version", Long.class))
+                .isEqualTo(request.expectedRowVersion());
+            assertThat(preparing.get("outcome", String.class)).isEqualTo("COMMITTED");
+            for (String substitution :
+                List.of(
+                    "transaction_id=transaction_id+1",
+                    "world_instance_id=world_instance_id+1",
+                    "expected_old=expected_old || '{\"extra\":true}'::jsonb",
+                    "expected_new=expected_new || '{\"extra\":true}'::jsonb")) {
+              assertActivationManifestDeniesUpdate(
+                  world, request.activationRequestId(), worldInstanceId, substitution, 1, 1);
+            }
+            assertActivationManifestDeniesUpdate(
+                world, request.activationRequestId(), worldInstanceId, null, 2, 1);
+            assertActivationManifestDeniesUpdate(
+                world, request.activationRequestId(), worldInstanceId, null, 1, 2);
+            throw new WorldCanonicalInstanceActivationService.ActivationDeniedException(
+                heldAuthorityLoss);
+          }
+
+          @Override
+          public void close() {}
+        };
+
+    assertThatThrownBy(() -> service.activateProtected(protection, held))
+        .isInstanceOf(WorldCanonicalInstanceActivationService.ActivationDeniedException.class)
+        .hasMessage(heldAuthorityLoss);
+    assertPendingActivationState(world);
+    var pending =
+        world.fetchSingle(
+            "SELECT account_protection_evidence_bytes FROM world_canonical_instance_activation_fence "
+                + "WHERE activation_request_id=?",
+            request.activationRequestId());
+    assertThat(pending.get(0, byte[].class)).containsExactly(protection.canonicalBytes());
+    assertThat(service.readTerminalEvidence(protection)).isEmpty();
+  }
+
+  private static void assertActivationManifestDeniesUpdate(
+      DSLContext world,
+      UUID activationRequestId,
+      long worldInstanceId,
+      String manifestSubstitution,
+      int epochAdvance,
+      int rowVersionAdvance) {
+    world.execute("SAVEPOINT activation_manifest_probe");
+    try {
+      // Alter only the manifest minted by the real operation; the World guard stays enabled.
+      if (manifestSubstitution != null) {
+        assertThat(
+                world.execute(
+                    "UPDATE world_canonical_activation_execution_manifest SET "
+                        + manifestSubstitution
+                        + " WHERE activation_request_id=? AND transaction_id=txid_current()",
+                    activationRequestId))
+            .isEqualTo(1);
+      }
+      assertThatThrownBy(
+              () ->
+                  world.execute(
+                      "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+?,"
+                          + "row_version=row_version+?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                      epochAdvance,
+                      rowVersionAdvance,
+                      worldInstanceId))
+          .as(
+              "manifest %s, lifecycle epoch +%s, row version +%s",
+              manifestSubstitution, epochAdvance, rowVersionAdvance)
+          .isInstanceOf(DataAccessException.class)
+          .hasMessageContaining("no exact transaction execution manifest")
+          .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"));
+    } finally {
+      world.execute("ROLLBACK TO SAVEPOINT activation_manifest_probe");
+      world.execute("RELEASE SAVEPOINT activation_manifest_probe");
+    }
+  }
+
   private static void assertPendingActivationState(DSLContext world) {
     assertThat(world.fetch("SELECT status FROM world_instance").getValues("status", String.class))
         .containsExactly("PREPARING");
@@ -5241,6 +5384,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 .getValues("operation_state", String.class))
         .containsExactly("PENDING");
     assertThat(world.fetchCount(DSL.table("world_canonical_instance_activation_operation")))
+        .isZero();
+    assertThat(world.fetchCount(DSL.table("world_canonical_activation_execution_manifest")))
         .isZero();
   }
 
@@ -5657,7 +5802,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             attempt == 1;
         case TRANSIENT_ROLLBACK_ALWAYS, TRANSIENT_ROLLBACK_ALWAYS_FINAL_READBACK_FAILURE ->
             attempt <= 3;
-        case NONE -> false;
+        case NONE, POST_INSERT_AUTHORITY_LOSS -> false;
       };
     }
 
@@ -5669,6 +5814,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             attempt == 1;
         case TRANSIENT_ROLLBACK_ALWAYS_FINAL_READBACK_FAILURE -> attempt == 3;
         case NONE,
+            POST_INSERT_AUTHORITY_LOSS,
             TRANSIENT_ROLLBACK_ONCE,
             TRANSIENT_AFTER_COMMIT_ONCE,
             TRANSIENT_ROLLBACK_ALWAYS,
