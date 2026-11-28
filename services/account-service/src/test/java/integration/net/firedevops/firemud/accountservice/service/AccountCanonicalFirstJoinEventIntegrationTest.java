@@ -12,6 +12,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Ordering;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
 import net.firedevops.firemud.accountservice.dto.AccountSecurityStateMutationRequest;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
@@ -46,8 +48,13 @@ import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityE
 import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec.AccountState;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Outcome;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.OwnerReadback;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.flywaydb.core.Flyway;
@@ -186,6 +193,65 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
         });
     var committed = fixture.commitFirstJoin();
     assertThat(fixture.commitFirstJoin()).isEqualTo(committed);
+  }
+
+  @Test
+  void mixedDraftOwnerOutcomesKeepFirstJoinAndOriginalAccountSourceIntentPending() {
+    Fixture fixture = newFixture();
+    var fences = new DraftAuthorizationFenceRepository(fixture.dsl);
+    var binding = fixture.retainCommitOrderedDraftFence(fences);
+    var change =
+        new SourceChange(
+            UUID.randomUUID(),
+            binding.sources(),
+            "controlled pending mutation".getBytes(StandardCharsets.UTF_8));
+    assertThat(fixture.inTransaction(() -> fences.requestSourceChange(change))).isFalse();
+
+    // The Account repository retains exact terminal evidence supplied by the test participants.
+    var readbacks =
+        List.of(
+            draftOwnerReadback(binding, Owner.WORLD, Outcome.COMMITTED),
+            draftOwnerReadback(binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED));
+    fixture.transaction.executeWithoutResult(
+        status -> readbacks.forEach(readback -> fences.recordOwnerReadback(binding, readback)));
+
+    var authorityBefore = fixture.leaveRows();
+    String[] intentTables = {
+      "account_join_operations",
+      "account_draft_authorization_fences",
+      "account_draft_authorization_sources",
+      "account_draft_authorization_source_changes",
+      "account_draft_authorization_changed_scopes",
+      "account_draft_authorization_owner_readbacks"
+    };
+    var intentsBefore = fixture.rows(intentTables);
+    assertThatThrownBy(fixture::commitFirstJoin)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Canonical first-JOIN Account source intent is unresolved");
+
+    assertThat(fixture.leaveRows()).isEqualTo(authorityBefore);
+    assertThat(fixture.rows(intentTables)).isEqualTo(intentsBefore);
+    fixture.transaction.executeWithoutResult(
+        status -> {
+          var operation =
+              fixture
+                  .operations
+                  .findCanonicalEvidenceForUpdateByRequestId(fixture.requestId)
+                  .orElseThrow();
+          assertThat(operation.status()).isEqualTo("PENDING");
+          assertThat(operation.terminalProof()).isNull();
+          var retainedChange = fences.inspectSourceChange(change);
+          assertThat(retainedChange.status()).isEqualTo("WAITING");
+          assertThat(retainedChange.binding()).containsExactly(change.canonicalBytes());
+          assertThat(fences.readSettlement(binding)).isEqualTo(Settlement.PENDING);
+          assertThat(fences.sourceMutationPermitted(change)).isFalse();
+          assertThat(fences.sourceAbortPermitted(change)).isFalse();
+          for (var readback : readbacks) {
+            var retained = fences.readOwnerResult(binding, readback.owner()).orElseThrow();
+            assertThat(retained.outcome()).isEqualTo(readback.outcome());
+            assertThat(retained.readback()).containsExactly(readback.canonicalBytes());
+          }
+        });
   }
 
   @Test
@@ -2410,6 +2476,73 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
           });
     }
 
+    private DraftAuthorizationFenceBinding retainCommitOrderedDraftFence(
+        DraftAuthorizationFenceRepository fences) {
+      return inTransaction(
+          () -> {
+            operations.lockAccount(account.getId());
+            UUID accountId = account.getAccountUuid();
+            var current = sourceEvidence.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId);
+            var source = current.account();
+            var accountEvidence =
+                new SourceEvidence(
+                    SourceKind.ACCOUNT,
+                    accountId.toString(),
+                    Long.toString(source.generation()),
+                    Long.toString(source.sourceVersion()),
+                    source.checkpoint().outboxStreamKey(),
+                    Long.toString(source.checkpoint().sequence()),
+                    current.canonicalAccountProjection().toJson().getBytes(StandardCharsets.UTF_8));
+            var draft =
+                DraftCommitBinding.create(
+                    new DraftCommitBinding.TargetProof(
+                        tenantUuid,
+                        UUID.randomUUID(),
+                        1,
+                        tenantEvidence.sourceGameTenantKey(),
+                        tenantEvidence.sourceGameRowId(),
+                        tenantEvidence.sourceGameTenantKey(),
+                        tenantEvidence.provenanceKind()),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "test-only/base",
+                    List.of(
+                        new DraftCommitBinding.RevisionPayload(
+                            "0",
+                            UUID.randomUUID(),
+                            DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                            "test-only-world-payload")),
+                    List.of(
+                        new DraftCommitBinding.AffectedUnit(
+                            DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                            "region",
+                            "test-region",
+                            "aggregate",
+                            "test-region",
+                            "0")));
+            var binding =
+                new DraftAuthorizationFenceBinding(
+                        UUID.randomUUID(),
+                        draft.requestId(),
+                        draft.commitId(),
+                        UUID.randomUUID(),
+                        accountId,
+                        tenantUuid,
+                        draft.target().canonicalVersionId(),
+                        draft.baseCommitId(),
+                        "0",
+                        draft.canonicalBytes(),
+                        draft.canonicalBytes(),
+                        draft.digest(),
+                        List.of(accountEvidence))
+                    .withRequiredOwners();
+            fences.reserve(binding);
+            assertThat(fences.claimCommitOrder(binding).ordering())
+                .isEqualTo(Ordering.COMMIT_ORDER);
+            return binding;
+          });
+    }
+
     private long membershipId() {
       return membershipId == null ? -1L : membershipId;
     }
@@ -2436,6 +2569,19 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     private <T> T inTransaction(java.util.function.Supplier<T> callback) {
       return transaction.execute(status -> callback.get());
     }
+  }
+
+  private static OwnerReadback draftOwnerReadback(
+      DraftAuthorizationFenceBinding binding, Owner owner, Outcome outcome) {
+    return new OwnerReadback(
+        owner,
+        outcome,
+        binding.operationId(),
+        binding.commitId(),
+        binding.fenceId(),
+        binding.inputDigest(),
+        binding.canonicalBytes(),
+        (owner.name() + ":" + outcome.name()).getBytes(StandardCharsets.UTF_8));
   }
 
   private static FreshTenantCreationEvidence freshTenantEvidence(UUID tenantUuid) {
