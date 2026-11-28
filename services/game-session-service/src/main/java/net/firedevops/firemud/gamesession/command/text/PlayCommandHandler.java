@@ -199,7 +199,14 @@ public class PlayCommandHandler {
     SessionContext context = maybeContext.get();
     try (GameplayLoggingContext baseContext =
         GameplayLoggingContext.open(Long.toString(context.tenantId()), null, null, null)) {
-      GameplayWorldCatalog.ReadSnapshot catalogSnapshot = gameplayWorldCatalog.readSnapshot();
+      final GameplayWorldCatalog.ReadSnapshot catalogSnapshot;
+      try {
+        catalogSnapshot = gameplayWorldCatalog.readSnapshot();
+      } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException failure) {
+        return failure.authorityUnavailable()
+            ? authorityUnavailableFailure(tenantTag, null, 0L)
+            : admissionPointerUnavailableFailure(tenantTag, null);
+      }
       Optional<ResolvedPlaySelection> maybeSelection =
           resolveSelection(playRequest, catalogSnapshot);
       if (maybeSelection.isEmpty()) {
@@ -296,6 +303,24 @@ public class PlayCommandHandler {
         } catch (IllegalStateException ex) {
           return characterIdentityUnavailableFailure(
               selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()), character, ex);
+        }
+        boolean retainedTargetMatchesSelection =
+            context.hasGameplayIdentity()
+                && context.tenantId() == selectedRealm.tenantId()
+                && context.gameInstanceId() == selectedRealm.gameInstanceId()
+                && (!StringUtils.hasText(context.worldSlug())
+                    || sameSlug(context.worldSlug(), selectedWorld.slug()))
+                && (!StringUtils.hasText(context.realmSlug())
+                    || sameSlug(context.realmSlug(), selectedRealm.slug()));
+        if (!StringUtils.hasText(character)
+            && retainedTargetMatchesSelection
+            && context.characterId() != resolvedCharacter.id()) {
+          return characterIdentityUnavailableFailure(
+              selectedTenantTag,
+              Long.toString(selectedRealm.gameInstanceId()),
+              Long.toString(context.characterId()),
+              new IllegalStateException(
+                  "Current persisted roster no longer contains the retained actor"));
         }
         String characterName = resolvedCharacter.name();
         long gameInstanceId = selectedRealm.gameInstanceId();
