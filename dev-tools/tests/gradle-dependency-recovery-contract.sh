@@ -1026,7 +1026,7 @@ for mutation in url host mixed unpinned-root unsupported-variant compile-started
   case "$mutation" in
     url) sed -i '/Could not get resource/s/kotlin-stdlib/annotations/' "$CASE_DIR/buildsrc-cause.log" ;;
     host) sed -i '0,/plugins.gradle.org/s//example.invalid/' "$CASE_DIR/buildsrc-cause.log" ;;
-    mixed) sed -i '/^[*] Try:/i > Received status code 403 from server: Forbidden' "$CASE_DIR/buildsrc-cause.log" ;;
+    mixed) sed -i '0,/status code 429/s//status code 403/' "$CASE_DIR/buildsrc-cause.log" ;;
     unpinned-root) sed -i "s/configuration 'classpath'/configuration 'runtimeClasspath'/" "$CASE_DIR/buildsrc-cause.log" ;;
     unsupported-variant) sed -i 's/-gradle96/-arbitrary-variant/g' "$CASE_DIR/buildsrc-cause.log" ;;
     compile-started) sed -i '1i > Task :logging-admin-service:compileJava FAILED' "$CASE_DIR/buildsrc-cause.log" ;;

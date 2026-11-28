@@ -526,8 +526,14 @@ for (const publishable of ["false", "", undefined]) {
   for (const change of [
     {created_at: "2026-01-08T00:00:02Z"}, {updated_at: "2026-01-07T23:59:59Z"},
   ]) await assert.rejects(resolve({nativeAttempt: {...source, ...change}}), /chronology/);
+  const {run_attempt: ignoredAttempt, ...producerFromAttemptEndpoint} = producer;
+  const namesOnlySibling = {...producerFromAttemptEndpoint, id: producer.id + 1, name: "Other exact job"};
+  for (const jobs of [[producerFromAttemptEndpoint], [producer, namesOnlySibling]]) {
+    assert.equal((await resolve({jobs})).output.title, title,
+      "the exact native attempt endpoint can omit job-level attempt metadata");
+  }
   for (const change of [
-    {id: 0}, {id: "8001"}, {run_id: 4243}, {run_attempt: 2}, {run_attempt: undefined},
+    {id: 0}, {id: "8001"}, {run_id: 4243}, {run_attempt: 2}, {run_attempt: null},
     {head_sha: sha("a")}, {head_sha: undefined}, {workflow_name: "other"},
     {name: "PR Full-Stack Smoke (runtime-required=unknown)"}, {status: "in_progress"},
     {conclusion: "skipped"}, {conclusion: "failure"}, {conclusion: "cancelled"},

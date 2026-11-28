@@ -183,6 +183,7 @@ module.exports = async function admitPrRuntimeRefresh({
   const collectInventory = async (event, status, createdSince, runs, ids) => {
     let total;
     let seen = 0;
+    const pageRunIds = new Set();
     for (let page = 1; page <= inventoryPages; page++) {
       const {data: inventory} = await github.rest.actions.listWorkflowRuns({
         ...contextRepo, workflow_id: runtimeWorkflow.id, event, status, per_page: pageSize, page,
@@ -199,8 +200,12 @@ module.exports = async function admitPrRuntimeRefresh({
         if (run?.event !== event || run.status !== status) {
           throw new Error('Runtime inventory contains an unexpected event or status.');
         }
+        if (!isPositiveInteger(run.id) || pageRunIds.has(run.id)) {
+          throw new Error('Runtime inventory contains an invalid or repeated run ID.');
+        }
+        pageRunIds.add(run.id);
         if (!exactNativeTuple(run)) continue;
-        if (!isPositiveInteger(run.id) || !isPositiveInteger(run.run_attempt) ||
+        if (!isPositiveInteger(run.run_attempt) ||
             !validChronology(run.created_at) ||
             (createdSince && Date.parse(run.created_at) < Date.parse(createdSince))) {
           throw new Error('Exact runtime run has invalid native chronology.');
@@ -394,8 +399,8 @@ module.exports = async function admitPrRuntimeRefresh({
       const historical = !rejection && latestAttempt > attempt;
       let run = latestBefore;
       if (historical) {
-        // Only this typed failure proves the owner stopped before invoking dispatch.
-        if (kind !== preSendUnavailable.kind || claim.ownerRevision === undefined) return false;
+        // Only typed pre-send outcomes prove the exact owner stopped before invoking dispatch.
+        if (![unsent.kind, preSendUnavailable.kind].includes(kind) || claim.ownerRevision === undefined) return false;
         const terminalConclusions = ['success', 'failure', 'neutral', 'cancelled', 'skipped',
           'timed_out', 'action_required', 'stale', 'startup_failure'];
         if (latestStatus === 'completed' ? !terminalConclusions.includes(latestConclusion) :
@@ -420,7 +425,8 @@ module.exports = async function admitPrRuntimeRefresh({
       if (markers.length !== 1 || markers[0].status !== 'completed' || markers[0].conclusion !== 'success' ||
           markers[0].name !== `${markerPrefix} ${ownerReceiptIdentity(claim, runId, attempt)}`) return false;
       if (historical && job.steps.some(step =>
-        [unsent, dispatchRejection].some(outcome => step.name.startsWith(`Runtime refresh ${outcome.kind} claim`)) &&
+        [unsent, dispatchRejection, preSendUnavailable].some(outcome => outcome.kind !== kind &&
+          step.name.startsWith(`Runtime refresh ${outcome.kind} claim`)) &&
         (step.status !== 'completed' || step.conclusion !== 'skipped'))) return false;
 
       const latest = rejection ? dataOf(await getAttempt()) : await getRun();

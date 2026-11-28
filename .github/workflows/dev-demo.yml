@@ -606,18 +606,22 @@ jobs:
           [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ && "$DEPLOYED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$(git rev-parse HEAD)" == "$HEAD_SHA" && "$DEPLOYED_BASE_SHA" != "$HEAD_SHA" ]]
-          namespace_uid="$(
+          namespace_identity="$(
             KUBECONFIG="$NAMESPACE_KUBECONFIG" kubectl get namespace dev -o json |
               jq -er --arg sha "$HEAD_SHA" '
                 select(.kind == "Namespace" and .metadata.name == "dev"
                   and .metadata.deletionTimestamp == null
                   and .metadata.labels["firemud.dev/dev-demo"] == "true"
                   and .metadata.labels["firemud.dev/environment-class"] == "dev-demo-cluster"
-                  and .metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == $sha)
-                | .metadata.uid
-                | select(type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"))
+                  and .metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == $sha
+                  and ((.metadata.annotations // {})
+                    | has("firemud.dev/pending-dev-demo-bootstrap") | not))
+                | select(.metadata.uid | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"))
+                | select(.metadata.resourceVersion | type == "string" and length > 0)
+                | [.metadata.uid, .metadata.resourceVersion] | @tsv
               '
           )"
+          IFS=$'\t' read -r namespace_uid namespace_resource_version <<<"$namespace_identity"
           helm_revision="$(
             helm list -n dev --filter '^dev$' -o json |
               jq -er '
@@ -631,6 +635,11 @@ jobs:
           values_digest="$(sha256sum </tmp/dev-demo-values.yaml)"
           request_id="dev-demo-smoke-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           (( ${#request_id} <= 128 ))
+          bootstrap_hold="${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:${DEPLOYED_BASE_SHA}:${HEAD_SHA}:${request_id}"
+          (( ${#bootstrap_hold} <= 256 ))
+          KUBECONFIG="$NAMESPACE_KUBECONFIG" kubectl annotate namespace dev \
+            --resource-version="$namespace_resource_version" \
+            "firemud.dev/pending-dev-demo-bootstrap=${bootstrap_hold}" --overwrite >/dev/null
           evidence_dir="$(mktemp -d "$RUNNER_TEMP/dev-demo-bootstrap.XXXXXXXX")"
           jq -n -e \
             --arg repository "$GITHUB_REPOSITORY" --arg runId "$GITHUB_RUN_ID" \
@@ -648,6 +657,8 @@ jobs:
           {
             echo "evidence_dir=$evidence_dir"
             echo "request_id=$request_id"
+            echo "bootstrap_hold=$bootstrap_hold"
+            echo "namespace_uid=$namespace_uid"
           } >> "$GITHUB_OUTPUT"
 
       - name: Retain dev-demo bootstrap intent before sending
@@ -1058,6 +1069,30 @@ jobs:
           name: dev-demo-bootstrap-result-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.bootstrap-intent.outputs.evidence_dir }}/result.json
           if-no-files-found: error
+
+      - name: Clear dev-demo bootstrap hold after retained result
+        id: clear-bootstrap-hold
+        if: ${{ success() && steps.retain-bootstrap-result.outcome == 'success' }}
+        env:
+          NAMESPACE_KUBECONFIG: ${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig
+          BOOTSTRAP_HOLD: ${{ steps.bootstrap-intent.outputs.bootstrap_hold }}
+          BOOTSTRAP_NAMESPACE_UID: ${{ steps.bootstrap-intent.outputs.namespace_uid }}
+          HEAD_SHA: ${{ needs.dev-demo-plan.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          bootstrap_resource_version="$(
+            KUBECONFIG="$NAMESPACE_KUBECONFIG" kubectl get namespace dev -o json |
+              jq -er --arg uid "$BOOTSTRAP_NAMESPACE_UID" --arg head "$HEAD_SHA" --arg hold "$BOOTSTRAP_HOLD" '
+                select(.kind == "Namespace" and .metadata.name == "dev"
+                  and .metadata.uid == $uid
+                  and .metadata.annotations["firemud.dev/last-dev-demo-head-sha"] == $head
+                  and .metadata.annotations["firemud.dev/pending-dev-demo-bootstrap"] == $hold)
+                | .metadata.resourceVersion | select(type == "string" and length > 0)
+              '
+          )"
+          KUBECONFIG="$NAMESPACE_KUBECONFIG" kubectl annotate namespace dev \
+            --resource-version="$bootstrap_resource_version" \
+            "firemud.dev/pending-dev-demo-bootstrap-" --overwrite >/dev/null
 
       - name: Clean local dev-demo bootstrap evidence
         if: ${{ always() && steps.bootstrap-intent.outcome == 'success' }}

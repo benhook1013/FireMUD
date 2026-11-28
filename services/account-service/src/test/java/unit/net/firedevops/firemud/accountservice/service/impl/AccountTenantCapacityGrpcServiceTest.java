@@ -1,8 +1,10 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
@@ -43,6 +45,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedConstruction;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -206,6 +209,44 @@ class AccountTenantCapacityGrpcServiceTest {
           .contains(new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, decisionId));
       ordered.verify(observer).onCompleted();
       verify(observer, never()).onError(any());
+      verifyNoMoreInteractions(observer);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void completionCallbackFailureDoesNotSignalAnotherTerminalEvent(boolean readDenial) {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    var wire = TenantCapacityAdmissionGrpcCodec.toRequest(request);
+    var peer = request.evidence().callerWorkload();
+    var decisionId = UUID.randomUUID();
+    var completionFailure = new IllegalStateException("Controlled completion callback failure");
+    try (var guards = readDenial ? quotaDenialReader(peer) : authenticatedCaller()) {
+      AccountTenantCapacityOwner owner = mock();
+      if (readDenial) {
+        when(owner.readRetainedAdmissionDenial(request, peer))
+            .thenReturn(new Refusal(Failure.CAPACITY_QUOTA_EXCEEDED, decisionId));
+      } else {
+        when(owner.commit(request, peer))
+            .thenThrow(new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED, decisionId));
+      }
+      StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
+      doThrow(completionFailure).when(observer).onCompleted();
+      var service = new AccountTenantCapacityGrpcService(owner, "prod");
+
+      assertThatThrownBy(
+              () -> {
+                if (readDenial) {
+                  service.readTenantCapacityAdmissionDenial(wire, observer);
+                } else {
+                  service.commitTenantCapacityAdmission(wire, observer);
+                }
+              })
+          .isSameAs(completionFailure);
+
+      var ordered = inOrder(observer);
+      ordered.verify(observer).onNext(any());
+      ordered.verify(observer).onCompleted();
       verifyNoMoreInteractions(observer);
     }
   }

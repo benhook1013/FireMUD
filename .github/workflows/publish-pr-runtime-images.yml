@@ -110,7 +110,7 @@ jobs:
               const producers = data.jobs.filter(job => job?.name === "PR Full-Stack Smoke (runtime-required=true)");
               const job = producers[0];
               if (producers.length !== 1 || !positive(job.id) || job.run_id !== run.id ||
-                  job.run_attempt !== run.run_attempt || job.head_sha !== run.head_sha ||
+                  (Object.hasOwn(job, "run_attempt") && job.run_attempt !== run.run_attempt) || job.head_sha !== run.head_sha ||
                   ![workflow.name, run.display_title].includes(job.workflow_name) ||
                   job.status !== "completed" || job.conclusion !== "failure" || !Array.isArray(job.steps)) return false;
               const markers = job.steps.filter(step => step?.name === "Known canonical transition PLAY failure with successful authenticated cleanup");
@@ -341,7 +341,7 @@ jobs:
                   normalizedName(job.name) === metadataExpression);
                 const checkPrefix = `https://api.github.com/repos/${repository}/check-runs/`;
                 const nativeJob = job => job && positive(job.id) && job.run_id === ci.id &&
-                  job.run_attempt === ci.run_attempt && job.head_sha === head &&
+                  (!Object.hasOwn(job, "run_attempt") || job.run_attempt === ci.run_attempt) && job.head_sha === head &&
                   [ciWorkflow.name, ciTitle].includes(job.workflow_name) && job.status === "completed" &&
                   typeof job.check_run_url === "string" && job.check_run_url.startsWith(checkPrefix) &&
                   /^[1-9][0-9]*$/.test(job.check_run_url.slice(checkPrefix.length));
@@ -437,7 +437,7 @@ jobs:
                   if (await retryClassification()) continue;
                   return null;
                 }
-                if (!gate || !positive(gate.id) || gate.run_id !== ci.id || gate.run_attempt !== ci.run_attempt ||
+                if (!gate || !positive(gate.id) || gate.run_id !== ci.id || (Object.hasOwn(gate, "run_attempt") && gate.run_attempt !== ci.run_attempt) ||
                     gate.head_sha !== head || ![ciWorkflow.name, ciTitle].includes(gate.workflow_name) || gate.status !== "completed" ||
                     typeof gate.check_run_url !== "string" || !gate.check_run_url.startsWith(checkPrefix) ||
                     !/^[1-9][0-9]*$/.test(gate.check_run_url.slice(checkPrefix.length)) ||
@@ -445,7 +445,7 @@ jobs:
                     enforcement.length !== 1 || enforcement[0].status !== "completed" ||
                     !["success", "failure"].includes(enforcement[0].conclusion)) {
                   // Skip only proven metadata preservation, never malformed or unfinished evidence.
-                  if (gate && positive(gate.id) && gate.run_id === ci.id && gate.run_attempt === ci.run_attempt &&
+                  if (gate && positive(gate.id) && gate.run_id === ci.id && (!Object.hasOwn(gate, "run_attempt") || gate.run_attempt === ci.run_attempt) &&
                       gate.head_sha === head && [ciWorkflow.name, ciTitle].includes(gate.workflow_name) &&
                       gate.status === "completed" && typeof gate.check_run_url === "string" &&
                       gate.check_run_url.startsWith(checkPrefix) && /^[1-9][0-9]*$/.test(gate.check_run_url.slice(checkPrefix.length)) &&
@@ -855,7 +855,7 @@ jobs:
                   for (const job of data.jobs) {
                     if (!Number.isSafeInteger(job?.id) || job.id <= 0 || ids.has(job.id) ||
                         typeof job.name !== "string" || !job.name.trim() || job.run_id !== sourceId ||
-                        job.run_attempt !== run.run_attempt || job.head_sha !== run.head_sha ||
+                        (Object.hasOwn(job, "run_attempt") && job.run_attempt !== run.run_attempt) || job.head_sha !== run.head_sha ||
                         ![workflow.name, run.display_title].includes(job.workflow_name)) {
                       throw new Error("publication source attempt job inventory has duplicate or unattributable jobs");
                     }

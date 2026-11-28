@@ -105,10 +105,11 @@ public final class AccountTenantCapacityGrpcService
     }
     try {
       observer.onNext(result);
-      observer.onCompleted();
     } catch (RuntimeException callback) {
       observer.onError(Status.INTERNAL.asRuntimeException());
+      return;
     }
+    observer.onCompleted();
   }
 
   @Override
@@ -168,9 +169,10 @@ public final class AccountTenantCapacityGrpcService
     }
     try {
       observer.onNext(result);
-      observer.onCompleted();
     } catch (RuntimeException callback) {
       observer.onError(Status.INTERNAL.asRuntimeException());
+      return;
     }
+    observer.onCompleted();
   }
 }

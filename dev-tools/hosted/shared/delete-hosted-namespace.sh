@@ -101,9 +101,10 @@ if [[ -n "$expected_deployed_head" ]]; then
     (.metadata.annotations // {}) as $annotations
     | select(($annotations["firemud.dev/last-dev-demo-head-sha"] | ascii_downcase) == $head)
     | select($annotations | has("firemud.dev/pending-dev-demo-deployment") | not)
+    | select($annotations | has("firemud.dev/pending-dev-demo-bootstrap") | not)
     | .metadata.resourceVersion | select(type == "string" and length > 0)
   ' <<<"$namespace_json")"; then
-    echo "refusing automatic dev-demo reset: deployed head or namespace version changed, or a pending deployment exists" >&2
+    echo "refusing automatic dev-demo reset: deployed head or namespace version changed, or a pending deployment/bootstrap hold exists" >&2
     exit 1
   fi
 fi

@@ -112,7 +112,11 @@ case "$*" in
     if [[ "${QUIESCE_MODE:-}" == active-replicaset ]]; then
       replicas=1
     fi
-    printf '{"kind":"ReplicaSetList","items":[{"kind":"ReplicaSet","metadata":{"ownerReferences":[{"kind":"Deployment","name":"account-service","controller":true}]},"spec":{"replicas":%s}}]}\n' "$replicas"
+    observed=2
+    if [[ "${QUIESCE_MODE:-}" == unobserved-replicaset ]]; then
+      observed=1
+    fi
+    printf '{"kind":"ReplicaSetList","items":[{"kind":"ReplicaSet","metadata":{"generation":2,"ownerReferences":[{"kind":"Deployment","name":"account-service","controller":true}]},"status":{"observedGeneration":%s},"spec":{"replicas":%s}}]}\n' "$observed" "$replicas"
     ;;
   "-n contract scale deployment/account-service --replicas=0")
     [[ "${QUIESCE_MODE:-}" != account-scale-failure ]] || { echo 'scale denied' >&2; exit 1; }
@@ -176,7 +180,7 @@ run_quiesce() {
 
 run_quiesce success >/dev/null
 run_quiesce typed-lists >/dev/null
-for mode in success unobserved-deployment active-replicaset; do
+for mode in success unobserved-deployment unobserved-replicaset active-replicaset; do
   calls="$fixture_dir/verify-calls-$mode"
   if QUIESCE_MODE="$mode" QUIESCE_CALLS="$calls" \
     QUIESCE_STATE="$fixture_dir/state-success" PATH="$fake_bin:$PATH" \

@@ -1110,6 +1110,9 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
       getWorkflow: async () => ({data: {id: 7, path: source.path, name: "Build Runtime Images"}}),
       getWorkflowRun: async () => {
         if (refs.length) qualifiedAttemptReads++;
+        if (kind === "ordinary-final-attempt-deadline" && qualifiedAttemptReads === 3) {
+          now += 90 * 60 * 1000;
+        }
         return {data: {...source, run_attempt: kind === "newer-attempt" || observedAttemptMove ? 2 : 1}};
       },
     },
@@ -1259,6 +1262,11 @@ async function scenario(kind, event = "pull_request", listedConclusion = null) {
   const ordinary = await scenario("ordinary-stable", "repository_dispatch");
   assert.deepEqual(ordinary.failures, [], "unchanged ordinary typed proof passes");
   assert.equal(ordinary.waitedMillis, 0);
+  const lateOrdinary = await scenario("ordinary-final-attempt-deadline", "repository_dispatch");
+  assert.equal(lateOrdinary.waitedMillis, 0);
+  assert.equal(lateOrdinary.failures.length, 1);
+  assert.match(lateOrdinary.failures[0], /^Timed out waiting for the exact runtime-images/,
+    "an exact final attempt result after the overall deadline cannot pass the gate");
   assert.equal(ordinary.infos.some(message => message.startsWith("Stopping stale smoke gate before accepting full-stack proof ")), false,
     "unchanged proof clears without the obsolete identity message");
   const delayedSmoke = await scenario("ordinary-delayed-smoke-step", "repository_dispatch");
@@ -4406,19 +4414,21 @@ async function recoveredFinalFence(disposition, change = null) {
         if (change === "unavailable") return null;
       }
       return {...selectedIdentity, sourceEvent: "repository_dispatch",
+        canonicalPlayEligible: change !== "label" || finalAttempts === 0,
         ...(finalAttempts > 0 && change === "base" ? {baseSha: "e".repeat(40), mergeSha: "f".repeat(40)} : {})};
     }, selected => JSON.stringify([selected.baseRef, selected.baseSha, selected.headSha, selected.mergeSha, selected.sourceEvent]),
     value => Number.isSafeInteger(value) && value > 0, async selected => {
       assert.deepEqual(selected, proofRun);
       finalAttempts++;
-      return change !== "rerun-after-identity" || postAttemptFences === 0;
+      return change !== "rerun-at-final-attempt" || finalAttempts < 2;
     }, resolve => resolve(), 0, () => {resumedPolling = true;});
-  const rejectedIdentity = change !== null && change !== "rerun-after-identity";
-  assert.equal(finalAttempts, (disposition === "verified" ? 2 : 1) + (rejectedIdentity ? 0 : 1));
-  assert.equal(postAttemptFences, 1);
-  assert.deepEqual(failures, []);
+  const rejectedIdentity = change !== null && change !== "rerun-at-final-attempt";
+  assert.equal(finalAttempts, disposition === "verified" ? 2 : 1 + Number(!rejectedIdentity));
+  assert.equal(postAttemptFences, disposition === "verified" && change === "rerun-at-final-attempt" ? 0 : 1);
+  assert.deepEqual(failures, disposition === "verified" && change === "label"
+    ? ["Canonical PLAY transition exception label is absent or no longer eligible."] : []);
   assert.deepEqual(outputs, disposition === "verified" && change === null ? [["known_play_exception", "true"]] : []);
-  assert.equal(resumedPolling, ["base", "unavailable", "rerun-after-identity"].includes(change),
+  assert.equal(resumedPolling, ["base", "unavailable", "rerun-at-final-attempt"].includes(change),
     "changed or unavailable final identity resumes polling; obsolete identity exits");
 }
 async function failedLegacyProof(stage, error, event = "pull_request") {
@@ -4910,7 +4920,7 @@ function markerAccepted(overrides = {}) {
       assert.equal(marker.proofReads, conclusion === "success" ? 2 : 1);
       assert.deepEqual(marker.outputs, conclusion === "success" ? [["known_play_exception", "true"]] : []);
       assert.equal(marker.writes, conclusion === "success" ? 1 : 0);
-      assert.equal(marker.finalReads, conclusion === "success" ? 3 : 0);
+      assert.equal(marker.finalReads, conclusion === "success" ? 2 : 0);
     }
   }
   const missingMarker = await pendingMarkerSnapshot([null, undefined, null, undefined, "success"]);
@@ -5457,7 +5467,8 @@ function markerAccepted(overrides = {}) {
     await selectedProducerFinalFence("repository_dispatch", false, false, false, change);
   }
   for (const disposition of ["ordinary", "verified"]) {
-    for (const change of [null, "base", "closed", "head", "retarget", "unavailable", "rerun-after-identity"]) {
+    for (const change of [null, "base", "closed", "head", "retarget", "unavailable", "rerun-at-final-attempt",
+      ...(disposition === "verified" ? ["label"] : [])]) {
       await recoveredFinalFence(disposition, change);
     }
   }

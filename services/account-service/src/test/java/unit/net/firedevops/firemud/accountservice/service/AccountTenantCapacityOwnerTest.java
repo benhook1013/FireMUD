@@ -19,6 +19,7 @@ import io.grpc.Context;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
@@ -263,10 +264,12 @@ class AccountTenantCapacityOwnerTest {
           when(f.issuances.readCurrentCommittedCandidateByJti(
                   CapacityAdmissionTestFixture.DELEGATION_JTI))
               .thenAnswer(ignored -> {
-                expire.run();
+                f.databaseExpired = true;
+                Instant tokenExpiry = sourceTokenExpiry(f.request);
+                assertThat(tokenExpiry).isAfter(f.request.evidence().expiresAt());
+                when(f.clock.instant()).thenReturn(tokenExpiry);
                 throw new CommittedCandidateExpiredException(
-                    CapacityAdmissionTestFixture.DELEGATION_JTI,
-                    f.request.evidence().expiresAt().getEpochSecond());
+                    CapacityAdmissionTestFixture.DELEGATION_JTI, tokenExpiry.getEpochSecond());
               });
       case EXPIRES_DURING_SCOPE_QUALIFICATION ->
           when(f.scopes.findCanonicalEvidenceByTokenHash(verifiedScopeTokenHash(f.request)))
@@ -524,7 +527,7 @@ class AccountTenantCapacityOwnerTest {
         java.util.Objects.requireNonNull(
             f.dsl.fetchOne("SELECT * FROM account_tenant_capacity_reservations ", new Object[0]));
     UUID claimOwner = UUID.randomUUID();
-    var claimExpiry = CapacityAdmissionTestFixture.NOW.plusSeconds(2);
+    var claimExpiry = next.evidence().expiresAt().plusSeconds(1);
     when(row.get("recovery_owner", UUID.class)).thenReturn(claimOwner);
     when(row.get("recovery_claim_fence", Long.class)).thenReturn(7L);
     when(row.get("recovery_claim_expires_at", java.time.OffsetDateTime.class))
@@ -536,7 +539,10 @@ class AccountTenantCapacityOwnerTest {
     Record usage = mock(Record.class);
     doAnswer(
             invocation -> {
-              f.databaseExpired = evaluationExpires;
+              if (evaluationExpires) {
+                f.databaseExpired = true;
+                when(f.clock.instant()).thenReturn(next.evidence().expiresAt());
+              }
               return usage;
             })
         .when(f.dsl)
@@ -565,6 +571,7 @@ class AccountTenantCapacityOwnerTest {
         .execute(startsWith("UPDATE account_tenant_capacity_reservations "), any(Object[].class));
     assertThat(f.originDecision).isNull();
     assertThat(f.pendingOriginDecision).isNull();
+    assertThat(f.transactionEvents).containsExactly("begin", "rollback");
   }
 
   private static void retainOriginThen(
@@ -994,6 +1001,7 @@ class AccountTenantCapacityOwnerTest {
     when(f.scopes.findCanonicalEvidenceByTokenHash(scopeTokenHash))
         .thenAnswer(ignored -> {
           now.set(f.request.evidence().expiresAt());
+          f.databaseExpired = true;
           return Optional.of(scope);
         });
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
@@ -1067,6 +1075,11 @@ class AccountTenantCapacityOwnerTest {
         .withDigest();
   }
 
+  private static Instant sourceTokenExpiry(Request request) {
+    var source = (Map<?, ?>) request.evidence().fields().get("sourceReferences");
+    return Instant.parse((String) source.get("callerTokenExpiresAt"));
+  }
+
   private static String verifiedScopeTokenHash(Request request) {
     return net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence
         .parseCanonical(request.evidence().canonicalBytes())
@@ -1095,7 +1108,7 @@ class AccountTenantCapacityOwnerTest {
     when(issuance.identity().notBeforeEpochSecond())
         .thenReturn(CapacityAdmissionTestFixture.NOW.minusSeconds(60).getEpochSecond());
     when(issuance.identity().expiresAtEpochSecond())
-        .thenReturn(CapacityAdmissionTestFixture.NOW.plusSeconds(3600).getEpochSecond());
+        .thenReturn(sourceTokenExpiry(f.request).getEpochSecond());
     when(issuance.tokenSha256()).thenReturn((String) source.get("callerTokenSha256"));
     when(issuance.canonicalRegistryRecordSha256())
         .thenReturn((String) source.get("callerRegistryRecordSha256"));

@@ -1257,7 +1257,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                     dsl.fetchSingle("SELECT clock_timestamp() AS observed")
                         .get("observed", java.time.OffsetDateTime.class)
                         .toInstant();
-                Instant expiresAt = evaluatedAt.plusSeconds(3);
+                Instant expiresAt = evaluatedAt.plusSeconds(10);
                 var expiresDuringTransaction =
                     acceptedAttempt(evaluatedAt, expiresAt, expiresAt.minusMillis(1));
                 insertAcceptedCapacityAttempt(dsl, tenantId, expiresDuringTransaction, 1, 2);
@@ -1267,6 +1267,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                                 AccountTenantCapacityRepository.at(expiresAt))
                             .get("fresh", Boolean.class))
                     .isTrue();
+                dsl.execute("SET LOCAL statement_timeout = '15s'");
                 dsl.execute(
                     "SELECT pg_sleep_until(?::timestamptz)",
                     AccountTenantCapacityRepository.at(expiresAt));

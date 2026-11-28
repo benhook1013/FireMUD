@@ -318,6 +318,20 @@ test('incomplete active inventory must converge or leave the refresh undispatche
   }
 });
 
+test('a repeated unrelated row does not qualify a paginated run inventory', async () => {
+  const f = admissionFixture();
+  const actions = f.admission.github.rest.actions;
+  const list = actions.listWorkflowRuns;
+  const unrelated = Array.from({length: 100}, (_, index) =>
+    f.makePullRequestRun({id: 200 + index, display_title: 'Unrelated runtime comparison', status: 'queued'}));
+  actions.listWorkflowRuns = async input => {
+    if (input.event !== 'pull_request' || input.status !== 'queued') return list(input);
+    return {data: {total_count: 101, workflow_runs: input.page === 1 ? unrelated : [unrelated[0]]}};
+  };
+  assert.equal(await admitRuntimeRefresh(f.admission), 'inventory-unavailable');
+  assert.equal(f.sent.length, 0);
+});
+
 test('identity retries are bounded and do not retry authorization failure', async () => {
   for (const [status, observations] of [[503, 6], [403, 1]]) {
     const f = admissionFixture();
@@ -772,7 +786,7 @@ test('only the exact successful admission attempt can prove an unsent or rejecte
     'wrong qualified path': (f, {run}) => { run.path += '@refs/heads/stacked'; },
     'wrong repository': (f, {run}) => { run.head_repository.full_name = 'fork/FireMUD'; },
     'wrong owner revision': (f, {run, job}) => { run.head_sha = E; job.head_sha = E; },
-    'receipt attempt identity differs': (f, {run}) => { run.run_attempt++; },
+    'receipt attempt identity differs': (f, {run, originalAttempt}) => { run.run_attempt++; originalAttempt.run_attempt++; },
     'failed run': (f, {run}) => { run.conclusion = 'failure'; },
     'wrong job head': (f, {job}) => { job.head_sha = E; },
     'skipped marker': (f, {job}) => { job.steps[0].conclusion = 'skipped'; },
@@ -797,8 +811,8 @@ test('only the exact successful admission attempt can prove an unsent or rejecte
         else f.state.dispatchError = dispatchValidationError();
         assert.equal(await admitRuntimeRefresh(f.admission), kind === 'unsent' ? 'obsolete' : 'dispatch-rejected');
         const evidence = completeOwnerReceiptAttempt(f, kind);
-        // Rejection is attributed to historical evidence. Current-run movement
-        // blocks unsent receipts, while historical contradictions block either kind.
+        // Rejection uses its exact attempt directly. An unsent proof also fences
+        // the latest observation, so movement during that proof remains ambiguous.
         const receiptRun = kind === 'rejected' && name !== 'attempt moves during marker read'
           ? evidence.originalAttempt : evidence.run;
         change(f, {...evidence, run: receiptRun, kind});
@@ -818,7 +832,7 @@ test('only the exact successful admission attempt can prove an unsent or rejecte
   }
 });
 
-test('a newer native attempt preserves only an attributable original final identity failure', async t => {
+test('a newer native attempt preserves an attributable original pre-send failure', async t => {
   for (const [name, change, expected] of [
     ['exact scoped attempt', () => {}, 'dispatched-observed'],
     ['wrong exact attempt identity', ({originalAttempt}) => { originalAttempt.run_attempt = 2; }, 'claim-held'],
@@ -855,6 +869,22 @@ test('a newer native attempt preserves only an attributable original final ident
       assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim),
         expected === 'dispatched-observed' ? ['2'] : []);
     });
+  }
+});
+
+test('an exact unsent receipt remains usable after its native run is rerun', async () => {
+  for (const conflictingMarker of [false, true]) {
+    const f = admissionFixture();
+    preparePreviewRefusal(f);
+    assert.equal(await admitRuntimeRefresh(f.admission), 'obsolete');
+    const {run, job} = completeOwnerReceiptAttempt(f, 'unsent');
+    Object.assign(run, {run_attempt: 2, status: 'queued', conclusion: null});
+    if (conflictingMarker) {
+      job.steps.push({name: 'Runtime refresh pre-send-unavailable claim', status: 'completed', conclusion: 'success'});
+    }
+    assert.equal(await admitOrdinaryRefresh(f), conflictingMarker ? 'claim-held' : 'dispatched-observed');
+    assert.deepEqual(f.sent.map(({client_payload}) => client_payload.runtime_refresh_claim),
+      conflictingMarker ? [] : ['2']);
   }
 });
 
@@ -930,13 +960,16 @@ test('advancing a generation requires one exact terminal receiver with a success
   assert.equal(f.sent.length, 2);
 });
 
-test('attempt-scoped receiver accepts a sibling job without a redundant attempt field', async () => {
+test('an exact receiver rerun can prove the original claim without a new POST', async () => {
   const f = admissionFixture();
   f.state.keepHidden = true;
   assert.equal(await admitRuntimeRefresh(f.admission), 'dispatched-unconfirmed');
   const [tag] = f.claimTags.values();
-  const run = {...f.state.newRun, status: 'completed', conclusion: 'failure', run_attempt: 2};
+  const run = {...f.state.newRun, status: 'completed', conclusion: 'failure', run_attempt: 1};
   f.runs.push(run);
+  assert.equal(await admitRuntimeRefresh(f.admission), 'claim-held');
+  assert.equal(f.sent.length, 1);
+  run.run_attempt = 2;
   f.receiverJobs.set(`${run.id}:2`, [
     {id: 1, run_id: run.id, run_attempt: 2, head_sha: run.head_sha,
       name: 'Derive Runtime Image Metadata', status: 'completed', conclusion: 'success',

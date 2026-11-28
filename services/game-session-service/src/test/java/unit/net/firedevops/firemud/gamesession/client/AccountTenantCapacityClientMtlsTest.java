@@ -649,65 +649,62 @@ class AccountTenantCapacityClientMtlsTest {
   void commitReachesItsTransportDeadlineWhileTlsReloadIsBlocked() throws Exception {
     String previousReloadPolicy = System.getProperty(TLS_RELOAD_PROPERTY);
     System.setProperty(TLS_RELOAD_PROPERTY, "true");
-    Server server = null;
     try {
       var calls = new AtomicInteger();
       var respond = new AtomicBoolean(true);
       var measuredSecondInvocationEntered = new CountDownLatch(1);
       var tls = pki.clientProperties(directory, pki.identity("client"));
       var factory = new BlockingReloadChannelFactory();
-      server =
+      var server =
           server(
               "account", calls, false, new AtomicLong(), respond, measuredSecondInvocationEntered);
-      var client = client(server, tls, factory);
-      var executor = Executors.newSingleThreadExecutor(Thread.ofPlatform().daemon().factory());
-      try (AutoCloseable stopClient =
-          () -> {
-            factory.releaseReload.countDown();
-            executor.shutdownNow();
-            stopReloadingClient(client, factory);
-            assertThat(executor.awaitTermination(5, TimeUnit.SECONDS))
-                .as("capacity RPC worker terminated")
-                .isTrue();
-          }) {
-        client.init();
-        assertThat(factory.singleAttemptBuilds).hasValue(1);
-        assertThat(factory.standardBuilds).hasValue(0);
-        var request = CapacityAdmissionTestFixture.playerRequest();
-        client.commit(request, deadline());
-        respond.set(false);
-        try {
-          Files.writeString(Path.of(tls.getCertChain()), "\n", StandardOpenOption.APPEND);
-          assertThat(factory.reloadStarted.await(5, TimeUnit.SECONDS)).isTrue();
-          assertThat(factory.singleAttemptBuilds).hasValue(2);
+      try (AutoCloseable stopServer = () -> stop(server)) {
+        var client = client(server, tls, factory);
+        var executor = Executors.newSingleThreadExecutor(Thread.ofPlatform().daemon().factory());
+        try (AutoCloseable stopClient =
+            () -> {
+              factory.releaseReload.countDown();
+              executor.shutdownNow();
+              stopReloadingClient(client, factory);
+              assertThat(executor.awaitTermination(5, TimeUnit.SECONDS))
+                  .as("capacity RPC worker terminated")
+                  .isTrue();
+            }) {
+          client.init();
+          assertThat(factory.singleAttemptBuilds).hasValue(1);
           assertThat(factory.standardBuilds).hasValue(0);
-          long explicitDeadline = CapacityAdmissionTestFixture.NOW.toEpochMilli() + 3_000L;
-          var timedOut =
-              executor.submit(() ->
-                  assertThatThrownBy(() -> client.commit(request, explicitDeadline))
-                      .isInstanceOfSatisfying(
-                          StatusRuntimeException.class,
-                          failure ->
-                              assertThat(failure.getStatus().getCode())
-                                  .isEqualTo(Status.Code.DEADLINE_EXCEEDED)));
-          assertThat(measuredSecondInvocationEntered.await(4, TimeUnit.SECONDS)).isTrue();
-          timedOut.get(4, TimeUnit.SECONDS);
-          assertThat(factory.releaseReload.getCount()).isEqualTo(1);
-          assertThat(calls).hasValue(2);
-        } finally {
-          factory.releaseReload.countDown();
+          var request = CapacityAdmissionTestFixture.playerRequest();
+          client.commit(request, deadline());
+          respond.set(false);
+          try {
+            Files.writeString(Path.of(tls.getCertChain()), "\n", StandardOpenOption.APPEND);
+            assertThat(factory.reloadStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(factory.singleAttemptBuilds).hasValue(2);
+            assertThat(factory.standardBuilds).hasValue(0);
+            long explicitDeadline = CapacityAdmissionTestFixture.NOW.toEpochMilli() + 3_000L;
+            var timedOut =
+                executor.submit(() ->
+                    assertThatThrownBy(() -> client.commit(request, explicitDeadline))
+                        .isInstanceOfSatisfying(
+                            StatusRuntimeException.class,
+                            failure ->
+                                assertThat(failure.getStatus().getCode())
+                                    .isEqualTo(Status.Code.DEADLINE_EXCEEDED)));
+            assertThat(measuredSecondInvocationEntered.await(4, TimeUnit.SECONDS)).isTrue();
+            timedOut.get(4, TimeUnit.SECONDS);
+            assertThat(factory.releaseReload.getCount()).isEqualTo(1);
+            assertThat(calls).hasValue(2);
+          } finally {
+            factory.releaseReload.countDown();
+          }
+          assertThat(factory.reloadBuilt.await(5, TimeUnit.SECONDS)).isTrue();
         }
-        assertThat(factory.reloadBuilt.await(5, TimeUnit.SECONDS)).isTrue();
       }
     } finally {
-      try {
-        if (server != null) stop(server);
-      } finally {
-        if (previousReloadPolicy == null) {
-          System.clearProperty(TLS_RELOAD_PROPERTY);
-        } else {
-          System.setProperty(TLS_RELOAD_PROPERTY, previousReloadPolicy);
-        }
+      if (previousReloadPolicy == null) {
+        System.clearProperty(TLS_RELOAD_PROPERTY);
+      } else {
+        System.setProperty(TLS_RELOAD_PROPERTY, previousReloadPolicy);
       }
     }
   }

@@ -72,9 +72,19 @@ case "${GH_FIXTURE:-}" in
   branch_wrong)
     printf '[{"workflow_runs":[{"id":104,"status":"completed","conclusion":"success","event":"workflow_run","head_sha":"dddddddddddddddddddddddddddddddddddddd","html_url":"https://example.test/runtime/104","display_title":"Build Runtime Images trusted-branch branch-main sha-%s","created_at":"2026-09-21T00:02:00Z"}]}]' "$head_sha"
     ;;
-  receipt_requalification|requalification_missing_receipt|receipt_after_failed_requalification|receipt_after_tag_conflict|receipt_ignore_ineligible_dispatch|failed_requalification_without_receipt|receipt|receipt_wrong_source|receipt_wrong_publisher|receipt_foreign|receipt_failed|receipt_duplicate|legacy|legacy_expired|legacy_missing|wrong_runs|receipt_transient|receipt_rerun)
+  receipt_requalification|requalification_missing_receipt|receipt_after_failed_requalification|receipt_expired_requalification|receipt_wrong_expired_requalification|receipt_no_job_attempt|receipt_typed_callback|receipt_after_tag_conflict|receipt_ignore_ineligible_dispatch|failed_requalification_without_receipt|receipt|receipt_wrong_source|receipt_wrong_publisher|receipt_foreign|receipt_failed|receipt_duplicate|legacy|legacy_expired|legacy_missing|wrong_runs|receipt_transient|receipt_rerun)
     source_title="Build Runtime Images secure-pr-artifact pr-7 base-$base_sha head-$head_sha merge-$merge_sha mode-required"
     fixture_attempt=2
+    source_event=pull_request
+    source_head="$head_sha"
+    source_path='.github/workflows/runtime-images.yml@refs/pull/7/merge'
+    source_branch=feature/example
+    if [[ "$GH_FIXTURE" == receipt_typed_callback ]]; then
+      source_event=repository_dispatch
+      source_head="$base_sha"
+      source_path='.github/workflows/runtime-images.yml'
+      source_branch=main
+    fi
     if [[ "$GH_FIXTURE" == receipt_rerun ]]; then
       [[ ! -e "$WAITER_STATE" ]] || fixture_attempt=3
     fi
@@ -121,8 +131,8 @@ case "${GH_FIXTURE:-}" in
           fixture_attempt=3
           : >"$WAITER_STATE"
         fi
-        printf '{"id":101,"workflow_id":501,"path":".github/workflows/runtime-images.yml@refs/pull/7/merge","head_branch":"feature/example","run_attempt":%s,"name":"Build Runtime Images","status":"completed","conclusion":"success","event":"pull_request","head_sha":"%s","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"},"html_url":"https://example.test/runtime/101","display_title":"%s","created_at":"2026-09-21T00:00:00Z","run_started_at":"2026-09-21T00:00:00Z","updated_at":"2026-09-21T00:00:45Z"}' \
-          "$fixture_attempt" "$head_sha" "$source_title"
+        printf '{"id":101,"workflow_id":501,"path":"%s","head_branch":"%s","run_attempt":%s,"name":"Build Runtime Images","status":"completed","conclusion":"success","event":"%s","head_sha":"%s","repository":{"full_name":"example/firemud"},"head_repository":{"full_name":"example/firemud"},"html_url":"https://example.test/runtime/101","display_title":"%s","created_at":"2026-09-21T00:00:00Z","run_started_at":"2026-09-21T00:00:00Z","updated_at":"2026-09-21T00:00:45Z"}' \
+          "$source_path" "$source_branch" "$fixture_attempt" "$source_event" "$source_head" "$source_title"
         ;;
       *'/actions/runs/102/attempts/1/jobs?'*|*'/actions/runs/104/attempts/1/jobs?'*)
         receipt= source_attempt="$fixture_attempt" publisher_attempt=1 conclusion=success
@@ -144,9 +154,18 @@ case "${GH_FIXTURE:-}" in
             receipt+="$receipt"
           fi
         fi
-        printf '{"total_count":1,"jobs":[{"id":%s,"run_id":%s,"run_attempt":1,"head_sha":"%s","name":"Publish Fixed PR Merge Image Tags","status":"completed","conclusion":"success","steps":[{"name":"Download successful PR image artifacts","number":5,"status":"completed","conclusion":"success"},{"name":"Validate exact PR source and artifact before registry login","number":6,"status":"completed","conclusion":"success"},{"name":"Publish fixed PR image tags","number":8,"status":"completed","conclusion":"success"}%s]}]}' "$publisher_job_id" "$publisher_id" "$base_sha" "$receipt"
+        publisher_attempt_field=',"run_attempt":1'
+        [[ "$GH_FIXTURE" != receipt_no_job_attempt ]] || publisher_attempt_field=''
+        printf '{"total_count":1,"jobs":[{"id":%s,"run_id":%s%s,"head_sha":"%s","name":"Publish Fixed PR Merge Image Tags","status":"completed","conclusion":"success","steps":[{"name":"Download successful PR image artifacts","number":5,"status":"completed","conclusion":"success"},{"name":"Validate exact PR source and artifact before registry login","number":6,"status":"completed","conclusion":"success"},{"name":"Publish fixed PR image tags","number":8,"status":"completed","conclusion":"success"}%s]}]}' "$publisher_job_id" "$publisher_id" "$publisher_attempt_field" "$base_sha" "$receipt"
         ;;
       *'/actions/runs/103/attempts/1/jobs?'*)
+        if [[ "$GH_FIXTURE" == receipt_expired_requalification || "$GH_FIXTURE" == receipt_wrong_expired_requalification ]]; then
+          expired_artifact=9001
+          [[ "$GH_FIXTURE" != receipt_wrong_expired_requalification ]] || expired_artifact=9888
+          printf '{"total_count":2,"jobs":[{"id":1003,"run_id":103,"head_sha":"%s","name":"Publish Fixed PR Merge Image Tags","status":"completed","conclusion":"skipped","steps":[]},{"id":1004,"run_id":103,"head_sha":"%s","name":"Resolve Exact Runtime Publication Source","status":"completed","conclusion":"failure","steps":[{"name":"Resolve successful exact source run","status":"completed","conclusion":"success"},{"name":"Exact runtime artifact expired source-101-%s artifact-%s %s","status":"completed","conclusion":"failure"}]}]}' \
+            "$base_sha" "$base_sha" "$fixture_attempt" "$expired_artifact" "$digest"
+          exit 0
+        fi
         tag_result=skipped
         [[ "$GH_FIXTURE" != receipt_after_tag_conflict ]] || tag_result=failure
         printf '{"total_count":1,"jobs":[{"id":1003,"run_id":103,"run_attempt":1,"head_sha":"%s","name":"Publish Fixed PR Merge Image Tags","status":"completed","conclusion":"failure","steps":[{"name":"Publish fixed PR image tags","number":8,"status":"completed","conclusion":"%s"}]}]}' "$base_sha" "$tag_result"
@@ -174,7 +193,7 @@ case "${GH_FIXTURE:-}" in
           esac
           exit 0
         fi
-        if [[ "$GH_FIXTURE" == receipt_after_failed_requalification || "$GH_FIXTURE" == receipt_after_tag_conflict || "$GH_FIXTURE" == receipt_ignore_ineligible_dispatch ]]; then
+        if [[ "$GH_FIXTURE" == receipt_after_failed_requalification || "$GH_FIXTURE" == receipt_expired_requalification || "$GH_FIXTURE" == receipt_wrong_expired_requalification || "$GH_FIXTURE" == receipt_after_tag_conflict || "$GH_FIXTURE" == receipt_ignore_ineligible_dispatch ]]; then
           case "$*" in
             *event=workflow_run*)
               printf '{"total_count":1,"workflow_runs":[{"id":102,"workflow_id":502,"run_attempt":1,"event":"workflow_run","status":"completed","conclusion":"success","display_title":"%s","created_at":"2026-09-21T00:01:00Z"}]}' \
@@ -198,7 +217,7 @@ case "${GH_FIXTURE:-}" in
         printf '{"total_count":1,"workflow_runs":[{"id":%s,"workflow_id":502,"run_attempt":1,"event":"%s","status":"completed","conclusion":"success","display_title":"%s","created_at":"2026-09-21T00:01:00Z"}]}' "$publisher_id" "$publisher_event" "$publisher_title"
         ;;
       *)
-        printf '[{"workflow_runs":[{"id":101,"workflow_id":501,"run_attempt":%s,"status":"completed","conclusion":"success","event":"pull_request","head_sha":"%s","html_url":"https://example.test/runtime/101","display_title":"%s","created_at":"2026-09-21T00:00:00Z"}]}]' "$fixture_attempt" "$head_sha" "$source_title"
+        printf '[{"workflow_runs":[{"id":101,"workflow_id":501,"run_attempt":%s,"status":"completed","conclusion":"success","event":"%s","head_sha":"%s","html_url":"https://example.test/runtime/101","display_title":"%s","created_at":"2026-09-21T00:00:00Z"}]}]' "$fixture_attempt" "$source_event" "$source_head" "$source_title"
         ;;
     esac
     ;;
@@ -247,7 +266,7 @@ if GH_FIXTURE=stale_head bash "$RESOLVER" "$merge_sha" 7 "$base_sha" >/dev/null 
   exit 1
 fi
 
-for fixture in receipt_requalification receipt_after_failed_requalification receipt_ignore_ineligible_dispatch receipt legacy receipt_transient receipt_rerun; do
+for fixture in receipt_requalification receipt_no_job_attempt receipt_typed_callback receipt_expired_requalification receipt_after_failed_requalification receipt_ignore_ineligible_dispatch receipt legacy receipt_transient receipt_rerun; do
   if ! GH_FIXTURE="$fixture" WAITER_STATE="$TEMP_DIR/waiter-$fixture.state" \
     WAITER_CALLS="$TEMP_DIR/waiter-$fixture.calls" \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=30 \
@@ -302,7 +321,7 @@ PY_RERUN_PROOF_ORDER
   fi
 done
 
-for fixture in requalification_missing_receipt receipt_after_tag_conflict receipt_wrong_source receipt_wrong_publisher receipt_foreign receipt_failed receipt_duplicate legacy_expired legacy_missing; do
+for fixture in requalification_missing_receipt receipt_wrong_expired_requalification receipt_after_tag_conflict receipt_wrong_source receipt_wrong_publisher receipt_foreign receipt_failed receipt_duplicate legacy_expired legacy_missing; do
   if GH_FIXTURE="$fixture" \
     HOSTED_IMAGE_WAIT_TIMEOUT_SECONDS=2 \
     HOSTED_IMAGE_PUBLISHER_WAIT_TIMEOUT_SECONDS=2 \

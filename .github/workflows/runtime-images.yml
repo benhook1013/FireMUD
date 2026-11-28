@@ -901,50 +901,59 @@ jobs:
                 ].includes(candidate?.display_title));
               };
               const matching = await readPublishers();
-              if (!matching || matching.length !== 1) return false;
-              const publisher = matching[0];
-              const exactPublisher = candidate => candidate &&
+              if (!matching || matching.length === 0 || matching.length > 2 ||
+                  new Set(matching.map(run => run.id)).size !== matching.length ||
+                  new Set(matching.map(run => run.event)).size !== matching.length) return false;
+              const exactPublisher = (publisher, candidate) => candidate &&
                 ["id", "workflow_id", "run_attempt", "path", "display_title", "event", "head_branch", "head_sha", "created_at", "status", "conclusion"]
                   .every(field => candidate[field] === publisher[field]) &&
                 [publisherName, publisher.display_title].includes(candidate.name) &&
                 candidate.repository?.full_name === repository && candidate.head_repository?.full_name === repository;
-              if (!exactPublisher(publisher) || publisher.id <= 0 || !Number.isSafeInteger(publisher.id) ||
-                  publisher.run_attempt !== 1 ||
-                  publisher.workflow_id !== owner.id || publisher.head_branch !== defaultBranch || !shaPattern.test(publisher.head_sha || "") ||
-                  !(publisher.path === publisherPath || publisher.path === `${publisherPath}@refs/heads/${defaultBranch}`) ||
-                  (publisher.event === "repository_dispatch" ? publisher.display_title !== `${dispatchTitle} ${attemptSuffix}` :
-                    publisher.event !== "workflow_run" || publisher.display_title !== `${callbackTitle} source-run-${run.id} ${attemptSuffix}`) ||
-                  !Number.isFinite(timestamp(publisher.created_at)) || timestamp(publisher.created_at) < artifactTime ||
-                  publisher.status !== "completed" || publisher.conclusion !== "failure") return false;
-              const {data: evidence} = await github.rest.actions.listJobsForWorkflowRunAttempt(fanoutOptions({
-                ...context.repo, run_id: publisher.id, attempt_number: publisher.run_attempt, per_page: 100, page: 1,
-              }));
-              if (!Array.isArray(evidence?.jobs) || evidence.jobs.length > 100 || evidence.jobs.length !== evidence.total_count) return false;
-              const fixed = evidence.jobs.filter(value => value?.name === "Publish Fixed PR Merge Image Tags");
-              const exactJob = job => Number.isSafeInteger(job?.id) && job.id > 0 &&
-                job.run_id === publisher.id && job.run_attempt === publisher.run_attempt &&
-                job.head_sha === publisher.head_sha && job.status === "completed";
-              if (fixed.length !== 1 || !exactJob(fixed[0])) return false;
-              if (fixed[0].conclusion === "skipped") {
-                const resolvers = evidence.jobs.filter(value => value?.name === "Resolve Exact Runtime Publication Source");
-                if (resolvers.length !== 1 || !exactJob(resolvers[0]) || resolvers[0].conclusion !== "failure" ||
-                    !Array.isArray(resolvers[0].steps)) return false;
-                const resolverSteps = resolvers[0].steps.filter(step => step?.name === "Resolve successful exact source run");
-                const expirySteps = resolvers[0].steps.filter(step => step?.name?.startsWith("Exact runtime artifact expired"));
-                if (resolverSteps.length !== 1 || resolverSteps[0].status !== "completed" ||
-                    resolverSteps[0].conclusion !== "success" || expirySteps.length !== 1 ||
-                    expirySteps[0].name !== `Exact runtime artifact expired source-${run.id}-${run.run_attempt} artifact-${artifact.id} ${artifact.digest}` ||
-                    expirySteps[0].status !== "completed" || expirySteps[0].conclusion !== "failure") return false;
-              } else {
-                if (fixed[0].conclusion !== "failure" || !Array.isArray(fixed[0].steps)) return false;
-                const write = fixed[0].steps.filter(step => step?.name === "Publish fixed PR image tags");
-                if (write.length !== 1 || write[0].status !== "completed" || write[0].conclusion !== "skipped" ||
-                    fixed[0].steps.some(step => step?.name?.startsWith("PR runtime publication receipt") && step.conclusion !== "skipped")) return false;
+              for (const publisher of matching) {
+                if (!exactPublisher(publisher, publisher) || publisher.id <= 0 || !Number.isSafeInteger(publisher.id) ||
+                    publisher.run_attempt !== 1 ||
+                    publisher.workflow_id !== owner.id || publisher.head_branch !== defaultBranch || !shaPattern.test(publisher.head_sha || "") ||
+                    !(publisher.path === publisherPath || publisher.path === `${publisherPath}@refs/heads/${defaultBranch}`) ||
+                    (publisher.event === "repository_dispatch" ? publisher.display_title !== `${dispatchTitle} ${attemptSuffix}` :
+                      publisher.event !== "workflow_run" || publisher.display_title !== `${callbackTitle} source-run-${run.id} ${attemptSuffix}`) ||
+                    !Number.isFinite(timestamp(publisher.created_at)) || timestamp(publisher.created_at) < artifactTime ||
+                    publisher.status !== "completed" || publisher.conclusion !== "failure") return false;
+                const {data: evidence} = await github.rest.actions.listJobsForWorkflowRunAttempt(fanoutOptions({
+                  ...context.repo, run_id: publisher.id, attempt_number: publisher.run_attempt, per_page: 100, page: 1,
+                }));
+                if (!Array.isArray(evidence?.jobs) || evidence.jobs.length > 100 || evidence.jobs.length !== evidence.total_count) return false;
+                const fixed = evidence.jobs.filter(value => value?.name === "Publish Fixed PR Merge Image Tags");
+                const exactJob = job => Number.isSafeInteger(job?.id) && job.id > 0 &&
+                  job.run_id === publisher.id &&
+                  (!Object.hasOwn(job, "run_attempt") || job.run_attempt === publisher.run_attempt) &&
+                  job.head_sha === publisher.head_sha && job.status === "completed";
+                if (fixed.length !== 1 || !exactJob(fixed[0])) return false;
+                if (fixed[0].conclusion === "skipped") {
+                  const resolvers = evidence.jobs.filter(value => value?.name === "Resolve Exact Runtime Publication Source");
+                  if (resolvers.length !== 1 || !exactJob(resolvers[0]) || resolvers[0].conclusion !== "failure" ||
+                      !Array.isArray(resolvers[0].steps)) return false;
+                  const resolverSteps = resolvers[0].steps.filter(step => step?.name === "Resolve successful exact source run");
+                  const expirySteps = resolvers[0].steps.filter(step => step?.name?.startsWith("Exact runtime artifact expired"));
+                  if (resolverSteps.length !== 1 || resolverSteps[0].status !== "completed" ||
+                      resolverSteps[0].conclusion !== "success" || expirySteps.length !== 1 ||
+                      expirySteps[0].name !== `Exact runtime artifact expired source-${run.id}-${run.run_attempt} artifact-${artifact.id} ${artifact.digest}` ||
+                      expirySteps[0].status !== "completed" || expirySteps[0].conclusion !== "failure") return false;
+                } else {
+                  if (fixed[0].conclusion !== "failure" || !Array.isArray(fixed[0].steps)) return false;
+                  const write = fixed[0].steps.filter(step => step?.name === "Publish fixed PR image tags");
+                  if (write.length !== 1 || write[0].status !== "completed" || write[0].conclusion !== "skipped" ||
+                      write[0].started_at != null ||
+                      fixed[0].steps.some(step => step?.name?.startsWith("PR runtime publication receipt") && step.conclusion !== "skipped")) return false;
+                }
               }
               const refreshed = await readPublishers();
-              if (!refreshed || refreshed.length !== 1 || !exactPublisher(refreshed[0])) return false;
-              const {data: current} = await github.rest.actions.getWorkflowRun(fanoutOptions({...context.repo, run_id: publisher.id}));
-              return exactPublisher(current);
+              if (!refreshed || refreshed.length !== matching.length ||
+                  matching.some(publisher => !refreshed.some(candidate => exactPublisher(publisher, candidate)))) return false;
+              for (const publisher of matching) {
+                const {data: current} = await github.rest.actions.getWorkflowRun(fanoutOptions({...context.repo, run_id: publisher.id}));
+                if (!exactPublisher(publisher, current)) return false;
+              }
+              return true;
             };
             // The older PLAY diagnostic can leave the source run red. Only a
             // complete native attempt with its marker explicitly skipped can

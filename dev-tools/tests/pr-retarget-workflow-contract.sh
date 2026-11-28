@@ -1105,6 +1105,10 @@ async function runDispatcher({
         },
         getWorkflowRun: async (request) => {
           recordApiRequest("actions.getWorkflowRun", request);
+          if (request.run_id in (publication.additional ?? {})) {
+            const exactPublisher = publication.additional[request.run_id];
+            return {data: exactPublisher.latest ?? exactPublisher.run};
+          }
           if (request.run_id === publication.run?.id) return {data: publication.latest ?? publication.run};
           if (request.run_id !== ciRun.id) {
             runtimeRunReads.push(request.run_id);
@@ -1130,6 +1134,11 @@ async function runDispatcher({
         },
         listJobsForWorkflowRunAttempt: async (request) => {
           recordApiRequest("actions.listJobsForWorkflowRunAttempt", request);
+          if (request.run_id in (publication.additional ?? {})) {
+            const exactPublisher = publication.additional[request.run_id];
+            assert.equal(request.attempt_number, exactPublisher.run.run_attempt);
+            return {data: {total_count: exactPublisher.jobs.length, jobs: exactPublisher.jobs}};
+          }
           if (request.run_id === publication.run?.id) {
             assert.equal(request.attempt_number, publication.run.run_attempt);
             const jobs = publication.jobs ?? [publication.job];
@@ -1995,6 +2004,9 @@ async function runDispatcher({
         status: "completed", conclusion: "failure"},
     ]},
   ];
+  const callbackPublisher = {...publisher, id: 997, event: "workflow_run",
+    display_title: `Publish PR Runtime Images ${completedRefresh.display_title} source-run-${completedRefresh.id} attempt-${completedRefresh.run_attempt}`};
+  const callbackJob = {...publisherJob, id: 998, run_id: callbackPublisher.id};
   for (const [disposition, overrides, expected] of [
     ["expiry rejected by the exact resolver before any tag writer", {jobs: expiredBeforeWrite}, ["101"]],
     ["resolver failure lacks a typed expiry marker", {jobs: [expiredBeforeWrite[0],
@@ -2007,7 +2019,12 @@ async function runDispatcher({
     ["publisher could have written some tags", {job: {...publisherJob, steps: [{...noWrite, conclusion: "failure"}]}}, []],
     ["artifact is still retained", {artifact: {...artifact, expired: false}}, []],
     ["artifact is from a different upload window", {artifact: {...artifact, created_at: "2026-01-01T11:58:00Z"}}, []],
-    ["other exact publisher exists", {inventory: [publisher, {...publisher, id: 999}]}, []],
+    ["the two allowed wake paths both prove no write", {inventory: [publisher, callbackPublisher],
+      additional: {[callbackPublisher.id]: {run: callbackPublisher, jobs: [callbackJob]}}}, ["101"]],
+    ["one wake path could have written tags", {inventory: [publisher, callbackPublisher],
+      additional: {[callbackPublisher.id]: {run: callbackPublisher,
+        jobs: [{...callbackJob, steps: [{...noWrite, started_at: "2026-01-01T12:12:12Z"}]}]}}}, []],
+    ["other exact publisher for the same wake exists", {inventory: [publisher, {...publisher, id: 999}]}, []],
     ["publisher inventory is incomplete", {totalCount: 101}, []],
     ["publisher rerun became current", {latest: {...publisher, run_attempt: 4}}, []],
     ["legacy publisher cannot be tied to the selected attempt", {run: {...publisher,

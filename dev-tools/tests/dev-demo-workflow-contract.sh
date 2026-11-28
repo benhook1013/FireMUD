@@ -1431,6 +1431,8 @@ if ("steps.v2-migration-mode.outputs.activation == 'false'" not in clean_reset["
         '"$EXPECTED_NAMESPACE_UID" "$EXPECTED_DEPLOYED_HEAD"' not in clean_reset["run"]):
     raise SystemExit("automatic dev-demo reset must carry the classified UID and deployed head")
 deployed_head_step = deploy_by_name["Record exact deployed dev-demo head"]
+if deployed_head_step.get("env", {}).get("RETAINED_ACTIVATION") != "${{ steps.v2-migration-mode.outputs.activation }}":
+    raise SystemExit("deployed-head recording must receive the classifier's activation output")
 if "steps.deploy-release.outcome == 'success'" not in deployed_head_step.get("if", ""):
     raise SystemExit("deployed-head evidence is not gated on successful Helm completion")
 if "firemud.dev/last-dev-demo-head-sha=${HEAD_SHA}" not in deployed_head_step["run"]:
@@ -1510,18 +1512,37 @@ bootstrap_step = deploy_by_name["Create dev-demo smoke account"]
 intent_step = deploy_by_name["Capture dev-demo bootstrap intent"]
 retain_intent = deploy_by_name["Retain dev-demo bootstrap intent before sending"]
 retain_result = deploy_by_name["Retain successful dev-demo bootstrap result"]
+clear_bootstrap_hold = deploy_by_name["Clear dev-demo bootstrap hold after retained result"]
 if not (
     deploy_steps.index(deployed_head_step) < deploy_steps.index(intent_step)
     < deploy_steps.index(retain_intent) < deploy_steps.index(bootstrap_step)
-    < deploy_steps.index(retain_result)
+    < deploy_steps.index(retain_result) < deploy_steps.index(clear_bootstrap_hold)
 ):
     raise SystemExit("dev-demo bootstrap custody ordering is incorrect")
 if intent_step["if"] != "${{ success() && steps.record-deployed-head.outcome == 'success' }}":
     raise SystemExit("dev-demo bootstrap intent must follow successful deployment recording")
+if intent_step["env"].get("NAMESPACE_KUBECONFIG") != "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig":
+    raise SystemExit("dev-demo bootstrap intent must use the namespace-manager kubeconfig")
+if "firemud.dev/pending-dev-demo-bootstrap" not in intent_step["run"]:
+    raise SystemExit("dev-demo bootstrap intent must create a durable namespace hold")
 if bootstrap_step["if"] != "${{ success() && steps.retain-bootstrap-intent.outcome == 'success' }}":
     raise SystemExit("dev-demo bootstrap must wait for durable intent retention")
 if bootstrap_step["env"]["BOOTSTRAP_REQUEST_ID"] != "${{ steps.bootstrap-intent.outputs.request_id }}":
     raise SystemExit("dev-demo bootstrap request must consume the captured attempt identity")
+if bootstrap_step["env"].get("BOOTSTRAP_HOLD") != "${{ steps.bootstrap-intent.outputs.bootstrap_hold }}":
+    raise SystemExit("dev-demo bootstrap must consume the exact durable namespace hold")
+if bootstrap_step["env"].get("NAMESPACE_KUBECONFIG") != "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig":
+    raise SystemExit("dev-demo bootstrap must use the namespace manager for hold custody")
+if clear_bootstrap_hold["if"] != "${{ success() && steps.retain-bootstrap-result.outcome == 'success' }}":
+    raise SystemExit("dev-demo bootstrap hold must clear only after durable result retention")
+if clear_bootstrap_hold["env"].get("NAMESPACE_KUBECONFIG") != "${{ runner.temp }}/dev-demo-namespace-manager.kubeconfig":
+    raise SystemExit("dev-demo bootstrap hold clear must use the namespace manager")
+if clear_bootstrap_hold["env"].get("BOOTSTRAP_HOLD") != "${{ steps.bootstrap-intent.outputs.bootstrap_hold }}":
+    raise SystemExit("dev-demo bootstrap hold clear must use the exact durable hold")
+if "firemud.dev/pending-dev-demo-bootstrap-" not in clear_bootstrap_hold["run"]:
+    raise SystemExit("dev-demo bootstrap hold must clear in the post-retention step")
+if "firemud.dev/pending-dev-demo-bootstrap-" in bootstrap_step["run"]:
+    raise SystemExit("dev-demo bootstrap must not clear its hold before result retention")
 if retain_result["if"] != "${{ always() && steps.bootstrap-smoke.outputs.result_ready == 'true' }}":
     raise SystemExit("validated bootstrap evidence must upload even when cleanup fails")
 if not (

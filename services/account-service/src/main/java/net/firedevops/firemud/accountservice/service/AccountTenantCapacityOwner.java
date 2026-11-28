@@ -168,7 +168,7 @@ public final class AccountTenantCapacityOwner {
               currentDelegationAndScope(request, parsed, lifetime.accountNow());
             } catch (CommittedCandidateExpiredException expired) {
               if (!evidence.permitsCreation()
-                  || !expired.matches(sourceTokenJti(evidence), retainedExpiry))
+                  || !expired.matches(sourceTokenJti(evidence), sourceTokenExpiry(evidence)))
                 throw unavailable();
               lifetime = observeLifetime(evidence, retainedExpiry);
               if (!lifetime.expired()) throw unavailable();
@@ -380,6 +380,12 @@ public final class AccountTenantCapacityOwner {
     if (!(evidence.fields().get("sourceReferences") instanceof Map<?, ?> source))
       throw unavailable();
     return UUID.fromString((String) source.get("callerTokenJti"));
+  }
+
+  private static Instant sourceTokenExpiry(Evidence evidence) {
+    if (!(evidence.fields().get("sourceReferences") instanceof Map<?, ?> source))
+      throw unavailable();
+    return Instant.parse((String) source.get("callerTokenExpiresAt"));
   }
 
   private static <T> T qualifiedSource(Supplier<T> read) {

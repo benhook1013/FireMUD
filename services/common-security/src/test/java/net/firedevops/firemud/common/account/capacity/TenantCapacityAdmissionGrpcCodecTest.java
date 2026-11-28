@@ -31,13 +31,20 @@ class TenantCapacityAdmissionGrpcCodecTest {
     assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.toRefusal(request, code))
         .isInstanceOf(IllegalArgumentException.class);
 
-    var missingReceipt =
-        response.toBuilder()
-            .setRefusal(0, response.getRefusal(0).toBuilder().clearDurableDenialId())
-            .build();
-    assertThatThrownBy(
-            () -> TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, missingReceipt))
-        .isInstanceOf(IllegalArgumentException.class);
+    var commitment = TenantCapacityAdmissionGrpcCodec.toResponse(request, result(request));
+    for (var invalid :
+        List.of(
+            response.toBuilder().addCommitment(commitment.getCommitment(0)).build(),
+            response.toBuilder().addRefusal(response.getRefusal(0)).build(),
+            response.toBuilder()
+                .setRefusal(0, response.getRefusal(0).toBuilder().clearDurableDenialId())
+                .build())) {
+      assertThatThrownBy(
+              () -> TenantCapacityAdmissionGrpcCodec.readRefusalDetails(request, invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.requireResponse(request, invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
   }
 
   @Test

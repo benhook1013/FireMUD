@@ -88,7 +88,8 @@ read_endpoint_slices() {
 
 verify_writer_quiescence() {
   local writer_deadline="$1"
-  local service deployment_json replicas deployment_observed replicasets_json active_replicasets pods_json pod_count
+  local service deployment_json replicas deployment_observed replicasets_json active_replicasets
+  local unobserved_replicasets replicaset_status pods_json pod_count
   for service in "${services[@]}"; do
     while :; do
       if ! deployment_json="$(kubectl --request-timeout=10s -n "$namespace" get deployment "$service" --ignore-not-found -o json)"; then
@@ -111,7 +112,7 @@ verify_writer_quiescence() {
       if ! replicasets_json="$(kubectl --request-timeout=10s -n "$namespace" get replicasets -o json)"; then
         fail "cannot verify ReplicaSets for Deployment/$service"
       fi
-      if ! active_replicasets="$(jq -er --arg service "$service" '
+      if ! replicaset_status="$(jq -er --arg service "$service" '
         if (.kind != "ReplicaSetList" and .kind != "List")
           or (.items | type != "array")
           or any(.items[]; .kind != "ReplicaSet")
@@ -124,13 +125,21 @@ verify_writer_quiescence() {
                 or .spec.template.metadata.labels.app == $service
                 or any(.spec.template.spec.containers[]?;
                   .name == $service
-                  or ((.image // "") | split("@")[0] | split("/")[-1] | split(":")[0]) == $service))
-            | select(.spec.replicas != 0)]
-          | length
+                  or ((.image // "") | split("@")[0] | split("/")[-1] | split(":")[0]) == $service))]
+          | {
+              active: [.[] | select(.spec.replicas != 0)] | length,
+              unobserved: [.[]
+                | select(.spec.replicas == 0)
+                | select((.metadata.generation | type) != "number"
+                    or .status.observedGeneration != .metadata.generation)]
+                | length
+            }
+          | "\(.active)\t\(.unobserved)"
         end
       ' <<<"$replicasets_json")"; then
         fail "cannot parse ReplicaSets for Deployment/$service"
       fi
+      read -r active_replicasets unobserved_replicasets <<<"$replicaset_status"
 
       if ! pods_json="$(kubectl --request-timeout=10s -n "$namespace" get pods -o json)"; then
         fail "cannot verify pods for Deployment/$service"
@@ -157,11 +166,12 @@ verify_writer_quiescence() {
       ' <<<"$pods_json")"; then
         fail "cannot parse pods for Deployment/$service"
       fi
-      if [[ "$deployment_observed" == true && "$active_replicasets" == 0 && "$pod_count" == 0 ]]; then
+      if [[ "$deployment_observed" == true && "$active_replicasets" == 0 &&
+        "$unobserved_replicasets" == 0 && "$pod_count" == 0 ]]; then
         break
       fi
       (( SECONDS < writer_deadline )) ||
-        fail "writer $service is not quiescent (Deployment observed: $deployment_observed, active ReplicaSets: $active_replicasets, old writer pods: $pod_count)"
+        fail "writer $service is not quiescent (Deployment observed: $deployment_observed, active ReplicaSets: $active_replicasets, unobserved zero ReplicaSets: $unobserved_replicasets, old writer pods: $pod_count)"
       sleep 2
     done
   done

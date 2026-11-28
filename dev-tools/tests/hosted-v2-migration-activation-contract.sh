@@ -78,7 +78,7 @@ assert_rejected() {
   }
   export -f kubectl
   clean_snapshot="$RESET_NAMESPACE_JSON"
-  for change in     '.metadata.uid = "replacement"'     '.metadata.annotations["firemud.dev/last-dev-demo-head-sha"] = "changed"'     '.metadata.annotations["firemud.dev/pending-dev-demo-deployment"] = ""'     'del(.metadata.resourceVersion)'; do
+  for change in     '.metadata.uid = "replacement"'     '.metadata.annotations["firemud.dev/last-dev-demo-head-sha"] = "changed"'     '.metadata.annotations["firemud.dev/pending-dev-demo-deployment"] = ""'     '.metadata.annotations["firemud.dev/pending-dev-demo-bootstrap"] = "123:1"'     'del(.metadata.resourceVersion)'; do
     RESET_NAMESPACE_JSON="$(jq -c "$change" <<<"$clean_snapshot")"
     if bash "$delete_helper" dev dev fixture-dev-uid "$base_sha" >"$fixture_dir/reset.stdout" 2>"$fixture_dir/reset.stderr" ||
       [[ -e "$delete_request" ]]; then

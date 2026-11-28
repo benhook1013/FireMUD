@@ -275,7 +275,7 @@ if wait_mode == "pull-request":
               run.get("display_title") == f"Publish PR Runtime Images {source_suffix}")
              or (source_event == "pull_request" and
                  run.get("display_title") == f"Publish PR Runtime Images requalification {source_suffix}")))
-        or (source_event == "pull_request" and run.get("event") == "workflow_run" and
+        or (source_event in ("pull_request", "repository_dispatch") and run.get("event") == "workflow_run" and
         (tokens := run.get("display_title", "").split())[:8] == [
             "Publish", "PR", "Runtime", "Images", "Build", "Runtime", "Images",
             "secure-pr-artifact",
@@ -407,8 +407,9 @@ def read_jobs(record, run_path):
     seen = set()
     for job in jobs:
         if (not isinstance(job, dict) or not positive_int(job.get("id")) or job["id"] in seen
-                or any(not positive_int(job.get(field)) or job[field] != expected
-                       for field, expected in (("run_id", record["id"]), ("run_attempt", record["run_attempt"])))):
+                or not positive_int(job.get("run_id")) or job["run_id"] != record["id"]
+                or ("run_attempt" in job and (not positive_int(job["run_attempt"])
+                    or job["run_attempt"] != record["run_attempt"]))):
             unavailable("native job identity is inconsistent")
         seen.add(job["id"])
     return jobs
@@ -434,6 +435,7 @@ publisher = read_object(publisher_path)
 verify_run(publisher, run_id, attempt, workflow_id, event, ".github/workflows/publish-pr-runtime-images.yml")
 if publisher.get("display_title") != title or publisher.get("name") not in ("Publish PR Runtime Images", title):
     unavailable("native publisher title differs from the selected run")
+retained_expiry = None
 requalification = title == f"Publish PR Runtime Images requalification source-run-{source_id} attempt-{source_attempt}"
 if requalification and (event != "repository_dispatch" or source_event != "pull_request"):
     unavailable("publication requalification requires an original pull_request source run")
@@ -461,7 +463,26 @@ if selection_reason != "latest":
     if not isinstance(failed_steps, list) or any(not isinstance(step, dict) for step in failed_steps):
         unavailable("failed requalification step inventory is unproven")
     tag_steps = [step for step in failed_steps if step.get("name") == "Publish fixed PR image tags"]
-    if (len(tag_steps) != 1 or tag_steps[0].get("status") != "completed"
+    if failed_publish_jobs[0].get("conclusion") == "skipped" and not failed_steps:
+        resolvers = [job for job in failed_jobs if job.get("name") == "Resolve Exact Runtime Publication Source"]
+        if (len(resolvers) != 1 or resolvers[0].get("head_sha") != requalification_run["head_sha"]
+                or resolvers[0].get("status") != "completed" or resolvers[0].get("conclusion") != "failure"):
+            unavailable("failed requalification did not prove its pre-publication expiry")
+        resolver_steps = resolvers[0].get("steps")
+        if not isinstance(resolver_steps, list) or any(not isinstance(step, dict) for step in resolver_steps):
+            unavailable("failed requalification resolver steps are unproven")
+        resolved = [step for step in resolver_steps if step.get("name") == "Resolve successful exact source run"]
+        expired = [step for step in resolver_steps if str(step.get("name", "")).startswith("Exact runtime artifact expired")]
+        if (len(resolved) != 1 or not successful(resolved[0]) or len(expired) != 1
+                or expired[0].get("status") != "completed" or expired[0].get("conclusion") != "failure"):
+            unavailable("failed requalification does not have a unique expired-artifact receipt")
+        retained_expiry = re.fullmatch(
+            rf"Exact runtime artifact expired source-{source_id}-{source_attempt}"
+            r" artifact-([1-9][0-9]*) (sha256:[0-9a-f]{64})", expired[0]["name"],
+        )
+        if not retained_expiry:
+            unavailable("failed requalification expiry differs from the selected source attempt")
+    elif (len(tag_steps) != 1 or tag_steps[0].get("status") != "completed"
             or tag_steps[0].get("conclusion") != "skipped" or tag_steps[0].get("started_at") is not None):
         unavailable("failed requalification has no proof it skipped fixed-tag checks")
 job = successful_job(publisher, publisher_path, ("Publish Fixed PR Merge Image Tags",))
@@ -484,6 +505,8 @@ if receipts:
     )
     if not match or receipt["number"] <= publish["number"]:
         unavailable("publication receipt does not bind the successful producer and publisher attempts")
+    if retained_expiry and retained_expiry.groups() != match.groups():
+        unavailable("failed requalification expired a different artifact than the retained publication")
     print(f"{match[1]}\t{match[2]}")
     raise SystemExit(0)
 

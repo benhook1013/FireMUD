@@ -97,5 +97,6 @@ grep -Fq "duplicate retained admission attempts" "$rig/refused.err"
 "$bin/psql" -XqAtw -v ON_ERROR_STOP=1 -c "TRUNCATE account_service.account_capacity_origin_decisions; INSERT INTO account_service.account_capacity_origin_decisions VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');"
 invoke_probe >"$rig/clean.out" 2>"$rig/clean.err"
 test ! -s "$rig/clean.err"
-grep -Eq '^account-v1040-4-probe=retained-no-duplicates namespace=dev namespace_uid=local-fixture-uid .*applied_origin_migrations=3 checksum_comparison=verified-v1040-prefix$' "$rig/clean.out"
+expected_receipt='account-v1040-4-probe=retained-no-duplicates namespace=dev namespace_uid=local-fixture-uid deployed_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa target_sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb schema=account_service applied_origin_migrations=3 checksum_comparison=verified-v1040-prefix'
+[[ "$(<"$rig/clean.out")" == "$expected_receipt" ]]
 echo "shell receipt gate: clean prefix emits scoped receipt; duplicate prefix exits nonzero with no receipt"
