@@ -33,6 +33,9 @@ public interface InitialGameplayReleaseJournal {
 
   Optional<OutboxEntry> findNextEffect(UUID operationId);
 
+  /** Returns an acknowledged preparation requiring an exact readback, never a new dispatch. */
+  Optional<OutboxEntry> findHeldPreparationForRefresh(UUID operationId);
+
   /**
    * Uses a fresh attempt identity for each invocation, including retries after an uncertain claim
    * outcome. An existing dispatched or ambiguous result is for exact owner readback, not permission

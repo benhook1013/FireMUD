@@ -26,6 +26,8 @@ import java.util.UUID;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel;
 import org.jooq.DSLContext;
 import org.jooq.JSONB;
@@ -86,6 +88,10 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Objects.requireNonNull(scope, "scope must not be null");
     Objects.requireNonNull(
         controllerIssuedLockIdentity, "controllerIssuedLockIdentity must not be null");
+    if (GameTenantCreationDigest.utf8ByteLength(scope.evidenceRef())
+        > InitialGameplayRecoverRequest.MAX_EVIDENCE_REFERENCE_BYTES) {
+      throw new IllegalArgumentException("Operation evidence reference exceeds its UTF-8 limit");
+    }
     String scopeDigest = tupleCodec.digest(scope);
     JSONB scopePayload = JSONB.valueOf(tupleCodec.toJson(scope));
     JSONB bindingPayload = JSONB.valueOf(tupleCodec.toJson(scope.peerStorageBinding()));
@@ -329,6 +335,16 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
 
   @Override
   public Optional<OutboxEntry> findNextEffect(UUID operationId) {
+    return findReconciliationEffect(operationId, false);
+  }
+
+  @Override
+  public Optional<OutboxEntry> findHeldPreparationForRefresh(UUID operationId) {
+    return findReconciliationEffect(operationId, true);
+  }
+
+  private Optional<OutboxEntry> findReconciliationEffect(
+      UUID operationId, boolean preparationRefreshOnly) {
     // Surface an incomplete retained dispatch to the typed row validator before normal work.
     // The operation key bounds this selection; valid acknowledged rows still do not queue work.
     // Reconcile an existing handoff before a preparation hold. A hold can block the next
@@ -358,9 +374,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                    CASE WHEN reconciliation_state = 'acknowledged'
                         THEN acknowledged_at ELSE NULL END AS acknowledged_at
             FROM outbox
-            WHERE reconciliation_state <> 'acknowledged' OR last_dispatched_at IS NULL
-               OR attempt_count = 0 OR last_attempt_id IS NULL
-               OR last_attempt_id = '00000000-0000-0000-0000-000000000000'::uuid
+            WHERE (reconciliation_state <> 'acknowledged' OR last_dispatched_at IS NULL
+                   OR attempt_count = 0 OR last_attempt_id IS NULL
+                   OR last_attempt_id = '00000000-0000-0000-0000-000000000000'::uuid)
+              AND (NOT ? OR (effect_kind = 'prepare_playable_state_fenced'
+                             AND state = 'acknowledged' AND reconciliation_state = 'ambiguous'))
             ORDER BY CASE
                        WHEN reconciliation_state <> 'pending' AND
                             (last_dispatched_at IS NULL OR attempt_count = 0 OR last_attempt_id IS NULL
@@ -377,7 +395,8 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                      created_at, outbox_id
             LIMIT 1
             """,
-            operationId);
+            operationId,
+            preparationRefreshOnly);
     if (record == null) {
       // A finalized operation must still have an exact, durable handoff receipt.
       find(operationId);
@@ -441,7 +460,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
                   operationId,
                   effectId);
           if (changed != 1) {
-            return selectOutbox(tx, operationId, effectId, false);
+            throw conflict("effect dispatch claim was not recorded");
           }
           return selectOutbox(tx, operationId, effectId, false);
         });
@@ -876,6 +895,9 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
             throw conflict("effect readback changed after definitive no effect");
           }
           EffectReadback previous = requireNonRegressingReadback(readback, timestamps, current);
+          if (previous != null && previous.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
+            throw conflict("nonterminal effect unexpectedly retains a definitive readback");
+          }
           requireQualifiedWriteSession(tx);
           if (isPreparationHeldBeforeHandoff(operation, current)) {
             if (previous == null || previous.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {

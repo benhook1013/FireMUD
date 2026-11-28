@@ -12,6 +12,7 @@ import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseJournal.Ret
 import net.firedevops.firemud.recovery.journal.InitialGameplayReleaseTupleCodec;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.ContinueRecovery;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseCommands.Resume;
+import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectKind;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectOutboxState;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.InitialGameplayReleaseEvidence;
@@ -115,8 +116,9 @@ public final class InitialGameplayReleaseController {
   }
 
   /**
-   * Performs one outbox attempt or reconciles its exact prior attempt by owner readback. This
-   * method is deliberately not scheduled or exposed as a network endpoint in this source-only
+   * Performs one outbox attempt or reconciles its exact prior attempt by owner readback. An
+   * unresolved handoff can also refresh a held preparation without redispatching either effect.
+   * This method is deliberately not scheduled or exposed as a network endpoint in this source-only
    * stage. Reconciliation must run without a caller-owned transaction so a successful claim is
    * durable before an owner effect can be dispatched.
    */
@@ -135,7 +137,15 @@ public final class InitialGameplayReleaseController {
         || outbox.state() == EffectOutboxState.RETRYABLE) {
       return applyEffect(operation, outbox);
     }
-    return readBackEffect(operation, outbox);
+    Operation reconciled = readBackEffect(operation, outbox);
+    if (outbox.effect().kind() == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF
+        && reconciled.phase() == Phase.RELEASING) {
+      return journal
+          .findHeldPreparationForRefresh(operationId)
+          .map(preparation -> readBackEffect(reconciled, preparation))
+          .orElse(reconciled);
+    }
+    return reconciled;
   }
 
   private Operation applyEffect(Operation operation, OutboxEntry outbox) {
@@ -214,6 +224,9 @@ public final class InitialGameplayReleaseController {
       MaintenanceLockCredential maintenanceLock,
       String evidenceRef,
       TransitionVerb verb) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw unavailable("INITIAL_GAMEPLAY_RELEASE_TRANSITION_REQUIRES_NO_CALLER_TRANSACTION");
+    }
     Operation operation = requireOperation(operationId);
     requireLock(operation, maintenanceLock);
     if (!operation.scope().evidenceRef().equals(evidenceRef)) {

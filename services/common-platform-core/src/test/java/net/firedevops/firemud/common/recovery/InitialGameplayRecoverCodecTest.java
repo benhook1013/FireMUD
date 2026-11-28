@@ -148,6 +148,19 @@ class InitialGameplayRecoverCodecTest {
   }
 
   @Test
+  void preservesExactLaunchDescriptorIdAndItsMutationIdentity() {
+    String composedId = "launch-caf\u00e9";
+    String decomposedId = "launch-cafe\u0301";
+    var composed = decode(WIRE.replace("\"launch\"", "\"" + composedId + "\""));
+    var decomposed = decode(WIRE.replace("\"launch\"", "\"" + decomposedId + "\""));
+    assertThat(composed.target().launchAssociation().launchDescriptorId()).isEqualTo(composedId);
+    assertThat(decomposed.target().launchAssociation().launchDescriptorId())
+        .isEqualTo(decomposedId);
+    assertThat(InitialGameplayRecoverCodec.mutationDigest(decomposed))
+        .isNotEqualTo(InitialGameplayRecoverCodec.mutationDigest(composed));
+  }
+
+  @Test
   void rejectsUnicodeWhitespaceOnlyAndBoundaryTextButKeepsInternalWhitespace() {
     for (String whitespace : List.of("\u00a0", "\u0085")) {
       rejects(WIRE.replace("\"detail\":\"initial\"", "\"detail\":\"" + whitespace + "\""));

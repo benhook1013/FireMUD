@@ -13,6 +13,7 @@ import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration;
 import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 import org.springframework.mock.env.MockEnvironment;
@@ -651,6 +652,33 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
   }
 
   @Test
+  void acceptsJavaTrimmedScalarSchemaButKeepsListElementsExact() {
+    var scalar =
+        fixtureEnvironment().withProperty("spring.flyway.schemas", " \trecovery_control\t ");
+    assertThatCode(() -> postProcessor.postProcessEnvironment(scalar, new SpringApplication()))
+        .doesNotThrowAnyException();
+
+    var indexed = fixtureEnvironment();
+    indexed
+        .getPropertySources()
+        .addFirst(
+            new MapPropertySource(
+                "fixture-indexed-schema", Map.of("spring.flyway.schemas[0]", "recovery_control")));
+    assertThatCode(() -> postProcessor.postProcessEnvironment(indexed, new SpringApplication()))
+        .doesNotThrowAnyException();
+    indexed
+        .getPropertySources()
+        .replace(
+            "fixture-indexed-schema",
+            new MapPropertySource(
+                "fixture-indexed-schema",
+                Map.of("spring.flyway.schemas[0]", " recovery_control ")));
+    assertThatThrownBy(() -> postProcessor.postProcessEnvironment(indexed, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.flyway.schemas must contain only recovery_control");
+  }
+
+  @Test
   void acceptsHikariConnectionInitSqlForDisabledFlywayFixture() {
     var environment =
         fixtureEnvironment()
@@ -662,9 +690,12 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
 
   @Test
   void acceptsExplicitUtf8FlywayEncoding() {
-    var environment = fixtureEnvironment().withProperty("spring.flyway.encoding", "UTF-8");
-    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
-        .doesNotThrowAnyException();
+    for (String encoding : new String[] {"UTF-8", "UTF8", "unicode-1-1-utf-8"}) {
+      var environment = fixtureEnvironment().withProperty("spring.flyway.encoding", encoding);
+      assertThatCode(
+              () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+          .doesNotThrowAnyException();
+    }
   }
 
   @ParameterizedTest
@@ -763,6 +794,38 @@ class RecoveryControlDatabaseHostEnvironmentPostProcessorTest {
             () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
         .hasMessage(
             "spring.flyway.placeholder-replacement must be disabled for the recovery migrations");
+  }
+
+  @Test
+  void validatesPlaceholderDelimitersEvenWhenReplacementIsDisabled() {
+    var environment =
+        fixtureEnvironment().withProperty("spring.flyway.placeholder-prefix", "@${runtime}");
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.flyway placeholder delimiters")
+        .hasNoCause();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"versioned:*", "*:missing", "*:future,*:pending"})
+  void rejectsFlywayIgnorePatternsThatCouldSkipAppliedMigrations(String pattern) {
+    var environment =
+        fixtureEnvironment().withProperty("spring.flyway.ignore-migration-patterns", pattern);
+    assertThatThrownBy(
+            () -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageStartingWith("spring.flyway.ignore-migration-patterns may only ignore future")
+        .hasNoCause();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"*:future", "versioned:future", "repeatable:future"})
+  void acceptsFutureOnlyIgnorePattern(String pattern) {
+    var environment =
+        fixtureEnvironment().withProperty("spring.flyway.ignore-migration-patterns[0]", pattern);
+    assertThatCode(() -> postProcessor.postProcessEnvironment(environment, new SpringApplication()))
+        .doesNotThrowAnyException();
   }
 
   private static MockEnvironment fixtureEnvironment() {

@@ -1,6 +1,13 @@
 package net.firedevops.firemud.recovery.config;
 
+import jakarta.annotation.PreDestroy;
 import java.sql.SQLException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import javax.sql.DataSource;
 import net.firedevops.firemud.recovery.journal.JooqInitialGameplayReleaseJournal;
 import org.springframework.boot.health.contributor.Health;
@@ -10,7 +17,7 @@ import org.springframework.stereotype.Component;
 @Component
 final class RecoveryJournalHealthIndicator implements HealthIndicator {
   private static final int PROBE_TIMEOUT_SECONDS = 2;
-  private static final int PROBE_TIMEOUT_MILLIS = PROBE_TIMEOUT_SECONDS * 1000;
+  private static final long PROBE_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(PROBE_TIMEOUT_SECONDS);
   private static final String CHECK =
       """
       SELECT
@@ -108,11 +115,43 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                   WHERE a.attrelid = c.conrelid AND NOT a.attisdropped
                     AND a.attname IN ('outbox_id', 'attempt_id', 'attempt_ordinal')
                   ORDER BY CASE a.attname WHEN 'outbox_id' THEN 0 WHEN 'attempt_id' THEN 1 ELSE 2 END))
-            AND EXISTS (
-              SELECT 1 FROM pg_catalog.pg_attribute
-              WHERE attrelid = 'recovery_control.initial_gameplay_release_operation'::regclass
-                AND attname = 'target_namespace' AND NOT attisdropped AND attnotnull
-                AND atttypid = 'pg_catalog.varchar'::regtype AND atttypmod = 253 + 4)
+            AND NOT EXISTS (
+              SELECT 1
+              FROM (VALUES
+                ('operation_id', 'pg_catalog.uuid'::regtype, -1, true),
+                ('operation_kind', 'pg_catalog.varchar'::regtype, 44, true),
+                ('target_namespace', 'pg_catalog.varchar'::regtype, 257, true),
+                ('playable_state_namespace_id', 'pg_catalog.uuid'::regtype, -1, true),
+                ('peer_storage_binding', 'pg_catalog.jsonb'::regtype, -1, true),
+                ('scope_payload', 'pg_catalog.jsonb'::regtype, -1, true),
+                ('evidence_ref', 'pg_catalog.text'::regtype, -1, true),
+                ('scope_digest', 'pg_catalog.bpchar'::regtype, 68, true),
+                ('maintenance_lock_identity', 'pg_catalog.uuid'::regtype, -1, true),
+                ('phase', 'pg_catalog.varchar'::regtype, 36, true),
+                ('evidence_snapshot', 'pg_catalog.jsonb'::regtype, -1, false),
+                ('evidence_identity', 'pg_catalog.text'::regtype, -1, false),
+                ('evidence_digest', 'pg_catalog.bpchar'::regtype, 68, false),
+                ('revision', 'pg_catalog.int8'::regtype, -1, true),
+                ('created_at', 'pg_catalog.timestamptz'::regtype, -1, true),
+                ('updated_at', 'pg_catalog.timestamptz'::regtype, -1, true),
+                ('finalized_at', 'pg_catalog.timestamptz'::regtype, -1, false)
+              ) AS required(column_name, column_type, type_modifier, required_not_null)
+              LEFT JOIN pg_catalog.pg_attribute a
+                ON a.attrelid = 'recovery_control.initial_gameplay_release_operation'::regclass
+                AND a.attname = required.column_name AND NOT a.attisdropped
+                AND a.atttypid = required.column_type AND a.atttypmod = required.type_modifier
+                AND a.attnotnull = required.required_not_null
+              WHERE a.attnum IS NULL)
+            AND (SELECT count(DISTINCT pg_catalog.pg_get_expr(c.conbin, c.conrelid)) = 3
+              FROM pg_catalog.pg_constraint c
+              WHERE c.conrelid = 'recovery_control.initial_gameplay_release_operation'::regclass
+                AND c.contype = 'c' AND c.convalidated AND c.conenforced
+                AND pg_catalog.pg_get_expr(c.conbin, c.conrelid) IN (
+                  '(revision > 0)',
+                  '(((phase)::text = ''finalized''::text) = (finalized_at IS NOT NULL))',
+                  '(((evidence_snapshot IS NULL) AND (evidence_identity IS NULL)'
+                  || ' AND (evidence_digest IS NULL)) OR ((evidence_snapshot IS NOT NULL)'
+                  || ' AND (evidence_identity IS NOT NULL) AND (evidence_digest IS NOT NULL)))'))
             AND (SELECT count(DISTINCT a.attname) = 2
               FROM pg_catalog.pg_index i
               JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid
@@ -136,6 +175,28 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                 AND op.atttypid = 'pg_catalog.uuid'::regtype
                 AND kind.attname = 'effect_kind' AND kind.attnotnull
                 AND kind.atttypid = 'pg_catalog.varchar'::regtype AND kind.atttypmod = 52)
+            AND EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_index i
+              JOIN pg_catalog.pg_attribute operation ON operation.attrelid = i.indrelid
+                AND operation.attnum IN (i.indkey[0], i.indkey[1]) AND NOT operation.attisdropped
+              JOIN pg_catalog.pg_attribute verb ON verb.attrelid = i.indrelid
+                AND verb.attnum IN (i.indkey[0], i.indkey[1]) AND NOT verb.attisdropped
+              WHERE i.indrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
+                AND i.indisunique AND i.indisvalid AND i.indisready AND i.indimmediate
+                AND i.indpred IS NULL AND i.indnkeyatts = 2
+                AND operation.attname = 'operation_id' AND operation.attnotnull
+                AND operation.atttypid = 'pg_catalog.uuid'::regtype
+                AND verb.attname = 'verb' AND verb.attnotnull
+                AND verb.atttypid = 'pg_catalog.varchar'::regtype AND verb.atttypmod = 28)
+            AND NOT EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_index i
+              JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid
+                AND a.attnum = i.indkey[0] AND NOT a.attisdropped
+              WHERE i.indrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
+                AND i.indisunique AND i.indisvalid AND i.indisready AND i.indnkeyatts = 1
+                AND a.attname = 'operation_id')
             AND EXISTS (
               SELECT 1 FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_transition'::regclass
@@ -211,6 +272,11 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
                 AND attname IN ('acknowledged_at', 'last_dispatched_at')
                 AND NOT attisdropped AND NOT attnotnull
                 AND atttypid = 'pg_catalog.timestamptz'::regtype AND atttypmod = -1)
+            AND EXISTS (
+              SELECT 1 FROM pg_catalog.pg_attribute
+              WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
+                AND attname = 'updated_at' AND NOT attisdropped AND attnotnull
+                AND atttypid = 'pg_catalog.timestamptz'::regtype AND atttypmod IN (-1, 6))
             AND (SELECT count(*) = 2
               FROM pg_catalog.pg_attribute
               WHERE attrelid = 'recovery_control.initial_gameplay_release_outbox'::regclass
@@ -277,6 +343,18 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
           """;
 
   private final DataSource dataSource;
+  private final ThreadPoolExecutor probes =
+      new ThreadPoolExecutor(
+          0,
+          1,
+          PROBE_TIMEOUT_SECONDS,
+          TimeUnit.SECONDS,
+          new SynchronousQueue<>(),
+          task -> {
+            Thread worker = new Thread(task, "recovery-journal-readiness");
+            worker.setDaemon(true);
+            return worker;
+          });
 
   RecoveryJournalHealthIndicator(DataSource dataSource) {
     this.dataSource = dataSource;
@@ -287,28 +365,54 @@ final class RecoveryJournalHealthIndicator implements HealthIndicator {
     if (!JooqInitialGameplayReleaseJournal.driverLoggingIsRedacted()) {
       return Health.down().build();
     }
-    // Resolve the journal shape without reading journal rows or changing the database.
+    long deadline = System.nanoTime() + PROBE_TIMEOUT_NANOS;
+    try {
+      var probe = probes.submit(() -> checkJournal(deadline));
+      long remaining = deadline - System.nanoTime();
+      return remaining > 0
+              && probe.get(remaining, TimeUnit.NANOSECONDS)
+              && deadline - System.nanoTime() > 0
+          ? Health.up().build()
+          : Health.down().build();
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      return Health.down().build();
+    } catch (ExecutionException | RejectedExecutionException | TimeoutException unavailable) {
+      return Health.down().build();
+    }
+  }
+
+  @PreDestroy
+  void stopProbes() {
+    probes.shutdownNow();
+  }
+
+  private boolean checkJournal(long deadline) throws SQLException {
+    // The worker retains custody of the connection even after the caller's deadline expires.
+    // No queued probe can accumulate behind an in-flight acquisition or JDBC cleanup.
+    if (deadline - System.nanoTime() <= 0) {
+      return false;
+    }
     try (var connection = dataSource.getConnection()) {
       if (!connection.getAutoCommit() || connection.isReadOnly()) {
-        return Health.down().build();
+        return false;
       }
       int originalTimeout = connection.getNetworkTimeout();
+      int remainingMillis = (int) TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+      if (remainingMillis <= 0) {
+        return false;
+      }
       int probeTimeout =
-          originalTimeout > 0
-              ? Math.min(originalTimeout, PROBE_TIMEOUT_MILLIS)
-              : PROBE_TIMEOUT_MILLIS;
+          originalTimeout > 0 ? Math.min(originalTimeout, remainingMillis) : remainingMillis;
       connection.setNetworkTimeout(Runnable::run, probeTimeout);
       try (var statement = connection.prepareStatement(CHECK)) {
         statement.setQueryTimeout(PROBE_TIMEOUT_SECONDS);
         try (var rows = statement.executeQuery()) {
-          return rows.next() && rows.getBoolean(1) ? Health.up().build() : Health.down().build();
+          return rows.next() && rows.getBoolean(1);
         }
       } finally {
         connection.setNetworkTimeout(Runnable::run, originalTimeout);
       }
-    } catch (SQLException unavailable) {
-      // The driver exception can contain private configuration.
-      return Health.down().build();
     }
   }
 }

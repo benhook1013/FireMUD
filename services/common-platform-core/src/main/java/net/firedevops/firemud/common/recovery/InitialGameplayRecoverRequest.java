@@ -19,6 +19,7 @@ public record InitialGameplayRecoverRequest(
   public static final String ACTION_FAMILY_SCHEMA_ID = "initial-gameplay-recover/v1";
   public static final String ACTION_FAMILY_SCHEMA_VERSION = "1";
   public static final String TARGET_OWNER = "recovery-controller-service";
+  public static final int MAX_EVIDENCE_REFERENCE_BYTES = 512;
 
   public InitialGameplayRecoverRequest {
     controlPlaneRequestId = uuid(controlPlaneRequestId);
@@ -48,11 +49,7 @@ public record InitialGameplayRecoverRequest(
     public Target {
       Objects.requireNonNull(launchAssociation, "launchAssociation");
       Objects.requireNonNull(peerStorageBinding, "peerStorageBinding");
-      evidenceRef = boundedText(Objects.requireNonNull(evidenceRef, "evidenceRef"), 512);
-      if (evidenceRef.codePoints().anyMatch(InitialGameplayRecoverRequest::isNoncharacter)) {
-        throw new IllegalArgumentException(
-            "Evidence reference must not contain Unicode noncharacters");
-      }
+      evidenceRef = exactSelector(evidenceRef, MAX_EVIDENCE_REFERENCE_BYTES, "Evidence reference");
       evidenceDigest = digest(evidenceDigest);
     }
   }
@@ -72,7 +69,7 @@ public record InitialGameplayRecoverRequest(
       tenantAssociationOperationId = uuid(tenantAssociationOperationId);
       worldSlug = text(worldSlug, 128);
       launchControlPlaneRequestId = uuid(launchControlPlaneRequestId);
-      launchDescriptorId = text(launchDescriptorId, 256);
+      launchDescriptorId = exactSelector(launchDescriptorId, 256, "Launch descriptor");
       descriptorRequestDigest = digest(descriptorRequestDigest);
       descriptorResultDigest = digest(descriptorResultDigest);
       releaseAttestationEvidenceDigest = digest(releaseAttestationEvidenceDigest);
@@ -169,6 +166,14 @@ public record InitialGameplayRecoverRequest(
         || value.codePoints().anyMatch(InitialGameplayRecoverRequest::isNoncharacter)) {
       throw new IllegalArgumentException(
           "Peer/storage selectors must be in NFC and contain no Unicode noncharacters");
+    }
+    return value;
+  }
+
+  private static String exactSelector(String value, int limit, String name) {
+    boundedText(Objects.requireNonNull(value, name), limit);
+    if (value.codePoints().anyMatch(InitialGameplayRecoverRequest::isNoncharacter)) {
+      throw new IllegalArgumentException(name + " must not contain Unicode noncharacters");
     }
     return value;
   }
