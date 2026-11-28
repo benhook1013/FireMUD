@@ -33,6 +33,7 @@ import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -523,6 +524,44 @@ class PublishGateServiceImplTest {
 
     assertEquals(PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA, thrown.failureCode());
     assertTrue(thrown.getMessage().contains("ENTITY_MANAGEMENT"));
+  }
+
+  @ParameterizedTest
+  @CsvSource({",version:7,MISSING_CONTENT_DIGEST", "digest-entity,,MISSING_APPLIED_COMMIT"})
+  void ordinaryEntitySchemaTwoRequiresCompleteDigestAndCommitEvidence(
+      String entityDigest, String entityCommit, PublishGateFailureCode expectedFailure) {
+    VersionDto version =
+        new VersionDto(
+            7L,
+            "tenant-1",
+            8,
+            VersionLifecycleState.PUBLISHED,
+            2L,
+            null,
+            null,
+            false,
+            "notes",
+            LocalDateTime.now(),
+            LocalDateTime.now());
+    List<PublishParticipantDigestDto> digests =
+        List.of(
+            new PublishParticipantDigestDto(
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 3, null, null),
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 5, null, null),
+            new PublishParticipantDigestDto(
+                "ENTITY_MANAGEMENT", "7", entityCommit, entityDigest, 2, null, null),
+            new PublishParticipantDigestDto(
+                "GAME_LOGIC", "7", "version:7", "digest-logic", 1, null, null),
+            new PublishParticipantDigestDto(
+                "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-design", 1, null, null));
+
+    var denied =
+        assertThrows(
+            PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
+
+    assertEquals(expectedFailure, denied.failureCode());
+    assertTrue(denied.getMessage().contains("ENTITY_MANAGEMENT"));
   }
 
   @Test
