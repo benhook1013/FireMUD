@@ -5,9 +5,9 @@ on:
     workflows: [Build Runtime Images, "CI — Validation"]
     types: [completed]
   repository_dispatch:
-    types: [pr-runtime-image-publication]
+    types: [pr-runtime-image-publication, pr-runtime-image-requalification]
 
-run-name: Publish PR Runtime Images ${{ github.event_name == 'workflow_run' && format('{0} source-run-{1} attempt-{2}', github.event.workflow_run.display_title, github.event.workflow_run.id, github.event.workflow_run.run_attempt) || format('source-run-{0} attempt-{1}', github.event.client_payload.source_run_id, github.event.client_payload.source_run_attempt) }}
+run-name: Publish PR Runtime Images ${{ github.event_name == 'workflow_run' && format('{0} source-run-{1} attempt-{2}', github.event.workflow_run.display_title, github.event.workflow_run.id, github.event.workflow_run.run_attempt) || (github.event.action == 'pr-runtime-image-requalification' && format('requalification source-run-{0} attempt-{1}', github.event.client_payload.source_run_id, github.event.client_payload.source_run_attempt)) || format('source-run-{0} attempt-{1}', github.event.client_payload.source_run_id, github.event.client_payload.source_run_attempt) }}
 
 permissions: {}
 
@@ -653,7 +653,7 @@ jobs:
 
   source:
     name: Resolve Exact Runtime Publication Source
-    if: ${{ (github.event_name == 'workflow_run' && (github.event.workflow_run.path == '.github/workflows/runtime-images.yml' || startsWith(github.event.workflow_run.path, '.github/workflows/runtime-images.yml@')) && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'repository_dispatch') && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) || (github.event_name == 'repository_dispatch' && github.event.action == 'pr-runtime-image-publication' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
+    if: ${{ (github.event_name == 'workflow_run' && (github.event.workflow_run.path == '.github/workflows/runtime-images.yml' || startsWith(github.event.workflow_run.path, '.github/workflows/runtime-images.yml@')) && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'repository_dispatch') && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository) || (github.event_name == 'repository_dispatch' && (github.event.action == 'pr-runtime-image-publication' || github.event.action == 'pr-runtime-image-requalification') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -676,9 +676,10 @@ jobs:
         with:
           script: |
             const callback = context.eventName === "workflow_run";
+            const requalification = context.payload.action === "pr-runtime-image-requalification";
             const payload = context.payload.client_payload;
             if (!callback && (context.eventName !== "repository_dispatch" ||
-                context.payload.action !== "pr-runtime-image-publication" ||
+                (!requalification && context.payload.action !== "pr-runtime-image-publication") ||
                 context.ref !== `refs/heads/${context.payload.repository.default_branch}` ||
                 !payload || Array.isArray(payload) || typeof payload !== "object" ||
                 Object.keys(payload).length !== 2 || !Object.hasOwn(payload, "source_run_id") ||
@@ -752,7 +753,7 @@ jobs:
                   !isTrustedWorkflowPath(run.path) || !title ||
                   !["Build Runtime Images", run.display_title].includes(run.name) ||
                   !(callback ? ["pull_request", "repository_dispatch"].includes(run.event)
-                    : run.event === "repository_dispatch") ||
+                    : run.event === (requalification ? "pull_request" : "repository_dispatch")) ||
                   run.repository?.full_name !== repository || run.head_repository?.full_name !== repository ||
                   typeof run.head_branch !== "string" || !run.head_branch ||
                   typeof run.head_sha !== "string" || !/^[0-9a-f]{40}$/.test(run.head_sha) ||
@@ -897,7 +898,7 @@ jobs:
                 core.setOutput("artifact_digest", artifact.digest);
                 break;
               }
-              if (callback || !["queued", "in_progress", "waiting", "pending", "requested"].includes(run.status) ||
+              if (callback || requalification || !["queued", "in_progress", "waiting", "pending", "requested"].includes(run.status) ||
                   run.conclusion != null || Date.now() >= deadline) {
                 throw new Error("publication source did not reach a real terminal success within the bounded wait");
               }
@@ -952,7 +953,7 @@ jobs:
       - name: Validate exact PR source and artifact before registry login
         env:
           CURRENT_REPOSITORY: ${{ github.repository }}
-          PUBLICATION_TRIGGER: ${{ github.event_name }}
+          PUBLICATION_TRIGGER: ${{ github.event_name == 'repository_dispatch' && github.event.action == 'pr-runtime-image-requalification' && 'pr-runtime-image-requalification' || github.event_name }}
           SOURCE_RUN_ID: ${{ fromJSON(needs.source.outputs.source).id }}
           SOURCE_RUN_ATTEMPT: ${{ fromJSON(needs.source.outputs.source).run_attempt }}
           SOURCE_RUN_URL: ${{ fromJSON(needs.source.outputs.source).html_url }}
@@ -1093,10 +1094,12 @@ jobs:
           if source_event not in {"pull_request", "repository_dispatch"}:
               fail("source event is not an allowed PR image source")
           publication_trigger = required_environment("PUBLICATION_TRIGGER")
-          if publication_trigger not in {"workflow_run", "repository_dispatch"}:
+          if publication_trigger not in {"workflow_run", "repository_dispatch", "pr-runtime-image-requalification"}:
               fail("publication trigger is not allowed")
           if publication_trigger == "repository_dispatch" and source_event != "repository_dispatch":
               fail("typed publication requires a repository_dispatch source run")
+          if publication_trigger == "pr-runtime-image-requalification" and source_event != "pull_request":
+              fail("publication requalification requires an original pull_request source run")
           if required_environment("SOURCE_RUN_CONCLUSION") != "success":
               fail("source workflow did not succeed")
           if required_environment("SOURCE_HEAD_REPOSITORY") != repository:

@@ -172,7 +172,7 @@ if any(forbidden in handoff for forbidden in ["actions/checkout", "packages: wri
 resolver = workflow.split("  source:\n", 1)[1].split("  publish:\n", 1)[0]
 if "actions: read" not in resolver or any(value in resolver for value in ["actions/checkout", "contents: write", "packages: write"]):
     raise SystemExit("source resolver must be no-checkout and read-only")
-if "workflow_dispatch:" in workflow or "types: [pr-runtime-image-publication]" not in workflow:
+if "workflow_dispatch:" in workflow or "types: [pr-runtime-image-publication, pr-runtime-image-requalification]" not in workflow:
     raise SystemExit("publisher handoff must retain default-branch repository dispatch")
 for job in ["pr-local-smoke", "pr-controller-smoke"]:
     section = re.split(r"\n  [a-z][a-z-]*:", runtime_workflow.split("  " + job + ":\n", 1)[1], maxsplit=1)[0]
@@ -594,6 +594,26 @@ for (const publishable of ["false", "", undefined]) {
   assert.equal(callback.output.artifact_name, direct.output.artifact_name);
   const prSource = {...source, event: "pull_request", head_sha: sha("a"), head_branch: "feature/ci"};
   const prCallback = {...callbackContext, payload: {repository, workflow_run: prSource}};
+  const requalification = {...baseContext, payload: {...baseContext.payload, action: "pr-runtime-image-requalification"}};
+  const requalified = await resolve({runs: [prSource], context: requalification});
+  assert.equal(requalified.output.artifact_id, direct.output.artifact_id);
+  assert.equal(requalified.output.artifact_digest, direct.output.artifact_digest);
+  await rejectsResolver(resolve({context: requalification}), /provenance is not trusted/);
+  await rejectsResolver(resolve({context: requalification, runs: [prSource],
+    jobs: [{...producerFor(prSource), steps: []}]}), /actual successful Upload/);
+  const expiredRequalification = await resolve({context: requalification, runs: [prSource],
+    artifactInventory: {total_count: 1, artifacts: [{...artifactFor(prSource), expired: true}]}});
+  assert.deepEqual(expiredRequalification.output, {
+    expired_artifact: `source-4242-1 artifact-9001 sha256:${"d".repeat(64)}`,
+  });
+  await rejectsResolver(resolve({context: {...requalification, ref: "refs/heads/feature"}, runs: [prSource]}),
+    /closed default-branch source-run payload/);
+  await rejectsResolver(resolve({context: requalification, runs: [{...prSource, run_attempt: 2}]}),
+    /attempt differs from the dispatch/);
+  await rejectsResolver(resolve({context: requalification, runs: [{...prSource, status: "in_progress", conclusion: null}]}),
+    /did not reach a real terminal success/);
+  await rejectsResolver(resolve({context: requalification, runs: [{...prSource, head_repository: {full_name: "fork/FireMUD"}}]}),
+    /provenance is not trusted/);
   assert.equal((await resolve({runs: [prSource], context: prCallback,
     nativeAttempt: {...prSource, path: `${source.path}@refs/pull/42/merge`}})).output.title, title);
   await assert.rejects(resolve({runs: [prSource]}), /publication source run provenance is not trusted/);
@@ -1706,6 +1726,7 @@ PY
 }
 
 run_validation
+run_validation pull_request feature/ci "$head_sha" pr-runtime-image-requalification
 if SOURCE_RUN_ATTEMPT=2 run_validation >/dev/null 2>"$fixture_dir/attempt-error"; then
   echo "publisher accepted an artifact after the resolved source attempt changed" >&2
   exit 1
