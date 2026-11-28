@@ -10,8 +10,14 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -36,6 +42,7 @@ import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
@@ -110,6 +117,223 @@ class VersionAssetPublicationMinioPostgresIntegrationTest {
       s3Client.close();
     }
   }
+
+  @Test
+  void failedDatabaseCandidateWriteRollsBackAllEvidenceAndEpoch() {
+    CandidateFixture prepared = candidateTransactionFixture();
+    Fixture fixture = prepared.fixture();
+    Version version = prepared.version();
+    Map<String, Object> before = candidateArtifactRow(fixture, version);
+    fixture
+        .dsl()
+        .execute(
+            "CREATE FUNCTION fail_candidate_update() RETURNS TRIGGER AS $$ BEGIN "
+                + "RAISE EXCEPTION 'test candidate persistence failure'; END; $$ LANGUAGE plpgsql");
+    fixture
+        .dsl()
+        .execute(
+            "CREATE TRIGGER trg_fail_candidate_update AFTER UPDATE ON version_asset_artifact "
+                + "FOR EACH ROW EXECUTE FUNCTION fail_candidate_update()");
+    try {
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .candidateService()
+                      .recordExportCandidate(version.getTenantId(), 1, prepared.candidate()))
+          .isInstanceOf(DataAccessException.class)
+          .hasMessageContaining("test candidate persistence failure");
+      Fixture readback = fixtureFromSchema(fixture.schema(), fixture.dataSource());
+      // Compare every persisted column, including the frozen origin, and the row version.
+      assertThat(candidateArtifactRow(readback, version)).isEqualTo(before);
+      assertThatThrownBy(
+              () -> readback.candidateService().readExportCandidate(version.getTenantId(), 1))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("ASSET_EXPORT_CANDIDATE_NOT_FOUND");
+    } finally {
+      fixture
+          .dsl()
+          .execute("DROP TRIGGER IF EXISTS trg_fail_candidate_update ON version_asset_artifact");
+      fixture.dsl().execute("DROP FUNCTION IF EXISTS fail_candidate_update()");
+    }
+    assertThat(
+            fixture
+                .candidateService()
+                .recordExportCandidate(version.getTenantId(), 1, prepared.candidate()))
+        .isEqualTo(prepared.candidate());
+  }
+
+  @Test
+  void concurrentExactCandidateRecordsCommitOneEpochAndCallerRollbackCannotUndoIt()
+      throws Exception {
+    CandidateFixture prepared = candidateTransactionFixture();
+    Fixture fixture = prepared.fixture();
+    Version version = prepared.version();
+    Fixture firstOwner = fixtureFromSchema(fixture.schema(), fixture.dataSource());
+    Fixture secondOwner = fixtureFromSchema(fixture.schema(), fixture.dataSource());
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<FrozenAssetExportCandidate> first =
+          executor.submit(
+              () -> {
+                ready.countDown();
+                awaitCandidateStart(start);
+                return firstOwner
+                    .candidateService()
+                    .recordExportCandidate(version.getTenantId(), 1, prepared.candidate());
+              });
+      Future<FrozenAssetExportCandidate> second =
+          executor.submit(
+              () -> {
+                ready.countDown();
+                awaitCandidateStart(start);
+                return secondOwner
+                    .candidateService()
+                    .recordExportCandidate(version.getTenantId(), 1, prepared.candidate());
+              });
+      // Coordinate competing callers; this does not independently measure database lock waiting.
+      assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      assertThat(first.get(20, TimeUnit.SECONDS)).isEqualTo(prepared.candidate());
+      assertThat(second.get(20, TimeUnit.SECONDS)).isEqualTo(prepared.candidate());
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
+
+    Fixture committed = fixtureFromSchema(fixture.schema(), fixture.dataSource());
+    VersionAssetArtifact artifact =
+        committed
+            .artifactRepository()
+            .findByTenantIdAndVersionId(version.getTenantId(), version.getId())
+            .orElseThrow();
+    assertThat(artifact.getArtifactState().name()).isEqualTo("STAGED");
+    assertThat(artifact.getStateEpoch()).isEqualTo(2L);
+    assertThat(artifact.getLastWorkflowId()).isEqualTo(WORKFLOW_ID + "-candidate-transaction");
+    assertThat(committed.candidateService().readExportCandidate(version.getTenantId(), 1))
+        .isEqualTo(prepared.candidate());
+    Map<String, Object> original = candidateArtifactRow(committed, version);
+
+    fixture
+        .transactionTemplate()
+        .executeWithoutResult(
+            status -> {
+              assertThat(
+                      fixture
+                          .candidateService()
+                          .recordExportCandidate(version.getTenantId(), 1, prepared.candidate()))
+                  .isEqualTo(prepared.candidate());
+              status.setRollbackOnly();
+            });
+    Fixture afterRollback = fixtureFromSchema(fixture.schema(), fixture.dataSource());
+    assertThat(afterRollback.candidateService().readExportCandidate(version.getTenantId(), 1))
+        .isEqualTo(prepared.candidate());
+    assertThat(candidateArtifactRow(afterRollback, version)).isEqualTo(original);
+  }
+
+  @Test
+  void candidateEpochOverflowWritesNothing() {
+    CandidateFixture prepared = candidateTransactionFixture();
+    Fixture fixture = prepared.fixture();
+    Version version = prepared.version();
+    fixture
+        .dsl()
+        .execute(
+            "UPDATE version_asset_artifact SET state_epoch = ? WHERE tenant_id = ? AND version_id = ?",
+            Long.MAX_VALUE,
+            version.getTenantId(),
+            version.getId());
+    Map<String, Object> before = candidateArtifactRow(fixture, version);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .candidateService()
+                    .recordExportCandidate(version.getTenantId(), 1, prepared.candidate()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("ASSET_EXPORT_CANDIDATE_CONFLICT")
+        .hasCauseInstanceOf(ArithmeticException.class);
+    Fixture readback = fixtureFromSchema(fixture.schema(), fixture.dataSource());
+    assertThat(candidateArtifactRow(readback, version)).isEqualTo(before);
+    assertThatThrownBy(
+            () -> readback.candidateService().readExportCandidate(version.getTenantId(), 1))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("ASSET_EXPORT_CANDIDATE_NOT_FOUND");
+  }
+
+  // Controlled source and manifest inputs exercise only the private PostgreSQL candidate owner;
+  // these cases neither require MinIO nor establish production publication authorization.
+  private CandidateFixture candidateTransactionFixture() {
+    Fixture fixture = fixture();
+    Game game = saveGame(fixture);
+    Version version = saveVersion(fixture, game, 1);
+    GameAsset asset =
+        saveAsset(
+            fixture,
+            game.getTenantId(),
+            "candidate-transaction.png",
+            "image/png",
+            bytes("candidate transaction source bytes"));
+    commitAssetSource(fixture, version, asset);
+    ExportSnapshot snapshot =
+        fixture.publicationService().freezeOrReadSnapshot(game.getTenantId(), 1);
+    stageArtifact(fixture, game, version, WORKFLOW_ID + "-candidate-transaction");
+    List<PublishedArtifactDigest> digests =
+        snapshot.items().stream()
+            .map(
+                source ->
+                    new PublishedArtifactDigest(
+                        source.usageKey(),
+                        "BINARY",
+                        "artifacts/sha256/" + source.contentDigest().substring("sha256:".length()),
+                        source.contentDigest(),
+                        source.contentType(),
+                        1))
+            .toList();
+    assertThat(digests).hasSize(1);
+    FrozenAssetExportCandidate candidate =
+        new FrozenAssetExportCandidate(
+            new ExportedAssetManifest(
+                "sha256:" + sha256Hex(bytes("controlled candidate transaction manifest")),
+                1,
+                digests.stream().map(PublishedArtifactDigest::usageKey).toList(),
+                digests),
+            PUBLIC_BASE_URL);
+    assertThat(
+            fixture
+                .artifactRepository()
+                .findByTenantIdAndVersionId(game.getTenantId(), version.getId())
+                .orElseThrow()
+                .getStateEpoch())
+        .isEqualTo(1L);
+    return new CandidateFixture(fixture, version, candidate);
+  }
+
+  private Map<String, Object> candidateArtifactRow(Fixture fixture, Version version) {
+    return fixture
+        .dsl()
+        .fetchSingle(
+            "SELECT row_to_json(a)::text AS evidence, a.xmin::text AS row_version "
+                + "FROM version_asset_artifact a WHERE tenant_id = ? AND version_id = ?",
+            version.getTenantId(),
+            version.getId())
+        .intoMap();
+  }
+
+  private static void awaitCandidateStart(CountDownLatch start) {
+    try {
+      if (!start.await(10, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Concurrent candidate test start signal timed out");
+      }
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Concurrent candidate test was interrupted", exception);
+    }
+  }
+
+  private record CandidateFixture(
+      Fixture fixture, Version version, FrozenAssetExportCandidate candidate) {}
 
   @Test
   void

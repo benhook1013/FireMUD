@@ -258,8 +258,7 @@ class GameAuthoredWorldSourceDeliveryIntegrationTest {
             () ->
                 fixture
                     .transactionTemplate()
-                    .execute(
-                        status -> fixture.deliveryRepository().acknowledge(pending, changed)))
+                    .execute(status -> fixture.deliveryRepository().acknowledge(pending, changed)))
         .isInstanceOf(GameAuthoredWorldSourceDeliveryRepository.DeliveryConflictException.class)
         .hasMessageContaining("different World receipt");
     assertThat(
