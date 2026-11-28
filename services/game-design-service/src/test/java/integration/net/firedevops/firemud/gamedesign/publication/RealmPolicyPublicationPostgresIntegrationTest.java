@@ -3,11 +3,23 @@ package integration.net.firedevops.firemud.gamedesign.publication;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.grpc.ServerInterceptors;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.authoring.DraftBaseReference;
@@ -16,7 +28,13 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
+import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicyReadGrpcCodec;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBaseRepository;
 import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
@@ -29,6 +47,7 @@ import net.firedevops.firemud.gamedesign.publication.CommandSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
+import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationGrpcService;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationService;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublishedEvidence;
@@ -39,6 +58,8 @@ import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
+import net.firedevops.firemud.gamedesign.v1.PublishedRealmEntryPolicyServiceGrpc;
+import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -50,6 +71,7 @@ import org.jooq.impl.DataSourceConnectionProvider;
 import org.jooq.impl.DefaultConfiguration;
 import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.jooq.autoconfigure.SpringTransactionProvider;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -453,6 +475,118 @@ class RealmPolicyPublicationPostgresIntegrationTest {
     assertThat(replay.policies().getFirst().policyId())
         .isEqualTo(first.policies().getFirst().policyId());
     assertThat(replay.policySetDigest()).isEqualTo(first.policySetDigest());
+  }
+
+  @Test
+  void gameSessionMtlsReadsTheExactCommittedHumanPolicy(@TempDir Path directory) throws Exception {
+    Fixture fixture = fixture(true);
+    GameDesignPublicationOperation operation = fixture.prepare(true);
+    fixture.writePublish(operation, false);
+    var original = fixture.publicationReads().readPublishedSet(fixture.target()).orElseThrow();
+    assertThat(original.policies()).hasSize(1);
+    var policy = original.policies().getFirst();
+
+    String namespace = "test";
+    String serverUri = "spiffe://firemud/ns/test/sa/game-design-service";
+    var pki =
+        LoopbackMtlsTestPki.create(
+            directory,
+            "Published realm policy test CA",
+            new LoopbackMtlsTestPki.IdentitySpec("server", serverUri, true),
+            new LoopbackMtlsTestPki.IdentitySpec(
+                "client", "spiffe://firemud/ns/test/sa/game-session-service", false));
+    var auth =
+        new AuthTokenInterceptor(
+            new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L),
+            Set.of(
+                PublishedRealmEntryPolicyServiceGrpc.getResolvePublishedRealmEntryPolicyMethod()
+                    .getFullMethodName(),
+                PublishedRealmEntryPolicyServiceGrpc.getListPublishedRealmEntryPoliciesMethod()
+                    .getFullMethodName()));
+    var server =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(pki.keyManagerFactory(pki.identity("server"))))
+                    .trustManager(pki.trustManagerFactory())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(
+                ServerInterceptors.intercept(
+                    new RealmPolicyPublicationGrpcService(fixture.publicationReads(), namespace),
+                    new GrpcPeerIdentityInterceptor(),
+                    auth))
+            .build()
+            .start();
+    try {
+      var channel =
+          NettyChannelBuilder.forAddress("localhost", server.getPort())
+              .sslContext(
+                  GrpcSslContexts.forClient()
+                      .trustManager(pki.trustManagerFactory())
+                      .keyManager(pki.keyManagerFactory(pki.identity("client")))
+                      .build())
+              .build();
+      try {
+        var stub =
+            PublishedRealmEntryPolicyServiceGrpc.newBlockingStub(channel)
+                .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(serverUri))
+                .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(serverUri))
+                .withDeadlineAfter(5, TimeUnit.SECONDS);
+        var list =
+            new PublishedRealmEntryPolicyReadGrpcCodec.ListRequest(
+                namespace,
+                UUID.randomUUID(),
+                fixture.target().canonicalTenantId(),
+                fixture.target().canonicalVersionId());
+        var complete =
+            PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
+                list,
+                stub.listPublishedRealmEntryPolicies(
+                    PublishedRealmEntryPolicyReadGrpcCodec.toRequest(list)));
+        assertThat(complete.policySetDigest()).isEqualTo(original.policySetDigest());
+        assertThat(complete.operationBytes()).containsExactly(original.operationBytes());
+        assertThat(complete.captureBytes()).containsExactly(original.captureBytes());
+        assertThat(complete.terminalEvidenceBytes())
+            .containsExactly(original.terminalEvidenceBytes());
+        assertThat(complete.policies())
+            .singleElement()
+            .satisfies(
+                found -> {
+                  assertThat(found.policyId()).isEqualTo(policy.policyId());
+                  assertThat(found.policyDigest()).isEqualTo(policy.policyDigest());
+                });
+
+        var exact =
+            new PublishedRealmEntryPolicyReadGrpcCodec.ResolveRequest(
+                namespace,
+                UUID.randomUUID(),
+                list.canonicalTenantId(),
+                list.canonicalVersionId(),
+                policy.source().policy().worldSlug(),
+                policy.source().policy().realmSlug());
+        assertThat(
+                PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(
+                    exact,
+                    stub.resolvePublishedRealmEntryPolicy(
+                        PublishedRealmEntryPolicyReadGrpcCodec.toRequest(exact))))
+            .isEqualTo(complete);
+
+        var otherWorld =
+            PublishedRealmEntryPolicyReadGrpcCodec.toRequest(exact).toBuilder()
+                .setWorldSlug("different-world")
+                .build();
+        assertThatThrownBy(() -> stub.resolvePublishedRealmEntryPolicy(otherWorld))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                denied ->
+                    assertThat(denied.getStatus().getCode()).isEqualTo(Status.Code.NOT_FOUND));
+      } finally {
+        assertThat(channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      }
+    } finally {
+      assertThat(server.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+    }
   }
 
   @Test
