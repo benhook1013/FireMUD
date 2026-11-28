@@ -21,6 +21,7 @@ import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import javax.sql.DataSource;
 import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest;
 import net.firedevops.firemud.common.recovery.InitialGameplayRecoverRequest.AuditReason;
@@ -265,7 +266,8 @@ class InitialGameplayReleaseControllerTest {
     var dispatched = mock(OutboxEntry.class);
     var operationId = UUID.randomUUID();
     var effectId = UUID.randomUUID();
-    var now = java.time.Instant.parse("2026-11-18T12:00:00Z");
+    var now = Instant.parse("2026-11-18T12:00:00Z");
+    var clock = new MutableClock(now.minusSeconds(1));
     var readback =
         mock(
             net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel.EffectReadback.class);
@@ -285,8 +287,11 @@ class InitialGameplayReleaseControllerTest {
             org.mockito.ArgumentMatchers.eq(operationId),
             org.mockito.ArgumentMatchers.eq(effectId),
             any(),
-            org.mockito.ArgumentMatchers.eq(now)))
+            org.mockito.ArgumentMatchers.<Supplier<Instant>>any()))
         .thenAnswer(invocation -> {
+          Supplier<Instant> claimTime = invocation.getArgument(3);
+          clock.setInstant(now);
+          assertThat(claimTime.get()).isEqualTo(now);
           UUID claim = invocation.getArgument(2);
           attempt.set(claim);
           when(dispatched.lastAttemptId()).thenReturn(claim);
@@ -302,16 +307,18 @@ class InitialGameplayReleaseControllerTest {
     when(journal.recordEffectReadback(dispatched, readback, now)).thenReturn(after);
     var controller =
         new InitialGameplayReleaseController(
-            journal,
-            codec,
-            mock(InitialGameplayReleaseEvidenceProvider.class),
-            port,
-            java.time.Clock.fixed(now, java.time.ZoneOffset.UTC));
+            journal, codec, mock(InitialGameplayReleaseEvidenceProvider.class), port, clock);
 
     assertThat(controller.reconcileNextEffect(operationId)).isSameAs(after);
     assertThat(attempt.get()).isNotNull();
     var order = org.mockito.Mockito.inOrder(journal, port);
-    order.verify(journal).claimEffect(operationId, effectId, attempt.get(), now);
+    order
+        .verify(journal)
+        .claimEffect(
+            org.mockito.ArgumentMatchers.eq(operationId),
+            org.mockito.ArgumentMatchers.eq(effectId),
+            org.mockito.ArgumentMatchers.eq(attempt.get()),
+            org.mockito.ArgumentMatchers.<Supplier<Instant>>any());
     order.verify(port).apply(effect, attempt.get(), 1);
     order.verify(port).readback(effect, attempt.get(), 1);
     order.verify(journal).recordEffectReadback(dispatched, readback, now);
@@ -380,8 +387,8 @@ class InitialGameplayReleaseControllerTest {
     UUID previousAttempt = pending ? null : UUID.randomUUID();
     when(selected.attemptCount()).thenReturn(pending ? 0 : 1);
     when(selected.lastAttemptId()).thenReturn(previousAttempt);
-    when(journal.find(operationId))
-        .thenReturn(java.util.Optional.of(operation), java.util.Optional.of(after));
+    var snapshot = new AtomicReference<>(operation);
+    when(journal.find(operationId)).thenAnswer(invocation -> java.util.Optional.of(snapshot.get()));
     when(journal.findNextEffect(operationId)).thenReturn(java.util.Optional.of(selected));
     var claimedAttempt = new AtomicReference<UUID>();
     var claimed =
@@ -390,7 +397,7 @@ class InitialGameplayReleaseControllerTest {
             org.mockito.ArgumentMatchers.eq(operationId),
             org.mockito.ArgumentMatchers.eq(effectId),
             any(),
-            any()))
+            org.mockito.ArgumentMatchers.<Supplier<Instant>>any()))
         .thenAnswer(invocation -> {
           UUID requested = invocation.getArgument(2);
           claimedAttempt.set(requested);
@@ -408,6 +415,8 @@ class InitialGameplayReleaseControllerTest {
           if (ownsClaim) {
             when(claimed.effect()).thenReturn(effect);
             when(claimed.attemptCount()).thenReturn(claimedOrdinal);
+          } else {
+            snapshot.set(after);
           }
           return claimed;
         });
@@ -417,6 +426,27 @@ class InitialGameplayReleaseControllerTest {
     } else if (ownsClaim) {
       when(port.apply(org.mockito.ArgumentMatchers.eq(effect), any(), anyInt()))
           .thenReturn(applyResult);
+    }
+    if (ownsClaim && expectedRetrySource == null) {
+      when(journal.recordAmbiguousEffectForDispatch(
+              org.mockito.ArgumentMatchers.same(claimed),
+              org.mockito.ArgumentMatchers.eq(
+                  applyResult == null ? "EFFECT_CALL_OUTCOME_UNKNOWN" : applyResult.outcomeCode()),
+              any()))
+          .thenAnswer(invocation -> {
+            snapshot.set(after);
+            return true;
+          });
+    } else if (ownsClaim) {
+      when(journal.recordRetryableEffectForDispatch(
+              org.mockito.ArgumentMatchers.same(claimed),
+              org.mockito.ArgumentMatchers.eq(expectedRetrySource),
+              org.mockito.ArgumentMatchers.eq(applyResult.outcomeCode()),
+              any()))
+          .thenAnswer(invocation -> {
+            snapshot.set(after);
+            return true;
+          });
     }
     var controller =
         new InitialGameplayReleaseController(

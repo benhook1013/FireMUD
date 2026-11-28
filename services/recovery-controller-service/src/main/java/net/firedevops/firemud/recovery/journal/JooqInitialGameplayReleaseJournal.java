@@ -23,12 +23,14 @@ import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import net.firedevops.firemud.recovery.model.InitialGameplayReleaseModel;
 import org.jooq.DSLContext;
 import org.jooq.JSONB;
 import org.jooq.Record;
+import org.jooq.TransactionalCallable;
 import org.jooq.conf.ParamType;
 import org.jooq.conf.Settings;
 import org.jooq.conf.StatementType;
@@ -71,9 +73,10 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     JSONB bindingPayload = JSONB.valueOf(tupleCodec.toJson(scope.peerStorageBinding()));
     Instant now = Instant.now();
     try {
+      requireIndependentTransaction("operation creation");
       return dsl.transactionResult(configuration -> {
         DSLContext tx = DSL.using(configuration);
-        requireRedactedDatabaseLogging(tx);
+        requireQualifiedWriteSession(tx);
         tx.execute(
             """
             INSERT INTO recovery_control.initial_gameplay_release_operation (
@@ -115,20 +118,26 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     }
   }
 
-  private static void requireRedactedDatabaseLogging(DSLContext tx) {
-    // Check the same PostgreSQL session before any statement binds the lock credential.
+  private static void requireQualifiedWriteSession(DSLContext tx) {
+    // Qualify the transaction's own session before binding credentials or acknowledging a write.
     Record settings =
         tx.fetchOne(
             """
             SELECT current_setting('log_error_verbosity') = 'terse'
                AND current_setting('log_parameter_max_length_on_error') = '0'
-               AND current_setting('log_parameter_max_length') = '0' AS redacted
+               AND current_setting('log_parameter_max_length') = '0' AS redacted,
+              current_setting('fsync') = 'on'
+               AND current_setting('synchronous_commit') IN ('on', 'local', 'remote_write', 'remote_apply')
+                  AS durable
             """);
     if (settings == null || !Boolean.TRUE.equals(settings.get("redacted", Boolean.class))) {
       throw new IllegalStateException("Recovery journal requires redacted PostgreSQL logs");
     }
     if (!driverLoggingIsRedacted()) {
       throw new IllegalStateException("Recovery journal requires PostgreSQL driver tracing off");
+    }
+    if (!Boolean.TRUE.equals(settings.get("durable", Boolean.class))) {
+      throw new IllegalStateException("Recovery journal requires durable PostgreSQL commits");
     }
   }
 
@@ -178,7 +187,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         if (current.phase() != Phase.COLLECTING) {
           throw conflict("operation is not collecting owner evidence");
         }
-        requireRedactedDatabaseLogging(tx);
+        requireQualifiedWriteSession(tx);
         int changed =
             tx.execute(
                 """
@@ -209,63 +218,65 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   public PublicTransitionResult transition(PublicTransitionTuple tuple, Instant now) {
     Objects.requireNonNull(tuple, "tuple must not be null");
     Objects.requireNonNull(now, "now must not be null");
-    requireIndependentTransaction("public transition");
     String tupleDigest = tupleCodec.digest(tuple);
     JSONB tuplePayload = JSONB.valueOf(tupleCodec.toJson(tuple));
     var result = new PublicTransitionResult(tuple.operationId(), tuple.verb().resultPhase());
-    return dsl.transactionResult(configuration -> {
-      DSLContext tx = DSL.using(configuration);
-      Operation current = selectOperation(tx, tuple.operationId(), true);
-      requireTransitionMatchesOperation(tuple, current);
-      Record previous =
-          tx.fetchOne(
-              "SELECT tuple_digest, tuple_payload, expected_phase, result_phase FROM "
-                  + TRANSITION_TABLE
-                  + " WHERE operation_id = ? AND verb = ?",
-              tuple.operationId(),
-              tuple.verb().wireValue());
-      if (previous != null) {
-        requireRetainedTransition(previous, tuple, tupleDigest);
-        requireFinalizedHandoff(tx, current);
-        return result;
-      }
-      if (current.phase() != tuple.expectedPhase()) {
-        throw conflict("public transition expected phase is stale");
-      }
-      requireRedactedDatabaseLogging(tx);
-      tx.execute(
-          """
-          INSERT INTO recovery_control.initial_gameplay_release_transition (
-              operation_id, verb, tuple_digest, tuple_payload, expected_phase, result_phase
-          ) VALUES (?, ?, ?, CAST(? AS jsonb), ?, ?)
-          """,
-          tuple.operationId(),
-          tuple.verb().wireValue(),
-          tupleDigest,
-          tuplePayload,
-          tuple.expectedPhase().databaseValue(),
-          tuple.verb().resultPhase().databaseValue());
-      int changed =
+    return independentTransaction(
+        "public transition",
+        "Unable to record recovery journal transition",
+        configuration -> {
+          DSLContext tx = DSL.using(configuration);
+          Operation current = selectOperation(tx, tuple.operationId(), true);
+          requireTransitionMatchesOperation(tuple, current);
+          Record previous =
+              tx.fetchOne(
+                  "SELECT tuple_digest, tuple_payload, expected_phase, result_phase FROM "
+                      + TRANSITION_TABLE
+                      + " WHERE operation_id = ? AND verb = ?",
+                  tuple.operationId(),
+                  tuple.verb().wireValue());
+          if (previous != null) {
+            requireRetainedTransition(previous, tuple, tupleDigest);
+            requireFinalizedHandoff(tx, current);
+            return result;
+          }
+          if (current.phase() != tuple.expectedPhase()) {
+            throw conflict("public transition expected phase is stale");
+          }
+          requireQualifiedWriteSession(tx);
           tx.execute(
               """
-              UPDATE recovery_control.initial_gameplay_release_operation
-              SET phase = ?, revision = revision + 1, updated_at = CAST(? AS timestamptz)
-              WHERE operation_id = ? AND phase = ? AND revision = ?
+              INSERT INTO recovery_control.initial_gameplay_release_transition (
+                  operation_id, verb, tuple_digest, tuple_payload, expected_phase, result_phase
+              ) VALUES (?, ?, ?, CAST(? AS jsonb), ?, ?)
               """,
-              tuple.verb().resultPhase().databaseValue(),
-              toOffsetDateTime(now),
               tuple.operationId(),
+              tuple.verb().wireValue(),
+              tupleDigest,
+              tuplePayload,
               tuple.expectedPhase().databaseValue(),
-              current.revision());
-      if (changed != 1) {
-        throw conflict("public transition compare-and-set lost");
-      }
-      Operation transitioned = selectOperation(tx, tuple.operationId(), false);
-      if (tuple.verb() == TransitionVerb.RESUME) {
-        enqueueEffect(tx, prepareEffect(transitioned), now);
-      }
-      return result;
-    });
+              tuple.verb().resultPhase().databaseValue());
+          int changed =
+              tx.execute(
+                  """
+                  UPDATE recovery_control.initial_gameplay_release_operation
+                  SET phase = ?, revision = revision + 1, updated_at = CAST(? AS timestamptz)
+                  WHERE operation_id = ? AND phase = ? AND revision = ?
+                  """,
+                  tuple.verb().resultPhase().databaseValue(),
+                  toOffsetDateTime(now),
+                  tuple.operationId(),
+                  tuple.expectedPhase().databaseValue(),
+                  current.revision());
+          if (changed != 1) {
+            throw conflict("public transition compare-and-set lost");
+          }
+          Operation transitioned = selectOperation(tx, tuple.operationId(), false);
+          if (tuple.verb() == TransitionVerb.RESUME) {
+            enqueueEffect(tx, prepareEffect(transitioned), now);
+          }
+          return result;
+        });
   }
 
   @Override
@@ -350,9 +361,10 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   }
 
   @Override
-  public OutboxEntry claimEffect(UUID operationId, UUID effectId, UUID attemptId, Instant now) {
+  public OutboxEntry claimEffect(
+      UUID operationId, UUID effectId, UUID attemptId, Supplier<Instant> claimTime) {
     Objects.requireNonNull(attemptId, "attemptId must not be null");
-    Objects.requireNonNull(now, "now must not be null");
+    Objects.requireNonNull(claimTime, "claimTime must not be null");
     requireIndependentTransaction("effect dispatch claim");
     return dsl.transactionResult(configuration -> {
       DSLContext tx = DSL.using(configuration);
@@ -376,11 +388,12 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         requireExactClosureBeforeRetry(tx, current);
       }
       requirePhaseForEffect(operation.phase(), current.effect().kind());
-      if (current.effect().kind() == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF) {
-        requireAcknowledgedEffect(
-            tx, operation, EffectKind.PREPARE_PLAYABLE_STATE_FENCED, now, true);
-      }
-      requireRedactedDatabaseLogging(tx);
+      Instant now =
+          current.effect().kind() == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF
+              ? requireAcknowledgedEffect(
+                  tx, operation, EffectKind.PREPARE_PLAYABLE_STATE_FENCED, claimTime, true)
+              : claimTime.get();
+      requireQualifiedWriteSession(tx);
       int changed =
           tx.execute(
               """
@@ -469,7 +482,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         if (retained != null
             && "local_no_send".equals(retained.get("retry_provenance", String.class))
             && !Boolean.TRUE.equals(retained.get("send_outcome_uncertain", Boolean.class))) {
-          requireRedactedDatabaseLogging(tx);
+          requireQualifiedWriteSession(tx);
           int changed =
               tx.execute(
                   "UPDATE "
@@ -490,7 +503,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       }
       if (current.state() == resultState) {
         if (resultState == EffectOutboxState.AMBIGUOUS) {
-          requireRedactedDatabaseLogging(tx);
+          requireQualifiedWriteSession(tx);
           tx.execute(
               "UPDATE " + OUTBOX_TABLE + " SET send_outcome_uncertain = true WHERE outbox_id = ?",
               current.outboxId());
@@ -513,7 +526,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         }
         return true;
       }
-      requireRedactedDatabaseLogging(tx);
+      requireQualifiedWriteSession(tx);
       OffsetDateTime recordedAt = toOffsetDateTime(now);
       if (retrySource == RetrySource.NOT_DISPATCHED) {
         Record stored =
@@ -613,252 +626,261 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     Objects.requireNonNull(dispatch, "dispatch must not be null");
     Objects.requireNonNull(readback, "readback must not be null");
     Objects.requireNonNull(now, "now must not be null");
-    requireIndependentTransaction("effect readback");
     UUID operationId = dispatch.effect().operationId();
     UUID effectId = dispatch.effect().effectId();
-    return dsl.transactionResult(configuration -> {
-      DSLContext tx = DSL.using(configuration);
-      Operation operation = requireFinalizedHandoff(tx, selectOperation(tx, operationId, true));
-      OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
-      tupleCodec.requireEffectMatchesOperation(current.effect(), operation);
-      if (!sameEffect(dispatch, current)
-          || (dispatch.state() != EffectOutboxState.DISPATCHED
-              && dispatch.state() != EffectOutboxState.AMBIGUOUS)) {
-        throw conflict("effect readback dispatch tuple changed");
-      }
-      if (dispatch.lastAttemptId() == null) {
-        throw conflict("effect readback belongs to another attempt");
-      }
-      if (!dispatch.lastAttemptId().equals(current.lastAttemptId())) {
-        RetainedClosure retainedClosure =
-            findRetainedClosure(tx, current, dispatch.lastAttemptId(), dispatch.attemptCount());
-        if (retainedClosure == null) {
-          throw conflict("effect readback belongs to another attempt");
-        }
-        if (!sameRetainedOutcome(retainedClosure.readback(), readback)
-            || readback.observedAt().isAfter(now)) {
-          throw conflict("effect readback changed after definitive no effect");
-        }
-        if (readback.observedAt().isBefore(retainedClosure.dispatchedAt())) {
-          throw conflict("effect readback is stale");
-        }
-        return operation;
-      }
-      String readbackDigest = tupleCodec.digest(readback);
-      if (dispatch.attemptCount() != current.attemptCount()) {
-        throw conflict("effect readback dispatch generation changed");
-      }
-      requireReadbackMatches(readback, current, operationId, effectId);
-      if (current.state() == EffectOutboxState.ACKNOWLEDGED
-          || current.state() == EffectOutboxState.RETRYABLE) {
-        Record stored =
-            tx.fetchOne(
-                "SELECT readback_digest, readback_payload, readback_identity, last_dispatched_at,"
-                    + " retry_provenance, updated_at, acknowledged_at, send_outcome_uncertain,"
-                    + " preparation_observation_payload, preparation_observation_digest FROM "
-                    + OUTBOX_TABLE
-                    + " WHERE operation_id = ? AND effect_id = ?",
-                operationId,
-                effectId);
-        String storedDigest = stored == null ? null : stored.get("readback_digest", String.class);
-        if (current.state() == EffectOutboxState.ACKNOWLEDGED) {
-          if (readbackDigest.equals(storedDigest)) {
-            requireSuccessfulReadbackState(readback, current.effect().kind());
-            requireValidExactStoredReadback(readback, stored, storedDigest, current);
-            requireRetainedReadbackRecordingTime(readback, stored, "acknowledged_at");
-            requireTerminalReplayWithinAttempt(readback, stored, now);
+    return independentTransaction(
+        "effect readback",
+        "Unable to record recovery journal effect readback",
+        configuration -> {
+          DSLContext tx = DSL.using(configuration);
+          Operation operation = requireFinalizedHandoff(tx, selectOperation(tx, operationId, true));
+          OutboxEntry current = selectOutbox(tx, operationId, effectId, true);
+          tupleCodec.requireEffectMatchesOperation(current.effect(), operation);
+          if (!sameEffect(dispatch, current)
+              || (dispatch.state() != EffectOutboxState.DISPATCHED
+                  && dispatch.state() != EffectOutboxState.AMBIGUOUS)) {
+            throw conflict("effect readback dispatch tuple changed");
+          }
+          if (dispatch.lastAttemptId() == null) {
+            throw conflict("effect readback belongs to another attempt");
+          }
+          if (!dispatch.lastAttemptId().equals(current.lastAttemptId())) {
+            RetainedClosure retainedClosure =
+                findRetainedClosure(tx, current, dispatch.lastAttemptId(), dispatch.attemptCount());
+            if (retainedClosure == null) {
+              throw conflict("effect readback belongs to another attempt");
+            }
+            if (!sameRetainedOutcome(retainedClosure.readback(), readback)
+                || readback.observedAt().isAfter(now)) {
+              throw conflict("effect readback changed after definitive no effect");
+            }
+            if (readback.observedAt().isBefore(retainedClosure.dispatchedAt())) {
+              throw conflict("effect readback is stale");
+            }
             return operation;
           }
-          if (operation.phase() == Phase.RELEASING
-              && current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED) {
-            retainPreparationObservation(tx, current, stored, readback, readbackDigest, now);
-            return operation;
+          String readbackDigest = tupleCodec.digest(readback);
+          if (dispatch.attemptCount() != current.attemptCount()) {
+            throw conflict("effect readback dispatch generation changed");
           }
-          if (operation.phase() == Phase.FINALIZED
-              && current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
-              && readback.state() == EffectReadbackState.PREPARED_FENCED
-              && stored != null
-              && readback.equals(
-                  latestPreparationObservation(
-                      tx, stored, current, requireReadbackReceipt(stored, current)))) {
-            requireTerminalReplayWithinAttempt(readback, stored, now);
-            return operation;
+          requireReadbackMatches(readback, current, operationId, effectId);
+          if (current.state() == EffectOutboxState.ACKNOWLEDGED
+              || current.state() == EffectOutboxState.RETRYABLE) {
+            Record stored =
+                tx.fetchOne(
+                    "SELECT readback_digest, readback_payload, readback_identity, last_dispatched_at,"
+                        + " retry_provenance, updated_at, acknowledged_at, send_outcome_uncertain,"
+                        + " preparation_observation_payload, preparation_observation_digest FROM "
+                        + OUTBOX_TABLE
+                        + " WHERE operation_id = ? AND effect_id = ?",
+                    operationId,
+                    effectId);
+            String storedDigest =
+                stored == null ? null : stored.get("readback_digest", String.class);
+            if (current.state() == EffectOutboxState.ACKNOWLEDGED) {
+              if (readbackDigest.equals(storedDigest)) {
+                requireSuccessfulReadbackState(readback, current.effect().kind());
+                requireValidExactStoredReadback(readback, stored, storedDigest, current);
+                requireRetainedReadbackRecordingTime(readback, stored, "acknowledged_at");
+                requireTerminalReplayWithinAttempt(readback, stored, now);
+                return operation;
+              }
+              if (operation.phase() == Phase.RELEASING
+                  && current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED) {
+                retainPreparationObservation(tx, current, stored, readback, readbackDigest, now);
+                return operation;
+              }
+              if (operation.phase() == Phase.FINALIZED
+                  && current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
+                  && readback.state() == EffectReadbackState.PREPARED_FENCED
+                  && stored != null
+                  && readback.equals(
+                      latestPreparationObservation(
+                          tx, stored, current, requireReadbackReceipt(stored, current)))) {
+                requireTerminalReplayWithinAttempt(readback, stored, now);
+                return operation;
+              }
+              if (current.effect().kind() == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF
+                  && stored != null
+                  && sameRetainedOutcome(readback, stored, storedDigest, "acknowledged_at")) {
+                requireSuccessfulReadbackState(readback, current.effect().kind());
+                requireTerminalReplayWithinAttempt(readback, stored, now);
+                return operation;
+              }
+              throw conflict("effect readback changed after acknowledgement");
+            }
+            if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
+                && readbackDigest.equals(storedDigest)) {
+              requireValidExactStoredReadback(readback, stored, storedDigest, current);
+              requireRetainedClosureMatchesStoredReadback(tx, current, stored, storedDigest);
+              requireTerminalReplayWithinAttempt(readback, stored, now);
+              recoverOwnerClosureProvenance(tx, current);
+              return operation;
+            }
+            if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
+                && stored != null
+                && sameRetainedOutcome(readback, stored, storedDigest, "updated_at")) {
+              requireRetainedClosureMatchesStoredReadback(tx, current, stored, storedDigest);
+              requireTerminalReplayWithinAttempt(readback, stored, now);
+              recoverOwnerClosureProvenance(tx, current);
+              return operation;
+            }
+            String provenance =
+                stored == null ? null : stored.get("retry_provenance", String.class);
+            boolean heldUntyped = stored != null && provenance == null;
+            boolean typedOwnerRejection = "owner_rejected".equals(provenance);
+            boolean partial = readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL;
+            boolean typedLocalNoSend = "local_no_send".equals(provenance);
+            boolean heldLocalNoSend =
+                partial
+                    && heldUntyped
+                    && hasRetainedLocalNoSend(
+                        tx, current, stored.get("last_dispatched_at", OffsetDateTime.class));
+            boolean partialAfterLocalNoSend = partial && (typedLocalNoSend || heldLocalNoSend);
+            boolean partialAfterOwnerRejection =
+                partial
+                    && (typedOwnerRejection
+                        || (heldUntyped
+                            && hasRetainedOwnerRejection(
+                                tx, current, readback.attemptId(), current.attemptCount())));
+            if (partialAfterLocalNoSend || partialAfterOwnerRejection) {
+              requireTerminalReplayWithinAttempt(readback, stored, now);
+              if (typedOwnerRejection
+                  || (typedLocalNoSend
+                      && Boolean.FALSE.equals(
+                          stored.get("send_outcome_uncertain", Boolean.class)))) {
+                requireExactClosureBeforeRetry(tx, current);
+              } else if (hasRetainedClosure(
+                  tx, current, readback.attemptId(), current.attemptCount())) {
+                throw conflict("effect readback changed after definitive no effect");
+              }
+              requireNonRegressingReadback(readback, stored, current);
+              if (!readbackDigest.equals(storedDigest)) {
+                requireQualifiedWriteSession(tx);
+                // Keep the observation floor without changing the original retry provenance or
+                // hold.
+                tx.execute(
+                    """
+                    UPDATE recovery_control.initial_gameplay_release_outbox
+                    SET readback_identity = ?, readback_payload = CAST(? AS jsonb),
+                        readback_digest = ?, updated_at = GREATEST(updated_at, CAST(? AS timestamptz))
+                    WHERE outbox_id = ?
+                    """,
+                    readback.readbackIdentity(),
+                    JSONB.valueOf(tupleCodec.toJson(readback)),
+                    readbackDigest,
+                    toOffsetDateTime(now),
+                    current.outboxId());
+              }
+              return operation;
+            }
+            boolean hasStoredReadback =
+                stored != null
+                    && (storedDigest != null
+                        || stored.get("readback_payload", JSONB.class) != null
+                        || stored.get("readback_identity", String.class) != null);
+            boolean conflictsWithRetainedOutcome =
+                hasStoredReadback && !hasValidatedUnknownReadback(stored, storedDigest, current);
+            // A V4 local no-send carried exact typed proof. V5's unknown transport status
+            // holds reuse but does not make a contradictory applied outcome admissible.
+            if (conflictsWithRetainedOutcome
+                || (readback.state() != EffectReadbackState.PROVEN_NO_EFFECT
+                    && (!heldUntyped
+                        || hasRetainedClosure(tx, current, readback.attemptId(), null)
+                        || hasRetainedOwnerRejection(tx, current, readback.attemptId(), null)))) {
+              throw conflict("effect readback changed after definitive no effect");
+            }
+            // A held retry keeps the same attempt and observation fences as an ambiguous dispatch.
+            // Record partial evidence so a delayed definitive observation cannot advance it.
           }
-          if (current.effect().kind() == EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF
-              && stored != null
-              && sameRetainedOutcome(readback, stored, storedDigest, "acknowledged_at")) {
-            requireSuccessfulReadbackState(readback, current.effect().kind());
-            requireTerminalReplayWithinAttempt(readback, stored, now);
-            return operation;
+          if (readback.observedAt().isAfter(now)) {
+            throw conflict("effect readback observation is in the future");
           }
-          throw conflict("effect readback changed after acknowledgement");
-        }
-        if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
-            && readbackDigest.equals(storedDigest)) {
-          requireValidExactStoredReadback(readback, stored, storedDigest, current);
-          requireRetainedClosureMatchesStoredReadback(tx, current, stored, storedDigest);
-          requireTerminalReplayWithinAttempt(readback, stored, now);
-          recoverOwnerClosureProvenance(tx, current);
-          return operation;
-        }
-        if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT
-            && stored != null
-            && sameRetainedOutcome(readback, stored, storedDigest, "updated_at")) {
-          requireRetainedClosureMatchesStoredReadback(tx, current, stored, storedDigest);
-          requireTerminalReplayWithinAttempt(readback, stored, now);
-          recoverOwnerClosureProvenance(tx, current);
-          return operation;
-        }
-        String provenance = stored == null ? null : stored.get("retry_provenance", String.class);
-        boolean heldUntyped = stored != null && provenance == null;
-        boolean typedOwnerRejection = "owner_rejected".equals(provenance);
-        boolean partial = readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL;
-        boolean typedLocalNoSend = "local_no_send".equals(provenance);
-        boolean heldLocalNoSend =
-            partial
-                && heldUntyped
-                && hasRetainedLocalNoSend(
-                    tx, current, stored.get("last_dispatched_at", OffsetDateTime.class));
-        boolean partialAfterLocalNoSend = partial && (typedLocalNoSend || heldLocalNoSend);
-        boolean partialAfterOwnerRejection =
-            partial
-                && (typedOwnerRejection
-                    || (heldUntyped
-                        && hasRetainedOwnerRejection(
-                            tx, current, readback.attemptId(), current.attemptCount())));
-        if (partialAfterLocalNoSend || partialAfterOwnerRejection) {
-          requireTerminalReplayWithinAttempt(readback, stored, now);
-          if (typedOwnerRejection
-              || (typedLocalNoSend
-                  && Boolean.FALSE.equals(stored.get("send_outcome_uncertain", Boolean.class)))) {
-            requireExactClosureBeforeRetry(tx, current);
-          } else if (hasRetainedClosure(
-              tx, current, readback.attemptId(), current.attemptCount())) {
+          if (current.state() != EffectOutboxState.DISPATCHED
+              && current.state() != EffectOutboxState.AMBIGUOUS
+              && current.state() != EffectOutboxState.RETRYABLE) {
+            throw conflict("effect is not awaiting readback reconciliation");
+          }
+          Record timestamps =
+              tx.fetchOne(
+                  "SELECT last_dispatched_at, readback_payload, readback_digest, readback_identity FROM"
+                      + " "
+                      + OUTBOX_TABLE
+                      + " WHERE operation_id = ? AND effect_id = ?",
+                  operationId,
+                  effectId);
+          if (timestamps == null) {
+            throw conflict("effect dispatch timestamp is unavailable");
+          }
+          OffsetDateTime dispatchTime = timestamps.get("last_dispatched_at", OffsetDateTime.class);
+          if (dispatchTime == null) {
+            throw conflict("effect dispatch timestamp is unavailable");
+          }
+          Instant dispatchedAt = dispatchTime.toInstant();
+          if (readback.observedAt().isBefore(dispatchedAt)) {
+            throw conflict("effect readback is stale");
+          }
+          if (readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL
+              && readback.state() != EffectReadbackState.PROVEN_NO_EFFECT
+              && hasRetainedLocalNoSend(tx, current, dispatchTime)) {
             throw conflict("effect readback changed after definitive no effect");
           }
-          requireNonRegressingReadback(readback, stored, current);
-          if (!readbackDigest.equals(storedDigest)) {
-            requireRedactedDatabaseLogging(tx);
-            // Keep the observation floor without changing the original retry provenance or hold.
+          EffectReadback previous = requireNonRegressingReadback(readback, timestamps, current);
+          requireQualifiedWriteSession(tx);
+          if (isPreparationHeldBeforeHandoff(operation, current)) {
+            if (previous == null || previous.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
+              throw conflict("held preparation has no retained partial readback");
+            }
+            if (readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
+              requireSuccessfulReadbackState(readback, current.effect().kind());
+              setReadbackState(
+                  tx, current, readback, readbackDigest, EffectOutboxState.ACKNOWLEDGED, now);
+              return operation;
+            }
+          }
+          if (readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL) {
+            setReadbackState(
+                tx, current, readback, readbackDigest, EffectOutboxState.AMBIGUOUS, now);
+            return operation;
+          }
+          if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT) {
+            if (hasRetainedClosure(tx, current, readback.attemptId(), null)) {
+              throw conflict("effect attempt closure already exists outside exact replay");
+            }
             tx.execute(
                 """
-                UPDATE recovery_control.initial_gameplay_release_outbox
-                SET readback_identity = ?, readback_payload = CAST(? AS jsonb),
-                    readback_digest = ?, updated_at = GREATEST(updated_at, CAST(? AS timestamptz))
-                WHERE outbox_id = ?
+                INSERT INTO recovery_control.initial_gameplay_release_attempt_closure
+                    (outbox_id, attempt_id, attempt_ordinal, readback_payload, readback_digest, dispatched_at, recorded_at)
+                VALUES (?, ?, ?, CAST(? AS jsonb), ?, CAST(? AS timestamptz), CAST(? AS timestamptz))
                 """,
-                readback.readbackIdentity(),
+                current.outboxId(),
+                readback.attemptId(),
+                current.attemptCount(),
                 JSONB.valueOf(tupleCodec.toJson(readback)),
                 readbackDigest,
-                toOffsetDateTime(now),
-                current.outboxId());
+                dispatchTime,
+                toOffsetDateTime(now));
+            setReadbackState(
+                tx, current, readback, readbackDigest, EffectOutboxState.RETRYABLE, now);
+            return operation;
           }
-          return operation;
-        }
-        boolean hasStoredReadback =
-            stored != null
-                && (storedDigest != null
-                    || stored.get("readback_payload", JSONB.class) != null
-                    || stored.get("readback_identity", String.class) != null);
-        boolean conflictsWithRetainedOutcome =
-            hasStoredReadback && !hasValidatedUnknownReadback(stored, storedDigest, current);
-        // A V4 local no-send carried exact typed proof. V5's unknown transport status
-        // holds reuse but does not make a contradictory applied outcome admissible.
-        if (conflictsWithRetainedOutcome
-            || (readback.state() != EffectReadbackState.PROVEN_NO_EFFECT
-                && (!heldUntyped
-                    || hasRetainedClosure(tx, current, readback.attemptId(), null)
-                    || hasRetainedOwnerRejection(tx, current, readback.attemptId(), null)))) {
-          throw conflict("effect readback changed after definitive no effect");
-        }
-        // A held retry keeps the same attempt and observation fences as an ambiguous dispatch.
-        // Record partial evidence so a delayed definitive observation cannot advance it.
-      }
-      if (readback.observedAt().isAfter(now)) {
-        throw conflict("effect readback observation is in the future");
-      }
-      if (current.state() != EffectOutboxState.DISPATCHED
-          && current.state() != EffectOutboxState.AMBIGUOUS
-          && current.state() != EffectOutboxState.RETRYABLE) {
-        throw conflict("effect is not awaiting readback reconciliation");
-      }
-      Record timestamps =
-          tx.fetchOne(
-              "SELECT last_dispatched_at, readback_payload, readback_digest, readback_identity FROM"
-                  + " "
-                  + OUTBOX_TABLE
-                  + " WHERE operation_id = ? AND effect_id = ?",
-              operationId,
-              effectId);
-      if (timestamps == null) {
-        throw conflict("effect dispatch timestamp is unavailable");
-      }
-      OffsetDateTime dispatchTime = timestamps.get("last_dispatched_at", OffsetDateTime.class);
-      if (dispatchTime == null) {
-        throw conflict("effect dispatch timestamp is unavailable");
-      }
-      Instant dispatchedAt = dispatchTime.toInstant();
-      if (readback.observedAt().isBefore(dispatchedAt)) {
-        throw conflict("effect readback is stale");
-      }
-      if (readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL
-          && readback.state() != EffectReadbackState.PROVEN_NO_EFFECT
-          && hasRetainedLocalNoSend(tx, current, dispatchTime)) {
-        throw conflict("effect readback changed after definitive no effect");
-      }
-      EffectReadback previous = requireNonRegressingReadback(readback, timestamps, current);
-      requireRedactedDatabaseLogging(tx);
-      if (isPreparationHeldBeforeHandoff(operation, current)) {
-        if (previous == null || previous.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
-          throw conflict("held preparation has no retained partial readback");
-        }
-        if (readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
           requireSuccessfulReadbackState(readback, current.effect().kind());
           setReadbackState(
               tx, current, readback, readbackDigest, EffectOutboxState.ACKNOWLEDGED, now);
-          return operation;
-        }
-      }
-      if (readback.state() == EffectReadbackState.UNKNOWN_OR_PARTIAL) {
-        setReadbackState(tx, current, readback, readbackDigest, EffectOutboxState.AMBIGUOUS, now);
-        return operation;
-      }
-      if (readback.state() == EffectReadbackState.PROVEN_NO_EFFECT) {
-        if (hasRetainedClosure(tx, current, readback.attemptId(), null)) {
-          throw conflict("effect attempt closure already exists outside exact replay");
-        }
-        tx.execute(
-            """
-            INSERT INTO recovery_control.initial_gameplay_release_attempt_closure
-                (outbox_id, attempt_id, attempt_ordinal, readback_payload, readback_digest, dispatched_at, recorded_at)
-            VALUES (?, ?, ?, CAST(? AS jsonb), ?, CAST(? AS timestamptz), CAST(? AS timestamptz))
-            """,
-            current.outboxId(),
-            readback.attemptId(),
-            current.attemptCount(),
-            JSONB.valueOf(tupleCodec.toJson(readback)),
-            readbackDigest,
-            dispatchTime,
-            toOffsetDateTime(now));
-        setReadbackState(tx, current, readback, readbackDigest, EffectOutboxState.RETRYABLE, now);
-        return operation;
-      }
-      requireSuccessfulReadbackState(readback, current.effect().kind());
-      setReadbackState(tx, current, readback, readbackDigest, EffectOutboxState.ACKNOWLEDGED, now);
-      if (current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED) {
-        if (operation.phase() != Phase.RESUME_AUTHORIZED) {
-          throw conflict("preparation effect is outside the authorized phase");
-        }
-        updatePhase(tx, operation, Phase.RELEASING, now, null);
-        enqueueEffect(tx, handoffEffect(operation), now);
-      } else {
-        if (operation.phase() != Phase.RELEASING) {
-          throw conflict("handoff effect is outside the releasing phase");
-        }
-        updatePhase(tx, operation, Phase.FINALIZED, now, now);
-      }
-      return selectOperation(tx, operationId, false);
-    });
+          if (current.effect().kind() == EffectKind.PREPARE_PLAYABLE_STATE_FENCED) {
+            if (operation.phase() != Phase.RESUME_AUTHORIZED) {
+              throw conflict("preparation effect is outside the authorized phase");
+            }
+            updatePhase(tx, operation, Phase.RELEASING, now, null);
+            enqueueEffect(tx, handoffEffect(operation), now);
+          } else {
+            if (operation.phase() != Phase.RELEASING) {
+              throw conflict("handoff effect is outside the releasing phase");
+            }
+            updatePhase(tx, operation, Phase.FINALIZED, now, now);
+          }
+          return selectOperation(tx, operationId, false);
+        });
   }
 
   private static boolean sameEffect(OutboxEntry dispatch, OutboxEntry current) {
@@ -868,7 +890,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
   }
 
   private void recoverOwnerClosureProvenance(DSLContext tx, OutboxEntry current) {
-    requireRedactedDatabaseLogging(tx);
+    requireQualifiedWriteSession(tx);
     tx.execute(
         "UPDATE "
             + OUTBOX_TABLE
@@ -918,7 +940,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
       throw conflict(
           "preparation readback must be newer than the retained same-attempt observation");
     }
-    requireRedactedDatabaseLogging(tx);
+    requireQualifiedWriteSession(tx);
     if (readback.state() != EffectReadbackState.UNKNOWN_OR_PARTIAL) {
       requireSuccessfulReadbackState(readback, preparation.effect().kind());
       if (acknowledgement.readbackIdentity().equals(readback.readbackIdentity())
@@ -931,17 +953,21 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
         throw conflict("preparation readback identity already has an observation");
       }
     }
-    tx.execute(
-        """
-        UPDATE recovery_control.initial_gameplay_release_outbox
-        SET preparation_observation_payload = CAST(? AS jsonb), preparation_observation_digest = ?,
-            updated_at = GREATEST(updated_at, CAST(? AS timestamptz))
-        WHERE outbox_id = ?
-        """,
-        JSONB.valueOf(tupleCodec.toJson(readback)),
-        readbackDigest,
-        toOffsetDateTime(now.truncatedTo(java.time.temporal.ChronoUnit.MICROS)),
-        preparation.outboxId());
+    int changed =
+        tx.execute(
+            """
+            UPDATE recovery_control.initial_gameplay_release_outbox
+            SET preparation_observation_payload = CAST(? AS jsonb), preparation_observation_digest = ?,
+                updated_at = GREATEST(updated_at, CAST(? AS timestamptz))
+            WHERE outbox_id = ?
+            """,
+            JSONB.valueOf(tupleCodec.toJson(readback)),
+            readbackDigest,
+            toOffsetDateTime(now.truncatedTo(java.time.temporal.ChronoUnit.MICROS)),
+            preparation.outboxId());
+    if (changed != 1) {
+      throw conflict("preparation observation compare-and-set lost");
+    }
   }
 
   private EffectReadback latestPreparationObservation(
@@ -982,9 +1008,21 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     return observation;
   }
 
+  private <T> T independentTransaction(
+      String operation, String failureMessage, TransactionalCallable<T> transaction) {
+    try {
+      requireIndependentTransaction(operation);
+      return dsl.transactionResult(transaction);
+    } catch (DataAccessException | org.springframework.dao.DataAccessException failure) {
+      // Translate after rollback, without retaining row details from the database failure.
+      throw new IllegalStateException(failureMessage);
+    }
+  }
+
   private void requireIndependentTransaction(String operation) {
     // A journal bound to a caller's transaction can release only a savepoint.
-    // These entry points report authorization, dispatch custody, or a phase after commit.
+    // These entry points report a new operation, authorization, dispatch custody, or a phase after
+    // commit.
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || !dsl.connectionResult(connection -> connection.getAutoCommit())) {
       throw conflict(operation + " requires its own transaction");
@@ -1246,11 +1284,11 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     }
   }
 
-  private void requireAcknowledgedEffect(
+  private Instant requireAcknowledgedEffect(
       DSLContext context,
       Operation operation,
       EffectKind kind,
-      Instant upperBound,
+      Supplier<Instant> timeBound,
       boolean forUpdate) {
     UUID operationId = operation.scope().operationId();
     String label = kind == EffectKind.PREPARE_PLAYABLE_STATE_FENCED ? "preparation" : "handoff";
@@ -1270,19 +1308,22 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
     if (stored == null) throw conflict("retained " + label + " is missing");
     OutboxEntry effect = toOutboxEntry(stored);
     tupleCodec.requireEffectMatchesOperation(effect.effect(), operation);
-    if (effect.state() != EffectOutboxState.ACKNOWLEDGED
-        || effect.acknowledgedAt().isAfter(upperBound)) {
+    if (effect.state() != EffectOutboxState.ACKNOWLEDGED) {
       throw conflict("retained " + label + " acknowledgement is unavailable");
     }
     EffectReadback acknowledgement = requireReadbackReceipt(stored, effect);
-    if (kind == EffectKind.PREPARE_PLAYABLE_STATE_FENCED) {
-      EffectReadback observation =
-          latestPreparationObservation(context, stored, effect, acknowledgement);
-      if (observation.state() != EffectReadbackState.PREPARED_FENCED
-          || observation.observedAt().isAfter(upperBound)) {
-        throw conflict("retained preparation acknowledgement is unavailable");
-      }
+    EffectReadback observation =
+        kind == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
+            ? latestPreparationObservation(context, stored, effect, acknowledgement)
+            : acknowledgement;
+    Instant upperBound = timeBound.get();
+    if (effect.acknowledgedAt().isAfter(upperBound)
+        || (kind == EffectKind.PREPARE_PLAYABLE_STATE_FENCED
+            && (observation.state() != EffectReadbackState.PREPARED_FENCED
+                || observation.observedAt().isAfter(upperBound)))) {
+      throw conflict("retained " + label + " acknowledgement is unavailable");
     }
+    return upperBound;
   }
 
   private EffectReadback requireReadbackReceipt(Record stored, OutboxEntry effect) {
@@ -1311,7 +1352,7 @@ public final class JooqInitialGameplayReleaseJournal implements InitialGameplayR
           context,
           operation,
           EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF,
-          operation.finalizedAt(),
+          operation::finalizedAt,
           false);
     }
     return operation;

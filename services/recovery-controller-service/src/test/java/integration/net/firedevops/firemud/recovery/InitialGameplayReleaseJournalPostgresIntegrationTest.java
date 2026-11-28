@@ -309,7 +309,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .withCommand(
               "postgres",
               "-c",
-              "fsync=off",
+              "fsync=on",
               "-c",
               "log_error_verbosity=terse",
               "-c",
@@ -426,6 +426,63 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
           .hasMessage("Unable to bind recovery journal evidence")
           .hasNoCause();
       assertThat(injected.find(scope.operationId())).contains(collected);
+      fixture.execute(operationTable + " DROP CONSTRAINT fixture_requires_collecting");
+      Instant now = Instant.now();
+      Operation ready =
+          injected.bindVerifiedEvidence(
+              scope, tupleCodec.digest(scope), evidence, tupleCodec.digest(evidence), now);
+      PublicTransitionTuple continuation = transitionTuple(ready, TransitionVerb.CONTINUE_RECOVERY);
+      fixture.execute(
+          operationTable
+              + " ADD CONSTRAINT fixture_holds_transition CHECK (phase <> 'awaiting_resume')");
+      assertThatThrownBy(() -> injected.transition(continuation, now.plusSeconds(1)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Unable to record recovery journal transition")
+          .hasNoCause();
+      assertThat(injected.findTransition(continuation)).isEmpty();
+      assertThat(injected.find(scope.operationId())).contains(ready);
+      fixture.execute(operationTable + " DROP CONSTRAINT fixture_holds_transition");
+      assertThat(injected.transition(continuation, now.plusSeconds(1)).phase())
+          .isEqualTo(Phase.AWAITING_RESUME);
+      assertThat(injected.transition(continuation, now.plusSeconds(2)).phase())
+          .isEqualTo(Phase.AWAITING_RESUME);
+
+      Operation awaiting = injected.find(scope.operationId()).orElseThrow();
+      injected.transition(transitionTuple(awaiting, TransitionVerb.RESUME), now.plusSeconds(3));
+      OutboxEntry pending = injected.findNextEffect(scope.operationId()).orElseThrow();
+      OutboxEntry dispatched =
+          injected.claimEffect(
+              scope.operationId(),
+              pending.effect().effectId(),
+              UUID.randomUUID(),
+              now.plusSeconds(4));
+      var prepared =
+          readbackFor(
+              dispatched,
+              dispatched.lastAttemptId(),
+              EffectReadbackState.PREPARED_FENCED,
+              "redaction-test-preparation",
+              now.plusSeconds(5));
+      fixture.execute(
+          operationTable + " ADD CONSTRAINT fixture_holds_readback CHECK (phase <> 'releasing')");
+      assertThatThrownBy(
+              () -> injected.recordEffectReadback(dispatched, prepared, now.plusSeconds(6)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Unable to record recovery journal effect readback")
+          .hasNoCause();
+      assertThat(injected.findNextEffect(scope.operationId())).contains(dispatched);
+      assertThat(injected.find(scope.operationId()))
+          .get()
+          .extracting(Operation::phase)
+          .isEqualTo(Phase.RESUME_AUTHORIZED);
+      assertThat(
+              injected.findEffect(scope.operationId(), EffectKind.COMMIT_OWNER_AUTHORIZED_HANDOFF))
+          .isEmpty();
+      fixture.execute(operationTable + " DROP CONSTRAINT fixture_holds_readback");
+      assertThat(injected.recordEffectReadback(dispatched, prepared, now.plusSeconds(6)).phase())
+          .isEqualTo(Phase.RELEASING);
+      assertThat(injected.recordEffectReadback(dispatched, prepared, now.plusSeconds(7)).phase())
+          .isEqualTo(Phase.RELEASING);
       assertThat(output.getAll()).doesNotContain(lockIdentity.toString());
       String completionMarker = "recovery-journal-redaction-" + UUID.randomUUID();
       dsl.execute("DO $$ BEGIN RAISE LOG '" + completionMarker + "'; END $$");
@@ -433,8 +490,72 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       assertThat(serverLog)
           .contains("violates check constraint \"fixture_requires_bound_phase\"")
           .contains("violates check constraint \"fixture_requires_collecting\"")
+          .contains("violates check constraint \"fixture_holds_transition\"")
+          .contains("violates check constraint \"fixture_holds_readback\"")
           .contains(completionMarker)
           .doesNotContain(lockIdentity.toString());
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void asynchronousJournalSessionsCannotQualifyOrClaimARelease() throws Exception {
+    String database = "firemud_recovery_control";
+    dsl.execute("CREATE DATABASE " + database);
+    try {
+      try (var migration = startPackagedApplication(true)) {
+        assertThat(journalHealth(migration).health().getStatus()).isEqualTo(Status.UP);
+      }
+      try (var application =
+          startPackagedApplication(
+              false,
+              "--spring.datasource.hikari.connection-init-sql=SET synchronous_commit TO off")) {
+        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.DOWN);
+        assertThat(application.getBean(HealthEndpoint.class).healthForPath("liveness"))
+            .isNotNull()
+            .extracting(result -> result.getStatus())
+            .isEqualTo(Status.UP);
+      }
+      Instant base = Instant.parse("2026-09-01T00:00:00Z");
+      OutboxEntry preparation = authorizedDispatch(base);
+      var prepared =
+          readbackFor(
+              preparation,
+              preparation.lastAttemptId(),
+              EffectReadbackState.PREPARED_FENCED,
+              "durable-preparation",
+              base.plusSeconds(5));
+      journal.recordEffectReadback(preparation, prepared, base.plusSeconds(5));
+      UUID operationId = preparation.effect().operationId();
+      OutboxEntry pending = journal.findNextEffect(operationId).orElseThrow();
+      assertThat(pending.state()).isEqualTo(EffectOutboxState.PENDING);
+      try (var connection =
+          DriverManager.getConnection(
+              POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        var asynchronous = DSL.using(connection, SQLDialect.POSTGRES);
+        asynchronous.execute("SET synchronous_commit TO off");
+        var unqualified = new JooqInitialGameplayReleaseJournal(asynchronous, tupleCodec);
+        assertThatThrownBy(() ->
+                unqualified.claimEffect(
+                    operationId,
+                    pending.effect().effectId(),
+                    UUID.randomUUID(),
+                    base.plusSeconds(6)))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Recovery journal requires durable PostgreSQL commits");
+      }
+      assertThat(journal.findNextEffect(operationId)).contains(pending);
+      assertThat(
+              journal
+                  .claimEffect(
+                      operationId,
+                      pending.effect().effectId(),
+                      UUID.randomUUID(),
+                      base.plusSeconds(6))
+                  .state())
+          .isEqualTo(EffectOutboxState.DISPATCHED);
     } finally {
       dsl.execute("DROP DATABASE " + database);
     }
@@ -503,7 +624,11 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     String fixtureUrl = POSTGRES.getJdbcUrl();
     String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
     dsl.execute("CREATE DATABASE " + database);
-    try (var application = startPackagedApplication(true);
+    try (var application =
+            startPackagedApplication(
+                true,
+                "--spring.sql.init.mode=always",
+                "--spring.sql.init.schema-locations=classpath:/fixture-missing-recovery-init.sql");
         Connection packagedConnection =
             DriverManager.getConnection(
                 packagedUrl, POSTGRES.getUsername(), POSTGRES.getPassword())) {
@@ -538,6 +663,31 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                       requested.operationId())
                   .get(0, UUID.class))
           .isEqualTo(lockIdentity);
+    } finally {
+      dsl.execute("DROP DATABASE " + database);
+    }
+  }
+
+  @Test
+  @ResourceLock("packaged-recovery-control-fixture-database")
+  void packagedFlywayRefusesMixedModeAfterAllMigrationsAreApplied() throws Exception {
+    String database = "firemud_recovery_control";
+    dsl.execute("CREATE DATABASE " + database);
+    try {
+      try (var application = startPackagedApplication(true)) {
+        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      }
+      assertThatThrownBy(
+              () -> {
+                try (var ignored = startPackagedApplication(true, "--spring.flyway.mixed=true")) {
+                  throw new AssertionError("Flyway mixed mode must be refused at startup");
+                }
+              })
+          .hasStackTraceContaining(
+              "spring.flyway.mixed must be disabled for the recovery migrations");
+      try (var application = startPackagedApplication(false, "--spring.flyway.mixed=true")) {
+        assertThat(journalHealth(application).health().getStatus()).isEqualTo(Status.UP);
+      }
     } finally {
       dsl.execute("DROP DATABASE " + database);
     }
@@ -618,7 +768,12 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       InitialGameplayReleaseEvidence proof = evidence(scope);
       var transaction =
           new TransactionTemplate(application.getBean(PlatformTransactionManager.class));
+      Scope nestedCreation = scope();
+      assertThat(nestedCreation.operationId()).isNotEqualTo(operationId);
       transaction.executeWithoutResult(status -> {
+        assertThatThrownBy(() -> packagedJournal.create(nestedCreation, UUID.randomUUID()))
+            .isInstanceOf(InitialGameplayReleaseConflictException.class)
+            .hasMessageContaining("operation creation requires its own transaction");
         assertThatThrownBy(() ->
                 packagedJournal.bindVerifiedEvidence(
                     scope,
@@ -631,6 +786,11 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
         status.setRollbackOnly();
       });
       assertThat(packagedJournal.find(operationId)).contains(collecting);
+      assertThat(packagedJournal.find(nestedCreation.operationId())).isEmpty();
+      UUID nestedLock = UUID.randomUUID();
+      Operation created = packagedJournal.create(nestedCreation, nestedLock);
+      assertThat(created.maintenanceLockIdentity()).isEqualTo(nestedLock);
+      assertThat(packagedJournal.create(nestedCreation, UUID.randomUUID())).isEqualTo(created);
 
       Operation ready =
           packagedJournal.bindVerifiedEvidence(
@@ -957,6 +1117,7 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
     "payload_digest, TYPE varchar(64)",
     "payload_digest, DROP NOT NULL",
     "send_outcome_uncertain, SET NOT NULL",
+    "send_outcome_uncertain, SET DEFAULT true",
     "send_outcome_uncertain, TYPE recovery_control.fixture_uncertainty_flag",
     "retry_provenance, SET NOT NULL",
     "retry_provenance, TYPE varchar(1)",
@@ -1010,9 +1171,15 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"TYPE char(63)", "TYPE varchar(64)", "DROP NOT NULL"})
+  @CsvSource({
+    "readback_digest, TYPE char(63)",
+    "readback_digest, TYPE varchar(64)",
+    "readback_digest, DROP NOT NULL",
+    "dispatched_at, TYPE timestamptz(0)"
+  })
   @ResourceLock("packaged-recovery-control-fixture-database")
-  void closureDigestMustHaveRequiredShapeForJournalReadiness(String alteration) throws Exception {
+  void closureColumnsMustHaveRequiredShapeForJournalReadiness(String column, String alteration)
+      throws Exception {
     String database = "firemud_recovery_control";
     String fixtureUrl = POSTGRES.getJdbcUrl();
     String packagedUrl = fixtureUrl.substring(0, fixtureUrl.lastIndexOf('/') + 1) + database;
@@ -1025,7 +1192,9 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       DSL.using(connection, SQLDialect.POSTGRES)
           .execute(
               "ALTER TABLE recovery_control.initial_gameplay_release_attempt_closure"
-                  + " ALTER COLUMN readback_digest "
+                  + " ALTER COLUMN "
+                  + column
+                  + " "
                   + alteration);
       assertCompletePackagedMigrationReceipts(packagedUrl);
       var health = application.getBean(HealthEndpoint.class);
@@ -1193,6 +1362,8 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
   @ValueSource(
       strings = {
         "operation_key",
+        "transition_tuple_digest_width",
+        "transition_tuple_digest_nullability",
         "outbox_operation_kind_key",
         "preparation_key",
         "preparation_digest_width",
@@ -1217,6 +1388,12 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 ALTER TABLE recovery_control.initial_gameplay_release_operation
                   DROP CONSTRAINT initial_gameplay_release_operation_pkey CASCADE
                 """;
+            case "transition_tuple_digest_width" ->
+                "ALTER TABLE recovery_control.initial_gameplay_release_transition"
+                    + " ALTER COLUMN tuple_digest TYPE CHAR(32)";
+            case "transition_tuple_digest_nullability" ->
+                "ALTER TABLE recovery_control.initial_gameplay_release_transition"
+                    + " ALTER COLUMN tuple_digest DROP NOT NULL";
             case "outbox_operation_kind_key" ->
                 """
                 ALTER TABLE recovery_control.initial_gameplay_release_outbox
@@ -1394,12 +1571,11 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
       UUID lock = UUID.randomUUID();
       var preparedJournal = new JooqInitialGameplayReleaseJournal(logging, tupleCodec);
       assertThat(preparedJournal.create(scope(), lock).maintenanceLockIdentity()).isEqualTo(lock);
-      assertThat(
-              awaitPostgresLogSince(
-                  logStart,
-                  "INSERT INTO recovery_control.initial_gameplay_release_operation",
-                  Duration.ofSeconds(5)))
+      String completionMarker = "recovery-journal-insert-" + UUID.randomUUID();
+      logging.execute("DO $$ BEGIN RAISE LOG '" + completionMarker + "'; END $$");
+      assertThat(awaitPostgresLogSince(logStart, completionMarker, Duration.ofSeconds(5)))
           .contains("INSERT INTO recovery_control.initial_gameplay_release_operation")
+          .contains(completionMarker)
           .doesNotContain(lock.toString());
     }
   }
@@ -3959,6 +4135,64 @@ class InitialGameplayReleaseJournalPostgresIntegrationTest {
                 .claimEffect(operationId, effectId, UUID.randomUUID(), base.plusSeconds(11))
                 .attemptCount())
         .isEqualTo(2);
+  }
+
+  @Test
+  void preparationIdentityRollsBackWhenObservationWriteIsSkipped() {
+    Instant base = Instant.parse("2026-09-01T00:00:00Z");
+    OutboxEntry preparation = authorizedDispatch(base);
+    UUID attemptId = preparation.lastAttemptId();
+    UUID operationId = preparation.effect().operationId();
+    UUID effectId = preparation.effect().effectId();
+    var prepared =
+        readbackFor(
+            preparation,
+            attemptId,
+            EffectReadbackState.PREPARED_FENCED,
+            "initial-preparation",
+            base.plusSeconds(5));
+    journal.recordEffectReadback(preparation, prepared, prepared.observedAt());
+    var partial =
+        readbackFor(
+            preparation,
+            attemptId,
+            EffectReadbackState.UNKNOWN_OR_PARTIAL,
+            "partial-preparation",
+            base.plusSeconds(6));
+    journal.recordEffectReadback(preparation, partial, partial.observedAt());
+    var fresh =
+        readbackFor(
+            preparation,
+            attemptId,
+            EffectReadbackState.PREPARED_FENCED,
+            "fresh-preparation",
+            base.plusSeconds(7));
+    String retained = storedOutbox(operationId, effectId);
+    dsl.execute(
+        """
+        CREATE FUNCTION recovery_control.fixture_skip_preparation_observation() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$
+        """);
+    try {
+      dsl.execute(
+          """
+          CREATE TRIGGER fixture_skip_preparation_observation BEFORE UPDATE
+          ON recovery_control.initial_gameplay_release_outbox FOR EACH ROW
+          WHEN (NEW.preparation_observation_payload IS DISTINCT FROM OLD.preparation_observation_payload)
+          EXECUTE FUNCTION recovery_control.fixture_skip_preparation_observation()
+          """);
+      assertThatThrownBy(() -> journal.recordEffectReadback(preparation, fresh, fresh.observedAt()))
+          .isInstanceOf(InitialGameplayReleaseConflictException.class)
+          .hasMessageContaining("preparation observation compare-and-set lost");
+      assertThat(storedOutbox(operationId, effectId)).isEqualTo(retained);
+    } finally {
+      dsl.execute(
+          "DROP TRIGGER IF EXISTS fixture_skip_preparation_observation"
+              + " ON recovery_control.initial_gameplay_release_outbox");
+      dsl.execute("DROP FUNCTION recovery_control.fixture_skip_preparation_observation()");
+    }
+    journal.recordEffectReadback(preparation, fresh, fresh.observedAt());
+    assertThat(storedOutbox(operationId, effectId)).contains(tupleCodec.digest(fresh));
   }
 
   @ParameterizedTest
