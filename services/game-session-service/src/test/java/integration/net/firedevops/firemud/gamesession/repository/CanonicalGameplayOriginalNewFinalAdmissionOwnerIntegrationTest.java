@@ -88,12 +88,17 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
         var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
       long invocationStartedAt = CLOCK.millis();
       long acquisitionDeadline = invocationStartedAt + 1500;
+      var invocationCompletedAt = new java.util.concurrent.atomic.AtomicLong(Long.MIN_VALUE);
       var response =
           executor.submit(() -> {
-            try (var ignored =
-                owner.finalizeOriginalNewOnce(
-                    source, bound, account, issuer, controlledCapacity, acquisitionDeadline)) {
-              throw new AssertionError("Expired acquisition must not return FINAL authority");
+            try {
+              try (var ignored =
+                  owner.finalizeOriginalNewOnce(
+                      source, bound, account, issuer, controlledCapacity, acquisitionDeadline)) {
+                throw new AssertionError("Expired acquisition must not return FINAL authority");
+              }
+            } finally {
+              invocationCompletedAt.set(CLOCK.millis());
             }
           });
       try {
@@ -109,7 +114,9 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
         assertThatThrownBy(() -> response.get(3, java.util.concurrent.TimeUnit.SECONDS))
             .hasCauseInstanceOf(
                 CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable.class);
-        assertThat(CLOCK.millis())
+        assertThat(invocationCompletedAt.get())
+            .as("the time captured when the submitted FINAL invocation completed")
+            .isGreaterThanOrEqualTo(invocationStartedAt)
             .as("the supplied 1.5 second deadline, not the five second fallback, ended the call")
             .isLessThan(invocationStartedAt + 5_000L);
       } finally {
@@ -119,6 +126,93 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
     }
     assertThat(sqlImage()).isEqualTo(initialSql);
     assertThat(physicalImage()).isEqualTo(initialRedis);
+  }
+
+  @Test
+  void retainsVerifiedFinalPostimageWhenOpenExpiresAfterReadbackWithoutNewAdmission()
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var issuerOpen = issuerOpen();
+
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var boundTemplate = template.bindCapacityExecution(controlledCapacity)) {
+      var originalOpen = controlledAccountOpen();
+      long openExpiry = Math.addExact(CLOCK.millis(), 2_500L);
+      var accountOpen =
+          new CanonicalGameplayAccountInitialOpenProof.CurrentOpen(
+              originalOpen.initializerId(),
+              originalOpen.originalRequestId(),
+              originalOpen.originalCallerContextId(),
+              originalOpen.originalAttemptFence(),
+              originalOpen.accountId(),
+              originalOpen.tenantId(),
+              originalOpen.playableStateNamespaceId(),
+              originalOpen.key(),
+              originalOpen.sourceControlEpoch(),
+              originalOpen.inventorySnapshotRevision(),
+              originalOpen.accountLoginEvidenceDigest(),
+              originalOpen.sourceControlDigest(),
+              originalOpen.incarnationDigest(),
+              originalOpen.issuedAtEpochMillis(),
+              openExpiry,
+              originalOpen.exactFields());
+      var ownerClock = new ExpireAtReadbackCloseClock(openExpiry);
+      var closedConnections = new java.util.concurrent.atomic.AtomicInteger();
+      long overallDeadline = Math.addExact(openExpiry, 5_000L);
+      var owner =
+          new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+              ownerClient,
+              catalog,
+              ownerClock,
+              tags,
+              () -> ownerClient.connect(io.lettuce.core.codec.ByteArrayCodec.INSTANCE),
+              () -> 5_000L,
+              close -> {
+                close.join();
+                if (closedConnections.incrementAndGet() == 2) {
+                  ownerClock.expireAfterVerifiedReadback();
+                }
+              });
+
+      try (var actual =
+          owner.finalizeOriginalNewOnce(
+              source,
+              boundTemplate,
+              accountOpen,
+              issuerOpen,
+              controlledCapacity,
+              overallDeadline)) {
+        assertThat(closedConnections.get())
+            .as("FINAL command and exact postimage connections")
+            .isEqualTo(2);
+        assertThat(ownerClock.millis())
+            .as("the OPEN cutoff expires only after the complete physical readback")
+            .isEqualTo(accountOpen.expiresAtEpochMillis());
+        assertThat(ownerClock.millis()).isLessThan(overallDeadline);
+        assertThat(inventory.commitOriginalNewFinalAdmission(actual).status())
+            .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
+        var committed = inventory.readOriginalNewFinalAdmissionSource(decision);
+        var receipt = committed.finalReceipt().orElseThrow();
+        assertThat(receipt.finalSessionSha256()).isEqualTo(actual.finalSessionSha256());
+        assertThat(receipt.admissionAtMillis()).isEqualTo(actual.admissionAtMillis());
+
+        assertThatThrownBy(() ->
+                owner.finalizeOriginalNewOnce(
+                    committed,
+                    boundTemplate,
+                    accountOpen,
+                    issuerOpen,
+                    controlledCapacity,
+                    overallDeadline))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(inventory.readOriginalNewFinalAdmissionSource(decision).finalReceipt())
+            .contains(receipt);
+      }
+    }
   }
 
   @Test
@@ -1090,5 +1184,38 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest
                   .isEqualTo(constraint);
               assertThat(postgresFailure.getServerErrorMessage().getMessage()).isEqualTo(message);
             });
+  }
+
+  private static final class ExpireAtReadbackCloseClock extends Clock {
+    private final long openExpiryMillis;
+    private volatile boolean expired;
+
+    private ExpireAtReadbackCloseClock(long openExpiryMillis) {
+      this.openExpiryMillis = openExpiryMillis;
+    }
+
+    void expireAfterVerifiedReadback() {
+      expired = true;
+    }
+
+    @Override
+    public long millis() {
+      return expired ? openExpiryMillis : CLOCK.millis();
+    }
+
+    @Override
+    public Instant instant() {
+      return Instant.ofEpochMilli(millis());
+    }
+
+    @Override
+    public ZoneOffset getZone() {
+      return ZoneOffset.UTC;
+    }
+
+    @Override
+    public Clock withZone(java.time.ZoneId zone) {
+      return Clock.fixed(instant(), zone);
+    }
   }
 }

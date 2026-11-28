@@ -354,7 +354,14 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       }
       try {
         requireDeadline(clock.millis(), absoluteDeadlineMillis);
-        requireCurrentOpenWindow(accountOpen, clock.millis());
+        // FINAL already checked the OPEN cutoff before writing. For a new effect, return the
+        // exact postimage for durable retention even if OPEN expires before this read finishes.
+        // The coordinator still checks currentness before confirmation or serving.
+        if (source.transitionStatus()
+            == net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot
+                .Status.COMMITTED) {
+          requireCurrentOpenWindow(accountOpen, clock.millis());
+        }
         finalized = template.requireFinalizedReadback(finalBytes);
         String finalizedSessionSha256 = digest("SHA-256", finalBytes);
         if (!candidate.equals(finalized.candidate())
@@ -1209,6 +1216,12 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
         throw unavailable();
       }
       sessionBytes = awaitCommand(() -> commands.get(sessionKey));
+      if (sessionBytes == null
+          || sessionBytes.length == 0
+          || sessionBytes.length
+              > CanonicalGameplayOriginalNewAuthenticatedSession.MAX_SESSION_BYTES) {
+        throw unavailable();
+      }
       Map<String, byte[]> capacityFields = new LinkedHashMap<>();
       capacityFields.put("binding", execution.canonicalBytes());
       capacityFields.put("digest", ascii(execution.digest()));
@@ -1228,12 +1241,6 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       if (accountOpen != null) {
         requireExactHash(commands, accountBarrierKey, accountFields);
         requireExactHash(commands, issuerBarrierKey, issuerFields);
-      }
-      if (sessionBytes == null
-          || sessionBytes.length == 0
-          || sessionBytes.length
-              > CanonicalGameplayOriginalNewAuthenticatedSession.MAX_SESSION_BYTES) {
-        throw unavailable();
       }
       readback = sessionBytes.clone();
       return readback;
@@ -1449,16 +1456,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       this.execution = Objects.requireNonNull(execution);
       this.source = Objects.requireNonNull(source, "durable final-admission source");
       this.session = Objects.requireNonNull(session, "finalized session");
-      byte[] exact = session.canonicalBytes();
-      try {
-        if (!execution
-            .digest()
-            .equals(JSON.readTree(exact).get("capacityExecutionDigest").textValue()))
-          throw unavailable();
-        this.finalSessionSha256 = Objects.requireNonNull(finalSessionSha256);
-      } finally {
-        wipe(exact);
-      }
+      if (!execution.digest().equals(session.capacityExecutionDigest())) throw unavailable();
+      this.finalSessionSha256 = Objects.requireNonNull(finalSessionSha256);
     }
 
     CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source() {

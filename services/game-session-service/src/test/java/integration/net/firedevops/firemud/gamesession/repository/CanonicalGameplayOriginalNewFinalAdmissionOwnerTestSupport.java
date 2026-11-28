@@ -566,6 +566,7 @@ abstract class CanonicalGameplayOriginalNewFinalAdmissionOwnerTestSupport {
               + CanonicalGameplayRegionRedisKeys.tenantRegionTag(
                   source.tenantId(), source.gameInstanceId(), source.regionId())
               + "}:*");
+      addPhysicalImage(image, regionBinding.installation().grant.key());
     }
     return image;
   }

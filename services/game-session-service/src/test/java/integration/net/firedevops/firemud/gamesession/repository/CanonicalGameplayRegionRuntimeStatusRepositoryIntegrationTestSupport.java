@@ -70,9 +70,10 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
   static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
-  @Container
-  static final GenericContainer<?> REDIS =
-      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
+  static final class TransferContainers {
+    static final GenericContainer<?> REDIS =
+        new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
+  }
 
   @TempDir Path directory;
 
@@ -277,7 +278,10 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
         throws Exception {
       String password = UUID.randomUUID().toString();
       try (var administrator =
-              RedisClient.create(RedisURI.create(REDIS.getHost(), REDIS.getMappedPort(6379)));
+              RedisClient.create(
+                  RedisURI.create(
+                      TransferContainers.REDIS.getHost(),
+                      TransferContainers.REDIS.getMappedPort(6379)));
           var connection = administrator.connect(ByteArrayCodec.INSTANCE)) {
         connection.sync().flushdb();
         connection
@@ -314,7 +318,8 @@ abstract class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTestSupp
                     .addCommand(CommandType.TIME));
       }
       coordinationUri =
-          RedisURI.Builder.redis(REDIS.getHost(), REDIS.getMappedPort(6379))
+          RedisURI.Builder.redis(
+                  TransferContainers.REDIS.getHost(), TransferContainers.REDIS.getMappedPort(6379))
               .withAuthentication("gamesession_coord_app", password)
               .withTimeout(Duration.ofSeconds(5))
               .build();

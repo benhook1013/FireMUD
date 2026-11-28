@@ -221,7 +221,10 @@ class AccountTenantCapacityClientMtlsTest {
     try (var client = client(server)) {
       client.init();
       assertThatThrownBy(() -> client.commit(request, deadline()))
-          .isInstanceOf(StatusRuntimeException.class);
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
       assertThat(client.readRetainedAdmissionOutcome(request, deadline()))
           .isEqualTo(retainedResult);
       assertThat(commits).hasValue(1);

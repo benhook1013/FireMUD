@@ -391,6 +391,16 @@ class CanonicalGameplayOriginalNewCapacityRetentionOwnerIntegrationTest
     var original = regionBinding.installation();
     assertThatThrownBy(() -> replaceRegionOwner("successor-without-positive-serving-proof"))
         .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () -> observeGuardedRegionReplacement("successor-without-positive-serving-proof"))
+        .rootCause()
+        .isInstanceOfSatisfying(
+            org.postgresql.util.PSQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23514");
+              assertThat(failure.getMessage())
+                  .contains("Region owner replacement lacks exact transfer custody");
+            });
     assertThat(
             new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl())
                 .find(original.source)

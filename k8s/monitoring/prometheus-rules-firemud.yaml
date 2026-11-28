@@ -286,6 +286,18 @@ spec:
           annotations:
             summary: Original NEW capacity SQL permits remain in uncertain release custody
             description: A provider release failed and the affected process retained an operation permit. Preserve original SQL and Redis execution evidence, isolate new capacity work and follow the owner reconciliation procedure; a restart or a zero gauge does not prove that an admission did not commit.
+        - alert: OriginalNewCapacitySqlRetireFailureRetainedOperations
+          expr: original_new_capacity_sql_retire_failure_retained_operations > 0
+          for: 0m
+          labels:
+            service: game-session-service
+            component: capacity
+            severity: P1
+            owner: gameplay
+            runbook: design/architecture/microservices/game-session-service/operations.md#original-new-capacity-sql-retire-failure
+          annotations:
+            summary: Original NEW capacity SQL permits remain in unproved connection retirement custody
+            description: Connection retirement could not be proved and the affected process retained an operation permit. Preserve original SQL and execution evidence, isolate new capacity work and follow the owner reconciliation procedure; restart or a zero gauge does not prove resource disposal or non-execution.
         - alert: OriginalNewCapacityRedisCloseFailureRetainedOperations
           expr: original_new_capacity_redis_close_failure_retained_operations > 0
           for: 0m

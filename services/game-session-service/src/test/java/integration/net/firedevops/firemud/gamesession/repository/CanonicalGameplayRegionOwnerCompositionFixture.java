@@ -503,6 +503,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             null,
             null,
             null,
+            null,
             Objects.requireNonNull(phaseRunner, "phaseRunner"))
         .first();
   }
@@ -531,6 +532,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             currentTarget,
             worldRegionResolver,
             entityReferenceClient,
+            null,
             null,
             createdReferenceClient,
             binding -> {
@@ -581,6 +583,30 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         snapshotRegionOwnerSqlState(
             dsl, obligation.tenantId(), obligation.gameInstanceId(), obligation.regionId()),
         physical);
+  }
+
+  /** Proves that refusing an expired grant replacement preserves the acknowledged bridge. */
+  public static ExpiredGrantProof installAndBridgeThenExpiredGrantReplacementRefuses(
+      DSLContext dsl,
+      String redisHost,
+      int redisPort,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalPlayableTarget currentTarget,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient)
+      throws Exception {
+    var capture = new AtomicReference<ExpiredGrantProof>();
+    installAndBridgeInternal(
+        dsl,
+        redisHost,
+        redisPort,
+        worldRequest,
+        currentTarget,
+        worldRegionResolver,
+        entityReferenceClient,
+        null,
+        capture);
+    return Objects.requireNonNull(capture.get(), "expired-grant bridge proof");
   }
 
   /**
@@ -915,6 +941,30 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         worldRegionResolver,
         entityReferenceClient,
         secondBinding,
+        null);
+  }
+
+  private static TwoBindingProof installAndBridgeInternal(
+      DSLContext dsl,
+      String redisHost,
+      int redisPort,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalPlayableTarget currentTarget,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
+      SecondBinding secondBinding,
+      AtomicReference<ExpiredGrantProof> expiredGrantProofCapture)
+      throws Exception {
+    return installAndBridgeInternal(
+        dsl,
+        redisHost,
+        redisPort,
+        worldRequest,
+        currentTarget,
+        worldRegionResolver,
+        entityReferenceClient,
+        secondBinding,
+        expiredGrantProofCapture,
         null,
         null,
         null);
@@ -929,6 +979,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
       CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
       SecondBinding secondBinding,
+      AtomicReference<ExpiredGrantProof> expiredGrantProofCapture,
       CanonicalPlayerCreatedRuntimeReferenceClient createdReferenceClient,
       java.util.function.Consumer<ExistingBinding> afterBridge,
       BridgeSqlPhaseRunner phaseRunner)
@@ -1071,6 +1122,19 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         afterBridge.accept(new ExistingBinding(bridgeOwner, installation, firstAcknowledgement));
       }
       if (secondBinding == null) {
+        if (expiredGrantProofCapture != null) {
+          expiredGrantProofCapture.set(
+              refuseReplacementAfterAcknowledgement(
+                  dsl,
+                  redis,
+                  scriptCatalog,
+                  stableSource,
+                  worldRegionResolver,
+                  bridgeEntityReferenceClient,
+                  worldRequest,
+                  firstProof,
+                  installation));
+        }
         return new TwoBindingProof(firstProof, null, null, true, true, true, true, true);
       }
 
@@ -1441,6 +1505,105 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         return fixtureRunner.run(BridgeSqlPhase.valueOf(phase.name()), action);
       }
     };
+  }
+
+  private static ExpiredGrantProof refuseReplacementAfterAcknowledgement(
+      DSLContext dsl,
+      RegionRedis redis,
+      RedisScriptCatalog scriptCatalog,
+      ControlledStableIncarnationSource stableSource,
+      CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
+      CanonicalPreseededActorRuntimeReferenceClient entityReferenceClient,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      Proof acknowledged,
+      CanonicalGameplayRegionLeaseOwner.Installation originalInstallation) {
+    byte[] leaseKey =
+        ascii(
+            CanonicalGameplayRegionRedisKeys.lease(
+                originalInstallation.source.tenantId(),
+                originalInstallation.source.gameInstanceId(),
+                originalInstallation.source.regionId()));
+    if (!redis.admin().pexpire(leaseKey, 0L)) {
+      throw new IllegalStateException("The acknowledged bridge grant could not be expired");
+    }
+
+    RuntimeIdentity replacementIdentity =
+        new RuntimeIdentity(
+            "game-session-service",
+            "region-owner-composition-replacement",
+            "localhost",
+            Instant.now(),
+            "test",
+            "test",
+            "controlled-test-image");
+    var replacementOwner =
+        CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
+            dsl,
+            redis.ownerClient(),
+            scriptCatalog,
+            stableSource,
+            worldRegionResolver,
+            entityReferenceClient,
+            replacementIdentity,
+            Duration.ofSeconds(30),
+            Clock.systemUTC());
+    var source = originalInstallation.source;
+    var sqlBeforeRefusal =
+        snapshotRegionOwnerSqlState(
+            dsl, source.tenantId(), source.gameInstanceId(), source.regionId());
+    String acknowledgedRowBeforeRefusal = regionBridgeRowImage(dsl, acknowledged.transitionId());
+    Record acknowledgedRow =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT * FROM game_session_canonical_binding_region_bridge_obligation"
+                    + " WHERE transition_id = ?",
+                acknowledged.transitionId()),
+            "acknowledged bridge row before replacement refusal");
+    var physicalBridgeBeforeRefusal =
+        snapshotRegionBridgeRedisState(redis, acknowledgedRow, acknowledged.runtimeEntityId());
+    var inventory = new CanonicalGameplayBindingInventoryRepository(dsl);
+    var inventoryBeforeRefusal = inventory.readSnapshot();
+    String metaKey =
+        CanonicalGameplayRegionRedisKeys.meta(
+            source.tenantId(), source.gameInstanceId(), source.regionId());
+
+    boolean replacementRefused;
+    String refusalMessage;
+    try {
+      replacementOwner.installForTransition(acknowledged.transitionId(), worldRequest);
+      replacementRefused = false;
+      refusalMessage = null;
+    } catch (IllegalStateException expected) {
+      replacementRefused = true;
+      refusalMessage = expected.getMessage();
+    }
+
+    return new ExpiredGrantProof(
+        acknowledged,
+        replacementRefused,
+        refusalMessage,
+        sqlBeforeRefusal.equals(
+            snapshotRegionOwnerSqlState(
+                dsl, source.tenantId(), source.gameInstanceId(), source.regionId())),
+        acknowledgedRowBeforeRefusal.equals(regionBridgeRowImage(dsl, acknowledged.transitionId())),
+        inventoryBeforeRefusal.equals(inventory.readSnapshot()),
+        physicalBridgeBeforeRefusal.equals(
+                snapshotRegionBridgeRedisState(
+                    redis, acknowledgedRow, acknowledged.runtimeEntityId()))
+            && "none".equals(redis.admin().type(leaseKey))
+            && redis.admin().pttl(ascii(metaKey)) == -1L);
+  }
+
+  private static String regionBridgeRowImage(DSLContext dsl, UUID transitionId) {
+    Record row =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT to_jsonb(obligation)::text AS image"
+                    + " FROM game_session_canonical_binding_region_bridge_obligation obligation"
+                    + " WHERE transition_id = ?",
+                transitionId),
+            "persisted region bridge obligation image");
+    return Objects.requireNonNull(row.get("image", String.class), "region bridge row image");
   }
 
   private static boolean sameAbortSource(
@@ -2114,6 +2277,15 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       boolean accountMemberAddedExactly,
       boolean accountControlStatePreserved,
       boolean exactMemberRetryPreservedState) {}
+
+  public record ExpiredGrantProof(
+      Proof acknowledgedBridge,
+      boolean replacementRefused,
+      String refusalMessage,
+      boolean ownerSqlStatePreserved,
+      boolean acknowledgementRowPreserved,
+      boolean inventoryStatePreserved,
+      boolean physicalBridgeStatePreserved) {}
 
   public record AccountAbortProof(
       UUID transitionId,

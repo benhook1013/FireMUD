@@ -2369,6 +2369,43 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
+  void acknowledgedRegionBridgeSurvivesRefusedExpiredGrantReplacement() throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try (var compositionPool = newCompositionPool(testSchema)) {
+      try (RedisFixture redis = RedisFixture.open()) {
+        redis.admin().flushdb();
+      }
+      // This local candidate-launch source is created through the real Game Session owners;
+      // its upstream publication inputs remain controlled test evidence.
+      var runtimeTarget =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+              testSchema.dataSource(), UUID.randomUUID(), "firemud");
+      WorldFixture world = WorldFixture.open(runtimeTarget);
+      try (var entitySource = EntityReferenceFixture.open()) {
+        CanonicalGameplayRegionOwnerCompositionFixture.ExpiredGrantProof proof =
+            CanonicalGameplayRegionOwnerCompositionFixture.installAndBridgeThenExpiredGrantReplacementRefuses(
+                DSL.using(compositionPool, SQLDialect.POSTGRES),
+                REDIS.getHost(),
+                REDIS.getMappedPort(REDIS_PORT),
+                world.request(),
+                runtimeTarget.playableTarget(),
+                world.resolver(),
+                entitySource.client());
+
+        assertThat(proof.acknowledgedBridge().exactLostReplyRetry()).isTrue();
+        assertThat(proof.replacementRefused()).isTrue();
+        assertThat(proof.ownerSqlStatePreserved()).isTrue();
+        assertThat(proof.acknowledgementRowPreserved()).isTrue();
+        assertThat(proof.inventoryStatePreserved()).isTrue();
+        assertThat(proof.physicalBridgeStatePreserved()).isTrue();
+      }
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
   void retainedParentRegionBridgeUpgradePreservesRowsHistoryAndMigrationRetry() throws Exception {
     assertRetainedParentRegionBridgeUpgrade(false);
   }

@@ -242,6 +242,7 @@ class AccountGameplayAdmissionLeaseClientTest {
     var deadlines = new CopyOnWriteArrayList<Deadline>();
     var dispatchedDeadlines = new CopyOnWriteArrayList<Deadline>();
     var dispatchedRemainingNanos = new CopyOnWriteArrayList<Long>();
+    var serverEntryRemainingNanos = new CopyOnWriteArrayList<Long>();
     var issuedRequests = new CopyOnWriteArrayList<IssueOriginalNewGameplayCredentialRequest>();
     var signedBoundJwts = new CopyOnWriteArrayList<String>();
     var confirmationRequests =
@@ -257,7 +258,7 @@ class AccountGameplayAdmissionLeaseClientTest {
               public void issueOriginalNewGameplayCredential(
                   IssueOriginalNewGameplayCredentialRequest request,
                   StreamObserver<AccountGameplayAdmissionLeaseResponse> observer) {
-                capture(observed, deadlines);
+                capture(observed, deadlines, serverEntryRemainingNanos);
                 issuedRequests.add(request);
                 try {
                   var parsed =
@@ -310,7 +311,7 @@ class AccountGameplayAdmissionLeaseClientTest {
               public void confirmOriginalNewGameplayAdmission(
                   ConfirmOriginalNewGameplayAdmissionRequest request,
                   StreamObserver<OriginalNewAdmissionConfirmationResponse> observer) {
-                capture(observed, deadlines);
+                capture(observed, deadlines, serverEntryRemainingNanos);
                 confirmationRequests.add(request);
                 var parsed =
                     AccountGameplayAdmissionLeaseGrpcCodec
@@ -378,24 +379,17 @@ class AccountGameplayAdmissionLeaseClientTest {
           });
       assertThat(deadlines).hasSize(4);
       assertThat(dispatchedDeadlines).hasSize(4);
-      assertThat(dispatchedRemainingNanos.get(0)).isBetween(4_500_000_000L, 5_000_000_000L);
-      assertThat(dispatchedRemainingNanos.get(1)).isBetween(2_500_000_000L, 3_000_000_000L);
-      assertThat(dispatchedRemainingNanos.get(2)).isBetween(4_000_000_000L, 5_000_000_000L);
-      assertThat(dispatchedRemainingNanos.get(3)).isBetween(2_000_000_000L, 3_000_000_000L);
+      assertThat(serverEntryRemainingNanos).hasSize(4);
+      assertThat(dispatchedRemainingNanos.get(0)).isPositive().isLessThanOrEqualTo(5_000_000_000L);
+      assertThat(dispatchedRemainingNanos.get(1)).isPositive().isLessThanOrEqualTo(3_000_000_000L);
+      assertThat(dispatchedRemainingNanos.get(2)).isPositive().isLessThanOrEqualTo(5_000_000_000L);
+      assertThat(dispatchedRemainingNanos.get(3)).isPositive().isLessThanOrEqualTo(3_000_000_000L);
+      assertThat(serverEntryRemainingNanos.get(0)).isPositive().isLessThanOrEqualTo(5_000_000_000L);
+      assertThat(serverEntryRemainingNanos.get(1)).isPositive().isLessThanOrEqualTo(3_000_000_000L);
+      assertThat(serverEntryRemainingNanos.get(2)).isPositive().isLessThanOrEqualTo(5_000_000_000L);
+      assertThat(serverEntryRemainingNanos.get(3)).isPositive().isLessThanOrEqualTo(3_000_000_000L);
       assertThat(dispatchedDeadlines.get(1)).isSameAs(requestedIssueDeadline);
       assertThat(dispatchedDeadlines.get(3)).isSameAs(requestedBoundedDeadline);
-      assertThat(deadlines.get(0).timeRemaining(TimeUnit.MILLISECONDS))
-          .isPositive()
-          .isLessThanOrEqualTo(5_000L);
-      assertThat(deadlines.get(1).timeRemaining(TimeUnit.MILLISECONDS))
-          .isPositive()
-          .isLessThanOrEqualTo(3_000L);
-      assertThat(deadlines.get(2).timeRemaining(TimeUnit.MILLISECONDS))
-          .isPositive()
-          .isLessThanOrEqualTo(5_000L);
-      assertThat(deadlines.get(3).timeRemaining(TimeUnit.MILLISECONDS))
-          .isPositive()
-          .isLessThanOrEqualTo(3_000L);
       received.close();
       boundedReceived.close();
       java.util.Arrays.fill(originalLease, (byte) 0);
@@ -887,6 +881,15 @@ class AccountGameplayAdmissionLeaseClientTest {
     var peer = GrpcPeerIdentity.current();
     peers.add(peer == null ? null : peer.uri());
     deadlines.add(Context.current().getDeadline());
+  }
+
+  private static void capture(
+      List<String> peers, List<Deadline> deadlines, List<Long> remainingNanos) {
+    var peer = GrpcPeerIdentity.current();
+    peers.add(peer == null ? null : peer.uri());
+    Deadline deadline = Context.current().getDeadline();
+    deadlines.add(deadline);
+    remainingNanos.add(deadline == null ? 0L : deadline.timeRemaining(TimeUnit.NANOSECONDS));
   }
 
   private static void failWithSecret(

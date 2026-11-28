@@ -22,6 +22,7 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.CommittedCapacityRequest;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
@@ -298,8 +299,12 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         deadline,
         owner -> {
           var candidate = source.candidate();
+          // A charged attempt already owns its mapping. An exact durable Account abort may
+          // precede a retry of denial settlement, but cannot confer new admission authority.
           var assignment =
-              owner.scopedTags().assignmentForTransition(request.identity().admissionId());
+              owner
+                  .scopedTags()
+                  .readAssignmentForRetainedCapacityExecution(request.identity().admissionId());
           owner
               .sql()
               .transaction(configuration -> {
@@ -944,13 +949,15 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
           bytes(CanonicalGameplaySessionRedisKeys.tenantIndex(assignment, binding.bindingRef()));
       if (!persistent(commands, session, "string")
           || !persistent(commands, character, "string")
-          || !Arrays.equals(bytes(expectedCharacter), await(commands.get(character)))
+          || !Arrays.equals(bytes(expectedCharacter), await(() -> commands.get(character)))
           || !persistent(commands, account, "set")
-          || !Boolean.TRUE.equals(await(commands.sismember(account, bytes(binding.sessionId()))))
+          || !Boolean.TRUE.equals(
+              await(() -> commands.sismember(account, bytes(binding.sessionId()))))
           || !persistent(commands, tenant, "set")
-          || !Boolean.TRUE.equals(await(commands.sismember(tenant, bytes(binding.sessionId())))))
+          || !Boolean.TRUE.equals(
+              await(() -> commands.sismember(tenant, bytes(binding.sessionId())))))
         throw unavailable();
-      byte[] actual = await(commands.get(session));
+      byte[] actual = await(() -> commands.get(session));
       try {
         if (expectedFinalDigest == null) {
           if (!Arrays.equals(candidate.canonicalBytes(), actual)) throw unavailable();
@@ -1008,7 +1015,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                 + "}:"
                 + execution.request().admissionAttemptId());
     if (!persistent(commands, key, "hash")) throw unavailable();
-    Map<byte[], byte[]> raw = await(commands.hgetall(key));
+    Map<byte[], byte[]> raw = await(() -> commands.hgetall(key));
     Map<String, byte[]> result = new LinkedHashMap<>();
     raw.forEach((name, value) -> {
       if (result.put(text(name), value) != null) throw unavailable();
@@ -1235,17 +1242,20 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   }
 
   private boolean persistent(RedisAsyncCommands<byte[], byte[]> commands, byte[] key, String type) {
-    return type.equals(await(commands.type(key)))
-        && Long.valueOf(-1).equals(await(commands.pttl(key)));
+    return type.equals(await(() -> commands.type(key)))
+        && Long.valueOf(-1).equals(await(() -> commands.pttl(key)));
   }
 
   private void principal(RedisAsyncCommands<byte[], byte[]> commands) {
-    if (!"gamesession_coord_app".equals(await(commands.aclWhoami()))) throw unavailable();
+    if (!"gamesession_coord_app".equals(await(commands::aclWhoami))) throw unavailable();
   }
 
-  private <T> T await(RedisFuture<T> future) {
+  private <T> T await(Supplier<RedisFuture<T>> command) {
+    long beforeSubmission = remainingMillis();
+    RedisFuture<T> future = command.get();
+    if (future == null) throw unavailable();
     try {
-      return future.get(remainingMillis(), TimeUnit.MILLISECONDS);
+      return future.get(Math.min(beforeSubmission, remainingMillis()), TimeUnit.MILLISECONDS);
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
       future.cancel(true);
